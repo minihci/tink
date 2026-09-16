@@ -7,6 +7,8 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime"
+	"runtime/debug"
 
 	"github.com/spf13/cobra"
 
@@ -35,8 +37,43 @@ made executable instead of just documented.`,
 	root.AddCommand(newApplyCmd())
 	root.AddCommand(newIngressCmd())
 	root.AddCommand(newMongoCmd())
+	root.AddCommand(newVersionCmd())
 
 	return root
+}
+
+func newVersionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print tink's build version",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fmt.Fprintln(cmd.OutOrStdout(), buildVersion())
+			return nil
+		},
+	}
+}
+
+// buildVersion reads Go's own embedded VCS metadata (available whenever
+// this binary was built with `go build` inside a git checkout) rather than
+// relying on -ldflags injected by a release script that doesn't exist yet.
+func buildVersion() string {
+	version := "unknown"
+	commit := "unknown"
+	buildDate := "unknown"
+
+	if info, ok := debug.ReadBuildInfo(); ok {
+		version = info.Main.Version // already carries a +dirty suffix when vcs.modified is true
+		for _, s := range info.Settings {
+			switch s.Key {
+			case "vcs.revision":
+				commit = s.Value
+			case "vcs.time":
+				buildDate = s.Value
+			}
+		}
+	}
+
+	return fmt.Sprintf("tink %s (commit %s, built %s, %s)", version, commit, buildDate, runtime.Version())
 }
 
 func newApplyCmd() *cobra.Command {
