@@ -28,7 +28,7 @@ comment for the working bash it's replacing.
 | Command | Status | Replaces |
 |---|---|---|
 | `tink apply` | not yet ported | `incus-host/scripts/deploy.sh` |
-| `tink ingress reconcile` / `tink ingress status` | not yet ported | `incus-host/reconciler/reconcile.sh` |
+| `tink ingress reconcile` / `tink ingress status` | ported, not yet cut over | `incus-host/reconciler/reconcile.sh` |
 | `tink mongo snapshot` | not yet designed | (none yet - still under discussion) |
 
 `apply` converges a host to its declared platform state - storage
@@ -64,13 +64,17 @@ same code the CLI calls, without duplicating it.
 
 ## Status
 
-Skeleton only - no capability is implemented yet. `ingress` is next,
-since it's simpler than `apply` (no secrets, no sequencing) and already
-fully specified in `incus-host/reconciler/DESIGN.md`. The cutover plan
-for the live reconciler: build a dry-run mode, run this alongside the
-bash version against `incus.xlii.co`'s real state, diff the output, and
-only then move the cron entry over - the bash script stays in place as
-rollback until this is proven.
+`ingress` is implemented: `tink ingress reconcile` and `tink ingress
+status` use Incus's own Go client (`GetInstancesFull`, matching
+`recursion=2`) instead of curl+jq, and `reconcile --dry-run` computes and
+reports what would change without writing anything or reloading Caddy.
+Not yet cut over on the live host - the plan stands as written: run it
+side by side with `incus-host/reconciler/reconcile.sh` against
+`incus.xlii.co`'s real state, diff the output, and only then move the
+cron entry over. The bash script stays in place as rollback until that's
+proven.
+
+`apply` (capability zero) hasn't been started.
 
 ## Building
 

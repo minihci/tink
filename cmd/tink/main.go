@@ -96,27 +96,92 @@ func newIngressCmd() *cobra.Command {
 		Short: "Manage self-registered ingress routes",
 	}
 
-	ingressCmd.AddCommand(&cobra.Command{
+	ingressCmd.AddCommand(newIngressReconcileCmd())
+	ingressCmd.AddCommand(newIngressStatusCmd())
+
+	return ingressCmd
+}
+
+func newIngressReconcileCmd() *cobra.Command {
+	opts := ingress.DefaultOptions()
+	cmd := &cobra.Command{
 		Use:   "reconcile",
 		Short: "Discover registered instances and converge ingress routes to match",
 		Long: `reconcile is tink's port of incus-host/reconciler/reconcile.sh: it
 discovers instances that opt in via user.ingress.{domain,port,enabled}
-config and renders/applies the shared ingress instance's routes. Not yet
-ported.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return ingress.Reconcile()
-		},
-	})
+config and renders/applies the shared ingress instance's routes.
 
-	ingressCmd.AddCommand(&cobra.Command{
+Use --dry-run to compute and report what would change without writing
+anything or reloading Caddy -- this is how it's meant to be run alongside
+the live bash version before its cron entry actually gets moved over.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			result, err := ingress.Reconcile(opts)
+			if err != nil {
+				return err
+			}
+			printIngressResult(cmd, result, opts.DryRun)
+			return nil
+		},
+	}
+	addIngressFlags(cmd, &opts)
+	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "compute and report what would change without applying it")
+	return cmd
+}
+
+func newIngressStatusCmd() *cobra.Command {
+	opts := ingress.DefaultOptions()
+	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show what's currently registered, without changing anything",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return ingress.Status()
+			result, err := ingress.Status(opts)
+			if err != nil {
+				return err
+			}
+			printIngressResult(cmd, result, true)
+			return nil
 		},
-	})
+	}
+	addIngressFlags(cmd, &opts)
+	return cmd
+}
 
-	return ingressCmd
+func addIngressFlags(cmd *cobra.Command, opts *ingress.Options) {
+	cmd.Flags().StringVar(&opts.Socket, "socket", opts.Socket, "Incus daemon unix socket path")
+	cmd.Flags().StringVar(&opts.RoutesDir, "routes-dir", opts.RoutesDir, "generated ingress routes directory")
+	cmd.Flags().StringVar(&opts.IngressInstance, "ingress-instance", opts.IngressInstance, "name of the ingress instance to reload")
+}
+
+func printIngressResult(cmd *cobra.Command, result *ingress.Result, dryRun bool) {
+	out := cmd.OutOrStdout()
+	for _, w := range result.Warnings {
+		fmt.Fprintf(cmd.ErrOrStderr(), "WARN: %s\n", w)
+	}
+
+	fmt.Fprintf(out, "%d instance(s) registered:\n", len(result.Registrations))
+	for _, r := range result.Registrations {
+		fmt.Fprintf(out, "  %s -> https://%s (proxying to %s:%s)\n", r.Name, r.Domain, r.Address, r.Port)
+	}
+
+	if result.Diff.Empty() {
+		fmt.Fprintln(out, "no changes")
+		return
+	}
+
+	verb := "would apply"
+	if result.Applied {
+		verb = "applied"
+	}
+	fmt.Fprintf(out, "%s: +%d -%d ~%d\n", verb, len(result.Diff.Added), len(result.Diff.Removed), len(result.Diff.Changed))
+	for _, f := range result.Diff.Added {
+		fmt.Fprintf(out, "  add %s\n", f)
+	}
+	for _, f := range result.Diff.Removed {
+		fmt.Fprintf(out, "  remove %s\n", f)
+	}
+	for _, f := range result.Diff.Changed {
+		fmt.Fprintf(out, "  change %s\n", f)
+	}
 }
 
 func newMongoCmd() *cobra.Command {
