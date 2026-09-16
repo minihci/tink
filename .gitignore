@@ -1,0 +1,4 @@
+/tink
+/dist/
+*.test
+*.out
