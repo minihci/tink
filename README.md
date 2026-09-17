@@ -28,7 +28,7 @@ comment for the working bash it's replacing.
 | Command | Status | Replaces |
 |---|---|---|
 | `tink deploy` | verified live | `incus-host/scripts/deploy.sh` |
-| `tink ingress reconcile` / `tink ingress status` | ported, not yet cut over | `incus-host/reconciler/reconcile.sh` |
+| `tink ingress reconcile` / `tink ingress status` | live on `incus.xlii.co` | `incus-host/reconciler/reconcile.sh` |
 | `tink daemon run` / `tink daemon install` | implemented | (new - cron is still how `ingress reconcile` actually runs today) |
 | `tink mongo snapshot` | not yet designed | (none yet - still under discussion) |
 
@@ -79,15 +79,16 @@ same code the CLI calls, without duplicating it.
 
 ## Status
 
-`ingress` is implemented: `tink ingress reconcile` and `tink ingress
-status` use Incus's own Go client (`GetInstancesFull`, matching
-`recursion=2`) instead of curl+jq, and `reconcile --dry-run` computes and
-reports what would change without writing anything or reloading Caddy.
-Not yet cut over on the live host - the plan stands as written: run it
-side by side with `incus-host/reconciler/reconcile.sh` against
-`incus.xlii.co`'s real state, diff the output, and only then move the
-cron entry over. The bash script stays in place as rollback until that's
-proven.
+`ingress` is implemented and **cut over live on `incus.xlii.co`**: `tink
+ingress reconcile` and `tink ingress status` use Incus's own Go client
+(`GetInstancesFull`, matching `recursion=2`) instead of curl+jq. The
+cutover followed the plan as written -- ran `tink daemon run` side by
+side with the still-cron-invoked `incus-host/reconciler/reconcile.sh` for
+two full passes against real production data (the live `ns-caddy`
+registration, not a scratch instance), confirmed byte-identical output
+and zero unnecessary writes (route file mtime unchanged across both
+passes), then removed the cron entry. `ns.xlii.co`/`incus.xlii.co`/
+`auth.xlii.co` all confirmed healthy throughout and afterward.
 
 `deploy` (capability zero) is implemented and verified end-to-end against
 a real, freshly installed Incus 7.4 host -- not just dry-run, a real run
@@ -95,9 +96,13 @@ that stood up authelia/incus-ui/ingress with real secrets, a real
 GHCR-published image, and real domains, confirmed by both instances
 serving over HTTPS with real Let's Encrypt certs afterward. Same order as
 `deploy.sh` (registries, storage volumes, profiles, incus-ui, authelia,
-ingress, daemon config, reconciler cron), same behavior including
-deploy.sh's own existing quirk of unconditionally deleting and
-relaunching incus-ui/authelia/ingress on every run, not just the first.
+ingress, daemon config), same behavior including deploy.sh's own existing
+quirk of unconditionally deleting and relaunching incus-ui/authelia/ingress
+on every run, not just the first. One deliberate improvement over
+deploy.sh, not just a port: the last step installs and enables `tink
+daemon run` under the host's real init system instead of installing the
+old cron entry, removing any leftover legacy cron entry from an older run
+first.
 Profiles, storage volumes, and instance existence/stop/delete go through
 Incus's real Go client (verified against its actual interface
 definitions); registries and instance launch still shell out, since
@@ -119,17 +124,17 @@ Confirmed idempotent: running `deploy` twice in a row against the same
 host, back to back, produced identical results both times with no
 manual intervention needed on the second run.
 
-`daemon` is implemented but not yet running anywhere real -- `ingress
-reconcile` still runs on `incus.xlii.co` via cron, unchanged. `daemon
-run`'s loop mechanics (immediate first pass, ticks at the given interval,
-survives a failed pass without dying, exits cleanly on SIGTERM/SIGINT)
-are unit-tested with an injected reconcile function, no live daemon
-needed. `daemon install` was smoke-tested locally: correct systemd unit
-and OpenRC script output for both `--init` values, and a clean, honest
-failure (not a wrong guess) when auto-detection finds neither marker.
-Moving the live reconciler from cron to `daemon run` under a real init
-system is a separate, deliberate cutover decision -- not implied by this
-existing.
+`daemon` is implemented, smoke-tested on a disposable VPS, and **now the
+live mechanism running the reconciler on `incus.xlii.co`** -- supervised
+by a real, `systemd-analyze verify`-passed unit (`systemctl enable --now
+tink-daemon`), not cron. `daemon run`'s loop mechanics (immediate first
+pass, ticks at the given interval, survives a failed pass without dying,
+exits cleanly on SIGTERM/SIGINT) are unit-tested with an injected
+reconcile function; `daemon install` auto-detects the init system,
+failing honestly rather than guessing wrong when neither systemd nor
+OpenRC is found. `deploy` (`tink` and `deploy.sh` both) now installs and
+enables this instead of the old cron entry on every run, so a future
+re-deploy can't silently reinstate cron underneath it.
 
 ## Building
 
