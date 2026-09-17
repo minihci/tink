@@ -7,13 +7,17 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/signal"
 	"runtime"
 	"runtime/debug"
+	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/minihci/tink/internal/backup"
 	"github.com/minihci/tink/internal/bootstrap"
+	"github.com/minihci/tink/internal/daemon"
 	"github.com/minihci/tink/internal/ingress"
 )
 
@@ -34,9 +38,10 @@ made executable instead of just documented.`,
 		SilenceUsage: true,
 	}
 
-	root.AddCommand(newApplyCmd())
+	root.AddCommand(newDeployCmd())
 	root.AddCommand(newIngressCmd())
 	root.AddCommand(newMongoCmd())
+	root.AddCommand(newDaemonCmd())
 	root.AddCommand(newVersionCmd())
 
 	return root
@@ -76,14 +81,14 @@ func buildVersion() string {
 	return fmt.Sprintf("tink %s (commit %s, built %s, %s)", version, commit, buildDate, runtime.Version())
 }
 
-func newApplyCmd() *cobra.Command {
+func newDeployCmd() *cobra.Command {
 	var repoRoot, deployEnvPath, socket string
 	var dryRun bool
 
 	cmd := &cobra.Command{
-		Use:   "apply",
+		Use:   "deploy",
 		Short: "Converge this host to its declared platform state (capability zero)",
-		Long: `apply provisions and reconciles the platform's own infrastructure —
+		Long: `deploy provisions and reconciles the platform's own infrastructure —
 storage volumes, profiles, the ingress/authelia/incus-ui instances, and the
 daemon's OIDC/authorization config — the same job
 incus-host/scripts/deploy.sh does today, ported faithfully (including its
@@ -236,4 +241,83 @@ func newMongoCmd() *cobra.Command {
 	})
 
 	return mongoCmd
+}
+
+func newDaemonCmd() *cobra.Command {
+	daemonCmd := &cobra.Command{
+		Use:   "daemon",
+		Short: "Run tink's periodic actions as a persistent process, instead of via cron",
+	}
+
+	daemonCmd.AddCommand(newDaemonRunCmd())
+	daemonCmd.AddCommand(newDaemonInstallCmd())
+	return daemonCmd
+}
+
+func newDaemonRunCmd() *cobra.Command {
+	opts := ingress.DefaultOptions()
+	var interval time.Duration
+
+	cmd := &cobra.Command{
+		Use:   "run",
+		Short: "Run the ingress reconciler loop until stopped",
+		Long: `run reconciles ingress registrations immediately, then again every
+--interval, until it receives SIGTERM or SIGINT -- the mode an init
+system's unit file (see "tink daemon install") actually invokes.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			return daemon.Run(ctx, cmd.OutOrStdout(), daemon.RunOptions{
+				Interval:       interval,
+				IngressOptions: opts,
+			})
+		},
+	}
+
+	cmd.Flags().StringVar(&opts.Socket, "socket", opts.Socket, "Incus daemon unix socket path")
+	cmd.Flags().StringVar(&opts.RoutesDir, "routes-dir", opts.RoutesDir, "generated ingress routes directory")
+	cmd.Flags().StringVar(&opts.IngressInstance, "ingress-instance", opts.IngressInstance, "name of the ingress instance to reload")
+	cmd.Flags().DurationVar(&interval, "interval", time.Minute, "how often to reconcile")
+	return cmd
+}
+
+func newDaemonInstallCmd() *cobra.Command {
+	unitOpts := daemon.DefaultUnitOptions()
+	var initSystem string
+
+	cmd := &cobra.Command{
+		Use:   "install",
+		Short: "Print a unit/init file for supervising \"tink daemon run\", for review before installing",
+		Long: `install prints (to stdout, for you to review and redirect yourself) the
+unit or init script content for running "tink daemon run" under the given
+init system. It does not write, enable, or start anything -- generating
+and applying are kept separate, the same way "kubectl create" and
+"kubectl apply" are two different steps.
+
+  tink daemon install --init=systemd > /etc/systemd/system/tink-daemon.service
+  tink daemon install --init=openrc  > /etc/init.d/tink-daemon
+
+Defaults to auto-detecting the running init system if --init is omitted;
+fails rather than guessing if detection is inconclusive.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if initSystem == "" {
+				initSystem = daemon.DetectInit()
+				if initSystem == "" {
+					return fmt.Errorf("could not detect the running init system -- pass --init explicitly (one of: %v)", daemon.InitSystems)
+				}
+				fmt.Fprintf(cmd.ErrOrStderr(), "detected init system: %s\n", initSystem)
+			}
+
+			out, err := daemon.Generate(initSystem, unitOpts)
+			if err != nil {
+				return err
+			}
+			fmt.Fprint(cmd.OutOrStdout(), out)
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&initSystem, "init", "", fmt.Sprintf("init system to generate for (one of: %v; default: auto-detect)", daemon.InitSystems))
+	cmd.Flags().StringVar(&unitOpts.ExecPath, "exec-path", unitOpts.ExecPath, "path to the tink binary on the target host")
+	return cmd
 }

@@ -27,17 +27,21 @@ comment for the working bash it's replacing.
 
 | Command | Status | Replaces |
 |---|---|---|
-| `tink apply` | ported, not yet verified live | `incus-host/scripts/deploy.sh` |
+| `tink deploy` | verified live | `incus-host/scripts/deploy.sh` |
 | `tink ingress reconcile` / `tink ingress status` | ported, not yet cut over | `incus-host/reconciler/reconcile.sh` |
+| `tink daemon run` / `tink daemon install` | implemented | (new - cron is still how `ingress reconcile` actually runs today) |
 | `tink mongo snapshot` | not yet designed | (none yet - still under discussion) |
 
-`apply` converges a host to its declared platform state - storage
+`deploy` converges a host to its declared platform state - storage
 volumes, profiles, the `ingress`/`authelia`/`incus-ui` instances, the
 daemon's OIDC/authorization config. `ingress reconcile` discovers
 instances that opt in via `user.ingress.{domain,port,enabled}` config and
 converges the shared `ingress` instance's routes to match, without a
-restart or a manual file push. `mongo snapshot` doesn't have a settled
-design yet.
+restart or a manual file push. `daemon run` runs that same reconcile loop
+as a persistent process instead of a cron-invoked one-shot; `daemon
+install` prints (doesn't apply) the systemd unit or OpenRC init script
+needed to supervise it, for whichever init system the host actually
+runs. `mongo snapshot` doesn't have a settled design yet.
 
 ## Why a separate repo from `incus-host`
 
@@ -53,10 +57,21 @@ step) rather than containing tink's code directly.
 ```
 cmd/tink/            thin CLI entrypoint (cobra) - argument parsing only
 internal/incusapi/   shared Incus API client, used by every capability
-internal/bootstrap/  tink apply
+internal/bootstrap/  tink deploy
 internal/ingress/    tink ingress ...
+internal/daemon/     tink daemon ...
 internal/backup/     tink mongo ... (undesigned)
 ```
+
+One binary, not two: `tink daemon run`/`tink daemon install` are
+subcommands of the same `tink` binary, not a separate `tinkd` daemon
+binary or a client/server split. Considered both and rejected them -- see
+`internal/daemon`'s own package doc for why (short version: a
+symlink/argv[0] dispatch trick is implicit "magic," and a
+thin-client-talks-to-a-daemon-API design only earns its complexity when
+the daemon owns state a one-shot invocation can't otherwise see, which
+tink doesn't have -- Incus's own daemon already owns everything tink
+cares about).
 
 Each capability is a plain importable package, not logic embedded in the
 CLI layer - so a future interface (a web UI, an API server) can reuse the
@@ -74,7 +89,7 @@ side by side with `incus-host/reconciler/reconcile.sh` against
 cron entry over. The bash script stays in place as rollback until that's
 proven.
 
-`apply` (capability zero) is implemented and verified end-to-end against
+`deploy` (capability zero) is implemented and verified end-to-end against
 a real, freshly installed Incus 7.4 host -- not just dry-run, a real run
 that stood up authelia/incus-ui/ingress with real secrets, a real
 GHCR-published image, and real domains, confirmed by both instances
@@ -100,9 +115,21 @@ config yet (true on every first boot) can crash to Stopped before
 restart is even called. All three are fixed with tests; see the "Fix
 three real bugs" commit for the full detail on each.
 
-Confirmed idempotent: running `apply` twice in a row against the same
+Confirmed idempotent: running `deploy` twice in a row against the same
 host, back to back, produced identical results both times with no
 manual intervention needed on the second run.
+
+`daemon` is implemented but not yet running anywhere real -- `ingress
+reconcile` still runs on `incus.xlii.co` via cron, unchanged. `daemon
+run`'s loop mechanics (immediate first pass, ticks at the given interval,
+survives a failed pass without dying, exits cleanly on SIGTERM/SIGINT)
+are unit-tested with an injected reconcile function, no live daemon
+needed. `daemon install` was smoke-tested locally: correct systemd unit
+and OpenRC script output for both `--init` values, and a clean, honest
+failure (not a wrong guess) when auto-detection finds neither marker.
+Moving the live reconciler from cron to `daemon run` under a real init
+system is a separate, deliberate cutover decision -- not implied by this
+existing.
 
 ## Building
 
