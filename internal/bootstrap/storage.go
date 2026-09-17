@@ -2,8 +2,9 @@ package bootstrap
 
 import (
 	"fmt"
-	"os/exec"
-	"strings"
+
+	"github.com/lxc/incus/v7/shared/api"
+	"github.com/minihci/tink/internal/incusapi"
 )
 
 // requiredVolumes are created once and never recreated by apply -- their
@@ -16,24 +17,19 @@ var requiredVolumes = []string{
 	"ingress-routes",
 }
 
-func existingVolumes(pool string) (map[string]bool, error) {
-	out, err := exec.Command("incus", "storage", "volume", "list", pool, "-f", "csv", "-c", "n").Output()
-	if err != nil {
-		return nil, fmt.Errorf("incus storage volume list %s: %w", pool, err)
-	}
-	names := map[string]bool{}
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if line != "" {
-			names[line] = true
-		}
-	}
-	return names, nil
-}
-
 func applyStorageVolumes(r *runner, opts Options) error {
-	existing, err := existingVolumes(opts.Config.StoragePool)
+	server, err := incusapi.Connect(opts.socket())
 	if err != nil {
-		return err
+		return fmt.Errorf("connecting to incus: %w", err)
+	}
+
+	existingNames, err := server.GetStoragePoolVolumeNames(opts.Config.StoragePool)
+	if err != nil {
+		return fmt.Errorf("listing storage volumes in %s: %w", opts.Config.StoragePool, err)
+	}
+	existing := map[string]bool{}
+	for _, name := range existingNames {
+		existing[name] = true
 	}
 
 	for _, vol := range requiredVolumes {
@@ -41,9 +37,18 @@ func applyStorageVolumes(r *runner, opts Options) error {
 			r.note("storage volume %s already exists", vol)
 			continue
 		}
-		if _, err := r.run(fmt.Sprintf("created storage volume %s", vol), "incus", "storage", "volume", "create", opts.Config.StoragePool, vol); err != nil {
-			return err
+		if r.dryRun {
+			r.note("would create storage volume %s", vol)
+			continue
 		}
+		if err := server.CreateStoragePoolVolume(opts.Config.StoragePool, api.StorageVolumesPost{
+			Name:        vol,
+			Type:        "custom",
+			ContentType: "filesystem",
+		}); err != nil {
+			return fmt.Errorf("creating storage volume %s: %w", vol, err)
+		}
+		r.note("created storage volume %s", vol)
 	}
 	return nil
 }

@@ -77,7 +77,7 @@ func buildVersion() string {
 }
 
 func newApplyCmd() *cobra.Command {
-	var repoRoot, deployEnvPath string
+	var repoRoot, deployEnvPath, socket string
 	var dryRun bool
 
 	cmd := &cobra.Command{
@@ -89,6 +89,12 @@ daemon's OIDC/authorization config — the same job
 incus-host/scripts/deploy.sh does today, ported faithfully (including its
 existing behavior of unconditionally recreating incus-ui/authelia/ingress
 on every run, not just the first).
+
+Profiles, storage volumes, and instance existence/deletion go through
+Incus's own Go client; registries and instance launch still shell out to
+the incus CLI -- remotes are a client-config concept with no daemon API to
+call instead, and launch means resolving an OCI image from a named remote,
+which isn't a single clean API call.
 
 Use --dry-run to compute and report every action without touching the
 daemon, the crontab, or any instance.`,
@@ -104,6 +110,7 @@ daemon, the crontab, or any instance.`,
 				RepoRoot: repoRoot,
 				Config:   cfg,
 				DryRun:   dryRun,
+				Socket:   socket,
 			})
 			for _, action := range result.Actions {
 				fmt.Fprintln(cmd.OutOrStdout(), action)
@@ -114,6 +121,7 @@ daemon, the crontab, or any instance.`,
 
 	cmd.Flags().StringVar(&repoRoot, "repo-root", ".", "path to the incus-host checkout")
 	cmd.Flags().StringVar(&deployEnvPath, "deploy-env", "", "path to deploy.env (default: <repo-root>/deploy.env)")
+	cmd.Flags().StringVar(&socket, "socket", "", "Incus daemon unix socket path (default: Incus's own resolution)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "compute and report every action without applying anything")
 	return cmd
 }

@@ -11,7 +11,11 @@
 // package's own comments.
 package bootstrap
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/minihci/tink/internal/incusapi"
+)
 
 // Options configures where apply reads its inputs from and how it
 // behaves.
@@ -22,6 +26,17 @@ type Options struct {
 	RepoRoot string
 	Config   Config
 	DryRun   bool
+	// Socket is the Incus daemon's local unix socket, used for every
+	// client-library call (profiles, storage volumes, instance
+	// existence/deletion). Defaults to incusapi.DefaultSocket.
+	Socket string
+}
+
+func (o Options) socket() string {
+	if o.Socket != "" {
+		return o.Socket
+	}
+	return incusapi.DefaultSocket
 }
 
 // Result is the ordered log of what apply did (or, in dry-run mode,

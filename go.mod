@@ -5,6 +5,7 @@ go 1.26.7
 require (
 	github.com/lxc/incus/v7 v7.4.0
 	github.com/spf13/cobra v1.10.2
+	go.yaml.in/yaml/v4 v4.0.0-rc.6
 )
 
 require (
@@ -50,7 +51,6 @@ require (
 	go.opentelemetry.io/otel v1.46.0 // indirect
 	go.opentelemetry.io/otel/metric v1.46.0 // indirect
 	go.opentelemetry.io/otel/trace v1.46.0 // indirect
-	go.yaml.in/yaml/v4 v4.0.0-rc.6 // indirect
 	golang.org/x/crypto v0.55.0 // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
