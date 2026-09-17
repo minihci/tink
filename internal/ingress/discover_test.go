@@ -96,6 +96,32 @@ func TestFilterAndResolve_ConflictSkipsBothClaimants(t *testing.T) {
 	}
 }
 
+func TestFilterAndResolve_CrossProjectRegistrationsBothSurvive(t *testing.T) {
+	a := instanceFixture("ns-caddy", map[string]string{
+		"user.ingress.enabled": "true",
+		"user.ingress.domain":  "ns.xlii.co",
+	}, "10.77.20.32")
+	a.Project = "default"
+	b := instanceFixture("ns-caddy", map[string]string{
+		"user.ingress.enabled": "true",
+		"user.ingress.domain":  "ns-staging.xlii.co",
+	}, "10.135.20.32")
+	b.Project = "nightscout"
+
+	regs, warnings := filterAndResolve([]api.InstanceFull{a, b})
+
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings, got %v", warnings)
+	}
+	want := []Registration{
+		{Name: "ns-caddy", Project: "default", Domain: "ns.xlii.co", Port: "80", Address: "10.77.20.32"},
+		{Name: "ns-caddy", Project: "nightscout", Domain: "ns-staging.xlii.co", Port: "80", Address: "10.135.20.32"},
+	}
+	if !reflect.DeepEqual(regs, want) {
+		t.Fatalf("got %+v, want %+v", regs, want)
+	}
+}
+
 func TestFilterAndResolve_NoAddressYetIsSkippedWithWarning(t *testing.T) {
 	instances := []api.InstanceFull{
 		instanceFixture("ns-caddy", map[string]string{

@@ -15,15 +15,19 @@ import (
 // re-resolved every pass, so a lease change heals on the next poll.
 type Registration struct {
 	Name    string
+	Project string
 	Domain  string
 	Port    string
 	Address string
 }
 
-// Discover queries every instance on the daemon and delegates to
-// filterAndResolve for the actual (independently testable) logic.
+// Discover queries every instance on the daemon, across every project --
+// not just `default` -- and delegates to filterAndResolve for the actual
+// (independently testable) logic. Without all-projects, anything moved
+// into a tenant project (e.g. `nightscout`) would silently drop off
+// ingress on the next poll, no error anywhere; see DESIGN.md.
 func Discover(server incus.InstanceServer) (regs []Registration, warnings []string, err error) {
-	instances, err := server.GetInstancesFull(api.InstanceTypeAny)
+	instances, err := server.GetInstancesFullAllProjects(api.InstanceTypeAny)
 	if err != nil {
 		return nil, nil, fmt.Errorf("listing instances: %w", err)
 	}
@@ -38,9 +42,9 @@ func Discover(server incus.InstanceServer) (regs []Registration, warnings []stri
 // handling: a contested domain never gets a silently picked winner.
 func filterAndResolve(instances []api.InstanceFull) (regs []Registration, warnings []string) {
 	type candidate struct {
-		name, domain, port string
-		hasAddress         bool
-		address            string
+		name, project, domain, port string
+		hasAddress                  bool
+		address                     string
 	}
 
 	var candidates []candidate
@@ -60,6 +64,7 @@ func filterAndResolve(instances []api.InstanceFull) (regs []Registration, warnin
 		address, ok := firstInetAddress(inst)
 		candidates = append(candidates, candidate{
 			name:       inst.Name,
+			project:    inst.Project,
 			domain:     domain,
 			port:       port,
 			hasAddress: ok,
@@ -87,21 +92,38 @@ func filterAndResolve(instances []api.InstanceFull) (regs []Registration, warnin
 
 		c := claimants[0]
 		if !c.hasAddress {
-			warnings = append(warnings, fmt.Sprintf("%s has no address yet (not started?), skipping this pass", c.name))
+			warnings = append(warnings, fmt.Sprintf("%s has no address yet (not started?), skipping this pass", qualifiedName(c.project, c.name)))
 			continue
 		}
 
 		regs = append(regs, Registration{
 			Name:    c.name,
+			Project: c.project,
 			Domain:  c.domain,
 			Port:    c.port,
 			Address: c.address,
 		})
 	}
 
-	sort.Slice(regs, func(i, j int) bool { return regs[i].Name < regs[j].Name })
+	sort.Slice(regs, func(i, j int) bool {
+		if regs[i].Project != regs[j].Project {
+			return regs[i].Project < regs[j].Project
+		}
+		return regs[i].Name < regs[j].Name
+	})
 
 	return regs, warnings
+}
+
+// qualifiedName is for warning text only -- "ns-caddy" is ambiguous once
+// more than one project can register, "nightscout/ns-caddy" isn't. The
+// `default` project stays unqualified since that's what every warning
+// looked like before multi-project discovery existed.
+func qualifiedName(project, name string) string {
+	if project == "" || project == "default" {
+		return name
+	}
+	return project + "/" + name
 }
 
 func firstInetAddress(inst api.InstanceFull) (string, bool) {

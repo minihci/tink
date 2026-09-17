@@ -38,7 +38,11 @@ var routeTemplate = template.Must(template.New("route").Parse(
 `))
 
 // Render produces the desired set of generated/*.caddy files, keyed by
-// filename, for the given registrations.
+// filename, for the given registrations. Only non-`default`-project
+// registrations get a filename prefix -- this keeps every filename this
+// reconciler has ever produced on incus.xlii.co unchanged, while still
+// keeping two projects that happen to both name an instance `ns-caddy`
+// from silently overwriting each other's route in this map.
 func Render(regs []Registration) (map[string]string, error) {
 	files := make(map[string]string, len(regs))
 	for _, reg := range regs {
@@ -46,7 +50,14 @@ func Render(regs []Registration) (map[string]string, error) {
 		if err := routeTemplate.Execute(&buf, reg); err != nil {
 			return nil, fmt.Errorf("rendering route for %s: %w", reg.Name, err)
 		}
-		files[reg.Name+".caddy"] = buf.String()
+		files[routeFilename(reg)] = buf.String()
 	}
 	return files, nil
+}
+
+func routeFilename(reg Registration) string {
+	if reg.Project == "" || reg.Project == "default" {
+		return reg.Name + ".caddy"
+	}
+	return reg.Project + "_" + reg.Name + ".caddy"
 }

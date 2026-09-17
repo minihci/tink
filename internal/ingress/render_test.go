@@ -44,6 +44,22 @@ func TestRender_MatchesHandWrittenRouteShape(t *testing.T) {
 	}
 }
 
+func TestRender_PrefixesNonDefaultProjectFilenames(t *testing.T) {
+	files, err := Render([]Registration{
+		{Name: "ns-caddy", Project: "default", Domain: "ns.xlii.co", Port: "80", Address: "10.77.20.32"},
+		{Name: "ns-caddy", Project: "nightscout", Domain: "ns-staging.xlii.co", Port: "80", Address: "10.135.20.32"},
+	})
+	if err != nil {
+		t.Fatalf("Render returned error: %v", err)
+	}
+
+	for _, want := range []string{"ns-caddy.caddy", "nightscout_ns-caddy.caddy"} {
+		if _, ok := files[want]; !ok {
+			t.Fatalf("expected a %q entry, got keys %v", want, keysOf(files))
+		}
+	}
+}
+
 func keysOf(m map[string]string) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
