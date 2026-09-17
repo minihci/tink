@@ -43,14 +43,23 @@ install` prints (doesn't apply) the systemd unit or OpenRC init script
 needed to supervise it, for whichever init system the host actually
 runs. `mongo snapshot` doesn't have a settled design yet.
 
-## Why a separate repo from `incus-host`
+## Relationship to `incus-host`
 
-`incus-host` describes one specific host's configuration - its own
-Caddyfile, its own Authelia config, its own secrets. Tink is meant to be
-the tool that host, and any future one, runs - not tied to any single
-host's specifics. `incus-host` is expected to become a *consumer* of
-tink (cloning and building a pinned version as part of its own deploy
-step) rather than containing tink's code directly.
+Tink started as a separate repo from
+[`incus-host`](https://github.com/xlii-co/incus-host) (the reference
+deployment, currently running on `incus.xlii.co`) on the assumption that
+`incus-host` would become a *consumer* of tink - cloning and building a
+pinned version as part of its own deploy step. That assumption inverted
+once `tink deploy` actually existed: `incus-host`'s real ongoing job
+turned out to be "carry `deploy`'s config templates" (its Caddyfile, its
+Authelia config, its Incus profile YAMLs), not "run a script that calls
+tink." A tool and the templates it renders don't need to be two repos
+just because they started in two places, so those templates moved into
+this repo's own [`configs/`](configs/README.md) (2026-09-18) -
+`--repo-root` defaults there now. A host running `tink deploy` needs one
+checkout (this one), not two. `incus-host` keeps the reconciler's
+reference bash implementation and design doc, kept for history rather
+than moved, since neither is what's actually executing anywhere anymore.
 
 ## Architecture
 
@@ -61,6 +70,7 @@ internal/bootstrap/  tink deploy
 internal/ingress/    tink ingress ...
 internal/daemon/     tink daemon ...
 internal/backup/     tink mongo ... (undesigned)
+configs/             tink deploy's config templates - see configs/README.md
 ```
 
 One binary, not two: `tink daemon run`/`tink daemon install` are

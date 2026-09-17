@@ -2,3 +2,14 @@
 /dist/
 *.test
 *.out
+
+# configs/ mixes committed templates with host-owned secrets and
+# per-deployment values, same as incus-host did before this moved here --
+# never commit these (configs/authelia/configuration.yml is deliberately
+# NOT here: it has no secrets or per-host literals, see the comment at
+# its top)
+configs/deploy.env
+configs/*.env
+!configs/*.env.example
+configs/secrets/
+configs/authelia/users_database.yml

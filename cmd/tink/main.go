@@ -90,10 +90,11 @@ func newDeployCmd() *cobra.Command {
 		Short: "Converge this host to its declared platform state (capability zero)",
 		Long: `deploy provisions and reconciles the platform's own infrastructure —
 storage volumes, profiles, the ingress/authelia/incus-ui instances, and the
-daemon's OIDC/authorization config — the same job
-incus-host/scripts/deploy.sh does today, ported faithfully (including its
-existing behavior of unconditionally recreating incus-ui/authelia/ingress
-on every run, not just the first).
+daemon's OIDC/authorization config — the same job incus-host/scripts/deploy.sh
+originally did, ported faithfully (including its existing behavior of
+unconditionally recreating incus-ui/authelia/ingress on every run, not just
+the first). Its config templates now live in this repo's own configs/
+directory rather than a separate incus-host checkout -- see configs/README.md.
 
 Profiles, storage volumes, and instance existence/deletion go through
 Incus's own Go client; registries and instance launch still shell out to
@@ -124,7 +125,7 @@ daemon, the crontab, or any instance.`,
 		},
 	}
 
-	cmd.Flags().StringVar(&repoRoot, "repo-root", ".", "path to the incus-host checkout")
+	cmd.Flags().StringVar(&repoRoot, "repo-root", "configs", "path to the config templates (this repo's own configs/ by default)")
 	cmd.Flags().StringVar(&deployEnvPath, "deploy-env", "", "path to deploy.env (default: <repo-root>/deploy.env)")
 	cmd.Flags().StringVar(&socket, "socket", "", "Incus daemon unix socket path (default: Incus's own resolution)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "compute and report every action without applying anything")
