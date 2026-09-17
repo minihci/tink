@@ -24,7 +24,7 @@ func currentCrontab() (string, error) {
 }
 
 // buildCrontab drops any prior line for the reconciler cron job, then
-// appends the current one -- idempotent, so re-running apply never
+// appends the current one -- idempotent, so re-running deploy never
 // accumulates duplicate entries. repoRoot is the reconciler script's own
 // absolute path, matching deploy.sh's `$(pwd)` (the repo root it's always
 // run from).

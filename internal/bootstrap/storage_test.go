@@ -5,7 +5,7 @@ import "testing"
 // Regression test for a real bug caught testing against a live host:
 // GetStoragePoolVolumeNames returns type-prefixed names ("custom/foo",
 // "container/bar"), and comparing bare names against them always missed,
-// so apply kept trying (and failing) to recreate volumes that already
+// so deploy kept trying (and failing) to recreate volumes that already
 // existed.
 func TestExistingCustomVolumeNames(t *testing.T) {
 	got := existingCustomVolumeNames([]string{

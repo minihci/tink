@@ -8,7 +8,7 @@ import (
 	"github.com/minihci/tink/internal/incusapi"
 )
 
-// requiredVolumes are created once and never recreated by apply -- their
+// requiredVolumes are created once and never recreated by deploy -- their
 // data (Caddy's ACME state, Authelia's config+db, ingress's routes) must
 // survive every instance recreation.
 var requiredVolumes = []string{
@@ -56,7 +56,7 @@ func applyStorageVolumes(r *runner, opts Options) error {
 // (query /1.0/storage-pools/<pool>/volumes): names come back
 // type-prefixed, e.g. "custom/incus-ui-caddy-data" or
 // "container/authelia" -- comparing bare names against these always
-// missed, so apply kept trying to recreate volumes that already existed.
+// missed, so deploy kept trying to recreate volumes that already existed.
 // Only "custom" is ever relevant here; a container's own root volume
 // sharing a bare name is not something to match against.
 func existingCustomVolumeNames(names []string) map[string]bool {

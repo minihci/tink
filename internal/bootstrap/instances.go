@@ -13,7 +13,7 @@ import (
 // recreateInstance unconditionally deletes (if present) and relaunches an
 // instance from image with the given profiles -- matching deploy.sh
 // exactly: there is no "skip if nothing changed" check here today, so
-// every apply run disrupts incus-ui/authelia/ingress, not just the first
+// every deploy run disrupts incus-ui/authelia/ingress, not just the first
 // bootstrap. That's a real, existing behavior this port preserves as-is,
 // not something introduced by porting it to Go.
 //
@@ -25,7 +25,7 @@ import (
 // image, none of which the daemon's own API models (remotes are a
 // client-config concept, not a server one) -- reimplementing that
 // resolution logic to satisfy "use the client everywhere" would mean
-// under-verified new code standing between "apply" and a live instance
+// under-verified new code standing between "deploy" and a live instance
 // launch, which is a worse trade than one exec call to something already
 // proven correct.
 func recreateInstance(r *runner, server incus.InstanceServer, name, image string, profiles ...string) error {

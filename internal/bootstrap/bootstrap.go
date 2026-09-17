@@ -17,7 +17,7 @@ import (
 	"github.com/minihci/tink/internal/incusapi"
 )
 
-// Options configures where apply reads its inputs from and how it
+// Options configures where deploy reads its inputs from and how it
 // behaves.
 type Options struct {
 	// RepoRoot is the incus-host checkout's root -- every relative path
@@ -39,7 +39,7 @@ func (o Options) socket() string {
 	return incusapi.DefaultSocket
 }
 
-// Result is the ordered log of what apply did (or, in dry-run mode,
+// Result is the ordered log of what deploy did (or, in dry-run mode,
 // would do).
 type Result struct {
 	Actions []string

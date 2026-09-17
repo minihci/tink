@@ -85,7 +85,7 @@ func LoadConfig(path string) (Config, error) {
 	return cfg, nil
 }
 
-// requiredFields are the deploy.env keys that must be set for apply to
+// requiredFields are the deploy.env keys that must be set for deploy to
 // proceed -- everything except the registry token, which is genuinely
 // optional (only needed for a private registry).
 var requiredFields = []string{

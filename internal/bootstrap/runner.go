@@ -9,7 +9,7 @@ import (
 )
 
 // runner executes incus/crontab commands, or -- in dry-run mode -- just
-// records what it would have run, so a whole apply pass can be computed
+// records what it would have run, so a whole deploy pass can be computed
 // and reported without ever touching the daemon.
 type runner struct {
 	dryRun  bool
