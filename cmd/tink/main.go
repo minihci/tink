@@ -77,17 +77,45 @@ func buildVersion() string {
 }
 
 func newApplyCmd() *cobra.Command {
-	return &cobra.Command{
+	var repoRoot, deployEnvPath string
+	var dryRun bool
+
+	cmd := &cobra.Command{
 		Use:   "apply",
 		Short: "Converge this host to its declared platform state (capability zero)",
 		Long: `apply provisions and reconciles the platform's own infrastructure —
 storage volumes, profiles, the ingress/authelia/incus-ui instances, and the
 daemon's OIDC/authorization config — the same job
-incus-host/scripts/deploy.sh does today. Not yet ported.`,
+incus-host/scripts/deploy.sh does today, ported faithfully (including its
+existing behavior of unconditionally recreating incus-ui/authelia/ingress
+on every run, not just the first).
+
+Use --dry-run to compute and report every action without touching the
+daemon, the crontab, or any instance.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return bootstrap.Run()
+			if deployEnvPath == "" {
+				deployEnvPath = repoRoot + "/deploy.env"
+			}
+			cfg, err := bootstrap.LoadConfig(deployEnvPath)
+			if err != nil {
+				return err
+			}
+			result, err := bootstrap.Run(bootstrap.Options{
+				RepoRoot: repoRoot,
+				Config:   cfg,
+				DryRun:   dryRun,
+			})
+			for _, action := range result.Actions {
+				fmt.Fprintln(cmd.OutOrStdout(), action)
+			}
+			return err
 		},
 	}
+
+	cmd.Flags().StringVar(&repoRoot, "repo-root", ".", "path to the incus-host checkout")
+	cmd.Flags().StringVar(&deployEnvPath, "deploy-env", "", "path to deploy.env (default: <repo-root>/deploy.env)")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "compute and report every action without applying anything")
+	return cmd
 }
 
 func newIngressCmd() *cobra.Command {

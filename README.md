@@ -27,7 +27,7 @@ comment for the working bash it's replacing.
 
 | Command | Status | Replaces |
 |---|---|---|
-| `tink apply` | not yet ported | `incus-host/scripts/deploy.sh` |
+| `tink apply` | ported, not yet verified live | `incus-host/scripts/deploy.sh` |
 | `tink ingress reconcile` / `tink ingress status` | ported, not yet cut over | `incus-host/reconciler/reconcile.sh` |
 | `tink mongo snapshot` | not yet designed | (none yet - still under discussion) |
 
@@ -74,7 +74,20 @@ side by side with `incus-host/reconciler/reconcile.sh` against
 cron entry over. The bash script stays in place as rollback until that's
 proven.
 
-`apply` (capability zero) hasn't been started.
+`apply` (capability zero) is implemented as a faithful port of
+`deploy.sh` -- same order (registries, storage volumes, profiles,
+incus-ui, authelia, ingress, daemon config, reconciler cron), same
+behavior including deploy.sh's own existing quirk of unconditionally
+deleting and relaunching incus-ui/authelia/ingress on every run, not just
+the first. `--dry-run` computes and reports the full action plan without
+touching the daemon, any instance, or the crontab. Template rendering
+(`${VAR}` substitution via `os.Expand`, plus the authorization scriptlet
+splice) is verified byte-identical against the real template files in
+`incus-host`, not just fixtures. Not yet run against a live host --
+that's the next step, same dry-run-first discipline as `ingress`, but
+higher stakes here (secrets, full daemon config replacement, instance
+deletion), so it needs an explicit go-ahead each time rather than
+proceeding automatically.
 
 ## Building
 
