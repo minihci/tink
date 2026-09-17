@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // runner executes incus/crontab commands, or -- in dry-run mode -- just
@@ -57,6 +58,35 @@ func (r *runner) runWithStdin(description string, content string, name string, a
 	}
 	r.note("%s", description)
 	return nil
+}
+
+// runWithRetry is like run, but retries on failure -- for operations
+// confirmed live to race against a freshly launched or just-crashed
+// instance's own state transitions (Incus's daemon-side operation queue,
+// not anything this port controls). Two confirmed live: a fresh
+// container's `test -d` succeeding doesn't mean file push is ready yet,
+// and `incus restart` can collide with an in-flight auto-restart-driven
+// stop (a race this project has hit before, manually, with the bash
+// script -- see incus-host's own project history). deploy.sh has no
+// protection against either; retrying serves what its wait loop and
+// restart step were already trying to guarantee, not a deviation from it.
+func (r *runner) runWithRetry(description string, name string, args ...string) error {
+	if r.dryRun {
+		_, err := r.run(description, name, args...)
+		return err
+	}
+
+	const maxAttempts = 5
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if _, err := r.run(description, name, args...); err != nil {
+			lastErr = err
+			time.Sleep(time.Second)
+			continue
+		}
+		return nil
+	}
+	return fmt.Errorf("giving up after %d attempts: %w", maxAttempts, lastErr)
 }
 
 // incusListNames runs `incus <kind> list -f csv -c n` and returns the

@@ -87,14 +87,83 @@ func waitForDir(r *runner, instance, dir string) error {
 	return nil
 }
 
+// filePush retries on failure -- confirmed live that `test -d <dir>`
+// succeeding (waitForDir's readiness signal) does not guarantee a
+// freshly launched container is actually ready to receive a file push
+// yet. See runner.runWithRetry for why this is a real, confirmed race,
+// not speculative hardening.
 func filePush(r *runner, description, createDirs, src, dest string) error {
 	args := []string{"file", "push"}
 	if createDirs != "" {
 		args = append(args, "--create-dirs")
 	}
 	args = append(args, src, dest)
-	_, err := r.run(description, "incus", args...)
-	return err
+	return r.runWithRetry(description, "incus", args...)
+}
+
+// ensureRunning picks the state-appropriate action to make sure name ends
+// up running with the config just pushed into it -- confirmed live that
+// deploy.sh's blind `incus restart` is a real logic gap, not just a
+// timing race: an app container with nothing at its config path yet
+// (true on every first boot, before this step pushes it) can crash to
+// Stopped before this step even runs, and restart itself requires an
+// instance to already be running. Stopped gets a start (reads the
+// now-present config fresh); Running gets an actual restart (needed to
+// force it to re-read the just-pushed config).
+//
+// Also confirmed live: Incus's own daemon-side operation queue can still
+// reject either action ("instance is busy running a stop operation") if
+// the container is mid-transition -- e.g. autorestart already kicked in
+// concurrently. That part genuinely is transient, so each retry re-reads
+// current state and re-picks the action fresh, rather than blindly
+// retrying a decision that may no longer match reality.
+func ensureRunning(r *runner, server incus.InstanceServer, name string) error {
+	if r.dryRun {
+		r.note("would ensure %s is running with its newly pushed config", name)
+		return nil
+	}
+
+	const maxAttempts = 5
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		action, err := ensureRunningOnce(server, name)
+		if err == nil {
+			r.note("%sed %s (picks up the config just pushed)", action, name)
+			return nil
+		}
+		lastErr = err
+		time.Sleep(time.Second)
+	}
+	return fmt.Errorf("ensuring %s is running: giving up after %d attempts: %w", name, maxAttempts, lastErr)
+}
+
+func ensureRunningOnce(server incus.InstanceServer, name string) (action string, err error) {
+	inst, _, err := server.GetInstance(name)
+	if err != nil {
+		return "", fmt.Errorf("checking state: %w", err)
+	}
+
+	action = restartAction(inst.Status)
+
+	op, err := server.UpdateInstanceState(name, api.InstanceStatePut{Action: action, Timeout: 30}, "")
+	if err != nil {
+		return action, fmt.Errorf("%sing: %w", action, err)
+	}
+	if err := op.Wait(); err != nil {
+		return action, fmt.Errorf("waiting to %s: %w", action, err)
+	}
+	return action, nil
+}
+
+// restartAction picks "start" for anything not already Running (a
+// stopped/crashed instance can't be restarted, only started) and
+// "restart" otherwise, where an actual stop+start cycle is needed to make
+// a live instance re-read config that was just pushed into it.
+func restartAction(currentStatus string) string {
+	if currentStatus != "Running" {
+		return "start"
+	}
+	return "restart"
 }
 
 func applyIncusUI(r *runner, opts Options) error {
@@ -142,8 +211,7 @@ func applyAuthelia(r *runner, opts Options) error {
 		}
 	}
 
-	_, err = r.run("restarted authelia (first boot almost always beats the config being there)", "incus", "restart", "authelia")
-	return err
+	return ensureRunning(r, server, "authelia")
 }
 
 func applyIngress(r *runner, opts Options) error {
@@ -169,6 +237,5 @@ func applyIngress(r *runner, opts Options) error {
 		return err
 	}
 
-	_, err = r.run("restarted ingress (picks up the Caddyfile + routes just pushed)", "incus", "restart", "ingress")
-	return err
+	return ensureRunning(r, server, "ingress")
 }

@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/lxc/incus/v7/shared/api"
 	"github.com/minihci/tink/internal/incusapi"
@@ -27,10 +28,7 @@ func applyStorageVolumes(r *runner, opts Options) error {
 	if err != nil {
 		return fmt.Errorf("listing storage volumes in %s: %w", opts.Config.StoragePool, err)
 	}
-	existing := map[string]bool{}
-	for _, name := range existingNames {
-		existing[name] = true
-	}
+	existing := existingCustomVolumeNames(existingNames)
 
 	for _, vol := range requiredVolumes {
 		if existing[vol] {
@@ -51,4 +49,23 @@ func applyStorageVolumes(r *runner, opts Options) error {
 		r.note("created storage volume %s", vol)
 	}
 	return nil
+}
+
+// existingCustomVolumeNames extracts bare custom-volume names from
+// GetStoragePoolVolumeNames' output. Confirmed live against a real host
+// (query /1.0/storage-pools/<pool>/volumes): names come back
+// type-prefixed, e.g. "custom/incus-ui-caddy-data" or
+// "container/authelia" -- comparing bare names against these always
+// missed, so apply kept trying to recreate volumes that already existed.
+// Only "custom" is ever relevant here; a container's own root volume
+// sharing a bare name is not something to match against.
+func existingCustomVolumeNames(names []string) map[string]bool {
+	existing := map[string]bool{}
+	for _, name := range names {
+		volType, bareName, found := strings.Cut(name, "/")
+		if found && volType == "custom" {
+			existing[bareName] = true
+		}
+	}
+	return existing
 }
