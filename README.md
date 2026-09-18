@@ -28,20 +28,25 @@ comment for the working bash it's replacing.
 | Command | Status | Replaces |
 |---|---|---|
 | `tink deploy` | verified live | `incus-host/scripts/deploy.sh` |
+| `tink run` | verified live against a real, disposable test host | (new - the manual per-tenant "mental docker-run into `incus launch` plus a sequence of `incus config`/`incus config device add` calls" dance) |
 | `tink ingress reconcile` / `tink ingress status` | live on `incus.xlii.co` | `incus-host/reconciler/reconcile.sh` |
 | `tink daemon run` / `tink daemon install` | implemented | (new - cron is still how `ingress reconcile` actually runs today) |
 | `tink mongo snapshot` | not yet designed | (none yet - still under discussion) |
 
 `deploy` converges a host to its declared platform state - storage
 volumes, profiles, the `ingress`/`authelia`/`incus-ui` instances, the
-daemon's OIDC/authorization config. `ingress reconcile` discovers
-instances that opt in via `user.ingress.{domain,port,enabled}` config and
-converges the shared `ingress` instance's routes to match, without a
-restart or a manual file push. `daemon run` runs that same reconcile loop
-as a persistent process instead of a cron-invoked one-shot; `daemon
-install` prints (doesn't apply) the systemd unit or OpenRC init script
-needed to supervise it, for whichever init system the host actually
-runs. `mongo snapshot` doesn't have a settled design yet.
+daemon's OIDC/authorization config. `run` translates a docker-run-shaped
+invocation onto real Incus primitives - see
+[`internal/run/DESIGN.md`](internal/run/DESIGN.md) for the flag-mapping
+table and its deliberate non-goals (not a Docker CLI clone). `ingress
+reconcile` discovers instances that opt in via
+`user.ingress.{domain,port,enabled}` config and converges the shared
+`ingress` instance's routes to match, without a restart or a manual file
+push. `daemon run` runs that same reconcile loop as a persistent process
+instead of a cron-invoked one-shot; `daemon install` prints (doesn't
+apply) the systemd unit or OpenRC init script needed to supervise it, for
+whichever init system the host actually runs. `mongo snapshot` doesn't
+have a settled design yet.
 
 ## Relationship to `incus-host`
 
@@ -67,6 +72,7 @@ than moved, since neither is what's actually executing anywhere anymore.
 cmd/tink/            thin CLI entrypoint (cobra) - argument parsing only
 internal/incusapi/   shared Incus API client, used by every capability
 internal/bootstrap/  tink deploy
+internal/run/        tink run - see internal/run/DESIGN.md
 internal/ingress/    tink ingress ...
 internal/daemon/     tink daemon ...
 internal/backup/     tink mongo ... (undesigned)
