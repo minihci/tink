@@ -52,11 +52,8 @@ func Build(opts Options) (*Spec, error) {
 
 	if len(opts.Cmd) > 0 {
 		// oci.entrypoint takes a single command-line string, exec'd in
-		// place of the image's own entrypoint -- exactly what scoped
-		// nextcloud-mcp to `webdav`+`calendar` (see DESIGN.md). Sufficient
-		// for every real case exercised on this platform so far; args
-		// containing spaces or shell metacharacters aren't handled since
-		// none of those real cases needed it.
+		// place of the image's own entrypoint. Args containing spaces or
+		// shell metacharacters aren't escaped/quoted.
 		spec.Config["oci.entrypoint"] = strings.Join(opts.Cmd, " ")
 	}
 
@@ -103,8 +100,7 @@ func Build(opts Options) (*Spec, error) {
 
 // publishDevice translates a docker -p HOST:CONTAINER value into a proxy
 // device. Only the plain HOST:CONTAINER form is supported -- no protocol
-// suffix, no bind-address prefix -- matching every -p this platform has
-// actually used so far (see DESIGN.md).
+// suffix, no bind-address prefix.
 func publishDevice(p string) (map[string]string, error) {
 	hostPort, containerPort, ok := strings.Cut(p, ":")
 	if !ok {
@@ -127,10 +123,8 @@ func publishDevice(p string) (map[string]string, error) {
 // volumeDevice translates a docker -v value into a disk device. A source
 // containing "/" is a host-path bind mount (matching Docker's own
 // disambiguation rule); a bare name is a managed Incus storage volume,
-// which -- unlike a Docker named volume -- needs a storage pool, so it's
-// attached in whichever pool --pool names (see DESIGN.md's open
-// questions: this is a real Docker/Incus model mismatch, not an
-// oversight).
+// which -- unlike a Docker named volume -- needs a storage pool, attached
+// in whichever pool --pool names.
 func volumeDevice(v, pool string) (map[string]string, error) {
 	src, dst, ok := strings.Cut(v, ":")
 	if !ok {

@@ -5,11 +5,8 @@ import (
 	"testing"
 )
 
-// Run's dry-run path never calls incusapi.Connect or shells out to incus
-// (see run.go), so it's exercised directly here without a live daemon --
-// matching this repo's existing convention of unit-testing pure logic
-// only and leaving daemon interaction to live verification (see
-// DESIGN.md's testing plan and internal/bootstrap's own tests).
+// Run's dry-run path never calls incusapi.Connect or shells out to incus,
+// so it's exercised directly here without a live daemon.
 func TestRun_DryRunDoesNotTouchIncus(t *testing.T) {
 	result, err := Run(Options{
 		DryRun:   true,
@@ -36,18 +33,10 @@ func TestRun_DryRunDoesNotTouchIncus(t *testing.T) {
 	}
 }
 
-// Regression test for a real bug caught testing against a real,
-// disposable test host: Postgres's and Nextcloud's own images run a
-// one-shot, config-gated action on first boot (Postgres's init scripts
-// need POSTGRES_PASSWORD already present; Nextcloud's installer needs
-// its DB credentials already present) -- launching bare and configuring
-// afterward either misses that moment entirely or crashes the instance
-// before config can be applied at all. create()+applyConfig()+
-// ensureRunning() always creates without starting first, so the
-// instance is always started for the very first time only after every
-// flag has already been translated into its config -- true regardless
-// of whether any Config was actually set, unlike the disproven
-// config-gated-restart design this replaced.
+// A devices-only run (no Config at all) still needs its initial start:
+// create() never starts the instance itself, regardless of whether any
+// Config was set, so a run with only a Volume/Publish/Network device
+// still needs one.
 func TestRun_DryRunAlwaysNotesAStartEvenWithNoConfig(t *testing.T) {
 	result, err := Run(Options{
 		DryRun: true,

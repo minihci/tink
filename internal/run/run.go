@@ -1,9 +1,8 @@
-// Package run implements tink run: translating a docker-run-shaped
-// invocation onto real Incus primitives, instead of the manual "mental
-// docker-run image+flags into incus launch plus a sequence of incus
-// config set/incus config device add calls" dance every tenant app on
-// this platform has been built with so far. See DESIGN.md for the full
-// design rationale and the flag-mapping table this package implements.
+// Package run implements tink run: translating docker-run-style flags
+// into an Incus instance -- the config keys and devices they correspond
+// to -- instead of hand-composing `incus init`/`config set`/`config
+// device add` calls. See DESIGN.md for the flag-mapping table and its
+// deliberate non-goals.
 package run
 
 import (
@@ -60,10 +59,10 @@ type Result struct {
 	Actions []string
 }
 
-// Run builds a Spec from opts and applies it: launches the image, then
-// sets the translated config and devices on the new instance. With
-// opts.DryRun, it computes and returns the same Spec and a description of
-// what would happen, without touching the daemon or launching anything.
+// Run builds a Spec from opts and applies it: creates the instance
+// (without starting it), sets its translated config and devices, then
+// starts it. With opts.DryRun, it computes and returns the same Spec and
+// a description of what would happen, without touching the daemon.
 func Run(opts Options) (*Result, error) {
 	spec, err := Build(opts)
 	if err != nil {
@@ -130,26 +129,15 @@ func Run(opts Options) (*Result, error) {
 	return result, nil
 }
 
-// create shells out to `incus init` (create without starting) rather
-// than `incus launch`, the same choice nextcloud-app's and
-// nextcloud-db's own profile comments already prescribe by hand: an
-// image whose entrypoint does a one-shot, config-gated action on first
-// boot (Postgres's own init scripts need POSTGRES_PASSWORD already
-// present; Nextcloud's own installer needs its DB credentials already
-// present) can't be launched bare and configured afterward -- by the
-// time config lands via UpdateInstance, the one-shot moment has already
-// passed, or the container has already failed to start at all. Creating
-// first, then applying config, then starting once (see ensureRunning)
-// mirrors Docker's own single atomic "docker run" semantics far more
-// faithfully than the original launch-then-reconfigure-then-restart
-// design did, and removes that design's restart-vs-start ambiguity
-// entirely: the instance is never running before its config is already
-// in place, so this is always a first start, never a restart.
-//
-// The remote/image-resolution shell-out itself is unavoidable for the
-// same reason internal/bootstrap/instances.go already documents:
-// resolving "docker-oci:redis:7" means talking to that named remote as
-// an ImageServer, a client-config concept with no daemon API to call
+// create shells out to `incus init` (create without starting), never
+// `incus launch`: some images (e.g. Postgres, Nextcloud) run a one-shot,
+// config-gated action on first boot that needs env vars already present,
+// so config has to be in place before the instance ever starts (see
+// applyConfig, ensureRunning). The remote/image-resolution shell-out
+// itself is unavoidable for the same reason
+// internal/bootstrap/instances.go documents: resolving a reference like
+// "docker-oci:redis:7" means talking to that named remote as an
+// ImageServer, a client-config concept with no daemon API to call
 // instead.
 func create(spec *Spec, project string) error {
 	args := []string{"init", spec.Image, spec.Name}
@@ -170,12 +158,9 @@ func create(spec *Spec, project string) error {
 }
 
 // applyConfig sets spec's translated Config and Devices onto the
-// just-created (not yet started) instance. Unlike create, this *is*
+// just-created (not yet started) instance. Unlike create, this is
 // modeled cleanly by the daemon's own API, so it goes through Incus's
-// real Go client rather than a second shell-out -- this mirrors exactly
-// the manual sequence of `incus config set`/`incus config device add`
-// calls used by hand today, just composed into one update instead of
-// several.
+// Go client rather than a second shell-out.
 func applyConfig(server incus.InstanceServer, spec *Spec) error {
 	if err := ensureManagedVolumes(server, spec); err != nil {
 		return err
@@ -208,16 +193,12 @@ func applyConfig(server incus.InstanceServer, spec *Spec) error {
 }
 
 // ensureManagedVolumes creates any managed storage volume a disk device
-// references that doesn't already exist. Docker auto-creates a named
-// volume on first use (`-v name:path`); Incus's own managed storage
-// volumes don't -- attaching a disk device to one that's never been
-// created fails validation outright, which UpdateInstance applies
-// atomically, so one missing volume would otherwise silently drop every
-// other translated config/device change too. Confirmed against a real,
-// disposable test host, not assumed. tink run matches Docker's
-// ergonomics here rather than Incus's own stricter default, since
-// replicating that gap would defeat the point of translating docker-run
-// flags in the first place.
+// references that doesn't already exist yet. Docker auto-creates a named
+// volume on first use (`-v name:path`); Incus's own managed volumes
+// don't -- attaching a disk device to one that's never been created
+// fails validation outright, and UpdateInstance applies atomically, so
+// one missing volume would otherwise silently drop every other
+// translated config/device change too.
 func ensureManagedVolumes(server incus.InstanceServer, spec *Spec) error {
 	for _, dev := range spec.Devices {
 		if dev["type"] != "disk" || dev["pool"] == "" {
@@ -242,13 +223,12 @@ func ensureManagedVolumes(server incus.InstanceServer, spec *Spec) error {
 }
 
 // ensureRunning starts name -- in practice always a first start, since
-// create() never starts the instance itself, so its config is always
-// already in place by the time this runs. Still checks current status
-// and picks start-vs-restart rather than assuming Stopped, and retries
-// on Incus's own transient "instance is busy" rejection (its operation
-// queue can briefly reject a state change mid-transition) -- the same
-// two real races internal/bootstrap.ensureRunning already found and
-// handles, reproduced here rather than shared across packages.
+// create() never starts the instance itself. Picks start-vs-restart from
+// current status rather than assuming Stopped, and retries on Incus's
+// own transient "instance is busy" rejection (its operation queue can
+// briefly reject a state change mid-transition); mirrors
+// internal/bootstrap.ensureRunning's own logic, reproduced here rather
+// than shared across packages.
 func ensureRunning(server incus.InstanceServer, name string) error {
 	const maxAttempts = 5
 	var lastErr error

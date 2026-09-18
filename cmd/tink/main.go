@@ -140,20 +140,18 @@ func newRunCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run [flags] IMAGE [CMD...]",
 		Short: "Launch an instance from docker-run-shaped flags, translated onto Incus primitives",
-		Long: `run translates a docker-run-shaped invocation onto real Incus
-primitives -- launch the image, then set the config keys and add the
-devices the given flags correspond to -- instead of the manual "mental
-docker-run image+flags into incus launch plus a sequence of incus config
-set/incus config device add calls" dance every tenant app on this
-platform has been built with so far. See internal/run/DESIGN.md for the
-full flag-mapping table and its deliberate non-goals -- this is not a
-Docker CLI clone: incus's own ps/exec/logs/stop/rm are already just as
-short as their Docker equivalents, and docker logs specifically has no
-Incus equivalent to translate to at all.
+		Long: `run creates an instance from docker-run-shaped flags, translated
+onto Incus primitives: the image is created (not started), the config
+keys and devices the flags correspond to are applied, then it starts.
+See internal/run/DESIGN.md for the full flag-mapping table and its
+deliberate non-goals -- this is not a Docker CLI clone: incus's own
+ps/exec/logs/stop/rm are already just as short as their Docker
+equivalents, and docker logs specifically has no Incus equivalent to
+translate to at all.
 
-Use --dry-run to compute and print the plan without launching anything
-or touching the daemon, matching tink deploy's and tink ingress
-reconcile's existing convention.`,
+Use --dry-run to compute and print the plan without creating or
+starting anything, matching tink deploy's and tink ingress reconcile's
+existing convention.`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Image = args[0]
