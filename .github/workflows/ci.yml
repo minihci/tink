@@ -7,7 +7,12 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # Pinned rather than the floating "ubuntu-latest" label, which GitHub
+    # has announced will migrate to Ubuntu 26 on 2026-10-19 (see
+    # actions/runner-images#14748) -- upgrading a CI base image is a
+    # deliberate decision to make and test, not something that should
+    # happen to this workflow silently on a fixed calendar date.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
