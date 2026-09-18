@@ -193,9 +193,9 @@ func newPlanCmd() *cobra.Command {
 	var socket string
 
 	cmd := &cobra.Command{
-		Use:   "plan [flags] FILE...",
+		Use:   "plan [flags] [FILE...]",
 		Short: "Spike: show what would change to converge a set of resources declared in YAML",
-		Long: `plan is a spike (see docs/resolver-architecture.md): a lightweight,
+		Long: fmt.Sprintf(`plan is a spike (see docs/resolver-architecture.md): a lightweight,
 tink-native version of the resolver half of that document's proposed
 architecture. It computes a dependency graph from each resource's own
 Project/Profiles/device sources plus any explicit depends_on, then
@@ -203,15 +203,17 @@ reports what "tink plan apply" would do, level by level -- everything in
 one level would run concurrently, since nothing in it depends on
 anything else in it.
 
+With no FILE given, reads %s from the current directory.
+
 Deliberately stateless: every check queries the Incus daemon directly,
 never a separately stored record of what was created last time.
 
 plan only ever reads -- there's no --dry-run flag here because there's
 nothing to opt out of. Run "tink plan apply" on the same files to
-actually converge.`,
-		Args: cobra.MinimumNArgs(1),
+actually converge.`, resolve.DefaultFile),
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resources, err := loadResolveFiles(args)
+			resources, err := resolve.LoadFiles(args)
 			if err != nil {
 				return err
 			}
@@ -246,21 +248,23 @@ func newPlanApplyCmd() *cobra.Command {
 	var socket string
 
 	cmd := &cobra.Command{
-		Use:   "apply [flags] FILE...",
+		Use:   "apply [flags] [FILE...]",
 		Short: "Converge a set of resources declared in YAML to match",
-		Long: `apply computes the same plan "tink plan" would show, then actually
+		Long: fmt.Sprintf(`apply computes the same plan "tink plan" would show, then actually
 converges: it runs level by level, every resource within one level
 concurrently, and only moves to the next level once the current one
 finishes entirely.
+
+With no FILE given, reads %s from the current directory.
 
 Deliberately stateless: every check queries the Incus daemon directly at
 apply time -- there's no saved plan file from "tink plan" to feed back
 in here, so nothing can go stale between the two. If a real workflow
 ever needs to apply exactly what a specific "tink plan" run showed,
-possibly later or by someone else, that gap is the reason to add one.`,
-		Args: cobra.MinimumNArgs(1),
+possibly later or by someone else, that gap is the reason to add one.`, resolve.DefaultFile),
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resources, err := loadResolveFiles(args)
+			resources, err := resolve.LoadFiles(args)
 			if err != nil {
 				return err
 			}
@@ -274,18 +278,6 @@ possibly later or by someone else, that gap is the reason to add one.`,
 
 	cmd.Flags().StringVar(&socket, "socket", "", "Incus daemon unix socket path (default: Incus's own resolution)")
 	return cmd
-}
-
-func loadResolveFiles(paths []string) ([]resolve.Resource, error) {
-	var resources []resolve.Resource
-	for _, path := range paths {
-		rs, err := resolve.LoadFile(path)
-		if err != nil {
-			return nil, err
-		}
-		resources = append(resources, rs...)
-	}
-	return resources, nil
 }
 
 func actionLabel(a resolve.Action) string {

@@ -40,6 +40,22 @@ func TestLoadFile_ParsesEveryKindAndField(t *testing.T) {
 	}
 }
 
+func TestLoadFiles_DefaultsToTinkYAMLWhenNoPathsGiven(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, DefaultFile), []byte("kind: project\nname: p\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+
+	resources, err := LoadFiles(nil)
+	if err != nil {
+		t.Fatalf("LoadFiles(nil) error = %v", err)
+	}
+	if len(resources) != 1 || resources[0].Name != "p" {
+		t.Errorf("LoadFiles(nil) = %+v, want the project resource from %s", resources, DefaultFile)
+	}
+}
+
 func TestLoadFile_SourcePathResolvedRelativeToYAMLDir(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "Caddyfile"), []byte("example content"), 0o644); err != nil {

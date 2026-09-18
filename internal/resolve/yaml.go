@@ -34,6 +34,31 @@ type yamlResource struct {
 	Restart    bool   `yaml:"restart"`
 }
 
+// DefaultFile is what tink plan / tink plan apply read when given no
+// FILE arguments at all -- "the stack described by this directory,"
+// the same role docker-compose.yml or kustomization.yaml play for their
+// own tools. Earned that position by being the format two real stacks
+// were hand-authored in directly, with no translation step ever
+// involved (see docs/resolver-architecture.md's 2026-09-18 update).
+const DefaultFile = "tink.yaml"
+
+// LoadFiles loads and concatenates every resource across paths,
+// defaulting to []string{DefaultFile} when paths is empty.
+func LoadFiles(paths []string) ([]Resource, error) {
+	if len(paths) == 0 {
+		paths = []string{DefaultFile}
+	}
+	var resources []Resource
+	for _, path := range paths {
+		rs, err := LoadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		resources = append(resources, rs...)
+	}
+	return resources, nil
+}
+
 // LoadFile parses one multi-document YAML file into a list of Resources.
 // A file resource's source_path is read now, relative to this YAML
 // file's own directory -- matching Terraform's own ${path.module}

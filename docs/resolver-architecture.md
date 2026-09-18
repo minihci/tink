@@ -298,3 +298,11 @@ gated on the same evidence `tink run`'s own Docker-flag translator had
 before it was worth building: real Pod-spec-shaped things out there
 worth importing (a Helm chart, someone's existing manifests), not a
 hypothetical one. Still not built, for exactly that reason.
+
+A primary interface earns a default filename the way a compatibility
+layer never would: `tink plan`/`tink plan apply` given no `FILE` now
+read `tink.yaml` from the current directory (`internal/resolve.
+DefaultFile`), the same role `docker-compose.yml`/`kustomization.yaml`
+play for their own tools. Not a thing a translator's output would ever
+need — nobody runs `tink run` or a future Pod-spec import with no
+arguments and expects it to find something on disk by convention.
