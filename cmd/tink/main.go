@@ -178,6 +178,7 @@ reconcile's existing convention.`,
 	cmd.Flags().StringVar(&opts.Restart, "restart", "", "always|unless-stopped|on-failure|no (boot.autorestart is a plain boolean -- retry counts aren't supported)")
 	cmd.Flags().StringVar(&opts.Pool, "pool", opts.Pool, "storage pool a bare -v name:path managed-volume mount attaches in")
 	cmd.Flags().StringArrayVar(&opts.Profiles, "profile", nil, "an existing Incus profile to layer in addition (repeatable)")
+	cmd.Flags().BoolVar(&opts.Rm, "rm", false, "delete the instance automatically once it stops, for any reason (Incus's own ephemeral flag)")
 	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "compute and print the plan without applying it")
 	// Flags stop being recognized once the first positional arg (IMAGE) is
 	// seen -- without this, pflag's default interspersed scanning would

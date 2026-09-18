@@ -83,3 +83,25 @@ func TestRun_DryRunNotesProject(t *testing.T) {
 		t.Errorf("Actions = %q, want a line naming the target project", joined)
 	}
 }
+
+func TestRun_DryRunNotesEphemeral(t *testing.T) {
+	result, err := Run(Options{DryRun: true, Name: "n", Image: "i", Rm: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	joined := strings.Join(result.Actions, "\n")
+	if !strings.Contains(joined, "ephemeral") {
+		t.Errorf("Actions = %q, want a line noting the instance is ephemeral", joined)
+	}
+}
+
+func TestRun_DryRunOmitsEphemeralNoteByDefault(t *testing.T) {
+	result, err := Run(Options{DryRun: true, Name: "n", Image: "i"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	joined := strings.Join(result.Actions, "\n")
+	if strings.Contains(joined, "ephemeral") {
+		t.Errorf("Actions = %q, should not mention ephemeral when --rm was not given", joined)
+	}
+}

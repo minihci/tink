@@ -199,3 +199,23 @@ func TestBuild_ProfilesPassThrough(t *testing.T) {
 		t.Errorf("Profiles = %v, want [ingress-shared]", spec.Profiles)
 	}
 }
+
+func TestBuild_Rm(t *testing.T) {
+	spec, err := Build(Options{Name: "n", Image: "i", Rm: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !spec.Ephemeral {
+		t.Error("Ephemeral = false, want true when --rm is given")
+	}
+}
+
+func TestBuild_NoRmMeansNotEphemeral(t *testing.T) {
+	spec, err := Build(Options{Name: "n", Image: "i"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if spec.Ephemeral {
+		t.Error("Ephemeral = true, want false when --rm is not given")
+	}
+}

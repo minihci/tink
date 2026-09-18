@@ -71,6 +71,23 @@ was hand-exercised for real, repeatedly, building nextcloud-incus.
 | `--ip ADDR` (requires `--network`) | NIC device's `ipv4.address:` field | Found missing while recreating a real known deployment (nextcloud-incus): every one of its five profiles pins a static address on `incusbr0`, which `--network` alone can't express. Errors if given without `--network` |
 | `--name NAME` | the Incus instance name (positional in Incus, a flag in Docker) | **Required** — unlike Docker, `tink run` does not invent a random name when omitted; Incus instance names are meaningful and persistent on this platform (ingress registration, profiles), so an unnamed instance is a mistake to catch, not a default to paper over |
 | `--restart=on-failure:5` | `boot.autorestart` (plain boolean) | **No clean map** — Incus has no retry-count concept. `tink run` accepts `--restart` as a boolean-ish flag (`always`/`unless-stopped` → `true`, `no` → `false`) and errors on a retry-count value rather than silently discarding it |
+| `--rm` | `ephemeral: true` on the instance (`incus init/launch -e, --ephemeral`) | A real Docker flag with a real Incus analog, unlike `-it`/`-d` (see below). **Confirmed live which one wins when combined with `--restart`**: an ephemeral instance with `boot.autorestart: true`, stopped, is deleted rather than restarted — `ephemeral` wins, matching Docker's own `--rm` removing the container on any stop, not just a clean exit |
+
+## Docker flags with no `tink run` analog
+
+Checked rather than assumed, since these look like they should map:
+
+- **`-d`/`--detach`** — not a gap, a non-issue: Incus instances are always
+  created running in the background by the daemon. There's no "foreground,
+  attached to my terminal" creation mode to opt out of the way plain
+  `docker run` has by default, so there's nothing for a flag to do here.
+- **`-it`** — architectural, not a missing flag. Docker's `-it` can make
+  the container's own PID 1 be your terminal session directly. Incus
+  splits creation from interaction: `tink run` creates and starts the
+  instance, and a separate `incus exec -it <name> -- <shell>` attaches an
+  interactive session to it afterward. That's the same category as
+  `ps`/`exec`/`logs` already being non-goals above, not something
+  `tink run` itself should grow a flag for.
 
 ## Architecture
 
@@ -150,6 +167,7 @@ tink run [flags] IMAGE [CMD...]
   --ip string            static ipv4.address on the NIC device (requires --network)
   --project string       Incus project to create the instance in (default: the daemon's own default project)
   --restart string      always|unless-stopped|no (boolean autorestart only)
+  --rm                    delete the instance automatically once it stops, for any reason
   --profile string       an existing Incus profile to layer in addition (repeatable)
   --dry-run              compute and print the plan without applying it
 ```

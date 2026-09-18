@@ -11,12 +11,13 @@ import (
 // DESIGN.md's "Flag mapping" table for the reasoning behind each
 // translation below. Building a Spec never touches Incus; only Run does.
 type Spec struct {
-	Name     string
-	Image    string
-	Cmd      []string
-	Config   map[string]string
-	Devices  map[string]map[string]string
-	Profiles []string
+	Name      string
+	Image     string
+	Cmd       []string
+	Config    map[string]string
+	Devices   map[string]map[string]string
+	Profiles  []string
+	Ephemeral bool
 }
 
 // Build translates already-parsed docker-run-style flag values (Options,
@@ -32,12 +33,13 @@ func Build(opts Options) (*Spec, error) {
 	}
 
 	spec := &Spec{
-		Name:     opts.Name,
-		Image:    opts.Image,
-		Cmd:      opts.Cmd,
-		Config:   map[string]string{},
-		Devices:  map[string]map[string]string{},
-		Profiles: opts.Profiles,
+		Name:      opts.Name,
+		Image:     opts.Image,
+		Cmd:       opts.Cmd,
+		Config:    map[string]string{},
+		Devices:   map[string]map[string]string{},
+		Profiles:  opts.Profiles,
+		Ephemeral: opts.Rm,
 	}
 
 	for _, e := range opts.Env {

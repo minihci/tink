@@ -36,6 +36,7 @@ type Options struct {
 	Restart  string
 	Pool     string
 	Profiles []string
+	Rm       bool
 
 	DryRun bool
 }
@@ -82,7 +83,11 @@ func Run(opts Options) (*Result, error) {
 		if project == "" {
 			project = "(daemon default)"
 		}
-		note("would create %s from %s in project %s (not started yet)", spec.Name, spec.Image, project)
+		ephemeral := ""
+		if spec.Ephemeral {
+			ephemeral = ", ephemeral: deleted automatically the moment it stops"
+		}
+		note("would create %s from %s in project %s (not started yet%s)", spec.Name, spec.Image, project, ephemeral)
 		for _, p := range spec.Profiles {
 			note("would layer profile %s", p)
 		}
@@ -153,6 +158,9 @@ func create(spec *Spec, project string) error {
 	}
 	if project != "" {
 		args = append(args, "--project", project)
+	}
+	if spec.Ephemeral {
+		args = append(args, "--ephemeral")
 	}
 	out, err := exec.Command("incus", args...).CombinedOutput()
 	if err != nil {
