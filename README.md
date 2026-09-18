@@ -28,7 +28,7 @@ comment for the working bash it's replacing.
 | Command | Status | Replaces |
 |---|---|---|
 | `tink deploy` | verified live | `incus-host/scripts/deploy.sh` |
-| `tink run` | implemented, not yet verified live | (new - the manual per-tenant "mental docker-run into `incus launch` plus a sequence of `incus config`/`incus config device add` calls" dance) |
+| `tink run` | verified live on `incus.homelabvps.com` | (new - the manual per-tenant "mental docker-run into `incus launch` plus a sequence of `incus config`/`incus config device add` calls" dance) |
 | `tink ingress reconcile` / `tink ingress status` | live on `incus.xlii.co` | `incus-host/reconciler/reconcile.sh` |
 | `tink daemon run` / `tink daemon install` | implemented | (new - cron is still how `ingress reconcile` actually runs today) |
 | `tink mongo snapshot` | not yet designed | (none yet - still under discussion) |

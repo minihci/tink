@@ -29,10 +29,33 @@ func TestRun_DryRunDoesNotTouchIncus(t *testing.T) {
 	}
 
 	joined := strings.Join(result.Actions, "\n")
-	for _, want := range []string{"would launch", "would layer profile nextcloud-app", "would add device", "would set config"} {
+	for _, want := range []string{"would launch", "would layer profile nextcloud-app", "would add device", "would set config", "would restart"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("Actions = %q, want a line containing %q", joined, want)
 		}
+	}
+}
+
+// Regression test for a real bug caught testing against a live host
+// (incus.homelabvps.com): environment.* and oci.entrypoint are
+// process-launch parameters, so setting them via UpdateInstance alone
+// leaves an already-running instance's original entrypoint process
+// running untouched -- a restart is required to actually apply them. A
+// managed-volume-only run has nothing that needs a restart to take
+// effect, so it shouldn't get one.
+func TestRun_DryRunSkipsRestartNoteWhenNoConfigIsSet(t *testing.T) {
+	result, err := Run(Options{
+		DryRun: true,
+		Name:   "n",
+		Image:  "i",
+		Volume: []string{"/host:/container"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	joined := strings.Join(result.Actions, "\n")
+	if strings.Contains(joined, "would restart") {
+		t.Errorf("Actions = %q, should not mention a restart when Config is empty", joined)
 	}
 }
 

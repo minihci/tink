@@ -9,6 +9,7 @@ package run
 import (
 	"fmt"
 	"os/exec"
+	"time"
 
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
@@ -80,10 +81,14 @@ func Run(opts Options) (*Result, error) {
 			note("would layer profile %s", p)
 		}
 		for name, dev := range spec.Devices {
+			if dev["type"] == "disk" && dev["pool"] != "" {
+				note("would ensure managed volume %s/%s exists (creating it if needed)", dev["pool"], dev["source"])
+			}
 			note("would add device %s: %v", name, dev)
 		}
 		if len(spec.Config) > 0 {
 			note("would set config: %v", spec.Config)
+			note("would restart %s to apply it (environment/entrypoint config only takes effect at container start)", spec.Name)
 		}
 		return result, nil
 	}
@@ -102,6 +107,21 @@ func Run(opts Options) (*Result, error) {
 		return result, err
 	}
 	note("applied config and devices to %s", spec.Name)
+
+	if len(spec.Config) > 0 {
+		// environment.* and oci.entrypoint are process-launch parameters
+		// -- confirmed live that setting them on an already-running
+		// instance leaves the image's original entrypoint process running
+		// untouched until a restart. Same fix internal/bootstrap's
+		// applyIngress/applyAuthelia already use for exactly this reason
+		// (see ensureRunning there); duplicated here rather than shared,
+		// since bootstrap's version is tied to its own *runner/dry-run
+		// type.
+		if err := ensureRestarted(server, spec.Name); err != nil {
+			return result, err
+		}
+		note("restarted %s to apply the config just set", spec.Name)
+	}
 
 	return result, nil
 }
@@ -132,6 +152,10 @@ func launch(spec *Spec) error {
 // `incus config set`/`incus config device add` calls used by hand today,
 // just composed into one update instead of several.
 func applyConfig(server incus.InstanceServer, spec *Spec) error {
+	if err := ensureManagedVolumes(server, spec); err != nil {
+		return err
+	}
+
 	inst, etag, err := server.GetInstance(spec.Name)
 	if err != nil {
 		return fmt.Errorf("reading %s after launch: %w", spec.Name, err)
@@ -156,4 +180,70 @@ func applyConfig(server incus.InstanceServer, spec *Spec) error {
 		return fmt.Errorf("updating %s config/devices: %w", spec.Name, err)
 	}
 	return op.Wait()
+}
+
+// ensureManagedVolumes creates any managed storage volume a disk device
+// references that doesn't already exist. Docker auto-creates a named
+// volume on first use (`-v name:path`); Incus's own managed storage
+// volumes don't -- attaching a disk device to one that's never been
+// created fails validation outright, which UpdateInstance applies
+// atomically, so one missing volume would otherwise silently drop every
+// other translated config/device change too. Confirmed live against
+// incus.homelabvps.com, not assumed. tink run matches Docker's
+// ergonomics here rather than Incus's own stricter default, since
+// replicating that gap would defeat the point of translating docker-run
+// flags in the first place.
+func ensureManagedVolumes(server incus.InstanceServer, spec *Spec) error {
+	for _, dev := range spec.Devices {
+		if dev["type"] != "disk" || dev["pool"] == "" {
+			continue // a bind mount (no pool) or a non-disk device
+		}
+
+		pool, name := dev["pool"], dev["source"]
+		if _, _, err := server.GetStoragePoolVolume(pool, "custom", name); err == nil {
+			continue // already exists
+		}
+
+		post := api.StorageVolumesPost{
+			Name:        name,
+			Type:        "custom",
+			ContentType: "filesystem",
+		}
+		if err := server.CreateStoragePoolVolume(pool, post); err != nil {
+			return fmt.Errorf("creating managed volume %s/%s: %w", pool, name, err)
+		}
+	}
+	return nil
+}
+
+// ensureRestarted starts or restarts name so it picks up config just
+// applied to it, retrying on Incus's own transient "instance is busy"
+// rejection (its operation queue can briefly reject a state change
+// mid-transition) -- the same two real races
+// internal/bootstrap.ensureRunning already found and handles, reproduced
+// here rather than shared across packages.
+func ensureRestarted(server incus.InstanceServer, name string) error {
+	const maxAttempts = 5
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		inst, _, err := server.GetInstance(name)
+		if err != nil {
+			return fmt.Errorf("checking %s's state: %w", name, err)
+		}
+
+		action := "start"
+		if inst.Status == "Running" {
+			action = "restart"
+		}
+
+		op, err := server.UpdateInstanceState(name, api.InstanceStatePut{Action: action, Timeout: 30}, "")
+		if err == nil {
+			if err = op.Wait(); err == nil {
+				return nil
+			}
+		}
+		lastErr = err
+		time.Sleep(time.Second)
+	}
+	return fmt.Errorf("starting/restarting %s to apply its config: giving up after %d attempts: %w", name, maxAttempts, lastErr)
 }
