@@ -112,3 +112,38 @@ identity_providers:
           - code
         token_endpoint_auth_method: none
         access_token_signed_response_alg: 'RS256' # Incus expects a JWT access token, not Authelia's default opaque one
+      # Second real OIDC client, added 2026-09-17 for nextcloud-incus
+      # (github.com/wyomarus/nextcloud-incus) — the platform's first
+      # confidential (non-public) client, unlike incus's own public/PKCE
+      # one. redirect_uris uses a literal domain, not a templated
+      # ${VAR}/env-function like AUTH_DOMAIN/INCUS_UI_DOMAIN above,
+      # deliberately: those two describe this platform's own two built-in
+      # domains, but a tenant app's domain is that tenant's own concern
+      # (same reasoning nightscout-app.profile.yaml hardcodes its own
+      # BASE_URL rather than being templated by this repo). Currently
+      # nc.test.greenlock.cloud, the homelabvps rehearsal target — update
+      # here (and reissue a client secret) at the real incus.xlii.co
+      # production cutover rather than assuming this value still applies.
+      # client_secret is the pbkdf2-sha512 hash from `incus exec authelia
+      # -- authelia crypto hash generate pbkdf2 --variant sha512 --random
+      # --random.length 72 --random.charset rfc3986` — the plaintext goes
+      # to Nextcloud's own `occ user_oidc:provider` command, never here.
+      - client_id: 'nextcloud'
+        client_name: 'Nextcloud'
+        client_secret: '$pbkdf2-sha512$310000$o532aHjq04zrri4pH6nrKA$qgG7RPbXLX7FyVUXlN.cRKqjFcVF/BHDepuraXXnTFLWbcmpS1zpyDy.TxPC8G7EccZCK9mz0W8WqVuIZM5IXw'
+        public: false
+        authorization_policy: one_factor
+        redirect_uris:
+          - 'https://nc.test.greenlock.cloud/apps/user_oidc/code'
+        scopes:
+          - openid
+          - profile
+          - email
+          - groups
+          - offline_access
+        grant_types:
+          - authorization_code
+          - refresh_token
+        response_types:
+          - code
+        token_endpoint_auth_method: client_secret_basic
