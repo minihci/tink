@@ -136,21 +136,34 @@ a computed graph (confirmed by reading its source: there is no
 cross-resource reference mechanism, and `--project` is a CLI flag, not a
 per-resource YAML field).
 
-**It's not currently safe to adopt**, for a concrete, disqualifying
-reason: `--project <name>` is honored when checking whether a resource
-already exists, but silently dropped on the actual `create`/`launch`
-call. Confirmed via `--verbose` output. Every resource in a 14-resource
-apply landed in the `default` project instead of the target one —
-5 stopped instances, 6 profiles, and 2 volumes, sitting right alongside
-this host's real, running `authelia`/`incus-ui`/`ingress`. No collision
-happened this time; nothing prevented one. Filed upstream as
-[abiosoft/incus-apply#68](https://github.com/abiosoft/incus-apply/issues/68),
-traced to a likely regression from that project's own PRs #45/#47
-("simplify"/"remove redundant" project scoping). This is exactly the
-kind of bug that matters most here specifically, since project isolation
-is this platform's real tenant-separation boundary
+**Not safe to adopt as of the released `v0.1.1`**, for a concrete,
+disqualifying reason: `--project <name>` is honored when checking
+whether a resource already exists, but silently dropped on the actual
+`create`/`launch` call. Confirmed via `--verbose` output. Every resource
+in a 14-resource apply landed in the `default` project instead of the
+target one — 5 stopped instances, 6 profiles, and 2 volumes, sitting
+right alongside this host's real, running `authelia`/`incus-ui`/
+`ingress`. No collision happened this time; nothing prevented one. This
+is exactly the kind of bug that matters most here specifically, since
+project isolation is this platform's real tenant-separation boundary
 (`nextcloud`/`nightscout` projects on `incus.xlii.co`) — not something
 to route around quietly.
+
+Filed upstream as
+[abiosoft/incus-apply#68](https://github.com/abiosoft/incus-apply/issues/68),
+traced to a likely regression from that project's own PRs #45/#47
+("simplify"/"remove redundant" project scoping) — then root-caused and
+fixed the same day rather than left as a report: `cloneResource`
+(`internal/incus/managed.go`) round-trips a resource through YAML to
+deep-copy it, then manually restores the fields tagged `yaml:"-"` that
+don't survive that round-trip; `Project` is one such field but was
+missing from that restoration list, and `Create()` builds its command
+from the clone, not the original resource. Fix, test, and live
+re-verification (both a profile and an instance, before/after, on a
+real host) submitted as
+[abiosoft/incus-apply#69](https://github.com/abiosoft/incus-apply/pull/69).
+Not merged as of this writing — check its actual state before assuming
+either the bug or the fix's status.
 
 ## The proposed architecture
 
@@ -174,9 +187,10 @@ to route around quietly.
 - **The resolver** — does the actual converging. **OpenTofu adopted as
   the primary, opinionated default** (the one actually proven live
   against a real stack); **`incus-apply` named as the documented
-  alternative**, worth reconsidering once #68 above is fixed — the same
-  "default + reasoning + named alternative + when to deviate" pattern
-  already used elsewhere on this platform (ZFS vs. btrfs for storage).
+  alternative**, worth reconsidering once #69 above is merged and a
+  release cut with it — the same "default + reasoning + named
+  alternative + when to deviate" pattern already used elsewhere on this
+  platform (ZFS vs. btrfs for storage).
 
 ## Explicit scope boundary
 
