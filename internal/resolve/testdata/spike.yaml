@@ -1,0 +1,55 @@
+kind: project
+name: resolve-spike-test
+---
+kind: profile
+name: default
+project: resolve-spike-test
+devices:
+  root:
+    type: disk
+    pool: default
+    path: /
+  eth0:
+    type: nic
+    network: incusbr0
+---
+kind: storage-volume
+name: spike-data
+project: resolve-spike-test
+---
+kind: instance
+name: spike-redis
+project: resolve-spike-test
+image: docker-oci:library/redis:7-alpine
+profiles:
+  - default
+config:
+  boot.autorestart: "true"
+---
+kind: instance
+name: spike-db
+project: resolve-spike-test
+image: docker-oci:library/postgres:16-alpine
+profiles:
+  - default
+config:
+  boot.autorestart: "true"
+  environment.POSTGRES_PASSWORD: spike-throwaway-password
+devices:
+  data:
+    type: disk
+    pool: default
+    source: spike-data
+    path: /var/lib/postgresql/data
+---
+kind: instance
+name: spike-app
+project: resolve-spike-test
+image: docker-oci:library/redis:7-alpine
+profiles:
+  - default
+depends_on:
+  - spike-db
+  - spike-redis
+config:
+  boot.autorestart: "true"
