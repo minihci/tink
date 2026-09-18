@@ -128,6 +128,17 @@ identity_providers:
       # -- authelia crypto hash generate pbkdf2 --variant sha512 --random
       # --random.length 72 --random.charset rfc3986` — the plaintext goes
       # to Nextcloud's own `occ user_oidc:provider` command, never here.
+      #
+      # token_endpoint_auth_method is client_secret_post, not the more
+      # common client_secret_basic — not a style choice, Nextcloud's
+      # user_oidc app actually sends its credentials in the POST body.
+      # First attempt used client_secret_basic (the more typical default
+      # for a confidential client) and failed hard: Authelia's own log
+      # spelled out the exact mismatch ("Access Request failed...
+      # registered client... configured to only support... basic...
+      # Relying Party will need to be configured to use... post"). If a
+      # future OIDC client here fails the same way, check what its RP
+      # actually sends before assuming basic is correct.
       - client_id: 'nextcloud'
         client_name: 'Nextcloud'
         client_secret: '$pbkdf2-sha512$310000$o532aHjq04zrri4pH6nrKA$qgG7RPbXLX7FyVUXlN.cRKqjFcVF/BHDepuraXXnTFLWbcmpS1zpyDy.TxPC8G7EccZCK9mz0W8WqVuIZM5IXw'
@@ -146,4 +157,4 @@ identity_providers:
           - refresh_token
         response_types:
           - code
-        token_endpoint_auth_method: client_secret_basic
+        token_endpoint_auth_method: client_secret_post
