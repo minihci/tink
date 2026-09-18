@@ -103,7 +103,7 @@ func Run(opts Options) (*Result, error) {
 		return result, nil
 	}
 
-	if err := create(spec, opts.Project); err != nil {
+	if err := Create(spec, opts.Project); err != nil {
 		return result, err
 	}
 	note("created %s from %s", spec.Name, spec.Image)
@@ -116,12 +116,12 @@ func Run(opts Options) (*Result, error) {
 		server = server.UseProject(opts.Project)
 	}
 
-	if err := applyConfig(server, spec); err != nil {
+	if err := ApplyConfig(server, spec); err != nil {
 		return result, err
 	}
 	note("applied config and devices to %s", spec.Name)
 
-	if err := ensureRunning(server, spec.Name); err != nil {
+	if err := EnsureRunning(server, spec.Name); err != nil {
 		return result, err
 	}
 	note("started %s", spec.Name)
@@ -129,17 +129,17 @@ func Run(opts Options) (*Result, error) {
 	return result, nil
 }
 
-// create shells out to `incus init` (create without starting), never
+// Create shells out to `incus init` (create without starting), never
 // `incus launch`: some images (e.g. Postgres, Nextcloud) run a one-shot,
 // config-gated action on first boot that needs env vars already present,
 // so config has to be in place before the instance ever starts (see
-// applyConfig, ensureRunning). The remote/image-resolution shell-out
+// ApplyConfig, EnsureRunning). The remote/image-resolution shell-out
 // itself is unavoidable for the same reason
 // internal/bootstrap/instances.go documents: resolving a reference like
 // "docker-oci:redis:7" means talking to that named remote as an
 // ImageServer, a client-config concept with no daemon API to call
 // instead.
-func create(spec *Spec, project string) error {
+func Create(spec *Spec, project string) error {
 	args := []string{"init", spec.Image, spec.Name}
 	for _, p := range spec.Profiles {
 		args = append(args, "--profile", p)
@@ -157,11 +157,11 @@ func create(spec *Spec, project string) error {
 	return nil
 }
 
-// applyConfig sets spec's translated Config and Devices onto the
-// just-created (not yet started) instance. Unlike create, this is
+// ApplyConfig sets spec's translated Config and Devices onto the
+// just-created (not yet started) instance. Unlike Create, this is
 // modeled cleanly by the daemon's own API, so it goes through Incus's
 // Go client rather than a second shell-out.
-func applyConfig(server incus.InstanceServer, spec *Spec) error {
+func ApplyConfig(server incus.InstanceServer, spec *Spec) error {
 	if err := ensureManagedVolumes(server, spec); err != nil {
 		return err
 	}
@@ -222,14 +222,14 @@ func ensureManagedVolumes(server incus.InstanceServer, spec *Spec) error {
 	return nil
 }
 
-// ensureRunning starts name -- in practice always a first start, since
-// create() never starts the instance itself. Picks start-vs-restart from
+// EnsureRunning starts name -- in practice always a first start, since
+// Create() never starts the instance itself. Picks start-vs-restart from
 // current status rather than assuming Stopped, and retries on Incus's
 // own transient "instance is busy" rejection (its operation queue can
 // briefly reject a state change mid-transition); mirrors
 // internal/bootstrap.ensureRunning's own logic, reproduced here rather
 // than shared across packages.
-func ensureRunning(server incus.InstanceServer, name string) error {
+func EnsureRunning(server incus.InstanceServer, name string) error {
 	const maxAttempts = 5
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {

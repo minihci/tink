@@ -34,7 +34,7 @@ func TestRun_DryRunDoesNotTouchIncus(t *testing.T) {
 }
 
 // A devices-only run (no Config at all) still needs its initial start:
-// create() never starts the instance itself, regardless of whether any
+// Create() never starts the instance itself, regardless of whether any
 // Config was set, so a run with only a Volume/Publish/Network device
 // still needs one.
 func TestRun_DryRunAlwaysNotesAStartEvenWithNoConfig(t *testing.T) {
@@ -52,7 +52,7 @@ func TestRun_DryRunAlwaysNotesAStartEvenWithNoConfig(t *testing.T) {
 		t.Errorf("Actions = %q, want a line noting the initial start even with no Config set", joined)
 	}
 	if strings.Contains(joined, "restart") {
-		t.Errorf("Actions = %q, should never mention a restart -- create() never starts the instance itself", joined)
+		t.Errorf("Actions = %q, should never mention a restart -- Create() never starts the instance itself", joined)
 	}
 }
 
