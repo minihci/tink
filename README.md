@@ -29,6 +29,7 @@ comment for the working bash it's replacing.
 |---|---|---|
 | `tink deploy` | verified live | `incus-host/scripts/deploy.sh` |
 | `tink run` | verified live against a real, disposable test host | (new - the manual per-tenant "mental docker-run into `incus launch` plus a sequence of `incus config`/`incus config device add` calls" dance) |
+| `tink plan` / `tink plan apply` | spike - live-verified against two structurally different real stacks (Nextcloud, Nightscout), not yet a committed capability | (new - hand-running a sequence of `incus` commands in the right order from memory or a prose runbook) |
 | `tink ingress reconcile` / `tink ingress status` | live on `incus.xlii.co` | `incus-host/reconciler/reconcile.sh` |
 | `tink daemon run` / `tink daemon install` | implemented | (new - cron is still how `ingress reconcile` actually runs today) |
 | `tink mongo snapshot` | not yet designed | (none yet - still under discussion) |
@@ -38,8 +39,15 @@ volumes, profiles, the `ingress`/`authelia`/`incus-ui` instances, the
 daemon's OIDC/authorization config. `run` translates a docker-run-shaped
 invocation onto real Incus primitives - see
 [`internal/run/DESIGN.md`](internal/run/DESIGN.md) for the flag-mapping
-table and its deliberate non-goals (not a Docker CLI clone). `ingress
-reconcile` discovers instances that opt in via
+table and its deliberate non-goals (not a Docker CLI clone). `plan`
+computes a dependency graph for a set of project/profile/storage-volume/
+instance/file resources declared in YAML and reports what would change;
+`plan apply` actually converges, level by level, everything within one
+level concurrently - see
+[`docs/resolver-architecture.md`](docs/resolver-architecture.md) for the
+full design and why its own YAML, not a Kubernetes-Pod-spec or
+docker-run-flags translation, is the primary way to author one of these.
+`ingress reconcile` discovers instances that opt in via
 `user.ingress.{domain,port,enabled}` config and converges the shared
 `ingress` instance's routes to match, without a restart or a manual file
 push. `daemon run` runs that same reconcile loop as a persistent process
@@ -73,6 +81,7 @@ cmd/tink/            thin CLI entrypoint (cobra) - argument parsing only
 internal/incusapi/   shared Incus API client, used by every capability
 internal/bootstrap/  tink deploy
 internal/run/        tink run - see internal/run/DESIGN.md
+internal/resolve/    tink plan / tink plan apply (spike) - see docs/resolver-architecture.md
 internal/ingress/    tink ingress ...
 internal/daemon/     tink daemon ...
 internal/backup/     tink mongo ... (undesigned)
