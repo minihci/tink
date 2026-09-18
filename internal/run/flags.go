@@ -74,11 +74,18 @@ func Build(opts Options) (*Spec, error) {
 		spec.Devices[fmt.Sprintf("volume%d", i)] = dev
 	}
 
+	if opts.IP != "" && opts.Network == "" {
+		return nil, fmt.Errorf("--ip requires --network")
+	}
 	if opts.Network != "" {
-		spec.Devices["eth0"] = map[string]string{
+		dev := map[string]string{
 			"type":    "nic",
 			"network": opts.Network,
 		}
+		if opts.IP != "" {
+			dev["ipv4.address"] = opts.IP
+		}
+		spec.Devices["eth0"] = dev
 	}
 
 	if opts.Restart != "" {

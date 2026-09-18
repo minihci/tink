@@ -142,6 +142,23 @@ func TestBuild_Network(t *testing.T) {
 	}
 }
 
+func TestBuild_NetworkWithStaticIP(t *testing.T) {
+	spec, err := Build(Options{Name: "n", Image: "i", Network: "incusbr0", IP: "10.135.3.40"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := map[string]string{"type": "nic", "network": "incusbr0", "ipv4.address": "10.135.3.40"}
+	if got := spec.Devices["eth0"]; !reflect.DeepEqual(got, want) {
+		t.Errorf("eth0 device = %v, want %v", got, want)
+	}
+}
+
+func TestBuild_IPRequiresNetwork(t *testing.T) {
+	if _, err := Build(Options{Name: "n", Image: "i", IP: "10.135.3.40"}); err == nil {
+		t.Error("expected an error when --ip is given without --network")
+	}
+}
+
 func TestBuild_Restart(t *testing.T) {
 	cases := []struct {
 		restart string

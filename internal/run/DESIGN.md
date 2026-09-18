@@ -68,6 +68,7 @@ was hand-exercised for real, repeatedly, building nextcloud-incus.
 | `-v name:/container/path` (repeatable) | `disk` device pointing at a managed storage volume, in the pool named by `--pool` (default `default`) | Distinguished from the bind-mount form by whether the source contains a `/` — a bare name is a managed volume, a path is a bind mount, matching Docker's own disambiguation rule. **Docker/Incus semantic gap, found live**: Docker auto-creates a named volume on first use; Incus's own managed volumes don't — attaching a disk device to one that's never been created fails validation outright. `tink run` creates the volume first if it's missing, matching Docker's ergonomics rather than Incus's stricter default (confirmed against a real, disposable test host, 2026-09-18) |
 | `IMAGE [CMD...]` (positional, after flags) | `oci.entrypoint` config key | Exactly what scoped `nextcloud-mcp` to `webdav`+`calendar` |
 | `--network NAME` | NIC device's `network:` field | |
+| `--ip ADDR` (requires `--network`) | NIC device's `ipv4.address:` field | Found missing while recreating a real known deployment (nextcloud-incus): every one of its five profiles pins a static address on `incusbr0`, which `--network` alone can't express. Errors if given without `--network` |
 | `--name NAME` | the Incus instance name (positional in Incus, a flag in Docker) | **Required** — unlike Docker, `tink run` does not invent a random name when omitted; Incus instance names are meaningful and persistent on this platform (ingress registration, profiles), so an unnamed instance is a mistake to catch, not a default to paper over |
 | `--restart=on-failure:5` | `boot.autorestart` (plain boolean) | **No clean map** — Incus has no retry-count concept. `tink run` accepts `--restart` as a boolean-ish flag (`always`/`unless-stopped` → `true`, `no` → `false`) and errors on a retry-count value rather than silently discarding it |
 
@@ -82,36 +83,52 @@ plain importable package, not logic embedded in `cmd/tink`):
   the part worth the most test coverage, and the only part that's
   meaningfully testable without a live daemon.
 - **`run.go`** — orchestration, using `internal/incusapi.Connect` like
-  every other capability:
-  1. `incus launch <image> <name>` (shells out — same justification
-     `internal/bootstrap/instances.go` already documents: remotes and OCI
-     image resolution are a client-config concept with no daemon API to
-     call instead, so reimplementing that resolution here would be new,
-     under-verified code standing in front of a live launch for no
-     benefit).
+  every other capability. **Create, configure, then start once** —
+  revised from an earlier launch-then-configure-then-restart design after
+  live testing against a second real reference deployment
+  (nextcloud-incus) showed it was wrong for a whole class of images, not
+  just slow:
+  1. `incus init <image> <name>` — creates the instance **without
+     starting it**, unlike `incus launch`. This is not a style choice:
+     nextcloud-app's and nextcloud-db's own profile comments already
+     prescribe exactly this by hand, because Postgres's and Nextcloud's
+     images each run a one-shot, config-gated action on first boot
+     (Postgres's init scripts need `POSTGRES_PASSWORD` already present;
+     Nextcloud's installer needs its DB credentials already present) —
+     launching bare and configuring afterward either misses that moment
+     entirely or crashes the instance before config can be applied at
+     all. The remote/image-resolution shell-out itself is still
+     unavoidable for the same reason `internal/bootstrap/instances.go`
+     already documents: resolving `docker-oci:redis:7` means talking to
+     that named remote as an ImageServer, a client-config concept with no
+     daemon API to call instead.
   2. Create any managed storage volume a `-v name:path` device references
      that doesn't already exist yet (see the flag table above — a real
      gap found live, not anticipated in the original design).
   3. `server.UpdateInstance(name, ...)` via Incus's real Go client to set
      the translated `Config`/`Devices` — this part *is* modeled cleanly
      by the daemon API, unlike image resolution, so it doesn't need a
-     second shell-out. This mirrors exactly the manual sequence used by
-     hand today (launch bare, then a run of `config set`/`config device
-     add` calls), just automated. **Applied atomically by Incus itself**:
-     confirmed live that one invalid device (the missing-volume case
-     above, before the fix) silently drops every other translated
-     config/device change too, leaving a launched-but-unconfigured
-     instance behind rather than partially applying the rest.
-  4. If any `Config` was set (environment variables, `oci.entrypoint`),
-     start-or-restart the instance so it actually takes effect.
-     **Confirmed live this is required, not optional**: environment
-     variables and `oci.entrypoint` are process-launch parameters for an
-     OCI application container, so `UpdateInstance` alone leaves an
-     already-running instance's original entrypoint process running
-     untouched — `incus config get` shows the new value, but nothing
-     inside the container changed until a restart. This mirrors the exact
-     problem `internal/bootstrap`'s `applyIngress`/`applyAuthelia` already
-     solved (`ensureRunning`/`restartAction`) for the same reason; `run.go`
+     second shell-out. **Applied atomically by Incus itself**: confirmed
+     live that one invalid device (the missing-volume case above, before
+     that fix) silently drops every other translated config/device change
+     too — a real reason this step has to fully succeed before anything
+     is ever started, not just a nicety.
+  4. Start the instance — **always**, regardless of whether any `Config`
+     was set, since `incus init` never starts it itself. This is always a
+     genuine first start, never a restart: the instance is never running
+     before its config is already in place, which is exactly what the
+     Postgres/Nextcloud case above needs, and incidentally also fixes a
+     latent gap in the original design (a devices-only run with no
+     `Config` never got a restart either, which was never actually
+     verified to be safe for device changes generally). The original
+     design's justification for *why* a restart was needed at all still
+     stands as the reasoning for why an initial start is required here —
+     environment variables and `oci.entrypoint` are process-launch
+     parameters, confirmed live that `UpdateInstance` alone leaves them
+     inert with no process ever having read them — it just no longer
+     needs to be conditional. Mirrors the same problem
+     `internal/bootstrap`'s `applyIngress`/`applyAuthelia` already solved
+     (`ensureRunning`/`restartAction`) for the same reason; `run.go`
      reimplements the same small start-vs-restart-by-current-status logic
      rather than importing it, since `bootstrap`'s version is tied to its
      own `*runner`/dry-run type.
@@ -130,6 +147,8 @@ tink run [flags] IMAGE [CMD...]
   -p, --publish HOST:CONTAINER   publish a port via a proxy device (repeatable)
   -v, --volume SRC:DST  bind-mount a host path or attach a managed volume (repeatable)
   --network string      NIC device's network
+  --ip string            static ipv4.address on the NIC device (requires --network)
+  --project string       Incus project to create the instance in (default: the daemon's own default project)
   --restart string      always|unless-stopped|no (boolean autorestart only)
   --profile string       an existing Incus profile to layer in addition (repeatable)
   --dry-run              compute and print the plan without applying it

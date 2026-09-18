@@ -29,7 +29,7 @@ func TestRun_DryRunDoesNotTouchIncus(t *testing.T) {
 	}
 
 	joined := strings.Join(result.Actions, "\n")
-	for _, want := range []string{"would launch", "would layer profile nextcloud-app", "would add device", "would set config", "would restart"} {
+	for _, want := range []string{"would create", "would layer profile nextcloud-app", "would add device", "would set config", "would start"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("Actions = %q, want a line containing %q", joined, want)
 		}
@@ -37,13 +37,18 @@ func TestRun_DryRunDoesNotTouchIncus(t *testing.T) {
 }
 
 // Regression test for a real bug caught testing against a real,
-// disposable test host: environment.* and oci.entrypoint are
-// process-launch parameters, so setting them via UpdateInstance alone
-// leaves an already-running instance's original entrypoint process
-// running untouched -- a restart is required to actually apply them. A
-// managed-volume-only run has nothing that needs a restart to take
-// effect, so it shouldn't get one.
-func TestRun_DryRunSkipsRestartNoteWhenNoConfigIsSet(t *testing.T) {
+// disposable test host: Postgres's and Nextcloud's own images run a
+// one-shot, config-gated action on first boot (Postgres's init scripts
+// need POSTGRES_PASSWORD already present; Nextcloud's installer needs
+// its DB credentials already present) -- launching bare and configuring
+// afterward either misses that moment entirely or crashes the instance
+// before config can be applied at all. create()+applyConfig()+
+// ensureRunning() always creates without starting first, so the
+// instance is always started for the very first time only after every
+// flag has already been translated into its config -- true regardless
+// of whether any Config was actually set, unlike the disproven
+// config-gated-restart design this replaced.
+func TestRun_DryRunAlwaysNotesAStartEvenWithNoConfig(t *testing.T) {
 	result, err := Run(Options{
 		DryRun: true,
 		Name:   "n",
@@ -54,13 +59,27 @@ func TestRun_DryRunSkipsRestartNoteWhenNoConfigIsSet(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	joined := strings.Join(result.Actions, "\n")
-	if strings.Contains(joined, "would restart") {
-		t.Errorf("Actions = %q, should not mention a restart when Config is empty", joined)
+	if !strings.Contains(joined, "would start n") {
+		t.Errorf("Actions = %q, want a line noting the initial start even with no Config set", joined)
+	}
+	if strings.Contains(joined, "restart") {
+		t.Errorf("Actions = %q, should never mention a restart -- create() never starts the instance itself", joined)
 	}
 }
 
 func TestRun_DryRunSurfacesBuildErrors(t *testing.T) {
 	if _, err := Run(Options{DryRun: true, Image: "i"}); err == nil {
 		t.Error("expected an error when --name is missing, even in dry-run")
+	}
+}
+
+func TestRun_DryRunNotesProject(t *testing.T) {
+	result, err := Run(Options{DryRun: true, Name: "n", Image: "i", Project: "nextcloud-tink-test"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	joined := strings.Join(result.Actions, "\n")
+	if !strings.Contains(joined, "in project nextcloud-tink-test") {
+		t.Errorf("Actions = %q, want a line naming the target project", joined)
 	}
 }

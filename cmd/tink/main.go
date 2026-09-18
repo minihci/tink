@@ -168,11 +168,13 @@ reconcile's existing convention.`,
 	}
 
 	cmd.Flags().StringVar(&opts.Socket, "socket", opts.Socket, "Incus daemon unix socket path (default: Incus's own resolution)")
+	cmd.Flags().StringVar(&opts.Project, "project", "", "Incus project to create the instance in (default: the daemon's own default project)")
 	cmd.Flags().StringVar(&opts.Name, "name", "", "instance name (required)")
 	cmd.Flags().StringArrayVarP(&opts.Env, "env", "e", nil, "set an environment variable (KEY=VALUE, repeatable)")
 	cmd.Flags().StringArrayVarP(&opts.Publish, "publish", "p", nil, "publish a port via a proxy device (HOST:CONTAINER, repeatable)")
 	cmd.Flags().StringArrayVarP(&opts.Volume, "volume", "v", nil, "bind-mount a host path or attach a managed volume (SRC:DST, repeatable)")
 	cmd.Flags().StringVar(&opts.Network, "network", "", "NIC device's network")
+	cmd.Flags().StringVar(&opts.IP, "ip", "", "static ipv4.address on the NIC device (requires --network)")
 	cmd.Flags().StringVar(&opts.Restart, "restart", "", "always|unless-stopped|on-failure|no (boot.autorestart is a plain boolean -- retry counts aren't supported)")
 	cmd.Flags().StringVar(&opts.Pool, "pool", opts.Pool, "storage pool a bare -v name:path managed-volume mount attaches in")
 	cmd.Flags().StringArrayVar(&opts.Profiles, "profile", nil, "an existing Incus profile to layer in addition (repeatable)")

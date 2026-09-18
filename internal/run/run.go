@@ -22,7 +22,8 @@ import (
 // cmd/tink -- this package never parses raw argv itself, matching how
 // every other tink capability's Options struct works.
 type Options struct {
-	Socket string
+	Socket  string
+	Project string
 
 	Name     string
 	Image    string
@@ -31,6 +32,7 @@ type Options struct {
 	Publish  []string
 	Volume   []string
 	Network  string
+	IP       string
 	Restart  string
 	Pool     string
 	Profiles []string
@@ -76,7 +78,11 @@ func Run(opts Options) (*Result, error) {
 	}
 
 	if opts.DryRun {
-		note("would launch %s as %s", spec.Image, spec.Name)
+		project := opts.Project
+		if project == "" {
+			project = "(daemon default)"
+		}
+		note("would create %s from %s in project %s (not started yet)", spec.Name, spec.Image, project)
 		for _, p := range spec.Profiles {
 			note("would layer profile %s", p)
 		}
@@ -88,19 +94,22 @@ func Run(opts Options) (*Result, error) {
 		}
 		if len(spec.Config) > 0 {
 			note("would set config: %v", spec.Config)
-			note("would restart %s to apply it (environment/entrypoint config only takes effect at container start)", spec.Name)
 		}
+		note("would start %s", spec.Name)
 		return result, nil
 	}
 
-	if err := launch(spec); err != nil {
+	if err := create(spec, opts.Project); err != nil {
 		return result, err
 	}
-	note("launched %s from %s", spec.Name, spec.Image)
+	note("created %s from %s", spec.Name, spec.Image)
 
 	server, err := incusapi.Connect(opts.Socket)
 	if err != nil {
 		return result, fmt.Errorf("connecting to incus: %w", err)
+	}
+	if opts.Project != "" {
+		server = server.UseProject(opts.Project)
 	}
 
 	if err := applyConfig(server, spec); err != nil {
@@ -108,49 +117,57 @@ func Run(opts Options) (*Result, error) {
 	}
 	note("applied config and devices to %s", spec.Name)
 
-	if len(spec.Config) > 0 {
-		// environment.* and oci.entrypoint are process-launch parameters
-		// -- confirmed live that setting them on an already-running
-		// instance leaves the image's original entrypoint process running
-		// untouched until a restart. Same fix internal/bootstrap's
-		// applyIngress/applyAuthelia already use for exactly this reason
-		// (see ensureRunning there); duplicated here rather than shared,
-		// since bootstrap's version is tied to its own *runner/dry-run
-		// type.
-		if err := ensureRestarted(server, spec.Name); err != nil {
-			return result, err
-		}
-		note("restarted %s to apply the config just set", spec.Name)
+	if err := ensureRunning(server, spec.Name); err != nil {
+		return result, err
 	}
+	note("started %s", spec.Name)
 
 	return result, nil
 }
 
-// launch shells out to `incus launch`, the same choice
-// internal/bootstrap/instances.go already makes and documents: resolving
-// a remote+image reference like "docker-oci:redis:7" means connecting to
-// that named remote as an ImageServer, which is a client-config concept
-// with no daemon API to call instead. Reimplementing that resolution here
-// would be new, under-verified code standing in front of a live launch
-// for no benefit over one exec call to something already proven correct.
-func launch(spec *Spec) error {
-	args := []string{"launch", spec.Image, spec.Name}
+// create shells out to `incus init` (create without starting) rather
+// than `incus launch`, the same choice nextcloud-app's and
+// nextcloud-db's own profile comments already prescribe by hand: an
+// image whose entrypoint does a one-shot, config-gated action on first
+// boot (Postgres's own init scripts need POSTGRES_PASSWORD already
+// present; Nextcloud's own installer needs its DB credentials already
+// present) can't be launched bare and configured afterward -- by the
+// time config lands via UpdateInstance, the one-shot moment has already
+// passed, or the container has already failed to start at all. Creating
+// first, then applying config, then starting once (see ensureRunning)
+// mirrors Docker's own single atomic "docker run" semantics far more
+// faithfully than the original launch-then-reconfigure-then-restart
+// design did, and removes that design's restart-vs-start ambiguity
+// entirely: the instance is never running before its config is already
+// in place, so this is always a first start, never a restart.
+//
+// The remote/image-resolution shell-out itself is unavoidable for the
+// same reason internal/bootstrap/instances.go already documents:
+// resolving "docker-oci:redis:7" means talking to that named remote as
+// an ImageServer, a client-config concept with no daemon API to call
+// instead.
+func create(spec *Spec, project string) error {
+	args := []string{"init", spec.Image, spec.Name}
 	for _, p := range spec.Profiles {
 		args = append(args, "--profile", p)
 	}
+	if project != "" {
+		args = append(args, "--project", project)
+	}
 	out, err := exec.Command("incus", args...).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("launching %s: %w: %s", spec.Name, err, out)
+		return fmt.Errorf("creating %s: %w: %s", spec.Name, err, out)
 	}
 	return nil
 }
 
 // applyConfig sets spec's translated Config and Devices onto the
-// just-launched instance. Unlike launch, this *is* modeled cleanly by
-// the daemon's own API, so it goes through Incus's real Go client rather
-// than a second shell-out -- this mirrors exactly the manual sequence of
-// `incus config set`/`incus config device add` calls used by hand today,
-// just composed into one update instead of several.
+// just-created (not yet started) instance. Unlike create, this *is*
+// modeled cleanly by the daemon's own API, so it goes through Incus's
+// real Go client rather than a second shell-out -- this mirrors exactly
+// the manual sequence of `incus config set`/`incus config device add`
+// calls used by hand today, just composed into one update instead of
+// several.
 func applyConfig(server incus.InstanceServer, spec *Spec) error {
 	if err := ensureManagedVolumes(server, spec); err != nil {
 		return err
@@ -158,7 +175,7 @@ func applyConfig(server incus.InstanceServer, spec *Spec) error {
 
 	inst, etag, err := server.GetInstance(spec.Name)
 	if err != nil {
-		return fmt.Errorf("reading %s after launch: %w", spec.Name, err)
+		return fmt.Errorf("reading %s after creation: %w", spec.Name, err)
 	}
 
 	put := inst.Writable()
@@ -216,13 +233,15 @@ func ensureManagedVolumes(server incus.InstanceServer, spec *Spec) error {
 	return nil
 }
 
-// ensureRestarted starts or restarts name so it picks up config just
-// applied to it, retrying on Incus's own transient "instance is busy"
-// rejection (its operation queue can briefly reject a state change
-// mid-transition) -- the same two real races
-// internal/bootstrap.ensureRunning already found and handles, reproduced
-// here rather than shared across packages.
-func ensureRestarted(server incus.InstanceServer, name string) error {
+// ensureRunning starts name -- in practice always a first start, since
+// create() never starts the instance itself, so its config is always
+// already in place by the time this runs. Still checks current status
+// and picks start-vs-restart rather than assuming Stopped, and retries
+// on Incus's own transient "instance is busy" rejection (its operation
+// queue can briefly reject a state change mid-transition) -- the same
+// two real races internal/bootstrap.ensureRunning already found and
+// handles, reproduced here rather than shared across packages.
+func ensureRunning(server incus.InstanceServer, name string) error {
 	const maxAttempts = 5
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
