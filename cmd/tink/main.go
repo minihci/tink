@@ -19,6 +19,7 @@ import (
 	"github.com/minihci/tink/internal/bootstrap"
 	"github.com/minihci/tink/internal/daemon"
 	"github.com/minihci/tink/internal/ingress"
+	"github.com/minihci/tink/internal/run"
 )
 
 func main() {
@@ -39,6 +40,7 @@ made executable instead of just documented.`,
 	}
 
 	root.AddCommand(newDeployCmd())
+	root.AddCommand(newRunCmd())
 	root.AddCommand(newIngressCmd())
 	root.AddCommand(newMongoCmd())
 	root.AddCommand(newDaemonCmd())
@@ -129,6 +131,57 @@ daemon, the crontab, or any instance.`,
 	cmd.Flags().StringVar(&deployEnvPath, "deploy-env", "", "path to deploy.env (default: <repo-root>/deploy.env)")
 	cmd.Flags().StringVar(&socket, "socket", "", "Incus daemon unix socket path (default: Incus's own resolution)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "compute and report every action without applying anything")
+	return cmd
+}
+
+func newRunCmd() *cobra.Command {
+	opts := run.DefaultOptions()
+
+	cmd := &cobra.Command{
+		Use:   "run [flags] IMAGE [CMD...]",
+		Short: "Launch an instance from docker-run-shaped flags, translated onto Incus primitives",
+		Long: `run translates a docker-run-shaped invocation onto real Incus
+primitives -- launch the image, then set the config keys and add the
+devices the given flags correspond to -- instead of the manual "mental
+docker-run image+flags into incus launch plus a sequence of incus config
+set/incus config device add calls" dance every tenant app on this
+platform has been built with so far. See internal/run/DESIGN.md for the
+full flag-mapping table and its deliberate non-goals -- this is not a
+Docker CLI clone: incus's own ps/exec/logs/stop/rm are already just as
+short as their Docker equivalents, and docker logs specifically has no
+Incus equivalent to translate to at all.
+
+Use --dry-run to compute and print the plan without launching anything
+or touching the daemon, matching tink deploy's and tink ingress
+reconcile's existing convention.`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			opts.Image = args[0]
+			opts.Cmd = args[1:]
+
+			result, err := run.Run(opts)
+			for _, action := range result.Actions {
+				fmt.Fprintln(cmd.OutOrStdout(), action)
+			}
+			return err
+		},
+	}
+
+	cmd.Flags().StringVar(&opts.Socket, "socket", opts.Socket, "Incus daemon unix socket path (default: Incus's own resolution)")
+	cmd.Flags().StringVar(&opts.Name, "name", "", "instance name (required)")
+	cmd.Flags().StringArrayVarP(&opts.Env, "env", "e", nil, "set an environment variable (KEY=VALUE, repeatable)")
+	cmd.Flags().StringArrayVarP(&opts.Publish, "publish", "p", nil, "publish a port via a proxy device (HOST:CONTAINER, repeatable)")
+	cmd.Flags().StringArrayVarP(&opts.Volume, "volume", "v", nil, "bind-mount a host path or attach a managed volume (SRC:DST, repeatable)")
+	cmd.Flags().StringVar(&opts.Network, "network", "", "NIC device's network")
+	cmd.Flags().StringVar(&opts.Restart, "restart", "", "always|unless-stopped|on-failure|no (boot.autorestart is a plain boolean -- retry counts aren't supported)")
+	cmd.Flags().StringVar(&opts.Pool, "pool", opts.Pool, "storage pool a bare -v name:path managed-volume mount attaches in")
+	cmd.Flags().StringArrayVar(&opts.Profiles, "profile", nil, "an existing Incus profile to layer in addition (repeatable)")
+	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "compute and print the plan without applying it")
+	// Flags stop being recognized once the first positional arg (IMAGE) is
+	// seen -- without this, pflag's default interspersed scanning would
+	// try to parse a CMD arg that happens to look like "--enable-app" as
+	// an unknown flag on `run` itself, rather than passing it through.
+	cmd.Flags().SetInterspersed(false)
 	return cmd
 }
 
