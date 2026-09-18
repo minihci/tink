@@ -144,6 +144,14 @@ identity_providers:
         client_secret: '$pbkdf2-sha512$310000$o532aHjq04zrri4pH6nrKA$qgG7RPbXLX7FyVUXlN.cRKqjFcVF/BHDepuraXXnTFLWbcmpS1zpyDy.TxPC8G7EccZCK9mz0W8WqVuIZM5IXw'
         public: false
         authorization_policy: one_factor
+        # No consent_mode was set initially, which defaults to `auto` ->
+        # `explicit` (no duration configured) -> a real consent prompt on
+        # every single login, confirmed by the user hitting it. This is a
+        # personal single-user app the user set up themselves, not a
+        # multi-tenant client needing repeated re-confirmation — remember
+        # the decision instead.
+        consent_mode: pre-configured
+        pre_configured_consent_duration: 1M
         redirect_uris:
           - 'https://nc.test.greenlock.cloud/apps/user_oidc/code'
         scopes:
