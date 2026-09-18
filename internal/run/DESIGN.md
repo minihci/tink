@@ -65,7 +65,7 @@ was hand-exercised for real, repeatedly, building nextcloud-incus.
 | `-e KEY=VAL` (repeatable) | `environment.KEY=VAL` config key | |
 | `-p HOST:CONTAINER` (repeatable) | `proxy` device: `listen=tcp:0.0.0.0:HOST connect=tcp:127.0.0.1:CONTAINER` | Syntax confirmed against current Incus docs during this design pass |
 | `-v /host/path:/container/path` (repeatable) | `disk` device, `source=/host/path path=/container/path` | Bind-mount form |
-| `-v name:/container/path` (repeatable) | `disk` device pointing at a managed storage volume, in the pool named by `--pool` (default `default`) | Distinguished from the bind-mount form by whether the source contains a `/` — a bare name is a managed volume, a path is a bind mount, matching Docker's own disambiguation rule. **Docker/Incus semantic gap, found live**: Docker auto-creates a named volume on first use; Incus's own managed volumes don't — attaching a disk device to one that's never been created fails validation outright. `tink run` creates the volume first if it's missing, matching Docker's ergonomics rather than Incus's stricter default (confirmed against `incus.homelabvps.com`, 2026-09-18) |
+| `-v name:/container/path` (repeatable) | `disk` device pointing at a managed storage volume, in the pool named by `--pool` (default `default`) | Distinguished from the bind-mount form by whether the source contains a `/` — a bare name is a managed volume, a path is a bind mount, matching Docker's own disambiguation rule. **Docker/Incus semantic gap, found live**: Docker auto-creates a named volume on first use; Incus's own managed volumes don't — attaching a disk device to one that's never been created fails validation outright. `tink run` creates the volume first if it's missing, matching Docker's ergonomics rather than Incus's stricter default (confirmed against a real, disposable test host, 2026-09-18) |
 | `IMAGE [CMD...]` (positional, after flags) | `oci.entrypoint` config key | Exactly what scoped `nextcloud-mcp` to `webdav`+`calendar` |
 | `--network NAME` | NIC device's `network:` field | |
 | `--name NAME` | the Incus instance name (positional in Incus, a flag in Docker) | **Required** — unlike Docker, `tink run` does not invent a random name when omitted; Incus instance names are meaningful and persistent on this platform (ingress registration, profiles), so an unnamed instance is a mistake to catch, not a default to paper over |
@@ -151,11 +151,11 @@ written so far — interspersed flags after the image are out of scope.
   logic only (see `internal/bootstrap`'s tests) and leaving real daemon
   interaction to live verification, not a hand-built fake
   `incus.InstanceServer`.
-- **Live verification, done (2026-09-18, against `incus.homelabvps.com`)**:
-  see "Verified live" below — this is what actually happened, not a plan
-  for later.
+- **Live verification, done (2026-09-18, against a real, disposable test
+  host)**: see "Verified live" below — this is what actually happened,
+  not a plan for later.
 
-## Verified live (2026-09-18, `incus.homelabvps.com`)
+## Verified live (2026-09-18, a real, disposable test host)
 
 Built for `linux/amd64`, copied to a separate path (`/root/tink-run-test`,
 not the live `/usr/local/bin/tink` `tink-daemon.service` runs) so as not

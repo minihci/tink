@@ -36,8 +36,8 @@ func TestRun_DryRunDoesNotTouchIncus(t *testing.T) {
 	}
 }
 
-// Regression test for a real bug caught testing against a live host
-// (incus.homelabvps.com): environment.* and oci.entrypoint are
+// Regression test for a real bug caught testing against a real,
+// disposable test host: environment.* and oci.entrypoint are
 // process-launch parameters, so setting them via UpdateInstance alone
 // leaves an already-running instance's original entrypoint process
 // running untouched -- a restart is required to actually apply them. A

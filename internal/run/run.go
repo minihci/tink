@@ -188,8 +188,8 @@ func applyConfig(server incus.InstanceServer, spec *Spec) error {
 // volumes don't -- attaching a disk device to one that's never been
 // created fails validation outright, which UpdateInstance applies
 // atomically, so one missing volume would otherwise silently drop every
-// other translated config/device change too. Confirmed live against
-// incus.homelabvps.com, not assumed. tink run matches Docker's
+// other translated config/device change too. Confirmed against a real,
+// disposable test host, not assumed. tink run matches Docker's
 // ergonomics here rather than Incus's own stricter default, since
 // replicating that gap would defeat the point of translating docker-run
 // flags in the first place.
