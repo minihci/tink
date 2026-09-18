@@ -220,3 +220,81 @@ benefit from being *described* once and resolved more than once
 (rehearsal + production), the same way the nextcloud-tink-test exercise
 that produced this document was itself motivated by a real, repeated
 manual-translation cost — not a hypothetical one.
+
+## Update, 2026-09-18: the resolver got built, and the diagram was wrong
+
+The convergence half got built after all, as `internal/resolve` on the
+`resolve-spike` branch — not OpenTofu, not `incus-apply`, a small
+tink-native package: a dependency graph inferred by name-matching
+(project/profiles/device sources, plus an explicit `depends_on` for
+edges structural inference can't reach), stateless (every check queries
+Incus directly, no state file), applying level by level with everything
+in one level running concurrently. Exposed as `tink plan` /
+`tink plan apply`, two verbs rather than one command with a `--dry-run`
+flag — `plan` only ever reads, so there's nothing for a flag to opt out
+of.
+
+Live-validated against two structurally different real stacks, not one:
+the same 5-instance Nextcloud stack this document was originally
+written against, and then a Nightscout reconstruction (mongo, app,
+caddy) on a separate test host. The second stack is the more
+interesting proof: its app tier has no `depends_on` on its database at
+all, deliberately, because `cgm-remote-monitor`'s own Mongo client
+retries forever and never needs it up first — unlike Nextcloud's app
+tier, which genuinely does. `resolve` put Nextcloud's db-dependent app
+in its own later level and Nightscout's independent one alongside its
+database in the same parallel level, correctly, with no code change
+between the two — real evidence the dependency inference generalizes
+rather than having been shaped to fit the one stack it was built
+against.
+
+This supersedes the "proposed architecture" section's resolver choice
+for this platform's own scope: `internal/resolve` is lighter than
+OpenTofu (no separate binary, no HCL/`.tf.json` lowering step, in-repo)
+and doesn't carry `incus-apply`'s outstanding project-scoping bug —
+exactly the "lighter-weight tool" this document went looking for before
+building either alternative. OpenTofu and `incus-apply` remain named
+alternatives, not the primary path, worth reconsidering only if a real
+need outgrows `resolve`'s deliberately narrow scope (no in-place
+instance reconfiguration, no computed cross-resource values, no state).
+
+**The diagram above was wrong about one thing, though, not just the
+resolver box.** It drew the IR as an internal, invisible hop between
+translators and a resolver — implying the normal way to define a stack
+would always be through a translator. In practice, both real stacks
+above were hand-authored directly as `resolve`'s own YAML, with zero
+translation step involved, ever. That YAML isn't a serialization format
+for an otherwise-hidden IR; it *is* the IR, made directly authorable,
+and it has already proven itself sufficient as a primary interface
+across two stacks with genuinely different shapes.
+
+That reframes what a Kubernetes-Pod-spec translator (or `tink run`'s
+existing Docker-flag one) actually is: not a competing "real" interface
+to `resolve`'s own YAML, and not superior to just writing the YAML —
+an onboarding/compatibility layer that produces entries in this same
+native format for someone arriving with that vocabulary already in
+hand. There's a structural reason it could only ever have been that: a
+Pod spec, like a `docker run` command, describes one container-shaped
+thing, not a stack's whole graph — it has no native way to say "these
+belong to one project" or "this profile is shared across three of
+these," the same ceiling `internal/run/DESIGN.md`'s own non-goals
+already document for Docker flags. Once a description has to span a
+whole graph, not one instance, it has already outgrown what either
+per-container vocabulary can express on its own.
+
+Revised diagram:
+
+```
+   Docker-flag input ──> translator ──┐
+                                       │
+ K8s-Pod-spec input ──> translator ──┼──> resolve's own YAML/IR ──> Incus
+                                       │    (the primary interface —
+   hand-authored YAML ────────────────┘     directly authorable, not hidden)
+```
+
+Concretely, this also means a Kubernetes-Pod-spec translator's value
+is no longer justified by having been the original seed idea — it's
+gated on the same evidence `tink run`'s own Docker-flag translator had
+before it was worth building: real Pod-spec-shaped things out there
+worth importing (a Helm chart, someone's existing manifests), not a
+hypothetical one. Still not built, for exactly that reason.
