@@ -65,6 +65,63 @@ func TestLevels_StructuralDependencyFromDeviceSource(t *testing.T) {
 	}
 }
 
+func TestLevels_StructuralDependencyFromImageName(t *testing.T) {
+	resources := []Resource{
+		{Kind: KindInstance, Name: "haos-test", Image: "haos-image"},
+		{Kind: KindImage, Name: "haos-image", Alias: "haos-x86-64-18.3"},
+	}
+	levels, err := Levels(resources)
+	if err != nil {
+		t.Fatalf("Levels() error = %v", err)
+	}
+	if !inLevel(levels, 0, "haos-image") {
+		t.Errorf("expected haos-image in level 0, got %v", levels)
+	}
+	if !inLevel(levels, 1, "haos-test") {
+		t.Errorf("expected haos-test in level 1, got %v", levels)
+	}
+}
+
+// Regression test for a real design flaw caught live: an instance's
+// Image and an image resource's own Alias started out as two
+// independently-typed strings that had to be kept in sync by hand, with
+// nothing tying them together but coincidence. resolveImageAlias fixes
+// this by letting Image name the image resource itself (its Name, same
+// as every other structural reference) and rewriting it to the real
+// Alias once the dependency graph is built.
+func TestLevels_ImageRewrittenToRealAliasAfterDependenciesComputed(t *testing.T) {
+	resources := []Resource{
+		{Kind: KindInstance, Name: "haos-test", Image: "haos-image"},
+		{Kind: KindImage, Name: "haos-image", Alias: "haos-x86-64-18.3"},
+	}
+	if _, err := Levels(resources); err != nil {
+		t.Fatalf("Levels() error = %v", err)
+	}
+	if resources[0].Image != "haos-x86-64-18.3" {
+		t.Errorf("instance's Image = %q, want rewritten to the image resource's own Alias %q", resources[0].Image, "haos-x86-64-18.3")
+	}
+}
+
+func TestLevels_ImageLiteralReferencePassesThroughUnchanged(t *testing.T) {
+	// The normal case for a container: Image names a remote reference,
+	// not any local resource -- no dependency, and left exactly as
+	// written.
+	resources := []Resource{
+		{Kind: KindInstance, Name: "app", Image: "docker-oci:library/redis:7-alpine"},
+		{Kind: KindImage, Name: "haos-image", Alias: "haos-x86-64-18.3"},
+	}
+	levels, err := Levels(resources)
+	if err != nil {
+		t.Fatalf("Levels() error = %v", err)
+	}
+	if len(levels) != 1 {
+		t.Fatalf("expected both independent resources in a single level, got %d levels: %v", len(levels), levels)
+	}
+	if resources[0].Image != "docker-oci:library/redis:7-alpine" {
+		t.Errorf("instance's Image = %q, want left unchanged", resources[0].Image)
+	}
+}
+
 func TestLevels_StructuralDependencyFromFileInstance(t *testing.T) {
 	resources := []Resource{
 		{Kind: KindFile, Name: "caddyfile", Instance: "caddy", Path: "/etc/caddy/Caddyfile"},

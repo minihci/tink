@@ -25,6 +25,15 @@ func Levels(resources []Resource) ([][]Resource, error) {
 		deps[r.Name] = r.dependencies(all)
 	}
 
+	// Runs after deps above, not before: dependencies() needs Image to
+	// still hold the referenced image resource's own Name to find the
+	// edge; incus init needs the real Alias. Doing the rewrite here,
+	// once, means every downstream consumer (createInstance, planned
+	// diffs, ...) just sees the resolved Incus-level value already, the
+	// same after-dependencies/before-levels slot inheritProject already
+	// uses for the same reason.
+	resolveImageAlias(all)
+
 	remaining := make(map[string]*Resource, len(resources))
 	for name, r := range all {
 		remaining[name] = r
@@ -75,6 +84,27 @@ func inheritProject(all map[string]*Resource) {
 			if target, ok := all[r.Instance]; ok {
 				r.Project = target.Project
 			}
+		}
+	}
+}
+
+// resolveImageAlias rewrites an instance's Image from another resource's
+// own tink-graph Name into that resource's real Incus Alias, when Image
+// names a local kind: image resource -- found live while building this
+// platform's own haos test project, where an instance's image: and an
+// image resource's alias: were two independently-typed strings with
+// nothing tying them together but coincidence, needing a change in two
+// places for one rename. Left untouched when Image doesn't match any
+// local image resource's Name (a container pulling a remote reference
+// like docker-oci:redis:7 is the normal case, and names no local
+// resource at all) -- so this is additive, not a new required form.
+func resolveImageAlias(all map[string]*Resource) {
+	for _, r := range all {
+		if r.Image == "" {
+			continue
+		}
+		if target, ok := all[r.Image]; ok && target.Kind == KindImage {
+			r.Image = target.Alias
 		}
 	}
 }

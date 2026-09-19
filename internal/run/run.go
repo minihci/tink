@@ -36,6 +36,7 @@ type Options struct {
 	Pool     string
 	Profiles []string
 	Rm       bool
+	VM       bool
 
 	DryRun bool
 }
@@ -86,7 +87,11 @@ func Run(opts Options) (*Result, error) {
 		if spec.Ephemeral {
 			ephemeral = ", ephemeral: deleted automatically the moment it stops"
 		}
-		note("would create %s from %s in project %s (not started yet%s)", spec.Name, spec.Image, project, ephemeral)
+		kind := "container"
+		if spec.VM {
+			kind = "virtual machine"
+		}
+		note("would create %s (%s) from %s in project %s (not started yet%s)", spec.Name, kind, spec.Image, project, ephemeral)
 		for _, p := range spec.Profiles {
 			note("would layer profile %s", p)
 		}
@@ -149,6 +154,9 @@ func Create(spec *Spec, project string) error {
 	}
 	if spec.Ephemeral {
 		args = append(args, "--ephemeral")
+	}
+	if spec.VM {
+		args = append(args, "--vm")
 	}
 	out, err := exec.Command("incus", args...).CombinedOutput()
 	if err != nil {

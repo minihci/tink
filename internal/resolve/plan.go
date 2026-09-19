@@ -3,6 +3,7 @@ package resolve
 import (
 	"fmt"
 	"io"
+	"os/exec"
 	"reflect"
 	"sort"
 	"sync"
@@ -89,6 +90,10 @@ func planOne(server incus.InstanceServer, r Resource) (PlannedResource, error) {
 		return planInstance(s, r)
 	case KindFile:
 		return planFile(s, r)
+	case KindIncus:
+		return planIncus(r)
+	case KindImage:
+		return planImage(s, r)
 	default:
 		return PlannedResource{}, fmt.Errorf("unknown kind %q", r.Kind)
 	}
@@ -167,6 +172,30 @@ func planFile(server incus.InstanceServer, r Resource) (PlannedResource, error) 
 		return PlannedResource{Resource: r, Action: ActionNone}, nil
 	}
 	return PlannedResource{Resource: r, Action: ActionUpdate, Changes: []string{fmt.Sprintf("content of %s on %s differs", r.Path, r.Instance)}}, nil
+}
+
+// planIncus runs `incus` with r.Check's args to decide whether r.Command
+// still needs to run -- no daemon API call involved, unlike every other
+// kind here, since an incus resource's whole point is describing
+// convergence in terms resolve has no first-class resource for yet (see
+// Resource.Check's own doc comment). A zero exit means already converged.
+func planIncus(r Resource) (PlannedResource, error) {
+	if err := exec.Command("incus", r.Check...).Run(); err != nil {
+		return PlannedResource{Resource: r, Action: ActionCreate, Changes: []string{fmt.Sprintf("check failed: %v", err)}}, nil
+	}
+	return PlannedResource{Resource: r, Action: ActionNone}, nil
+}
+
+// planImage checks only presence of Alias -- see Resource.Alias's own
+// doc comment for why an Incus alias is expected to be a stable pointer
+// to one specific artifact by convention, leaving nothing to diff beyond
+// "does it exist," the same reasoning project and storage-volume already
+// use to stay create-only.
+func planImage(server incus.InstanceServer, r Resource) (PlannedResource, error) {
+	if _, _, err := server.GetImageAlias(r.Alias); err != nil {
+		return PlannedResource{Resource: r, Action: ActionCreate}, nil
+	}
+	return PlannedResource{Resource: r, Action: ActionNone}, nil
 }
 
 // diffConfig reports desired keys that are missing or different in

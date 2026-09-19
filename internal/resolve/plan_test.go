@@ -2,6 +2,31 @@ package resolve
 
 import "testing"
 
+func TestPlanIncus_ActionNoneWhenCheckSucceeds(t *testing.T) {
+	// "incus version" always exits zero and needs no live daemon.
+	plan, err := planIncus(Resource{Name: "x", Check: []string{"version"}, Command: []string{"list"}})
+	if err != nil {
+		t.Fatalf("planIncus() error = %v", err)
+	}
+	if plan.Action != ActionNone {
+		t.Errorf("Action = %v, want ActionNone when check exits zero", plan.Action)
+	}
+}
+
+func TestPlanIncus_ActionCreateWhenCheckFails(t *testing.T) {
+	// An unrecognized incus subcommand always exits non-zero.
+	plan, err := planIncus(Resource{Name: "x", Check: []string{"not-a-real-subcommand"}, Command: []string{"version"}})
+	if err != nil {
+		t.Fatalf("planIncus() error = %v", err)
+	}
+	if plan.Action != ActionCreate {
+		t.Errorf("Action = %v, want ActionCreate when check exits non-zero", plan.Action)
+	}
+	if len(plan.Changes) == 0 {
+		t.Error("Changes is empty, want a note explaining why the check failed")
+	}
+}
+
 func TestDiffConfig_ReportsMissingKey(t *testing.T) {
 	changes := diffConfig(map[string]string{}, map[string]string{"limits.cpu": "1"})
 	if len(changes) != 1 {
