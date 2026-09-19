@@ -375,6 +375,17 @@ func TestLoadFile_ExecAgentTimeoutInvalidDuration(t *testing.T) {
 	}
 }
 
+func TestLoadFile_ExecAgentTimeoutRejectsNegative(t *testing.T) {
+	dir := t.TempDir()
+	stack := "kind: exec\nname: x\ninstance: caddy\ncheck: [true]\ncommand: [true]\nagent_timeout: -5s\n"
+	if err := os.WriteFile(filepath.Join(dir, "stack.yaml"), []byte(stack), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadFile(filepath.Join(dir, "stack.yaml")); err == nil {
+		t.Error("expected an error for a negative agent_timeout, not a silent fallback to the default")
+	}
+}
+
 func TestLoadFile_AgentTimeoutIsExecOnly(t *testing.T) {
 	dir := t.TempDir()
 	stack := "kind: project\nname: x\nagent_timeout: 45s\n"

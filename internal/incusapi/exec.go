@@ -2,6 +2,7 @@ package incusapi
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -9,6 +10,16 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
 )
+
+// ErrAgentNotReady wraps ExecInGuestWithRetry's "gave up waiting"
+// error so a caller can tell "the guest agent never came up within the
+// budget it was given" (a boot-timing condition, not necessarily a real
+// failure -- resolve's planExec treats it leniently, the same way every
+// plan function here already treats a not-yet-existing instance) apart
+// from every other exec failure (a genuinely broken command, wrong
+// path, a real connectivity problem), which is returned unwrapped and
+// should always be treated as a hard error.
+var ErrAgentNotReady = errors.New("VM agent did not come up within the given retry budget")
 
 // agentOfflineMessage is the exact text of Incus's own internal
 // errQemuAgentOffline sentinel (internal/server/instance/drivers/
@@ -86,8 +97,16 @@ func ExecInGuest(server incus.InstanceServer, instance string, command []string)
 // ExecInGuestWithRetry is ExecInGuest with the agent-boot retry budget
 // overridable instead of fixed at the package defaults -- see those
 // constants' own doc comment for why a caller might need this rather
-// than always taking the default.
+// than always taking the default. attempts is clamped to at least 1
+// here, not just trusted to every caller (agentRetry in resolve/exec.go
+// already clamps too, but this is now an exported function other
+// callers could reach directly) -- an attempts of 0 would otherwise
+// skip the retry loop entirely and wrap a nil lastErr in the "giving up"
+// error below.
 func ExecInGuestWithRetry(server incus.InstanceServer, instance string, command []string, attempts int, delay time.Duration) (exitCode int, output string, err error) {
+	if attempts < 1 {
+		attempts = 1
+	}
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {
 		exitCode, output, err = execInGuestOnce(server, instance, command)
@@ -95,9 +114,16 @@ func ExecInGuestWithRetry(server incus.InstanceServer, instance string, command 
 			return exitCode, output, err
 		}
 		lastErr = err
-		time.Sleep(delay)
+		if attempt < attempts {
+			// No sleep after the last attempt -- there's nothing left to
+			// wait for, and a caller asking for a single, fast attempt
+			// (resolve's planExec, checking convergence for a plan preview
+			// rather than actually converging) would otherwise pay a full
+			// delay for no reason.
+			time.Sleep(delay)
+		}
 	}
-	return 0, "", fmt.Errorf("waiting for %s's VM agent to come up: giving up after %d attempts: %w", instance, attempts, lastErr)
+	return 0, "", fmt.Errorf("waiting for %s's VM agent to come up: giving up after %d attempts: %w: %w", instance, attempts, ErrAgentNotReady, lastErr)
 }
 
 func execInGuestOnce(server incus.InstanceServer, instance string, command []string) (exitCode int, output string, err error) {

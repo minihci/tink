@@ -3,6 +3,7 @@ package resolve
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -11,6 +12,24 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 
 	"github.com/minihci/tink/internal/incusapi"
+)
+
+// planCheckAttempts/planCheckDelay are Plan's own, separate retry budget
+// for an exec resource's Check -- deliberately not agentRetry(r)'s real
+// budget. Plan's own doc comment states its premise: "a plan is pure
+// reads against live state," matching every other planXxx function here
+// (a single fast read, no sleep loop) -- but reusing the real budget
+// here would mean a plain `tink plan` after any restart silently blocks
+// for the full budget (30s by default, or however long a slower guest's
+// agent_timeout says) before printing anything, and hard-fails the
+// *entire* plan if that budget runs out, unlike every other kind's
+// lenient "would create" treatment of a not-yet-ready target. One fast
+// attempt is enough to tell "converged" from "not yet, guest still
+// booting" -- planExec below treats the latter the same leniently as a
+// not-yet-existing instance, via ErrAgentNotReady.
+const (
+	planCheckAttempts = 1
+	planCheckDelay    = 0
 )
 
 // agentRetry returns the agent-boot retry budget to use for r: the
@@ -77,14 +96,13 @@ func triggerHashConfigKey(name string) string {
 // there yet, and without this guard that surfaced as a hard Plan error
 // instead of the "would create" every other kind already reports
 // correctly in exactly this situation.
-func execConverged(server incus.InstanceServer, r Resource) (bool, error) {
+func execConverged(server incus.InstanceServer, r Resource, attempts int, delay time.Duration) (bool, error) {
 	inst, _, err := server.GetInstance(r.Instance)
 	if err != nil {
 		return false, nil
 	}
 
 	if len(r.Check) > 0 {
-		attempts, delay := agentRetry(r)
 		code, _, err := incusapi.ExecInGuestWithRetry(server, r.Instance, r.Check, attempts, delay)
 		if err != nil {
 			return false, err
@@ -101,9 +119,19 @@ func execConverged(server incus.InstanceServer, r Resource) (bool, error) {
 // ActionCreate as "the thing this plan decided needs doing," and a
 // second Action value that means exactly the same thing here would just
 // be two names for one concept.
+//
+// Uses planCheckAttempts/planCheckDelay, not agentRetry(r)'s real
+// budget -- see those constants' own doc comment. An ErrAgentNotReady
+// from that single fast attempt is reported the same leniently as a
+// not-yet-existing instance ("would run"), not a hard Plan error: the
+// guest simply hasn't finished booting yet, which Apply (with the real
+// budget) is expected to wait out for real.
 func planExec(server incus.InstanceServer, r Resource) (PlannedResource, error) {
-	converged, err := execConverged(server, r)
+	converged, err := execConverged(server, r, planCheckAttempts, planCheckDelay)
 	if err != nil {
+		if errors.Is(err, incusapi.ErrAgentNotReady) {
+			return PlannedResource{Resource: r, Action: ActionCreate, Changes: []string{fmt.Sprintf("would run: %v (guest agent not ready yet)", r.Command)}}, nil
+		}
 		return PlannedResource{}, err
 	}
 	if converged {
@@ -120,8 +148,9 @@ func planExec(server incus.InstanceServer, r Resource) (PlannedResource, error) 
 // moment it runs, not assumed still true from a moment earlier.
 func runExec(server incus.InstanceServer, r Resource) error {
 	s := scopedServer(server, r)
+	attempts, delay := agentRetry(r)
 
-	converged, err := execConverged(s, r)
+	converged, err := execConverged(s, r, attempts, delay)
 	if err != nil {
 		return err
 	}
@@ -129,7 +158,6 @@ func runExec(server incus.InstanceServer, r Resource) error {
 		return nil
 	}
 
-	attempts, delay := agentRetry(r)
 	code, output, err := incusapi.ExecInGuestWithRetry(s, r.Instance, r.Command, attempts, delay)
 	if err != nil {
 		return err

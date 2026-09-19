@@ -170,6 +170,15 @@ func (d yamlResource) toResource(dir string) (Resource, error) {
 			if err != nil {
 				return Resource{}, fmt.Errorf("resource %q: agent_timeout: %w", d.Name, err)
 			}
+			// time.ParseDuration accepts a negative string ("-5s") without
+			// complaint, but agentRetry's own <= 0 check treats zero and
+			// negative identically ("use the default") -- silently, which
+			// would swallow a typo (a stray "-") as if agent_timeout had
+			// never been set at all instead of reporting it as the invalid
+			// value it actually is.
+			if agentTimeout < 0 {
+				return Resource{}, fmt.Errorf("resource %q: agent_timeout: must not be negative, got %s", d.Name, d.AgentTimeout)
+			}
 		}
 	} else if d.AgentTimeout != "" {
 		return Resource{}, fmt.Errorf("resource %q: agent_timeout is exec-only", d.Name)
