@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	yaml "go.yaml.in/yaml/v4"
 )
@@ -48,6 +49,11 @@ type yamlResource struct {
 	Check    []string `yaml:"check"`
 	Command  []string `yaml:"command"`
 	Triggers []string `yaml:"triggers"`
+
+	// Exec-only. A duration string (e.g. "45s"), parsed below -- see
+	// Resource.AgentTimeout's own doc comment for why this is one
+	// duration rather than separate attempts/delay fields.
+	AgentTimeout string `yaml:"agent_timeout"`
 
 	// Image-only. Source is read at load time like SourcePath above --
 	// relative to this YAML file's own directory. Architecture defaults
@@ -144,6 +150,7 @@ func (d yamlResource) toResource(dir string) (Resource, error) {
 		return Resource{}, fmt.Errorf("resource %q: kind incus requires both check and command", d.Name)
 	}
 
+	var agentTimeout time.Duration
 	if kind == KindExec {
 		if d.Instance == "" {
 			return Resource{}, fmt.Errorf("resource %q: kind exec requires instance", d.Name)
@@ -157,6 +164,15 @@ func (d yamlResource) toResource(dir string) (Resource, error) {
 		if len(d.Check) > 0 && len(d.Triggers) > 0 {
 			return Resource{}, fmt.Errorf("resource %q: kind exec check and triggers are mutually exclusive -- check re-derives convergence from live reality every time, triggers only when no such check can be written at all", d.Name)
 		}
+		if d.AgentTimeout != "" {
+			var err error
+			agentTimeout, err = time.ParseDuration(d.AgentTimeout)
+			if err != nil {
+				return Resource{}, fmt.Errorf("resource %q: agent_timeout: %w", d.Name, err)
+			}
+		}
+	} else if d.AgentTimeout != "" {
+		return Resource{}, fmt.Errorf("resource %q: agent_timeout is exec-only", d.Name)
 	}
 
 	source := d.Source
@@ -189,6 +205,7 @@ func (d yamlResource) toResource(dir string) (Resource, error) {
 		Check:        d.Check,
 		Command:      d.Command,
 		Triggers:     d.Triggers,
+		AgentTimeout: agentTimeout,
 		Alias:        d.Alias,
 		Source:       source,
 		Architecture: architecture,

@@ -4,12 +4,32 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"strings"
+	"time"
 
 	incus "github.com/lxc/incus/v7/client"
 
 	"github.com/minihci/tink/internal/incusapi"
 )
+
+// agentRetry returns the agent-boot retry budget to use for r: the
+// package default when r.AgentTimeout is unset (the common case), or
+// that duration converted to a whole number of DefaultAgentRetryDelay-
+// sized attempts (rounded up) when a slower-booting guest needs more
+// than the default's margin -- see Resource.AgentTimeout's own doc
+// comment for why the cadence itself isn't also overridden here.
+func agentRetry(r Resource) (attempts int, delay time.Duration) {
+	delay = incusapi.DefaultAgentRetryDelay
+	if r.AgentTimeout <= 0 {
+		return incusapi.DefaultAgentRetryAttempts, delay
+	}
+	attempts = int(math.Ceil(float64(r.AgentTimeout) / float64(delay)))
+	if attempts < 1 {
+		attempts = 1
+	}
+	return attempts, delay
+}
 
 // runIncus (plan.go/apply.go) shells out to the incus binary on the host
 // resolve itself runs on; kind: exec instead runs inside the guest
@@ -64,7 +84,8 @@ func execConverged(server incus.InstanceServer, r Resource) (bool, error) {
 	}
 
 	if len(r.Check) > 0 {
-		code, _, err := incusapi.ExecInGuest(server, r.Instance, r.Check)
+		attempts, delay := agentRetry(r)
+		code, _, err := incusapi.ExecInGuestWithRetry(server, r.Instance, r.Check, attempts, delay)
 		if err != nil {
 			return false, err
 		}
@@ -108,7 +129,8 @@ func runExec(server incus.InstanceServer, r Resource) error {
 		return nil
 	}
 
-	code, output, err := incusapi.ExecInGuest(s, r.Instance, r.Command)
+	attempts, delay := agentRetry(r)
+	code, output, err := incusapi.ExecInGuestWithRetry(s, r.Instance, r.Command, attempts, delay)
 	if err != nil {
 		return err
 	}

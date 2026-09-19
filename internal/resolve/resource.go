@@ -16,6 +16,8 @@
 // "this must exist before that."
 package resolve
 
+import "time"
+
 // Kind identifies which Incus object a Resource describes. Scoped to
 // exactly what this platform uses today; not a general-purpose registry
 // the way incus-apply's or Terraform's own resource-type list is.
@@ -171,6 +173,22 @@ type Resource struct {
 	// VM's restart, which a remembered "already ran" marker would have
 	// stayed wrongly confident about.
 	Triggers []string
+
+	// Exec-only. Overrides incusapi's own default agent-boot-readiness
+	// retry budget (see DefaultAgentRetryAttempts/DefaultAgentRetryDelay's
+	// own doc comment) for this specific instance -- zero means "use the
+	// default." A single duration, not separate attempts/delay knobs: the
+	// 1-second cadence is a reasonable default in its own right (nothing
+	// here shares a resource that fixed polling would overload, and there
+	// was no measurement behind picking any other shape), the number that
+	// actually varies by guest is the total budget, and a YAML author
+	// naming a specific instance is exactly who'd know it boots slower
+	// than the 11 seconds this was tuned against -- not something worth
+	// gating behind a tink recompile. AgentTimeout is converted to a
+	// whole number of DefaultAgentRetryDelay-sized attempts (rounded up)
+	// in exec.go's agentRetry, so a caller reasons about one number in
+	// wall-clock terms instead of two coupled, cadence-shaped ones.
+	AgentTimeout time.Duration
 
 	// Image-only: wraps an already-complete VM disk image (a qcow2 or
 	// similar file -- never built from a rootfs; that stays out of

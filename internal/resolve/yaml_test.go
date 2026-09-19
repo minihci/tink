@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestLoadFile_ParsesEveryKindAndField(t *testing.T) {
@@ -328,6 +329,60 @@ func TestLoadFile_ExecCheckAndTriggersMutuallyExclusive(t *testing.T) {
 	}
 	if _, err := LoadFile(filepath.Join(dir, "stack.yaml")); err == nil {
 		t.Error("expected an error when an exec resource has both check and triggers")
+	}
+}
+
+func TestLoadFile_ParsesExecAgentTimeout(t *testing.T) {
+	dir := t.TempDir()
+	stack := "kind: exec\nname: x\ninstance: caddy\ncheck: [true]\ncommand: [true]\nagent_timeout: 45s\n"
+	if err := os.WriteFile(filepath.Join(dir, "stack.yaml"), []byte(stack), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	resources, err := LoadFile(filepath.Join(dir, "stack.yaml"))
+	if err != nil {
+		t.Fatalf("LoadFile() error = %v", err)
+	}
+	if len(resources) != 1 || resources[0].AgentTimeout != 45*time.Second {
+		t.Errorf("LoadFile() = %+v, want AgentTimeout 45s", resources)
+	}
+}
+
+func TestLoadFile_ExecAgentTimeoutDefaultsZero(t *testing.T) {
+	dir := t.TempDir()
+	stack := "kind: exec\nname: x\ninstance: caddy\ncheck: [true]\ncommand: [true]\n"
+	if err := os.WriteFile(filepath.Join(dir, "stack.yaml"), []byte(stack), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	resources, err := LoadFile(filepath.Join(dir, "stack.yaml"))
+	if err != nil {
+		t.Fatalf("LoadFile() error = %v", err)
+	}
+	if len(resources) != 1 || resources[0].AgentTimeout != 0 {
+		t.Errorf("LoadFile() = %+v, want AgentTimeout 0 (use the default)", resources)
+	}
+}
+
+func TestLoadFile_ExecAgentTimeoutInvalidDuration(t *testing.T) {
+	dir := t.TempDir()
+	stack := "kind: exec\nname: x\ninstance: caddy\ncheck: [true]\ncommand: [true]\nagent_timeout: not-a-duration\n"
+	if err := os.WriteFile(filepath.Join(dir, "stack.yaml"), []byte(stack), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadFile(filepath.Join(dir, "stack.yaml")); err == nil {
+		t.Error("expected an error for an unparseable agent_timeout")
+	}
+}
+
+func TestLoadFile_AgentTimeoutIsExecOnly(t *testing.T) {
+	dir := t.TempDir()
+	stack := "kind: project\nname: x\nagent_timeout: 45s\n"
+	if err := os.WriteFile(filepath.Join(dir, "stack.yaml"), []byte(stack), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadFile(filepath.Join(dir, "stack.yaml")); err == nil {
+		t.Error("expected an error when a non-exec resource sets agent_timeout")
 	}
 }
 

@@ -1,6 +1,36 @@
 package resolve
 
-import "testing"
+import (
+	"testing"
+	"time"
+
+	"github.com/minihci/tink/internal/incusapi"
+)
+
+func TestAgentRetry_UnsetTimeoutUsesPackageDefault(t *testing.T) {
+	attempts, delay := agentRetry(Resource{})
+	if attempts != incusapi.DefaultAgentRetryAttempts || delay != incusapi.DefaultAgentRetryDelay {
+		t.Errorf("agentRetry(zero AgentTimeout) = (%d, %v), want (%d, %v)",
+			attempts, delay, incusapi.DefaultAgentRetryAttempts, incusapi.DefaultAgentRetryDelay)
+	}
+}
+
+func TestAgentRetry_ConvertsTimeoutToAttemptsAtDefaultCadence(t *testing.T) {
+	attempts, delay := agentRetry(Resource{AgentTimeout: 45 * time.Second})
+	if delay != incusapi.DefaultAgentRetryDelay {
+		t.Errorf("agentRetry() delay = %v, want the default cadence %v unchanged", delay, incusapi.DefaultAgentRetryDelay)
+	}
+	if attempts != 45 {
+		t.Errorf("agentRetry(45s) attempts = %d, want 45 at a 1s cadence", attempts)
+	}
+}
+
+func TestAgentRetry_RoundsUpPartialAttempt(t *testing.T) {
+	attempts, _ := agentRetry(Resource{AgentTimeout: 1500 * time.Millisecond})
+	if attempts != 2 {
+		t.Errorf("agentRetry(1.5s) attempts = %d, want 2 (rounded up)", attempts)
+	}
+}
 
 func TestTriggerHash_SameInputsSameHash(t *testing.T) {
 	a := triggerHash([]string{"368b", "8d81"})
