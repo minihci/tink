@@ -88,20 +88,3 @@ func (r *runner) runWithRetry(description string, name string, args ...string) e
 	}
 	return fmt.Errorf("giving up after %d attempts: %w", maxAttempts, lastErr)
 }
-
-// incusListNames runs `incus <kind> list -f csv -c n` and returns the
-// resulting names -- read-only, always actually runs even in dry-run mode,
-// since dry-run needs real current state to report accurate plans against.
-func incusListNames(kind string) (map[string]bool, error) {
-	out, err := exec.Command("incus", kind, "list", "-f", "csv", "-c", "n").Output()
-	if err != nil {
-		return nil, fmt.Errorf("incus %s list: %w", kind, err)
-	}
-	names := map[string]bool{}
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if line != "" {
-			names[line] = true
-		}
-	}
-	return names, nil
-}

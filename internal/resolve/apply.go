@@ -236,7 +236,7 @@ func createInstance(server incus.InstanceServer, r Resource) error {
 		Profiles: r.Profiles,
 		VM:       r.VM,
 	}
-	if err := run.Create(spec, r.Project); err != nil {
+	if err := run.Create(server, spec, r.Project); err != nil {
 		return err
 	}
 	s := scopedServer(server, r)

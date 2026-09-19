@@ -7,11 +7,12 @@ package run
 
 import (
 	"fmt"
-	"os/exec"
+	"strings"
 	"time"
 
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
+	"github.com/lxc/incus/v7/shared/cliconfig"
 
 	"github.com/minihci/tink/internal/incusapi"
 )
@@ -108,15 +109,16 @@ func Run(opts Options) (*Result, error) {
 		return result, nil
 	}
 
-	if err := Create(spec, opts.Project); err != nil {
-		return result, err
-	}
-	note("created %s from %s", spec.Name, spec.Image)
-
 	server, err := incusapi.Connect(opts.Socket)
 	if err != nil {
 		return result, fmt.Errorf("connecting to incus: %w", err)
 	}
+
+	if err := Create(server, spec, opts.Project); err != nil {
+		return result, err
+	}
+	note("created %s from %s", spec.Name, spec.Image)
+
 	if opts.Project != "" {
 		server = server.UseProject(opts.Project)
 	}
@@ -134,35 +136,107 @@ func Run(opts Options) (*Result, error) {
 	return result, nil
 }
 
-// Create shells out to `incus init` (create without starting), never
-// `incus launch`: some images (e.g. Postgres, Nextcloud) run a one-shot,
+// Create creates spec's instance without starting it (create, never
+// `incus launch`): some images (e.g. Postgres, Nextcloud) run a one-shot,
 // config-gated action on first boot that needs env vars already present,
 // so config has to be in place before the instance ever starts (see
-// ApplyConfig, EnsureRunning). The remote/image-resolution shell-out
-// itself is unavoidable for the same reason
-// internal/bootstrap/instances.go documents: resolving a reference like
-// "docker-oci:redis:7" means talking to that named remote as an
-// ImageServer, a client-config concept with no daemon API to call
-// instead.
-func Create(spec *Spec, project string) error {
-	args := []string{"init", spec.Image, spec.Name}
-	for _, p := range spec.Profiles {
-		args = append(args, "--profile", p)
-	}
+// ApplyConfig, EnsureRunning). Goes through Incus's real Go client end to
+// end -- CreateInstanceFromImage (client/incus.go) already handles
+// local-vs-remote image resolution internally (the same same-server fast
+// path the daemon's own optimisation uses), so the only piece this still
+// needs to do itself is turning spec.Image's remote:ref syntax into an
+// ImageServer plus a resolved api.Image, the same way incus's own CLI
+// does it (cmd/incus/create.go's getImgInfo) -- read directly rather
+// than reimplemented from guesswork. Client config (remotes) is read via
+// cliconfig.LoadConfig, a real Go API for the same file `incus remote`
+// itself reads and writes -- see internal/bootstrap/registries.go for
+// the same reasoning applied to a read-only remote lookup.
+func Create(server incus.InstanceServer, spec *Spec, project string) error {
+	scoped := server
 	if project != "" {
-		args = append(args, "--project", project)
+		scoped = server.UseProject(project)
 	}
-	if spec.Ephemeral {
-		args = append(args, "--ephemeral")
-	}
-	if spec.VM {
-		args = append(args, "--vm")
-	}
-	out, err := exec.Command("incus", args...).CombinedOutput()
+
+	conf, err := cliconfig.LoadConfig("")
 	if err != nil {
-		return fmt.Errorf("creating %s: %w: %s", spec.Name, err, out)
+		return fmt.Errorf("creating %s: loading incus client config: %w", spec.Name, err)
 	}
-	return nil
+
+	imgServer, imgInfo, err := resolveImage(scoped, conf, spec.Image)
+	if err != nil {
+		return fmt.Errorf("creating %s: %w", spec.Name, err)
+	}
+
+	instanceType := api.InstanceTypeContainer
+	if spec.VM {
+		instanceType = api.InstanceTypeVM
+	}
+
+	op, err := scoped.CreateInstanceFromImage(imgServer, imgInfo, api.InstancesPost{
+		Name: spec.Name,
+		Type: instanceType,
+		InstancePut: api.InstancePut{
+			Profiles:  spec.Profiles,
+			Ephemeral: spec.Ephemeral,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("creating %s: %w", spec.Name, err)
+	}
+	return op.Wait()
+}
+
+// resolveImage splits image the same way incus's own CLI parses a
+// REMOTE:REF image reference (cmd/incus/create.go's getImgInfo) -- but
+// only treats a colon-prefix as a remote name when it actually matches
+// one configured in conf; otherwise the whole string is a bare local
+// reference (this platform's own kind: image resources always resolve
+// to one of these -- an alias with no colon at all -- so this is the
+// common path for tink itself, not just a fallback).
+func resolveImage(scoped incus.InstanceServer, conf *cliconfig.Config, image string) (incus.ImageServer, api.Image, error) {
+	remoteName, ref, hasPrefix := strings.Cut(image, ":")
+	remote, isKnownRemote := conf.Remotes[remoteName]
+	if !hasPrefix || !isKnownRemote {
+		return resolveLocalImage(scoped, image)
+	}
+
+	imgServer, err := conf.GetImageServer(remoteName)
+	if err != nil {
+		return nil, api.Image{}, fmt.Errorf("connecting to remote %q: %w", remoteName, err)
+	}
+
+	if remote.Protocol != "incus" {
+		// Public image servers (simplestreams, oci, ...): the reference
+		// itself is the fingerprint/tag to pull, not an alias to resolve
+		// first -- confirmed by reading getImgInfo's own "optimisation
+		// for public image servers" branch rather than assumed.
+		return imgServer, api.Image{Fingerprint: ref, ImagePut: api.ImagePut{Public: true}}, nil
+	}
+
+	if alias, _, err := imgServer.GetImageAlias(ref); err == nil {
+		ref = alias.Target
+	}
+	imgInfo, _, err := imgServer.GetImage(ref)
+	if err != nil {
+		return nil, api.Image{}, fmt.Errorf("resolving %s: %w", image, err)
+	}
+	return imgServer, *imgInfo, nil
+}
+
+// resolveLocalImage resolves ref (an alias or a bare fingerprint)
+// against scoped directly -- scoped is already project-scoped by
+// Create, and a local image alias lives inside that same project once
+// features.images is enabled, the same isolation confirmed live while
+// building this platform's own haos test project.
+func resolveLocalImage(scoped incus.InstanceServer, ref string) (incus.ImageServer, api.Image, error) {
+	if alias, _, err := scoped.GetImageAlias(ref); err == nil {
+		ref = alias.Target
+	}
+	imgInfo, _, err := scoped.GetImage(ref)
+	if err != nil {
+		return nil, api.Image{}, fmt.Errorf("resolving local image %q: %w", ref, err)
+	}
+	return scoped, *imgInfo, nil
 }
 
 // ApplyConfig sets spec's translated Config and Devices onto the
