@@ -42,7 +42,27 @@ func triggerHashConfigKey(name string) string {
 // check can be written at all (see Resource.Triggers' own doc comment
 // for exactly when that is, and why Check stays preferred whenever one
 // can be written).
+//
+// The instance-existence check up front matches planProject's,
+// planProfile's, planInstance's, planImage's and planFile's own
+// established convention here: a failed Get means "doesn't exist yet,"
+// answered as ActionCreate/not-converged, never propagated as a plan
+// error. Found live, not designed in up front: Plan computes every
+// resource's plan concurrently against current reality (see Plan's own
+// doc comment -- "nothing here depends on another resource existing
+// yet"), so an exec resource targeting an instance that's only *planned*
+// to exist, not created yet, hit this for real the first time this ran
+// against a from-scratch stack -- Check's ExecInstance and Triggers' own
+// GetInstance both fail outright against a project/instance that isn't
+// there yet, and without this guard that surfaced as a hard Plan error
+// instead of the "would create" every other kind already reports
+// correctly in exactly this situation.
 func execConverged(server incus.InstanceServer, r Resource) (bool, error) {
+	inst, _, err := server.GetInstance(r.Instance)
+	if err != nil {
+		return false, nil
+	}
+
 	if len(r.Check) > 0 {
 		code, _, err := incusapi.ExecInGuest(server, r.Instance, r.Check)
 		if err != nil {
@@ -51,10 +71,6 @@ func execConverged(server incus.InstanceServer, r Resource) (bool, error) {
 		return code == 0, nil
 	}
 
-	inst, _, err := server.GetInstance(r.Instance)
-	if err != nil {
-		return false, fmt.Errorf("reading %s to check %s's trigger hash: %w", r.Instance, r.Name, err)
-	}
 	return inst.Config[triggerHashConfigKey(r.Name)] == triggerHash(r.Triggers), nil
 }
 
