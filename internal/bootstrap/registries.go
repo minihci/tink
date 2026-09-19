@@ -1,10 +1,10 @@
 package bootstrap
 
 import (
-	"encoding/csv"
 	"fmt"
-	"os/exec"
 	"strings"
+
+	"github.com/lxc/incus/v7/shared/cliconfig"
 )
 
 // registryHostAndPath splits IMAGE_REGISTRY the same way deploy.sh's own
@@ -18,21 +18,35 @@ func registryHostAndPath(imageRegistry string) (host, path string) {
 	return host, rest + "/"
 }
 
+// currentRemoteURL and remoteExists (below) read the client's own
+// ~/.config/incus/config.yml directly via cliconfig.LoadConfig, the same
+// file `incus remote add/list` themselves read and write -- a real Go
+// API for this exists, unlike the daemon-side objects this whole
+// package increasingly goes through directly, since remotes are client
+// config, not something incusd's HTTP API exposes at all. Reads only:
+// adding/removing a remote (applyRegistries, just below) still shells
+// out, since replicating that safely (cert handling for TLS-secured
+// protocols, safe config-file writes) is a materially bigger, separate
+// piece of work than swapping a read.
 func currentRemoteURL(name string) (string, error) {
-	out, err := exec.Command("incus", "remote", "list", "-f", "csv").Output()
+	conf, err := cliconfig.LoadConfig("")
 	if err != nil {
-		return "", fmt.Errorf("incus remote list: %w", err)
+		return "", fmt.Errorf("loading incus client config: %w", err)
 	}
-	records, err := csv.NewReader(strings.NewReader(string(out))).ReadAll()
+	remote, ok := conf.Remotes[name]
+	if !ok || len(remote.Addrs) == 0 {
+		return "", nil
+	}
+	return remote.Addrs[0], nil
+}
+
+func remoteExists(name string) (bool, error) {
+	conf, err := cliconfig.LoadConfig("")
 	if err != nil {
-		return "", fmt.Errorf("parsing incus remote list output: %w", err)
+		return false, fmt.Errorf("loading incus client config: %w", err)
 	}
-	for _, rec := range records {
-		if len(rec) >= 2 && rec[0] == name {
-			return rec[1], nil
-		}
-	}
-	return "", nil
+	_, ok := conf.Remotes[name]
+	return ok, nil
 }
 
 // applyRegistries ensures the docker-oci remote exists and that
@@ -41,11 +55,11 @@ func currentRemoteURL(name string) (string, error) {
 // silently keep a stale registry across a deploy.env change (this bit
 // incus-host for real once already, see registries.go's git history).
 func applyRegistries(r *runner, opts Options) error {
-	remotes, err := incusListNames("remote")
+	exists, err := remoteExists("docker-oci")
 	if err != nil {
 		return err
 	}
-	if !remotes["docker-oci"] {
+	if !exists {
 		if _, err := r.run("added docker-oci remote", "incus", "remote", "add", "docker-oci", "https://docker.io", "--protocol", "oci"); err != nil {
 			return err
 		}
