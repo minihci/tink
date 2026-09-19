@@ -120,6 +120,9 @@ func LoadFile(path string) ([]Resource, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", path, err)
 		}
+		if err := Validate(r); err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
 		resources = append(resources, r)
 	}
 	return resources, nil
