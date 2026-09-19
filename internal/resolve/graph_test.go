@@ -172,6 +172,19 @@ func TestLevels_FileProjectNotOverriddenWhenExplicitlySet(t *testing.T) {
 	}
 }
 
+func TestLevels_ExecInheritsProjectFromInstance(t *testing.T) {
+	resources := []Resource{
+		{Kind: KindInstance, Name: "caddy", Project: "myproj"},
+		{Kind: KindExec, Name: "caddy-reload", Instance: "caddy", Command: []string{"caddy", "reload"}, Check: []string{"true"}},
+	}
+	if _, err := Levels(resources); err != nil {
+		t.Fatalf("Levels() error = %v", err)
+	}
+	if resources[1].Project != "myproj" {
+		t.Errorf("exec resource's Project = %q, want inherited %q", resources[1].Project, "myproj")
+	}
+}
+
 func TestLevels_ExplicitDependsOn(t *testing.T) {
 	resources := []Resource{
 		{Kind: KindInstance, Name: "app", DependsOn: []string{"db", "redis"}},

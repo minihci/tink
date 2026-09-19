@@ -1,9 +1,14 @@
 // Package resolve is a spike: a lightweight, tink-native version of the
 // resolver half of the architecture in docs/resolver-architecture.md --
 // scoped deliberately to what this platform actually uses (project,
-// profile, storage-volume, instance, file, incus, image), stateless
+// profile, storage-volume, instance, file, incus, image, exec), stateless
 // (diffs live Incus state directly, no separate state file to protect
-// secrets in), and using
+// secrets in) with one narrow, explicit exception -- an exec resource
+// with no observable Check falls back to a Triggers hash recorded on its
+// own target Instance via the same API everything else here already
+// uses, never a new artifact on disk; see Resource.Triggers' own doc
+// comment for why that's scoped to just this one field rather than a
+// general state store -- and using
 // explicit name-matching for structural dependencies (an instance's own
 // Project/Profiles/volume-backed devices) instead of a Terraform-style
 // expression language with deferred-value resolution -- real usage on
@@ -24,6 +29,7 @@ const (
 	KindFile          Kind = "file"
 	KindIncus         Kind = "incus"
 	KindImage         Kind = "image"
+	KindExec          Kind = "exec"
 )
 
 // kindPriority orders resource creation by type, matching the same
@@ -47,6 +53,7 @@ var kindPriority = map[Kind]int{
 	KindImage:         1,
 	KindInstance:      2,
 	KindFile:          3,
+	KindExec:          4,
 }
 
 // Resource is the shared, resolver-agnostic description of one thing
@@ -119,8 +126,51 @@ type Resource struct {
 	// Check would re-run Command on every apply, which is exactly the
 	// "was this already done" question every other resource kind here
 	// answers by reading live Incus state instead.
+	//
+	// Exec-only: Check and Command are reused here for the same
+	// zero-exit-means-converged convention, but run *inside* Instance
+	// over Incus's own WebSocket exec (ExecInstance) instead of shelling
+	// out to the incus binary on the host resolve itself runs on -- the
+	// real primitive this needed (a USB-mode-switched device's driver
+	// finishing its bind, a Caddy reload after a Caddyfile push) lives on
+	// the guest, not the host. See Resource.Triggers' own doc comment for
+	// the one case Check can't cover and what Exec does instead.
 	Check   []string
 	Command []string
+
+	// Exec-only, and mutually exclusive with Check (yaml.go enforces
+	// exactly one of the two, never both, never neither -- an exec
+	// resource with no way at all to tell "already done" from "needs to
+	// run" would silently re-run Command on every apply, the same
+	// footgun Check already exists to close for kind: incus). Triggers
+	// exists for the narrower case Check can't reach: a Command whose
+	// effect leaves nothing live to inspect afterward (a signal, not a
+	// state change -- the Caddy reload this platform already hit once,
+	// documented in docs/resolver-architecture.md's "one real gap, found
+	// and fixed" section, needed exactly this and got it from Terraform's
+	// state file at the time; internal/ingress's own real Caddy reload,
+	// by contrast, never needed this at all -- its apply() diffs its own
+	// generated route files against what's already on disk, a Check in
+	// every way that matters, just computed by the caller before apply()
+	// is ever called rather than passed in as a field here). Converging
+	// here still costs a state file nowhere else in resolve pays -- see
+	// execConverged's own doc comment in exec.go for what that costs and
+	// why it's scoped to only this one field rather than reopening the
+	// package doc comment's stateless claim generally: a sha256 of
+	// Triggers joined by "\x00" is
+	// stored as a user.tink.exec.<Name>.trigger-hash config key on
+	// Instance itself (through the same Incus API every other resource
+	// here already reads/writes, not a new artifact on disk) and compared
+	// on the next plan/apply. A zero-exit Check is preferred wherever one
+	// can be written at all, precisely because it re-derives "already
+	// done" from live reality every time and so self-heals from a
+	// Command whose effect can be undone by something outside resolve's
+	// view entirely -- confirmed live, not hypothetical: the aic8800 USB
+	// WiFi dongle this was built against reverts its own multi-stage
+	// mode-switch back to square one on nothing more than the owning
+	// VM's restart, which a remembered "already ran" marker would have
+	// stayed wrongly confident about.
+	Triggers []string
 
 	// Image-only: wraps an already-complete VM disk image (a qcow2 or
 	// similar file -- never built from a rootfs; that stays out of

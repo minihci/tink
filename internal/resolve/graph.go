@@ -68,19 +68,19 @@ func Levels(resources []Resource) ([][]Resource, error) {
 	return levels, nil
 }
 
-// inheritProject fills in a file resource's own Project from its target
-// Instance's Project, when left unset. Found the hard way, live: leaving
-// a file resource's Project empty falls back to the daemon's default
-// project, silently, the exact same class of mistake as the
+// inheritProject fills in a file or exec resource's own Project from its
+// target Instance's Project, when left unset. Found the hard way, live:
+// leaving a file resource's Project empty falls back to the daemon's
+// default project, silently, the exact same class of mistake as the
 // incus-apply#68 bug this whole exploration started from -- except this
 // time it's a human forgetting to restate a project name that structural
-// inference already knows, not a tool bug. Since a file resource already
-// names its target instance by reference, use that same connection to
-// inherit the project too, rather than trusting every file resource to
-// redeclare something the graph already knows.
+// inference already knows, not a tool bug. Since a file or exec resource
+// already names its target instance by reference, use that same
+// connection to inherit the project too, rather than trusting every one
+// to redeclare something the graph already knows.
 func inheritProject(all map[string]*Resource) {
 	for _, r := range all {
-		if r.Kind == KindFile && r.Project == "" && r.Instance != "" {
+		if (r.Kind == KindFile || r.Kind == KindExec) && r.Project == "" && r.Instance != "" {
 			if target, ok := all[r.Instance]; ok {
 				r.Project = target.Project
 			}

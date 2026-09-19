@@ -79,6 +79,10 @@ func applyOne(server incus.InstanceServer, r Resource, note func(string, ...any)
 		if err := createOne(server, r); err != nil {
 			return err
 		}
+		if r.Kind == KindExec {
+			note("%s/%s: ran %v", r.Kind, r.Name, r.Command)
+			return nil
+		}
 		note("%s/%s: created", r.Kind, r.Name)
 		return nil
 	case ActionUpdate:
@@ -125,6 +129,8 @@ func createOne(server incus.InstanceServer, r Resource) error {
 		return runIncus(r)
 	case KindImage:
 		return createImage(server, r)
+	case KindExec:
+		return runExec(server, r)
 	default:
 		return fmt.Errorf("unknown kind %q", r.Kind)
 	}

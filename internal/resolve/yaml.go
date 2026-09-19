@@ -41,8 +41,13 @@ type yamlResource struct {
 	// import, /path/to.qcow2, --alias, haos-x86-64]` -- never a shell
 	// string, so there's no quoting/escaping question and no way to run
 	// anything but the incus CLI itself.
-	Check   []string `yaml:"check"`
-	Command []string `yaml:"command"`
+	//
+	// Check, Command and Triggers are also exec-only -- see
+	// Resource.Check's and Resource.Triggers' own doc comments for what
+	// each field means there instead.
+	Check    []string `yaml:"check"`
+	Command  []string `yaml:"command"`
+	Triggers []string `yaml:"triggers"`
 
 	// Image-only. Source is read at load time like SourcePath above --
 	// relative to this YAML file's own directory. Architecture defaults
@@ -139,6 +144,21 @@ func (d yamlResource) toResource(dir string) (Resource, error) {
 		return Resource{}, fmt.Errorf("resource %q: kind incus requires both check and command", d.Name)
 	}
 
+	if kind == KindExec {
+		if d.Instance == "" {
+			return Resource{}, fmt.Errorf("resource %q: kind exec requires instance", d.Name)
+		}
+		if len(d.Command) == 0 {
+			return Resource{}, fmt.Errorf("resource %q: kind exec requires command", d.Name)
+		}
+		if len(d.Check) == 0 && len(d.Triggers) == 0 {
+			return Resource{}, fmt.Errorf("resource %q: kind exec requires either check or triggers, to answer \"was this already done\" -- see Resource.Check's and Resource.Triggers' own doc comments", d.Name)
+		}
+		if len(d.Check) > 0 && len(d.Triggers) > 0 {
+			return Resource{}, fmt.Errorf("resource %q: kind exec check and triggers are mutually exclusive -- check re-derives convergence from live reality every time, triggers only when no such check can be written at all", d.Name)
+		}
+	}
+
 	source := d.Source
 	architecture := d.Architecture
 	if kind == KindImage {
@@ -168,6 +188,7 @@ func (d yamlResource) toResource(dir string) (Resource, error) {
 		Restart:      d.Restart,
 		Check:        d.Check,
 		Command:      d.Command,
+		Triggers:     d.Triggers,
 		Alias:        d.Alias,
 		Source:       source,
 		Architecture: architecture,
