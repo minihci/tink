@@ -2,6 +2,15 @@ package resolve
 
 import "testing"
 
+// planIncus itself (like Create/pushFile/runIncus elsewhere in this
+// package) is deliberately not unit-tested: it shells out to the real
+// `incus` binary, which this repo's own CI runner doesn't have
+// installed at all -- confirmed live the hard way (a version of this
+// file assumed a bare client binary would always be present, without
+// even a daemon, and that broke CI). No Incus dependency at all is what
+// earns real test coverage in this package; see flags_test.go's own
+// package doc for the same reasoning applied to tink run's Build().
+
 func TestDiffConfig_ReportsMissingKey(t *testing.T) {
 	changes := diffConfig(map[string]string{}, map[string]string{"limits.cpu": "1"})
 	if len(changes) != 1 {

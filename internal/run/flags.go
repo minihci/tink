@@ -18,6 +18,7 @@ type Spec struct {
 	Devices   map[string]map[string]string
 	Profiles  []string
 	Ephemeral bool
+	VM        bool
 }
 
 // Build translates already-parsed docker-run-style flag values (Options,
@@ -40,6 +41,7 @@ func Build(opts Options) (*Spec, error) {
 		Devices:   map[string]map[string]string{},
 		Profiles:  opts.Profiles,
 		Ephemeral: opts.Rm,
+		VM:        opts.VM,
 	}
 
 	for _, e := range opts.Env {

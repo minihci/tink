@@ -219,3 +219,23 @@ func TestBuild_NoRmMeansNotEphemeral(t *testing.T) {
 		t.Error("Ephemeral = true, want false when --rm is not given")
 	}
 }
+
+func TestBuild_VM(t *testing.T) {
+	spec, err := Build(Options{Name: "n", Image: "i", VM: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !spec.VM {
+		t.Error("VM = false, want true when --vm is given")
+	}
+}
+
+func TestBuild_NoVMMeansContainer(t *testing.T) {
+	spec, err := Build(Options{Name: "n", Image: "i"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if spec.VM {
+		t.Error("VM = true, want false when --vm is not given")
+	}
+}

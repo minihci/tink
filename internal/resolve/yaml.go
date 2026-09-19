@@ -22,6 +22,7 @@ type yamlResource struct {
 	DependsOn []string                     `yaml:"depends_on"`
 	Image     string                       `yaml:"image"`
 	Profiles  []string                     `yaml:"profiles"`
+	VM        bool                         `yaml:"vm"`
 	Pool      string                       `yaml:"pool"`
 	Config    map[string]string            `yaml:"config"`
 	Devices   map[string]map[string]string `yaml:"devices"`
@@ -31,7 +32,27 @@ type yamlResource struct {
 	Path       string `yaml:"path"`
 	Content    string `yaml:"content"`
 	SourcePath string `yaml:"source_path"` // read at load time, relative to this YAML file's own directory
-	Restart    bool   `yaml:"restart"`
+
+	// Shared between File and Instance -- see Resource.Restart's own doc
+	// comment.
+	Restart bool `yaml:"restart"`
+
+	// Incus-only. Both are argv for the incus binary, e.g. `command: [image,
+	// import, /path/to.qcow2, --alias, haos-x86-64]` -- never a shell
+	// string, so there's no quoting/escaping question and no way to run
+	// anything but the incus CLI itself.
+	Check   []string `yaml:"check"`
+	Command []string `yaml:"command"`
+
+	// Image-only. Source is read at load time like SourcePath above --
+	// relative to this YAML file's own directory. Architecture defaults
+	// to "x86_64" when left empty. Properties is its own field (not
+	// Config above) since an image has no "config" concept in Incus at
+	// all -- see Resource.Properties' own doc comment.
+	Alias        string            `yaml:"alias"`
+	Source       string            `yaml:"source"`
+	Architecture string            `yaml:"architecture"`
+	Properties   map[string]string `yaml:"properties"`
 }
 
 // DefaultFile is what tink plan / tink plan apply read when given no
@@ -114,19 +135,42 @@ func (d yamlResource) toResource(dir string) (Resource, error) {
 		content = string(data)
 	}
 
+	if kind == KindIncus && (len(d.Check) == 0 || len(d.Command) == 0) {
+		return Resource{}, fmt.Errorf("resource %q: kind incus requires both check and command", d.Name)
+	}
+
+	source := d.Source
+	architecture := d.Architecture
+	if kind == KindImage {
+		if d.Alias == "" || d.Source == "" {
+			return Resource{}, fmt.Errorf("resource %q: kind image requires both alias and source", d.Name)
+		}
+		source = filepath.Join(dir, d.Source)
+		if architecture == "" {
+			architecture = "x86_64"
+		}
+	}
+
 	return Resource{
-		Kind:      kind,
-		Name:      d.Name,
-		Project:   d.Project,
-		DependsOn: d.DependsOn,
-		Image:     d.Image,
-		Profiles:  d.Profiles,
-		Pool:      d.Pool,
-		Config:    d.Config,
-		Devices:   d.Devices,
-		Instance:  d.Instance,
-		Path:      d.Path,
-		Content:   content,
-		Restart:   d.Restart,
+		Kind:         kind,
+		Name:         d.Name,
+		Project:      d.Project,
+		DependsOn:    d.DependsOn,
+		Image:        d.Image,
+		Profiles:     d.Profiles,
+		VM:           d.VM,
+		Pool:         d.Pool,
+		Config:       d.Config,
+		Devices:      d.Devices,
+		Instance:     d.Instance,
+		Path:         d.Path,
+		Content:      content,
+		Restart:      d.Restart,
+		Check:        d.Check,
+		Command:      d.Command,
+		Alias:        d.Alias,
+		Source:       source,
+		Architecture: architecture,
+		Properties:   d.Properties,
 	}, nil
 }
