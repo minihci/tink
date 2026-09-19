@@ -94,6 +94,8 @@ func planOne(server incus.InstanceServer, r Resource) (PlannedResource, error) {
 		return planIncus(r)
 	case KindImage:
 		return planImage(s, r)
+	case KindExec:
+		return planExec(s, r)
 	default:
 		return PlannedResource{}, fmt.Errorf("unknown kind %q", r.Kind)
 	}

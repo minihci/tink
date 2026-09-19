@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	yaml "go.yaml.in/yaml/v4"
 )
@@ -41,8 +42,18 @@ type yamlResource struct {
 	// import, /path/to.qcow2, --alias, haos-x86-64]` -- never a shell
 	// string, so there's no quoting/escaping question and no way to run
 	// anything but the incus CLI itself.
-	Check   []string `yaml:"check"`
-	Command []string `yaml:"command"`
+	//
+	// Check, Command and Triggers are also exec-only -- see
+	// Resource.Check's and Resource.Triggers' own doc comments for what
+	// each field means there instead.
+	Check    []string `yaml:"check"`
+	Command  []string `yaml:"command"`
+	Triggers []string `yaml:"triggers"`
+
+	// Exec-only. A duration string (e.g. "45s"), parsed below -- see
+	// Resource.AgentTimeout's own doc comment for why this is one
+	// duration rather than separate attempts/delay fields.
+	AgentTimeout string `yaml:"agent_timeout"`
 
 	// Image-only. Source is read at load time like SourcePath above --
 	// relative to this YAML file's own directory. Architecture defaults
@@ -109,6 +120,9 @@ func LoadFile(path string) ([]Resource, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", path, err)
 		}
+		if err := Validate(r); err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
 		resources = append(resources, r)
 	}
 	return resources, nil
@@ -137,6 +151,40 @@ func (d yamlResource) toResource(dir string) (Resource, error) {
 
 	if kind == KindIncus && (len(d.Check) == 0 || len(d.Command) == 0) {
 		return Resource{}, fmt.Errorf("resource %q: kind incus requires both check and command", d.Name)
+	}
+
+	var agentTimeout time.Duration
+	if kind == KindExec {
+		if d.Instance == "" {
+			return Resource{}, fmt.Errorf("resource %q: kind exec requires instance", d.Name)
+		}
+		if len(d.Command) == 0 {
+			return Resource{}, fmt.Errorf("resource %q: kind exec requires command", d.Name)
+		}
+		if len(d.Check) == 0 && len(d.Triggers) == 0 {
+			return Resource{}, fmt.Errorf("resource %q: kind exec requires either check or triggers, to answer \"was this already done\" -- see Resource.Check's and Resource.Triggers' own doc comments", d.Name)
+		}
+		if len(d.Check) > 0 && len(d.Triggers) > 0 {
+			return Resource{}, fmt.Errorf("resource %q: kind exec check and triggers are mutually exclusive -- check re-derives convergence from live reality every time, triggers only when no such check can be written at all", d.Name)
+		}
+		if d.AgentTimeout != "" {
+			var err error
+			agentTimeout, err = time.ParseDuration(d.AgentTimeout)
+			if err != nil {
+				return Resource{}, fmt.Errorf("resource %q: agent_timeout: %w", d.Name, err)
+			}
+			// time.ParseDuration accepts a negative string ("-5s") without
+			// complaint, but agentRetry's own <= 0 check treats zero and
+			// negative identically ("use the default") -- silently, which
+			// would swallow a typo (a stray "-") as if agent_timeout had
+			// never been set at all instead of reporting it as the invalid
+			// value it actually is.
+			if agentTimeout < 0 {
+				return Resource{}, fmt.Errorf("resource %q: agent_timeout: must not be negative, got %s", d.Name, d.AgentTimeout)
+			}
+		}
+	} else if d.AgentTimeout != "" {
+		return Resource{}, fmt.Errorf("resource %q: agent_timeout is exec-only", d.Name)
 	}
 
 	source := d.Source
@@ -168,6 +216,8 @@ func (d yamlResource) toResource(dir string) (Resource, error) {
 		Restart:      d.Restart,
 		Check:        d.Check,
 		Command:      d.Command,
+		Triggers:     d.Triggers,
+		AgentTimeout: agentTimeout,
 		Alias:        d.Alias,
 		Source:       source,
 		Architecture: architecture,

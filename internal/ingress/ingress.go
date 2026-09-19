@@ -73,7 +73,7 @@ func Reconcile(opts Options) (*Result, error) {
 		return result, nil
 	}
 
-	if err := apply(opts.RoutesDir, opts.IngressInstance, desired); err != nil {
+	if err := apply(server, opts.RoutesDir, opts.IngressInstance, desired); err != nil {
 		return nil, err
 	}
 	result.Applied = true

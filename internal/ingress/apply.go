@@ -3,9 +3,12 @@ package ingress
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
+
+	incus "github.com/lxc/incus/v7/client"
+
+	"github.com/minihci/tink/internal/incusapi"
 )
 
 // Diff reports which generated route files would be added, removed, or
@@ -71,12 +74,17 @@ func computeDiff(current, desired map[string]string) Diff {
 // apply performs a full rebuild of dir's *.caddy files to match desired --
 // not an incremental patch, so a deregistered or deleted instance's stale
 // route actually goes away instead of accumulating -- then gracefully
-// reloads Caddy via `incus exec`, matching reconcile.sh exactly. This
-// shells out to the incus CLI rather than the Go client's own exec API
-// deliberately: it's a single already-proven command, and pulling in the
-// client's websocket-based exec protocol for it would be scope beyond
-// what this first port needs.
-func apply(dir, ingressInstance string, desired map[string]string) error {
+// reloads Caddy. Deliberate difference from reconcile.sh, called out per
+// this package's own doc comment: reconcile.sh and this port's own first
+// version both shelled out to the incus CLI (exec.Command("incus", "exec",
+// ...)) for this, a "scope beyond what this first port needs" this
+// function's own comment used to say -- that scope arrived for real the
+// moment resolve's kind: exec needed the exact same guest-side exec
+// primitive for the exact same reason (a USB device's driver bind, this
+// same Caddy reload), so incusapi.ExecInGuest now lives in the shared
+// package both callers already depend on rather than staying duplicated
+// or shelled out to a binary that has to be on PATH.
+func apply(server incus.InstanceServer, dir, ingressInstance string, desired map[string]string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("creating %s: %w", dir, err)
 	}
@@ -99,9 +107,12 @@ func apply(dir, ingressInstance string, desired map[string]string) error {
 		}
 	}
 
-	cmd := exec.Command("incus", "exec", ingressInstance, "--", "caddy", "reload", "--config", "/etc/caddy/Caddyfile")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("reloading caddy: %w (%s)", err, output)
+	code, output, err := incusapi.ExecInGuest(server, ingressInstance, []string{"caddy", "reload", "--config", "/etc/caddy/Caddyfile"})
+	if err != nil {
+		return fmt.Errorf("reloading caddy: %w", err)
+	}
+	if code != 0 {
+		return fmt.Errorf("reloading caddy: exit %d: %s", code, output)
 	}
 	return nil
 }

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestLoadFile_ParsesEveryKindAndField(t *testing.T) {
@@ -247,6 +248,152 @@ func TestLoadFile_IncusRequiresCommand(t *testing.T) {
 	}
 	if _, err := LoadFile(filepath.Join(dir, "stack.yaml")); err == nil {
 		t.Error("expected an error when an incus resource has no command")
+	}
+}
+
+func TestLoadFile_ParsesExecCheckAndCommand(t *testing.T) {
+	dir := t.TempDir()
+	stack := "kind: exec\nname: caddy-reload\ninstance: caddy\ncheck: [sh, -c, false]\ncommand: [caddy, reload, --config, /etc/caddy/Caddyfile]\n"
+	if err := os.WriteFile(filepath.Join(dir, "stack.yaml"), []byte(stack), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	resources, err := LoadFile(filepath.Join(dir, "stack.yaml"))
+	if err != nil {
+		t.Fatalf("LoadFile() error = %v", err)
+	}
+	wantCheck := []string{"sh", "-c", "false"}
+	wantCommand := []string{"caddy", "reload", "--config", "/etc/caddy/Caddyfile"}
+	if len(resources) != 1 || resources[0].Instance != "caddy" ||
+		!reflect.DeepEqual(resources[0].Check, wantCheck) ||
+		!reflect.DeepEqual(resources[0].Command, wantCommand) {
+		t.Errorf("LoadFile() = %+v, want instance caddy, Check %v and Command %v", resources, wantCheck, wantCommand)
+	}
+}
+
+func TestLoadFile_ParsesExecTriggers(t *testing.T) {
+	dir := t.TempDir()
+	stack := "kind: exec\nname: new-id\ninstance: aic8800-driver-test\ntriggers: [\"368b:8d81\"]\ncommand: [sh, -c, echo 368b 8d81 > /sys/bus/usb/drivers/aic8800_fdrv/new_id]\n"
+	if err := os.WriteFile(filepath.Join(dir, "stack.yaml"), []byte(stack), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	resources, err := LoadFile(filepath.Join(dir, "stack.yaml"))
+	if err != nil {
+		t.Fatalf("LoadFile() error = %v", err)
+	}
+	wantTriggers := []string{"368b:8d81"}
+	if len(resources) != 1 || !reflect.DeepEqual(resources[0].Triggers, wantTriggers) {
+		t.Errorf("LoadFile() = %+v, want Triggers %v", resources, wantTriggers)
+	}
+}
+
+func TestLoadFile_ExecRequiresInstance(t *testing.T) {
+	dir := t.TempDir()
+	stack := "kind: exec\nname: x\ncheck: [true]\ncommand: [true]\n"
+	if err := os.WriteFile(filepath.Join(dir, "stack.yaml"), []byte(stack), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadFile(filepath.Join(dir, "stack.yaml")); err == nil {
+		t.Error("expected an error when an exec resource has no instance")
+	}
+}
+
+func TestLoadFile_ExecRequiresCommand(t *testing.T) {
+	dir := t.TempDir()
+	stack := "kind: exec\nname: x\ninstance: caddy\ncheck: [true]\n"
+	if err := os.WriteFile(filepath.Join(dir, "stack.yaml"), []byte(stack), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadFile(filepath.Join(dir, "stack.yaml")); err == nil {
+		t.Error("expected an error when an exec resource has no command")
+	}
+}
+
+func TestLoadFile_ExecRequiresCheckOrTriggers(t *testing.T) {
+	dir := t.TempDir()
+	stack := "kind: exec\nname: x\ninstance: caddy\ncommand: [true]\n"
+	if err := os.WriteFile(filepath.Join(dir, "stack.yaml"), []byte(stack), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadFile(filepath.Join(dir, "stack.yaml")); err == nil {
+		t.Error("expected an error when an exec resource has neither check nor triggers")
+	}
+}
+
+func TestLoadFile_ExecCheckAndTriggersMutuallyExclusive(t *testing.T) {
+	dir := t.TempDir()
+	stack := "kind: exec\nname: x\ninstance: caddy\ncheck: [true]\ntriggers: [a]\ncommand: [true]\n"
+	if err := os.WriteFile(filepath.Join(dir, "stack.yaml"), []byte(stack), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadFile(filepath.Join(dir, "stack.yaml")); err == nil {
+		t.Error("expected an error when an exec resource has both check and triggers")
+	}
+}
+
+func TestLoadFile_ParsesExecAgentTimeout(t *testing.T) {
+	dir := t.TempDir()
+	stack := "kind: exec\nname: x\ninstance: caddy\ncheck: [true]\ncommand: [true]\nagent_timeout: 45s\n"
+	if err := os.WriteFile(filepath.Join(dir, "stack.yaml"), []byte(stack), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	resources, err := LoadFile(filepath.Join(dir, "stack.yaml"))
+	if err != nil {
+		t.Fatalf("LoadFile() error = %v", err)
+	}
+	if len(resources) != 1 || resources[0].AgentTimeout != 45*time.Second {
+		t.Errorf("LoadFile() = %+v, want AgentTimeout 45s", resources)
+	}
+}
+
+func TestLoadFile_ExecAgentTimeoutDefaultsZero(t *testing.T) {
+	dir := t.TempDir()
+	stack := "kind: exec\nname: x\ninstance: caddy\ncheck: [true]\ncommand: [true]\n"
+	if err := os.WriteFile(filepath.Join(dir, "stack.yaml"), []byte(stack), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	resources, err := LoadFile(filepath.Join(dir, "stack.yaml"))
+	if err != nil {
+		t.Fatalf("LoadFile() error = %v", err)
+	}
+	if len(resources) != 1 || resources[0].AgentTimeout != 0 {
+		t.Errorf("LoadFile() = %+v, want AgentTimeout 0 (use the default)", resources)
+	}
+}
+
+func TestLoadFile_ExecAgentTimeoutInvalidDuration(t *testing.T) {
+	dir := t.TempDir()
+	stack := "kind: exec\nname: x\ninstance: caddy\ncheck: [true]\ncommand: [true]\nagent_timeout: not-a-duration\n"
+	if err := os.WriteFile(filepath.Join(dir, "stack.yaml"), []byte(stack), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadFile(filepath.Join(dir, "stack.yaml")); err == nil {
+		t.Error("expected an error for an unparseable agent_timeout")
+	}
+}
+
+func TestLoadFile_ExecAgentTimeoutRejectsNegative(t *testing.T) {
+	dir := t.TempDir()
+	stack := "kind: exec\nname: x\ninstance: caddy\ncheck: [true]\ncommand: [true]\nagent_timeout: -5s\n"
+	if err := os.WriteFile(filepath.Join(dir, "stack.yaml"), []byte(stack), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadFile(filepath.Join(dir, "stack.yaml")); err == nil {
+		t.Error("expected an error for a negative agent_timeout, not a silent fallback to the default")
+	}
+}
+
+func TestLoadFile_AgentTimeoutIsExecOnly(t *testing.T) {
+	dir := t.TempDir()
+	stack := "kind: project\nname: x\nagent_timeout: 45s\n"
+	if err := os.WriteFile(filepath.Join(dir, "stack.yaml"), []byte(stack), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadFile(filepath.Join(dir, "stack.yaml")); err == nil {
+		t.Error("expected an error when a non-exec resource sets agent_timeout")
 	}
 }
 
