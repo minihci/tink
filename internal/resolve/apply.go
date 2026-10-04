@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	incus "github.com/lxc/incus/v7/client"
@@ -17,87 +16,8 @@ import (
 	"github.com/lxc/incus/v7/shared/archive"
 	yaml "go.yaml.in/yaml/v4"
 
-	"github.com/minihci/tink/internal/incusapi"
 	"github.com/minihci/tink/internal/run"
 )
-
-// Apply walks resources level by level (see Levels): every resource
-// within one level runs concurrently, since none of them depend on each
-// other, and the next level only starts once the current one finishes
-// entirely. This is the same parallel-within-a-level, serial-across-
-// levels shape we watched Terraform's own engine execute against the
-// real nextcloud-tink-test stack -- nobody writes the order by hand.
-func Apply(socket string, resources []Resource) ([]string, error) {
-	levels, err := Levels(resources)
-	if err != nil {
-		return nil, err
-	}
-
-	server, err := incusapi.Connect(socket)
-	if err != nil {
-		return nil, fmt.Errorf("connecting to incus: %w", err)
-	}
-
-	var actions []string
-	var mu sync.Mutex
-	note := func(format string, args ...any) {
-		mu.Lock()
-		actions = append(actions, fmt.Sprintf(format, args...))
-		mu.Unlock()
-	}
-
-	for _, level := range levels {
-		var wg sync.WaitGroup
-		errs := make([]error, len(level))
-		for i, r := range level {
-			wg.Add(1)
-			go func(i int, r Resource) {
-				defer wg.Done()
-				errs[i] = applyOne(server, r, note)
-			}(i, r)
-		}
-		wg.Wait()
-		for i, err := range errs {
-			if err != nil {
-				return actions, fmt.Errorf("%s/%s: %w", level[i].Kind, level[i].Name, err)
-			}
-		}
-	}
-	return actions, nil
-}
-
-func applyOne(server incus.InstanceServer, r Resource, note func(string, ...any)) error {
-	plan, err := planOne(server, r)
-	if err != nil {
-		return err
-	}
-	switch plan.Action {
-	case ActionNone:
-		note("%s/%s: no changes", r.Kind, r.Name)
-		return nil
-	case ActionCreate:
-		if err := createOne(server, r); err != nil {
-			return err
-		}
-		if r.Kind == KindExec {
-			note("%s/%s: ran %v", r.Kind, r.Name, r.Command)
-			return nil
-		}
-		note("%s/%s: created", r.Kind, r.Name)
-		return nil
-	case ActionUpdate:
-		if err := updateOne(server, r); err != nil {
-			return err
-		}
-		if r.Kind == KindInstance && r.Restart {
-			note("%s/%s: updated and restarted (%v)", r.Kind, r.Name, plan.Changes)
-			return nil
-		}
-		note("%s/%s: updated (%v)", r.Kind, r.Name, plan.Changes)
-		return nil
-	}
-	return nil
-}
 
 func createOne(server incus.InstanceServer, r Resource) error {
 	switch r.Kind {

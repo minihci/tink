@@ -306,3 +306,38 @@ DefaultFile`), the same role `docker-compose.yml`/`kustomization.yaml`
 play for their own tools. Not a thing a translator's output would ever
 need — nobody runs `tink run` or a future Pod-spec import with no
 arguments and expects it to find something on disk by convention.
+
+
+## Update, 2026-10-04: an instance's image is no longer create-only
+
+`resolve` treated an instance's `image:` as create-only: bump a tag and
+`plan` reported "no changes", `apply` exited 0, and if the same edit also
+changed `config:` it was written onto the old image. That is now closed;
+[`docs/image-updates.md`](image-updates.md) is the user-facing description.
+`plan` reports image drift, a per-instance `on_image_change` policy says
+whether `apply` blocks on it (`report`, the default), tolerates it
+(`ignore`), or converges it by rebuilding the root filesystem (`rebuild`,
+OCI app containers only, digest-pinned images only), and `plan apply` ends
+with a summary line and a non-zero exit status whenever it leaves anything
+blocked.
+
+Building it corrected two assumptions worth keeping. First, an instance's
+`image.id` is not an identity: it is a property of whichever cached image
+record first held that content, as typed at that pull, so three instances
+made from the same bytes by a tag, a digest and both together all report the
+same `image.id`, and an obvious "compare the reference strings" check
+reported drift between two names for identical content. What identifies an
+OCI image is its fingerprint, which Incus derives from the layer digests and
+records as `volatile.base_image`; comparing it needs a registry lookup, so
+`plan` now makes one (`--offline` opts out). Second, `incus rebuild` is not
+the same as creating the instance again: it is not atomic (it deletes the
+root volume and then creates the new one), it downloads the image only
+after the instance is stopped, and it leaves the `oci.*` and `environment.*`
+keys copied from the *old* image untouched. The runtime-config check and the
+pre-pull exist because of those three facts, each of which was confirmed
+against the Incus source and a live daemon.
+
+This also makes the scope boundary above stale in one respect: "no in-place
+instance reconfiguration" has been untrue since existing instances started
+converging in place, and image changes are now handled as described, though
+only through an explicit opt-in.

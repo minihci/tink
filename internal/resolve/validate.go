@@ -15,24 +15,26 @@ import (
 // this package's existing "deliberately small substitute" approach
 // (see resource.go's own package doc comment).
 var fieldOwners = map[string][]Kind{
-	"Image":        {KindInstance},
-	"Profiles":     {KindInstance},
-	"VM":           {KindInstance},
-	"Pool":         {KindStorageVolume},
-	"Config":       {KindProject, KindProfile, KindInstance},
-	"Devices":      {KindProfile, KindInstance},
-	"Instance":     {KindFile, KindExec},
-	"Path":         {KindFile},
-	"Content":      {KindFile},
-	"Restart":      {KindFile, KindInstance},
-	"Check":        {KindIncus, KindExec},
-	"Command":      {KindIncus, KindExec},
-	"Triggers":     {KindExec},
-	"AgentTimeout": {KindExec},
-	"Alias":        {KindImage},
-	"Source":       {KindImage},
-	"Architecture": {KindImage},
-	"Properties":   {KindImage},
+	"Image":           {KindInstance},
+	"Profiles":        {KindInstance},
+	"VM":              {KindInstance},
+	"Pool":            {KindStorageVolume},
+	"Config":          {KindProject, KindProfile, KindInstance},
+	"Devices":         {KindProfile, KindInstance},
+	"Instance":        {KindFile, KindExec},
+	"Path":            {KindFile},
+	"Content":         {KindFile},
+	"Restart":         {KindFile, KindInstance},
+	"OnImageChange":   {KindInstance},
+	"SnapshotVolumes": {KindInstance},
+	"Check":           {KindIncus, KindExec},
+	"Command":         {KindIncus, KindExec},
+	"Triggers":        {KindExec},
+	"AgentTimeout":    {KindExec},
+	"Alias":           {KindImage},
+	"Source":          {KindImage},
+	"Architecture":    {KindImage},
+	"Properties":      {KindImage},
 }
 
 // Validate rejects a Resource that sets a field its own Kind doesn't
@@ -59,7 +61,7 @@ func Validate(r Resource) error {
 			return fmt.Errorf("resource %q: kind %q does not use field %q", r.Name, r.Kind, name)
 		}
 	}
-	return nil
+	return validateOnImageChange(r)
 }
 
 func kindAllowed(k Kind, owners []Kind) bool {

@@ -47,6 +47,12 @@ level concurrently - see
 [`docs/resolver-architecture.md`](docs/resolver-architecture.md) for the
 full design and why its own YAML, not a Kubernetes-Pod-spec or
 docker-run-flags translation, is the primary way to author one of these.
+`plan` also compares the image each instance was built from with the
+image its YAML names, and `plan apply` exits non-zero when it leaves
+anything blocked; an instance's `on_image_change` field says whether
+image drift is reported, ignored, or converged by rebuilding an OCI app
+container onto a digest-pinned image - see
+[`docs/image-updates.md`](docs/image-updates.md).
 `ingress reconcile` discovers instances that opt in via
 `user.ingress.{domain,port,enabled}` config and converges the shared
 `ingress` instance's routes to match, without a restart or a manual file
