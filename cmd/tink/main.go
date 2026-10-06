@@ -246,7 +246,9 @@ docs/secrets.md). plan never prints a secret, or the value it replaces.
 Every storage-volume should also answer "how is this backed up?" with a
 backup: block -- scheduled snapshots, or an explicit none: with a reason.
 For now a volume that does not only gets a warning; that will become an
-error. See docs/volume-backup.md.`, resolve.DefaultFile),
+error. A volume can also declare copies to kind: backup-target resources;
+plan checks them against 3-2-1 and warns, but nothing runs them yet.
+See docs/volume-backup.md.`, resolve.DefaultFile),
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			resources, err := resolve.LoadFiles(args)
@@ -264,7 +266,9 @@ error. See docs/volume-backup.md.`, resolve.DefaultFile),
 			if err != nil {
 				return fmt.Errorf("connecting to incus: %w", err)
 			}
-			opts := resolve.NewPlanOptions(offline)
+			// Planned one dependency level at a time, but a volume's 3-2-1 check needs the
+			// backup targets from an earlier level, so hand the options the whole stack.
+			opts := resolve.NewPlanOptions(offline).ForResources(resources)
 			for i, level := range levels {
 				fmt.Fprintf(cmd.OutOrStdout(), "level %d:\n", i)
 				plans, err := resolve.PlanWithOptions(server, level, opts)

@@ -15,6 +15,30 @@ type PlanOptions struct {
 	Offline bool
 
 	env *imageEnv
+
+	// targets are the WHOLE stack's backup-target resources, which a volume's
+	// 3-2-1 check needs. Set by ForResources; a caller that plans one dependency
+	// level at a time (as `tink plan` does) must call it with the full stack,
+	// because the targets and the volumes that copy to them land in different
+	// levels. PlanWithOptions/ApplyWithOptions only fill it in when it is unset.
+	targets map[string]Resource
+}
+
+// ForResources returns the options carrying the backup targets of the full
+// stack, so planning a subset of it (one level) can still judge a volume's
+// copies against the targets declared elsewhere in the stack.
+func (o PlanOptions) ForResources(resources []Resource) PlanOptions {
+	o.targets = backupTargets(resources)
+	return o
+}
+
+// withTargets fills the targets in from resources unless the caller already
+// supplied the full stack's: a subset must never replace them.
+func (o PlanOptions) withTargets(resources []Resource) PlanOptions {
+	if o.targets == nil {
+		o.targets = backupTargets(resources)
+	}
+	return o
 }
 
 // NewPlanOptions builds options with one registry cache shared by every

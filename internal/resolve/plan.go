@@ -65,6 +65,7 @@ func PlanWithOptions(server incus.InstanceServer, resources []Resource, opts Pla
 	if opts.env == nil {
 		opts.env = newImageEnv(opts.Offline)
 	}
+	opts = opts.withTargets(resources)
 	plans := make([]PlannedResource, len(resources))
 	errs := make([]error, len(resources))
 
@@ -112,7 +113,10 @@ func planOne(server incus.InstanceServer, r Resource, opts PlanOptions) (Planned
 	case KindProfile:
 		return planProfile(s, r)
 	case KindStorageVolume:
-		return planStorageVolume(s, r)
+		return planStorageVolume(s, r, opts.targets)
+	case KindBackupTarget:
+		// A declaration only: there is no Incus object to create or converge.
+		return PlannedResource{Resource: r, Action: ActionNone}, nil
 	case KindInstance:
 		return planInstance(s, r, opts)
 	case KindFile:
@@ -153,7 +157,7 @@ func planProfile(server incus.InstanceServer, r Resource) (PlannedResource, erro
 	return PlannedResource{Resource: r, Action: ActionUpdate, Changes: changes}, nil
 }
 
-func planStorageVolume(server incus.InstanceServer, r Resource) (PlannedResource, error) {
+func planStorageVolume(server incus.InstanceServer, r Resource, targets map[string]Resource) (PlannedResource, error) {
 	pool := r.Pool
 	if pool == "" {
 		pool = "default"
@@ -162,7 +166,9 @@ func planStorageVolume(server incus.InstanceServer, r Resource) (PlannedResource
 	if err != nil {
 		current = nil // not found: decideVolume plans a create (or blocks it)
 	}
-	return decideVolume(r, current), nil
+	p := decideVolume(r, current)
+	p.Warnings = append(p.Warnings, backupWarnings(r, targets)...)
+	return p, nil
 }
 
 // planFile reads the file's actual current byte content from inside the

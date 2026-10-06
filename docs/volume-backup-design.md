@@ -331,7 +331,12 @@ Ordered so each step is useful alone, and the Incus-supported path comes first.
 
 1. **`backup-target` kind, `copies:` declaration, and the 3-2-1 evaluator.** Pure
    plan logic: no engine, no new Incus calls. Delivers the guidance (the warning text
-   above) and fixes the YAML shape.
+   above) and fixes the YAML shape. **Done** (see `volume-backup.md`): `kind: backup-target`
+   (`location`, `engine: incus`, `remote`/`pool`), `copies:` and `verify:` on volumes, a hard error for
+   an unknown copy target, and the 3-2-1 warning. Differences from the sketch above: `engine` is limited to
+   `incus` and `location` is required; `verify` is parsed but not acted on; a volume with copies also gets a
+   "declared only, nothing runs them" warning. Found while testing it live: the CLI plans one dependency
+   level at a time, so the planner has to be handed the whole stack's targets, not the level it is on.
 2. **Local restore and verify.** `tink backup restore` from tier-1 snapshots into a new
    volume, and `verify` with a scratch volume plus the user's check, with the stamp and
    the stale-verification warning. This exercises the disposable-instance mechanism

@@ -32,6 +32,7 @@ const (
 	KindIncus         Kind = "incus"
 	KindImage         Kind = "image"
 	KindExec          Kind = "exec"
+	KindBackupTarget  Kind = "backup-target"
 )
 
 // kindPriority orders resource creation by type, matching the same
@@ -49,6 +50,7 @@ const (
 // other.
 var kindPriority = map[Kind]int{
 	KindProject:       0,
+	KindBackupTarget:  0, // pure declaration: nothing to create, but volumes refer to it
 	KindProfile:       1,
 	KindStorageVolume: 1,
 	KindIncus:         1,
@@ -78,7 +80,14 @@ type Resource struct {
 	Image    string
 	Profiles []string
 	VM       bool   // create a virtual machine instead of a container (passes --vm to incus init, same as tink run's own flag)
-	Pool     string // storage pool a storage-volume resource lives in
+	Pool     string // storage pool a storage-volume lives in, or the pool a backup-target copies into
+
+	// Backup-target-only. See backuptarget.go: where the target is (Location, the
+	// user's claim, used by the 3-2-1 check), how copies get there (Engine), and
+	// which Incus remote it is (Remote; empty means another pool on this server).
+	Location string
+	Engine   string
+	Remote   string
 
 	// Backup (storage-volume-only) is the volume's mandatory answer to "how is
 	// this backed up?". Nil means unanswered, which plan BLOCKS. See VolumeBackup.
@@ -287,6 +296,11 @@ func (r Resource) dependencies(all map[string]*Resource) []string {
 	for _, dev := range r.Devices {
 		if dev["type"] == "disk" && dev["source"] != "" {
 			add(dev["source"])
+		}
+	}
+	if r.Backup != nil {
+		for _, c := range r.Backup.Copies {
+			add(c.Target)
 		}
 	}
 	for _, d := range r.DependsOn {

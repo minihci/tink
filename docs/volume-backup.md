@@ -39,6 +39,58 @@ backup:
 a schedule with no expiry fills the pool forever, and Incus reads a zero expiry
 as "never expires", so `0d` is rejected too. Malformed blocks fail at load time.
 
+## Copies and 3-2-1 (declared, not yet run)
+
+Snapshots on the live pool are a rollback aid, not a backup: they die with the disk. A real backup
+is **3-2-1**: three copies of the data (the live volume plus two), in at least two distinct failure
+domains, at least one of them off-site. You declare where copies go as `kind: backup-target`
+resources, and each volume says which targets it copies to:
+
+```yaml
+kind: backup-target
+name: macpro
+location: other-host        # same-host | other-host | offsite -- your claim; tink cannot verify it
+engine: incus               # the only engine so far: replicate with Incus itself
+remote: macpro              # an Incus remote (another server)...
+---
+kind: backup-target
+name: nas
+location: other-host
+engine: incus
+pool: nas                   # ...or another storage pool on this server (e.g. the truenas driver)
+---
+kind: storage-volume
+name: immich-library
+backup:
+  snapshots: {schedule: "0 3 * * *", retain: 14d}    # rollback aid, does not count as a copy
+  copies:
+    - {target: macpro, schedule: "0 4 * * *", retain: 30d}
+    - {target: nas,    schedule: "0 5 * * *", retain: 30d}
+  verify: weekly            # daily | weekly | monthly; parsed and validated, not acted on yet
+```
+
+`copies` can be used with or without `snapshots`; `none` excludes all of them. A target needs `remote`
+(another Incus server) or `pool` (another pool on this server), and may name both.
+
+**What `plan` says.** For each volume that is not `none`, `plan` counts the copies and warns when 3-2-1
+is not met, naming the missing leg:
+
+```
+warning: 3-2-1 not met (2 of 3 copies; snapshots on the live volume's pool do not count). Missing: 1 more copy in another failure domain; an off-site copy (no copy's target is declared location: offsite)
+```
+
+A *failure domain* is the live volume's pool, or a target's remote server and pool, or its other local
+pool. A copy on the live volume's own pool is flagged and not counted. Two copies on the same remote and
+pool count as one domain. A reference to a `target` that does not exist is a **hard error** at load time,
+because a typo would otherwise silently drop a backup leg.
+
+**What is not real yet.** This is the declaration and the check only. **Nothing executes `copies`**: tink
+has no copy engine yet, so `plan` adds a warning to every volume with copies saying so, and a passing
+3-2-1 check means "the declaration is sound", not "the data is there". `verify` is likewise only parsed.
+The runner, restore and verify are the next slices (see `volume-backup-design.md`).
+
+Like the missing-`backup:` warning, the 3-2-1 warning is meant to become an error later.
+
 ## What tink does with it
 
 `schedule` and `retain` map one-to-one onto Incus's own volume keys
