@@ -49,6 +49,7 @@ func ApplyWithOptions(socket string, resources []Resource, opts PlanOptions) ([]
 	if opts.env == nil {
 		opts.env = newImageEnv(opts.Offline)
 	}
+	opts = opts.withTargets(resources)
 	return applyLevels(levels, func(r Resource, note func(string, ...any)) (outcome, error) {
 		return applyOne(server, r, opts, note)
 	})

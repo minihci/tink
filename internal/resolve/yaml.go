@@ -18,16 +18,21 @@ import (
 // invention -- familiarity was worth more here than any improvement a
 // different shape might buy.
 type yamlResource struct {
-	Kind      string                       `yaml:"kind"`
-	Name      string                       `yaml:"name"`
-	Project   string                       `yaml:"project"`
-	DependsOn []string                     `yaml:"depends_on"`
-	Image     string                       `yaml:"image"`
-	Profiles  []string                     `yaml:"profiles"`
-	VM        bool                         `yaml:"vm"`
-	Pool      string                       `yaml:"pool"`
-	Config    map[string]string            `yaml:"config"`
-	Devices   map[string]map[string]string `yaml:"devices"`
+	Kind      string   `yaml:"kind"`
+	Name      string   `yaml:"name"`
+	Project   string   `yaml:"project"`
+	DependsOn []string `yaml:"depends_on"`
+	Image     string   `yaml:"image"`
+	Profiles  []string `yaml:"profiles"`
+	VM        bool     `yaml:"vm"`
+	Pool      string   `yaml:"pool"`
+
+	// Backup-target-only -- see backuptarget.go.
+	Location string                       `yaml:"location"`
+	Engine   string                       `yaml:"engine"`
+	Remote   string                       `yaml:"remote"`
+	Config   map[string]string            `yaml:"config"`
+	Devices  map[string]map[string]string `yaml:"devices"`
 
 	// Storage-volume-only -- see VolumeBackup.
 	Backup *yamlBackup `yaml:"backup"`
@@ -79,14 +84,23 @@ type yamlBackup struct {
 		Schedule string `yaml:"schedule"`
 		Retain   string `yaml:"retain"`
 	} `yaml:"snapshots"`
-	None string `yaml:"none"`
+	Copies []struct {
+		Target   string `yaml:"target"`
+		Schedule string `yaml:"schedule"`
+		Retain   string `yaml:"retain"`
+	} `yaml:"copies"`
+	Verify string `yaml:"verify"`
+	None   string `yaml:"none"`
 }
 
 func (b *yamlBackup) toVolumeBackup() *VolumeBackup {
 	if b == nil {
 		return nil
 	}
-	out := &VolumeBackup{None: b.None}
+	out := &VolumeBackup{None: b.None, Verify: b.Verify}
+	for _, c := range b.Copies {
+		out.Copies = append(out.Copies, BackupCopy{Target: c.Target, Schedule: c.Schedule, Retain: c.Retain})
+	}
 	if b.Snapshots != nil {
 		out.Snapshots = &SnapshotPolicy{Schedule: b.Snapshots.Schedule, Retain: b.Snapshots.Retain}
 	}
@@ -242,6 +256,9 @@ func (d yamlResource) toResource(dir string) (Resource, error) {
 		Profiles:        d.Profiles,
 		VM:              d.VM,
 		Pool:            d.Pool,
+		Location:        d.Location,
+		Engine:          d.Engine,
+		Remote:          d.Remote,
 		Backup:          d.Backup.toVolumeBackup(),
 		Config:          d.Config,
 		Devices:         d.Devices,

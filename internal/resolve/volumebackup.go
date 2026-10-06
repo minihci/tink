@@ -20,13 +20,31 @@ import (
 // protects against mistakes (a bad upgrade, a deleted file), not against
 // losing the disk. See docs/volume-backup.md.
 type VolumeBackup struct {
-	// Snapshots is a scheduled-snapshot policy. Mutually exclusive with None.
+	// Snapshots is a scheduled-snapshot policy (tier 1: a rollback aid on the
+	// live pool, not a copy). Mutually exclusive with None.
 	Snapshots *SnapshotPolicy
+	// Copies are independent replicas in other failure domains, each to a
+	// kind: backup-target. Mutually exclusive with None. Declared and checked
+	// against 3-2-1 by plan; nothing executes them yet.
+	Copies []BackupCopy
+	// Verify is how often a restore of the backups should be rehearsed:
+	// daily, weekly or monthly. Parsed and validated; not acted on yet.
+	Verify string
 	// None is the reason this volume is deliberately not backed up. A
 	// non-empty string is the opt-out: a bare "none" with no reason would be
 	// indistinguishable from not having thought about it.
 	None string
 }
+
+// BackupCopy is one replica of the volume: where (Target names a
+// kind: backup-target), how often, and how long its snapshots are kept there.
+type BackupCopy struct {
+	Target   string
+	Schedule string // same syntax as SnapshotPolicy.Schedule
+	Retain   string // same syntax as SnapshotPolicy.Retain
+}
+
+var verifyCadences = map[string]bool{"daily": true, "weekly": true, "monthly": true}
 
 // SnapshotPolicy maps one-to-one onto Incus's own snapshots.schedule and
 // snapshots.expiry volume keys, so Incus does the work and tink only converges
@@ -63,14 +81,33 @@ func validateBackup(r Resource) error {
 	if b == nil {
 		return nil
 	}
-	hasSnap, hasNone := b.Snapshots != nil, b.None != ""
+	hasSnap, hasCopies, hasNone := b.Snapshots != nil, len(b.Copies) > 0, b.None != ""
 	switch {
-	case hasSnap && hasNone:
-		return fmt.Errorf("resource %q: backup: snapshots and none are mutually exclusive", r.Name)
-	case !hasSnap && !hasNone:
-		return fmt.Errorf("resource %q: backup: give either snapshots (schedule + retain) or none (the reason this volume is not backed up)", r.Name)
+	case hasNone && (hasSnap || hasCopies || b.Verify != ""):
+		return fmt.Errorf("resource %q: backup: none is mutually exclusive with snapshots, copies and verify", r.Name)
+	case !hasSnap && !hasCopies && !hasNone:
+		return fmt.Errorf("resource %q: backup: give snapshots (schedule + retain) and/or copies, or none (the reason this volume is not backed up)", r.Name)
 	case hasNone && strings.TrimSpace(b.None) == "":
 		return fmt.Errorf("resource %q: backup.none needs a reason, not whitespace", r.Name)
+	}
+	if b.Verify != "" && !verifyCadences[b.Verify] {
+		return fmt.Errorf("resource %q: backup.verify must be daily, weekly or monthly, got %q", r.Name, b.Verify)
+	}
+	seen := map[string]bool{}
+	for i, c := range b.Copies {
+		if c.Target == "" {
+			return fmt.Errorf("resource %q: backup.copies[%d]: target is required", r.Name, i)
+		}
+		if seen[c.Target] {
+			return fmt.Errorf("resource %q: backup.copies names target %q twice; one copy per target", r.Name, c.Target)
+		}
+		seen[c.Target] = true
+		if err := validateSchedule(c.Schedule); err != nil {
+			return fmt.Errorf("resource %q: backup.copies[%d] (%s) schedule: %w", r.Name, i, c.Target, err)
+		}
+		if err := validateRetain(c.Retain); err != nil {
+			return fmt.Errorf("resource %q: backup.copies[%d] (%s) retain: %w", r.Name, i, c.Target, err)
+		}
 	}
 	if hasSnap {
 		if err := validateSchedule(b.Snapshots.Schedule); err != nil {

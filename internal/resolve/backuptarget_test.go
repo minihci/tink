@@ -1,0 +1,225 @@
+package resolve
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func target(name, location, remote, pool string) Resource {
+	return Resource{Kind: KindBackupTarget, Name: name, Location: location, Engine: EngineIncus, Remote: remote, Pool: pool}
+}
+
+func volWith(name, pool string, snap bool, copies ...string) Resource {
+	b := &VolumeBackup{}
+	if snap {
+		b.Snapshots = &SnapshotPolicy{Schedule: "@daily", Retain: "14d"}
+	}
+	for _, t := range copies {
+		b.Copies = append(b.Copies, BackupCopy{Target: t, Schedule: "@daily", Retain: "30d"})
+	}
+	return Resource{Kind: KindStorageVolume, Name: name, Pool: pool, Backup: b}
+}
+
+func TestValidateBackupTarget(t *testing.T) {
+	ok := func(r Resource) {
+		t.Helper()
+		if err := Validate(r); err != nil {
+			t.Errorf("%+v: unexpected error %v", r, err)
+		}
+	}
+	bad := func(r Resource, want string) {
+		t.Helper()
+		if err := Validate(r); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%+v: error = %v, want it to contain %q", r, err, want)
+		}
+	}
+	ok(target("t", LocationOtherHost, "macpro", ""))
+	ok(target("t", LocationOffsite, "vps", "default"))
+	ok(target("t", LocationOtherHost, "", "nas")) // another pool on this server, e.g. the truenas driver
+
+	bad(target("t", "", "macpro", ""), "needs location")
+	bad(target("t", "moon", "macpro", ""), "location must be")
+	bad(Resource{Kind: KindBackupTarget, Name: "t", Location: LocationOffsite, Remote: "r"}, "needs engine")
+	bad(Resource{Kind: KindBackupTarget, Name: "t", Location: LocationOffsite, Engine: "restic", Remote: "r"}, "not supported yet")
+	bad(target("t", LocationOffsite, "", ""), "remote (another Incus server) or pool")
+	bad(target("t", LocationOffsite, "host:8443", ""), "bare Incus remote name")
+	bad(target("t", LocationOffsite, "r", "a/b"), "bare storage pool name")
+	// fields that belong to other kinds
+	bad(Resource{Kind: KindStorageVolume, Name: "v", Location: LocationOffsite}, "does not use field")
+	bad(Resource{Kind: KindInstance, Name: "i", Remote: "r"}, "does not use field")
+}
+
+func TestValidateBackupCopiesAndVerify(t *testing.T) {
+	bad := func(b *VolumeBackup, want string) {
+		t.Helper()
+		err := Validate(Resource{Kind: KindStorageVolume, Name: "v", Backup: b})
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%+v: error = %v, want it to contain %q", b, err, want)
+		}
+	}
+	cp := BackupCopy{Target: "t", Schedule: "@daily", Retain: "30d"}
+
+	for _, b := range []*VolumeBackup{
+		{Copies: []BackupCopy{cp}}, // copies without snapshots is fine
+		{Snapshots: &SnapshotPolicy{Schedule: "@daily", Retain: "7d"}, Copies: []BackupCopy{cp}, Verify: "weekly"},
+		{Snapshots: &SnapshotPolicy{Schedule: "@daily", Retain: "7d"}, Verify: "monthly"}, // verify a local snapshot
+	} {
+		if err := Validate(Resource{Kind: KindStorageVolume, Name: "v", Backup: b}); err != nil {
+			t.Errorf("%+v: unexpected error %v", b, err)
+		}
+	}
+
+	bad(&VolumeBackup{Verify: "weekly"}, "give snapshots") // nothing to verify
+	bad(&VolumeBackup{None: "x", Copies: []BackupCopy{cp}}, "mutually exclusive")
+	bad(&VolumeBackup{None: "x", Verify: "daily"}, "mutually exclusive")
+	bad(&VolumeBackup{Copies: []BackupCopy{cp}, Verify: "hourly"}, "verify must be daily, weekly or monthly")
+	bad(&VolumeBackup{Copies: []BackupCopy{{Schedule: "@daily", Retain: "1d"}}}, "target is required")
+	bad(&VolumeBackup{Copies: []BackupCopy{cp, cp}}, "twice")
+	bad(&VolumeBackup{Copies: []BackupCopy{{Target: "t", Schedule: "", Retain: "1d"}}}, "schedule: required")
+	bad(&VolumeBackup{Copies: []BackupCopy{{Target: "t", Schedule: "@daily", Retain: ""}}}, "retain: required")
+	bad(&VolumeBackup{Copies: []BackupCopy{{Target: "t", Schedule: "@daily", Retain: "0d"}}}, "expiry syntax")
+}
+
+func TestLevelsRejectsUnknownCopyTarget(t *testing.T) {
+	_, err := Levels([]Resource{target("macpro", LocationOtherHost, "macpro", ""), volWith("v", "", true, "macpr0")})
+	if err == nil || !strings.Contains(err.Error(), `target "macpr0"`) {
+		t.Fatalf("err = %v, want a hard error naming the unknown target (a typo must not silently drop a backup leg)", err)
+	}
+}
+
+func TestLevelsOrdersTargetsBeforeVolumes(t *testing.T) {
+	levels, err := Levels([]Resource{volWith("v", "", true, "macpro"), target("macpro", LocationOtherHost, "macpro", "")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(levels) != 2 || levels[0][0].Name != "macpro" || levels[1][0].Name != "v" {
+		t.Errorf("levels = %v, want the target in a level before the volume that copies to it", levels)
+	}
+}
+
+func TestBackupWarnings(t *testing.T) {
+	targets := map[string]Resource{
+		"macpro":  target("macpro", LocationOtherHost, "macpro", ""),
+		"macpro2": target("macpro2", LocationOtherHost, "macpro", "second"),
+		"vps":     target("vps", LocationOffsite, "vps", ""),
+		"nas":     target("nas", LocationOtherHost, "", "nas"),
+		"local":   target("local", LocationSameHost, "", "default"),
+		"tank2":   target("tank2", LocationSameHost, "", "tank"),
+	}
+	const declared = "declared only"
+	tests := []struct {
+		name string
+		vol  Resource
+		want []string // substrings, each must appear in the joined warnings
+		deny []string // substrings that must not
+	}{
+		{"snapshots only: no copies at all", volWith("v", "", true),
+			[]string{"3-2-1 not met (1 of 3 copies", "2 copies in other failure domains", "off-site copy"}, []string{declared}},
+		{"one copy, other host", volWith("v", "", true, "macpro"),
+			[]string{"(2 of 3 copies", "1 more copy in another failure domain", "off-site copy"}, nil},
+		{"two copies in different domains, one off-site: met",
+			volWith("v", "", true, "macpro", "vps"),
+			[]string{declared}, []string{"3-2-1 not met"}},
+		{"NAS pool + off-site VPS: met", volWith("v", "", true, "nas", "vps"),
+			[]string{declared}, []string{"3-2-1 not met"}},
+		{"two copies on different hosts but none off-site", volWith("v", "", false, "macpro", "nas"),
+			[]string{"(3 of 3 copies", "off-site copy"}, []string{"share one failure domain"}},
+		{"two copies on the same remote and pool share a domain",
+			volWith("v", "", true, "macpro", "macpro"), // duplicate target is rejected by Validate; domains still collapse
+			[]string{"share one failure domain"}, nil},
+		{"two pools on one remote are separate domains", volWith("v", "", true, "macpro", "macpro2"),
+			[]string{"off-site copy"}, []string{"share one failure domain"}},
+		{"copy to the live volume's own pool is not counted", volWith("v", "", true, "local", "vps"),
+			[]string{"not a separate failure domain and is not counted", "(2 of 3 copies", "1 more copy"}, nil},
+		{"live volume on another pool: same-named target pool matters", volWith("v", "tank", true, "tank2", "vps"),
+			[]string{"live volume's own pool (local:tank)", "(2 of 3 copies"}, nil},
+		{"opt-out is not evaluated", Resource{Kind: KindStorageVolume, Name: "v", Backup: &VolumeBackup{None: "x"}}, nil, nil},
+		{"no backup block is not evaluated here", Resource{Kind: KindStorageVolume, Name: "v"}, nil, nil},
+		{"not a volume", Resource{Kind: KindInstance, Name: "i"}, nil, nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := strings.Join(backupWarnings(tc.vol, targets), "\n")
+			if tc.want == nil && got != "" {
+				t.Fatalf("expected no warnings, got:\n%s", got)
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(got, w) {
+					t.Errorf("warnings missing %q:\n%s", w, got)
+				}
+			}
+			for _, d := range tc.deny {
+				if strings.Contains(got, d) {
+					t.Errorf("warnings must not contain %q:\n%s", d, got)
+				}
+			}
+		})
+	}
+}
+
+func TestLoadFileParsesBackupTargetsAndCopies(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "tink.yaml")
+	doc := `kind: backup-target
+name: macpro
+location: other-host
+engine: incus
+remote: macpro
+---
+kind: backup-target
+name: nas
+location: other-host
+engine: incus
+pool: nas
+---
+kind: storage-volume
+name: lib
+backup:
+  snapshots: {schedule: "0 3 * * *", retain: 14d}
+  copies:
+    - {target: macpro, schedule: "0 4 * * *", retain: 30d}
+    - {target: nas, schedule: "0 5 * * *", retain: 30d}
+  verify: weekly
+`
+	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rs, err := LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rs) != 3 || rs[0].Remote != "macpro" || rs[0].Location != LocationOtherHost || rs[0].Engine != EngineIncus || rs[1].Pool != "nas" {
+		t.Fatalf("targets parsed wrong: %+v %+v", rs[0], rs[1])
+	}
+	b := rs[2].Backup
+	if b == nil || len(b.Copies) != 2 || b.Copies[1] != (BackupCopy{Target: "nas", Schedule: "0 5 * * *", Retain: "30d"}) || b.Verify != "weekly" || b.Snapshots == nil {
+		t.Fatalf("volume backup parsed wrong: %+v", b)
+	}
+	if _, err := Levels(rs); err != nil {
+		t.Errorf("a well-formed stack must resolve: %v", err)
+	}
+}
+
+func TestWithTargetsNeverLetsASubsetReplaceTheStack(t *testing.T) {
+	stack := []Resource{target("macpro", LocationOtherHost, "macpro", ""), volWith("v", "", true, "macpro")}
+
+	// `tink plan` plans one dependency level at a time: the volume's level holds no targets at all.
+	// That used to wipe them, and every volume then reported "1 of 3 copies".
+	opts := PlanOptions{}.ForResources(stack).withTargets(stack[1:])
+	if _, ok := opts.targets["macpro"]; !ok {
+		t.Fatalf("targets = %v; a level without targets must not replace the stack's", opts.targets)
+	}
+	// A caller that passes the whole stack and sets nothing still gets them.
+	if _, ok := (PlanOptions{}).withTargets(stack).targets["macpro"]; !ok {
+		t.Error("withTargets should fill unset targets from the resources it is given")
+	}
+}
+
+func TestBackupWarningsSaysSoWhenATargetIsUnknown(t *testing.T) {
+	got := strings.Join(backupWarnings(volWith("v", "", true, "macpro"), nil), "\n")
+	if !strings.Contains(got, `copy target "macpro" is not known to the planner`) {
+		t.Errorf("a missing target must be reported loudly, got:\n%s", got)
+	}
+}

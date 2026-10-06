@@ -26,6 +26,10 @@ func TestValidate_AllowsFieldsCommonToEveryKind(t *testing.T) {
 		case KindIncus:
 			r.Check = []string{"image", "list"}
 			r.Command = []string{"image", "list"}
+		case KindBackupTarget:
+			r.Location = LocationOtherHost
+			r.Engine = EngineIncus
+			r.Remote = "macpro"
 		case KindImage:
 			r.Alias = "a"
 			r.Source = "s"

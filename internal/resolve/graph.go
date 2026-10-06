@@ -18,6 +18,9 @@ func Levels(resources []Resource) ([][]Resource, error) {
 		}
 		all[resources[i].Name] = &resources[i]
 	}
+	if err := validateBackupReferences(resources); err != nil {
+		return nil, err
+	}
 	inheritProject(all)
 
 	deps := make(map[string][]string, len(resources))

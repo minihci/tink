@@ -45,7 +45,7 @@ func TestValidateBackup(t *testing.T) {
 	bad(snapVol("v", "@daily", "14 d"), "expiry syntax")
 	bad(snapVol("v", "@daily", "0d"), "expiry syntax") // zero means "never expires" to Incus
 	bad(snapVol("v", "@daily", "1d 2d"), "repeats the unit")
-	bad(Resource{Kind: KindStorageVolume, Name: "v", Backup: &VolumeBackup{}}, "snapshots (schedule + retain) or none")
+	bad(Resource{Kind: KindStorageVolume, Name: "v", Backup: &VolumeBackup{}}, "snapshots (schedule + retain) and/or copies, or none")
 	bad(Resource{Kind: KindStorageVolume, Name: "v", Backup: &VolumeBackup{None: "  "}}, "needs a reason")
 	bad(Resource{Kind: KindStorageVolume, Name: "v", Backup: &VolumeBackup{
 		None: "x", Snapshots: &SnapshotPolicy{Schedule: "@daily", Retain: "1d"},
