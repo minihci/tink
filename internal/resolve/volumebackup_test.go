@@ -162,3 +162,22 @@ func TestLoadFileRejectsBadBackup(t *testing.T) {
 		t.Errorf("err = %v, want a retain-required error", err)
 	}
 }
+
+// Strict YAML must reach inside `verify:`, which has its own decoder: a misspelled key there would
+// otherwise silently turn a real verification (with a check) into a restore-only one.
+func TestVerifyMappingRejectsUnknownFields(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "tink.yaml")
+	for name, body := range map[string]string{
+		"misspelled check":    "    every: weekly\n    chek: {image: i, command: [true]}\n",
+		"misspelled in check": "    every: weekly\n    check: {image: i, command: [true], mout: /x}\n",
+	} {
+		doc := "kind: storage-volume\nname: v\nbackup:\n  snapshots: {schedule: \"@daily\", retain: 7d}\n  verify:\n" + body
+		if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadFile(path); err == nil {
+			t.Errorf("%s: a misspelled key inside verify: was silently accepted, weakening the verification", name)
+		}
+	}
+}

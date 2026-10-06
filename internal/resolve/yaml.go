@@ -120,7 +120,9 @@ func (v *yamlVerify) UnmarshalYAML(node *yaml.Node) error {
 				Mount   string   `yaml:"mount"`
 			} `yaml:"check"`
 		}
-		if err := node.Decode(&m); err != nil {
+		// Load with WithKnownFields, not Decode: Decode would not be strict here, and a misspelled key
+		// inside verify would silently drop the check.
+		if err := node.Load(&m, yaml.WithKnownFields()); err != nil {
 			return err
 		}
 		v.Every, v.Check = m.Every, m.Check
