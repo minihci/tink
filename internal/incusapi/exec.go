@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	incus "github.com/lxc/incus/v7/client"
@@ -127,7 +128,11 @@ func ExecInGuestWithRetry(server incus.InstanceServer, instance string, command 
 }
 
 func execInGuestOnce(server incus.InstanceServer, instance string, command []string) (exitCode int, output string, err error) {
-	var buf bytes.Buffer
+	// Incus copies stdout and stderr from two goroutines, and both go here so the output reads as one
+	// stream. A bare bytes.Buffer is not safe for that: with it, most runs (about 60% in testing, for a
+	// plain `echo`) came back with the output EMPTY while the exit status was right, so a failing command's
+	// error carried no output and a passing one printed nothing.
+	var buf syncBuffer
 	args := incus.InstanceExecArgs{
 		Stdin:    bytes.NewReader(nil),
 		Stdout:   &buf,
@@ -163,4 +168,22 @@ func execInGuestOnce(server incus.InstanceServer, instance string, command []str
 	}
 	<-args.DataDone
 	return exitCode, buf.String(), nil
+}
+
+// syncBuffer is a bytes.Buffer that is safe for concurrent writers, which keep their arrival order.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
