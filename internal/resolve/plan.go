@@ -97,6 +97,14 @@ func scopedServer(server incus.InstanceServer, r Resource) incus.InstanceServer 
 }
 
 func planOne(server incus.InstanceServer, r Resource, opts PlanOptions) (PlannedResource, error) {
+	// A secret that cannot be resolved blocks the WHOLE resource, never part of it.
+	if len(r.SecretProblems) > 0 {
+		return PlannedResource{Resource: r, Action: ActionBlocked, Blocked: r.SecretProblems}, nil
+	}
+	if unexpandedSecretRef(r) {
+		return PlannedResource{Resource: r, Action: ActionBlocked, Blocked: []string{
+			"holds a ${secret:...} reference that was never expanded (this is a tink bug: refusing to apply the literal text as a value)"}}, nil
+	}
 	s := scopedServer(server, r)
 	switch r.Kind {
 	case KindProject:

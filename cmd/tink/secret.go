@@ -210,7 +210,7 @@ replaces it.`,
 				if value, err = secrets.Generate(length, charset); err != nil {
 					return err
 				}
-			} else if value, err = readSecretValue(cmd.InOrStdin(), cmd.ErrOrStderr()); err != nil {
+			} else if value, err = readSecretValue(cmd.InOrStdin(), os.Stderr); err != nil {
 				return err
 			}
 			existed := s.Has(args[0])

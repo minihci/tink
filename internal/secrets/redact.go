@@ -3,6 +3,8 @@ package secrets
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
 	"io"
 	"net/url"
 	"sort"
@@ -19,10 +21,14 @@ import (
 // avoids putting values in output in the first place.
 //
 // It matches the value as written and in the encodings it plausibly takes in output: base64
-// (standard and URL, padded and not), URL- and path-escaped, and Go-quoted (what %q prints). A
-// multi-line value (a PEM key) also has each of its lines redacted on its own. It cannot catch a
-// secret that something has transformed beyond that, and values shorter than MinLength are not
-// added, since replacing them would mangle unrelated text.
+// (standard and URL, padded and not), hex, URL- and path-escaped, Go-quoted (what %q prints) and
+// JSON-escaped. A multi-line value (a PEM key) also has each of its lines redacted on its own.
+//
+// This is BEST EFFORT, not a guarantee. It cannot catch a secret that something has transformed
+// beyond those forms (hashed, split across fields, YAML-quoted), a value tink never decrypted (a
+// credential held only by Incus, such as a storage pool's API key), or output tink does not
+// print. It is a net under the places tink avoids printing a secret, not a substitute for them.
+// Values shorter than MinLength are not added, since replacing them would mangle unrelated text.
 type Redactor struct {
 	mu     sync.RWMutex
 	needle map[string]struct{}
@@ -53,6 +59,10 @@ func (r *Redactor) Add(value string) {
 		if q := strconv.Quote(f); len(q) > 2 {
 			forms = append(forms, q[1:len(q)-1])
 		}
+		if j, err := json.Marshal(f); err == nil && len(j) > 2 {
+			forms = append(forms, string(j[1:len(j)-1])) // JSON escapes <, >, & and non-ASCII
+		}
+		forms = append(forms, hex.EncodeToString(b), strings.ToUpper(hex.EncodeToString(b)))
 	}
 
 	r.mu.Lock()

@@ -27,6 +27,12 @@ func NewResolver(store *Store, identityPath string, red *Redactor) *Resolver {
 	return &Resolver{store: store, identityPath: IdentityPath(identityPath), red: red}
 }
 
+// Exists reports whether the store file is there at all.
+func (r *Resolver) Exists() bool { return r.store.Exists() }
+
+// Where is the store's path, for messages.
+func (r *Resolver) Where() string { return r.store.Path() }
+
 // Has reports whether the secret is set in the store.
 func (r *Resolver) Has(name string) bool { return r.store.Has(name) }
 

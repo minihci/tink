@@ -3,6 +3,7 @@ package secrets
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"net/url"
 	"os"
@@ -424,5 +425,20 @@ func TestPlainAgeCLICanReadAValue(t *testing.T) {
 	}
 	if got := strings.TrimPrefix(string(out), "tink:1:x-secret\n"); got != "interop-check-value" {
 		t.Errorf("age -d output = %q", out)
+	}
+}
+
+func TestRedactorCoversHexAndJSONEncodings(t *testing.T) {
+	r := NewRedactor()
+	secret := `pa<ss>&wörd-1234`
+	r.Add(secret)
+	for name, in := range map[string]string{
+		"hex":       hex.EncodeToString([]byte(secret)),
+		"HEX":       strings.ToUpper(hex.EncodeToString([]byte(secret))),
+		"json body": `{"password":"pa<ss>&wörd-1234"}`,
+	} {
+		if got := r.Redact("x " + in + " y"); strings.Contains(got, in) {
+			t.Errorf("%s form of the secret survived: %q", name, got)
+		}
 	}
 }

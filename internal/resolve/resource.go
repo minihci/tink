@@ -239,6 +239,13 @@ type Resource struct {
 
 	Config  map[string]string
 	Devices map[string]map[string]string
+
+	// Set by ExpandSecrets, never from YAML. SecretKeys are the config keys whose value held a
+	// secret reference (no diff prints them); SecretProblems are the reasons a reference could not be
+	// resolved, which blocks the whole resource; SecretsExpanded says expansion ran on it.
+	SecretKeys      map[string]bool
+	SecretProblems  []string
+	SecretsExpanded bool
 }
 
 // dependencies returns every resource name this one must wait for:
