@@ -158,10 +158,11 @@ func planStorageVolume(server incus.InstanceServer, r Resource) (PlannedResource
 	if pool == "" {
 		pool = "default"
 	}
-	if _, _, err := server.GetStoragePoolVolume(pool, "custom", r.Name); err != nil {
-		return PlannedResource{Resource: r, Action: ActionCreate}, nil
+	current, _, err := server.GetStoragePoolVolume(pool, "custom", r.Name)
+	if err != nil {
+		current = nil // not found: decideVolume plans a create (or blocks it)
 	}
-	return PlannedResource{Resource: r, Action: ActionNone}, nil
+	return decideVolume(r, current), nil
 }
 
 // planFile reads the file's actual current byte content from inside the

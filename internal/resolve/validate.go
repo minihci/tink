@@ -19,6 +19,7 @@ var fieldOwners = map[string][]Kind{
 	"Profiles":        {KindInstance},
 	"VM":              {KindInstance},
 	"Pool":            {KindStorageVolume},
+	"Backup":          {KindStorageVolume},
 	"Config":          {KindProject, KindProfile, KindInstance},
 	"Devices":         {KindProfile, KindInstance},
 	"Instance":        {KindFile, KindExec},
@@ -62,6 +63,9 @@ func Validate(r Resource) error {
 		}
 	}
 	if err := validateSecretRefs(r); err != nil {
+		return err
+	}
+	if err := validateBackup(r); err != nil {
 		return err
 	}
 	return validateOnImageChange(r)

@@ -80,6 +80,10 @@ type Resource struct {
 	VM       bool   // create a virtual machine instead of a container (passes --vm to incus init, same as tink run's own flag)
 	Pool     string // storage pool a storage-volume resource lives in
 
+	// Backup (storage-volume-only) is the volume's mandatory answer to "how is
+	// this backed up?". Nil means unanswered, which plan BLOCKS. See VolumeBackup.
+	Backup *VolumeBackup
+
 	// File-only: push Content to Path inside the named Instance.
 	Instance string
 	Path     string
