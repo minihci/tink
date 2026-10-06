@@ -76,6 +76,8 @@ missing volume via `run.ApplyConfig` and routes around the check.
 
 ## Not covered
 
+The direction for everything below is in [`volume-backup-design.md`](volume-backup-design.md).
+
 - **It is one disk.** Snapshots live in the same pool as the volume, so they
   guard against a bad upgrade or a deleted file, not a failed disk or a lost
   host. Off-site copies (tier 2) are not implemented.
