@@ -135,7 +135,8 @@ on the NAS, reached over iSCSI **[docs]**; a NAS-backed pool is a different fail
 domain from Tron's own disk, but **not** off-site unless the NAS is.
 
 Tested against a TrueNAS SCALE 25.10.7 VM on Tron (stable at the time; 26 was beta),
-with the Incus pool created by `incus storage create nas truenas source=tank/incus ...`:
+first on Incus 7.2 and then on 7.5.1 (the newest stable; 7.4 builds had already been
+removed from the package repo), with the Incus pool created by `incus storage create nas truenas source=tank/incus ...`:
 
 | Question | Result |
 |---|---|
@@ -145,13 +146,14 @@ with the Incus pool created by `incus storage create nas truenas source=tank/inc
 | Does restore from the NAS work (NAS snapshot to a new local volume)? | **Yes [verified].** Correct point-in-time contents (a file added after the snapshot was absent), identical hash, ~4 s. |
 | Do the snapshots exist on the NAS itself? | **Yes [verified].** As real ZFS snapshots (`tank/incus/custom/<project>_<vol>@snapshot-<name>`), so the NAS's own tooling can see them. |
 | Does tier-1 (`snapshots.schedule`/`expiry`) work on a NAS-backed volume? | **Yes [verified].** Scheduled snapshots appeared with the expected expiry. |
-| Can a **snapshot be cloned** on the NAS pool (needed for the ephemeral job engine's read-only clone)? | **No, on this version combination [verified].** Incus 7.2 + bundled `truenas_incus_ctl` 0.7.7 + TrueNAS 25.10.7: the default ZFS-clone path fails with `[EINVAL] properties.managedby: Property does not exist and cannot be inherited`. With `truenas.clone_copy=false` the fallback `replication start` call is rejected by the tool's own argument parser (it prints its usage). Not yet tried on Incus 7.4. |
+| Can a **snapshot be cloned** on the NAS pool (needed for the ephemeral job engine's read-only clone)? | **No, through Incus [verified on 7.2 and 7.5.1].** With the bundled `truenas_incus_ctl` 0.7.7 (still the newest release) and TrueNAS 25.10.7, the default ZFS-clone path fails with `[EINVAL] properties.managedby ... cannot be inherited` (7.5.1 also names `properties.comments`). With `truenas.clone_copy=false` the fallback `replication start` call is rejected by the tool's own argument parser (it prints its usage). **TrueNAS itself can clone:** calling `truenas_incus_ctl snapshot clone <ds>@<snap> <dest>` directly produced a correct clone with the snapshot as its origin. So the fault is in the properties the Incus driver attaches to the clone, not in ZFS or TrueNAS. Not yet tried on TrueNAS 25.04, which the driver was first written against. |
 
 What this means for the design: **the replicate and restore legs work on a NAS pool
 today; the job engine's clone-then-attach step does not**, so on a NAS pool the engine
 would have to read from a *local* clone and push to the NAS, not the other way round.
-That fits the direction anyway (copy first, engine later), but it should be re-checked
-on a newer Incus before it is relied on.
+That fits the direction anyway (copy first, engine later). It was re-checked on Incus
+7.5.1 and still fails, so treat NAS-pool cloning as unavailable until the driver or the
+ctl tool changes.
 
 Setup facts that a real deployment has to account for, all hit while building the test:
 
@@ -334,7 +336,8 @@ Ordered so each step is useful alone, and the Incus-supported path comes first.
 
 - **TrueNAS target:** copy, refresh, restore and snapshot preservation work (above). Still
   open: is `--refresh` truly incremental at realistic sizes; do copied snapshots carry
-  the source's expiry; does Incus 7.4 fix snapshot cloning on the NAS pool; and how does
+  the source's expiry; does TrueNAS 25.04 (or a newer truenas_incus_ctl) allow cloning on
+  the NAS pool, which 7.5.1 does not; and how does
   Incus behave at boot or mid-copy when the NAS is unreachable (not tested).
 - **Remote targets:** how does tink hold the credentials (client cert + trust token)
   for an Incus remote? It already connects to the local socket only.
