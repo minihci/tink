@@ -159,6 +159,10 @@ func applyOne(server incus.InstanceServer, r Resource, opts PlanOptions, note fu
 			note("%s/%s: updated and restarted (%v)", r.Kind, r.Name, plan.Changes)
 			return outChanged, nil
 		}
+		if r.Kind == KindInstance && !r.Restart && changesEnvironment(plan.Changes) {
+			note("%s/%s: updated (%v); its environment changed but it was not restarted, so running processes keep the old values until it is (restart: true does that on apply)", r.Kind, r.Name, plan.Changes)
+			return outChanged, nil
+		}
 		note("%s/%s: updated (%v)", r.Kind, r.Name, plan.Changes)
 		return outChanged, nil
 	case ActionRebuild:
@@ -171,4 +175,14 @@ func applyOne(server incus.InstanceServer, r Resource, opts PlanOptions, note fu
 		return outChanged, nil
 	}
 	return outConverged, nil
+}
+
+// changesEnvironment reports whether any planned change is to an environment.* config key.
+func changesEnvironment(changes []string) bool {
+	for _, c := range changes {
+		if strings.HasPrefix(c, "config.environment.") {
+			return true
+		}
+	}
+	return false
 }

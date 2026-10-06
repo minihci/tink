@@ -116,3 +116,24 @@ func TestRun_DryRunNotesContainerByDefault(t *testing.T) {
 		t.Errorf("Actions = %q, want a line noting this is a container by default", joined)
 	}
 }
+
+// `tink run --dry-run` echoes the config it would set. A password given with --env must not be in
+// that echo: the dry run is exactly what someone pastes into a chat or a CI log.
+func TestRun_DryRunDoesNotPrintSensitiveEnvValues(t *testing.T) {
+	result, err := Run(Options{
+		DryRun: true,
+		Name:   "app",
+		Image:  "docker-oci:library/postgres:16",
+		Env:    []string{"POSTGRES_PASSWORD=hunter2-hunter2", "TZ=UTC"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(result.Actions, "\n")
+	if strings.Contains(joined, "hunter2") {
+		t.Fatalf("the dry run printed the password:\n%s", joined)
+	}
+	if !strings.Contains(joined, "environment.TZ:UTC") && !strings.Contains(joined, "environment.TZ") {
+		t.Errorf("ordinary env should still be shown:\n%s", joined)
+	}
+}

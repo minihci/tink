@@ -12,21 +12,21 @@ import "testing"
 // package doc for the same reasoning applied to tink run's Build().
 
 func TestDiffConfig_ReportsMissingKey(t *testing.T) {
-	changes := diffConfig(map[string]string{}, map[string]string{"limits.cpu": "1"})
+	changes := diffConfig(map[string]string{}, map[string]string{"limits.cpu": "1"}, nil)
 	if len(changes) != 1 {
 		t.Fatalf("diffConfig() = %v, want exactly one change", changes)
 	}
 }
 
 func TestDiffConfig_ReportsDifferentValue(t *testing.T) {
-	changes := diffConfig(map[string]string{"limits.cpu": "1"}, map[string]string{"limits.cpu": "2"})
+	changes := diffConfig(map[string]string{"limits.cpu": "1"}, map[string]string{"limits.cpu": "2"}, nil)
 	if len(changes) != 1 {
 		t.Fatalf("diffConfig() = %v, want exactly one change", changes)
 	}
 }
 
 func TestDiffConfig_NoChangeWhenValueMatches(t *testing.T) {
-	changes := diffConfig(map[string]string{"limits.cpu": "1"}, map[string]string{"limits.cpu": "1"})
+	changes := diffConfig(map[string]string{"limits.cpu": "1"}, map[string]string{"limits.cpu": "1"}, nil)
 	if len(changes) != 0 {
 		t.Errorf("diffConfig() = %v, want no changes", changes)
 	}
@@ -36,7 +36,7 @@ func TestDiffConfig_NoChangeWhenValueMatches(t *testing.T) {
 // doesn't own (image.*, volatile.*) and should never report those as
 // drift just because desired doesn't mention them.
 func TestDiffConfig_IgnoresExtraKeysOnlyInCurrent(t *testing.T) {
-	changes := diffConfig(map[string]string{"volatile.uuid": "abc", "limits.cpu": "1"}, map[string]string{"limits.cpu": "1"})
+	changes := diffConfig(map[string]string{"volatile.uuid": "abc", "limits.cpu": "1"}, map[string]string{"limits.cpu": "1"}, nil)
 	if len(changes) != 0 {
 		t.Errorf("diffConfig() = %v, want no changes (current-only keys must not count as drift)", changes)
 	}
