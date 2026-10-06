@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -427,5 +428,27 @@ func TestLoadFile_RequiresName(t *testing.T) {
 	}
 	if _, err := LoadFile(filepath.Join(dir, "stack.yaml")); err == nil {
 		t.Error("expected an error when name is missing")
+	}
+}
+
+func TestLoadFileRejectsUnknownFields(t *testing.T) {
+	dir := t.TempDir()
+	for name, doc := range map[string]string{
+		"misspelled key":          "kind: instance\nname: x\nimagee: docker-oci:redis:7\n",
+		"misindented block":       "kind: instance\nname: x\nimage: docker-oci:redis:7\nconfig:\n  limits.memory: 1GiB\n devices:\n  d: {type: disk}\n",
+		"a field from the future": "kind: instance\nname: x\nsecrets:\n  - {name: a}\n",
+	} {
+		path := filepath.Join(dir, strings.ReplaceAll(name, " ", "-")+".yaml")
+		if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := LoadFile(path)
+		if err == nil {
+			t.Errorf("%s: a field tink does not know was silently accepted", name)
+			continue
+		}
+		if name != "misindented block" && !strings.Contains(err.Error(), "rejects fields it does not know") {
+			t.Errorf("%s: the error should say what to check, got %v", name, err)
+		}
 	}
 }
