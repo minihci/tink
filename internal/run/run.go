@@ -15,6 +15,7 @@ import (
 	"github.com/lxc/incus/v7/shared/cliconfig"
 
 	"github.com/minihci/tink/internal/incusapi"
+	"github.com/minihci/tink/internal/secrets"
 )
 
 // Options configures both how flags are translated (Build) and how the
@@ -103,7 +104,7 @@ func Run(opts Options) (*Result, error) {
 			note("would add device %s: %v", name, dev)
 		}
 		if len(spec.Config) > 0 {
-			note("would set config: %v", spec.Config)
+			note("would set config: %v", secrets.MaskedConfig(spec.Config))
 		}
 		note("would start %s", spec.Name)
 		return result, nil

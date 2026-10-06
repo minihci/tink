@@ -16,6 +16,8 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
 	"github.com/lxc/incus/v7/shared/cliconfig"
+
+	"github.com/minihci/tink/internal/secrets"
 )
 
 // Image drift: does the image an instance was built from match the image
@@ -174,7 +176,11 @@ func runtimeConfigDiff(cfg, declared map[string]string, rt ociRuntime) (diffs, k
 		if isDeclared(key) {
 			return
 		}
-		diffs = append(diffs, fmt.Sprintf("%s: instance has %q, new image wants %q", key, have, want))
+		if secrets.SensitiveKey(key) {
+			diffs = append(diffs, fmt.Sprintf("%s: instance and new image differ: %s", key, secrets.HiddenValue))
+		} else {
+			diffs = append(diffs, fmt.Sprintf("%s: instance has %q, new image wants %q", key, have, want))
+		}
 		keys = append(keys, key)
 	}
 

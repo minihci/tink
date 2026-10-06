@@ -9,6 +9,8 @@ import (
 	"sync"
 
 	incus "github.com/lxc/incus/v7/client"
+
+	"github.com/minihci/tink/internal/secrets"
 )
 
 // Action is what Plan decided needs to happen for one resource.
@@ -135,7 +137,7 @@ func planProfile(server incus.InstanceServer, r Resource) (PlannedResource, erro
 	if err != nil {
 		return PlannedResource{Resource: r, Action: ActionCreate}, nil
 	}
-	changes := diffConfig(current.Config, r.Config)
+	changes := diffConfig(current.Config, r.Config, nil)
 	changes = append(changes, diffDevices(current.Devices, r.Devices)...)
 	if len(changes) == 0 {
 		return PlannedResource{Resource: r, Action: ActionNone}, nil
@@ -205,10 +207,26 @@ func planImage(server incus.InstanceServer, r Resource) (PlannedResource, error)
 // keys we don't own (image.*, volatile.*) and never reports those as
 // drift, the same "only touch what we set" idea tink run's own
 // ApplyConfig already uses.
-func diffConfig(current, desired map[string]string) []string {
+//
+// Neither side of a change to a sensitive key is printed: not the new value, and not the old one
+// (replacing a plain password with a ${secret:} reference would otherwise print the old one in
+// clear). A key is sensitive when its name looks like one (secrets.SensitiveKey) or when it is in
+// hidden, the keys whose value was expanded from a secret.
+func diffConfig(current, desired map[string]string, hidden map[string]bool) []string {
 	var changes []string
 	for k, v := range desired {
-		if cur, ok := current[k]; !ok || cur != v {
+		cur, ok := current[k]
+		if ok && cur == v {
+			continue
+		}
+		switch {
+		case hidden[k] || secrets.SensitiveKey(k):
+			verb := "changed"
+			if !ok {
+				verb = "set"
+			}
+			changes = append(changes, fmt.Sprintf("config.%s: %s %s", k, secrets.HiddenValue, verb))
+		default:
 			changes = append(changes, fmt.Sprintf("config.%s: %q -> %q", k, current[k], v))
 		}
 	}
