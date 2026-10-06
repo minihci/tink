@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	yaml "go.yaml.in/yaml/v4"
@@ -108,11 +109,18 @@ func LoadFile(path string) ([]Resource, error) {
 	dir := filepath.Dir(path)
 	var resources []Resource
 	dec := yaml.NewDecoder(f)
+	// A field tink does not know is an error, not something to skip: a misspelled key, a wrongly
+	// indented block, or a field from a newer tink would otherwise be dropped silently and the stack
+	// would converge without it (an app started without its secret, a volume without its backup).
+	dec.KnownFields(true)
 	for {
 		var doc yamlResource
 		if err := dec.Decode(&doc); err != nil {
 			if errors.Is(err, io.EOF) {
 				break
+			}
+			if strings.Contains(err.Error(), "not found in type") {
+				return nil, fmt.Errorf("%s: %w (tink rejects fields it does not know instead of ignoring them: check the spelling and the indentation, and that this tink is new enough)", path, err)
 			}
 			return nil, fmt.Errorf("%s: %w", path, err)
 		}
