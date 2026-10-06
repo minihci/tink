@@ -127,16 +127,46 @@ Why this is the right first engine:
 |---|---|---|
 | Another Incus host on the LAN (e.g. the Mac Pro 5,1) | an Incus remote | [hypothesis] untested; needs the second host up and trusted |
 | A VPS running Incus | an Incus remote over the internet | [hypothesis] this is the off-site case; bandwidth and the API's exposure to the internet are the concerns, not mechanics |
-| A TrueNAS box | a *local* pool using Incus's `truenas` driver, copy across pools | [hypothesis] see below |
+| A TrueNAS box | a *local* pool using Incus's `truenas` driver, copy across pools | [verified] against a TrueNAS SCALE 25.10.7 VM; see below, including what did **not** work |
 
-**TrueNAS.** Tron's Incus (7.2) already lists the `truenas` driver (v0.7.7) as a
-supported, remote driver **[verified]**. Per upstream it is block-based: each Incus
-volume becomes a ZFS volume on the NAS, reached over iSCSI **[docs]**. If so, adding it
-as a second pool makes "copy to the NAS" a cross-pool copy on the same server, with no
-second Incus install at all. It is a different failure domain from Tron's own disk
-(a different machine), but **not** off-site unless the NAS is. Nothing about it is
-tested here because there is no TrueNAS box yet; the open questions below list what to
-check first.
+**TrueNAS.** Tron's Incus (7.2) lists the `truenas` driver (v0.7.7) as supported
+**[verified]**. Per upstream it is block-based: each Incus volume becomes a ZFS volume
+on the NAS, reached over iSCSI **[docs]**; a NAS-backed pool is a different failure
+domain from Tron's own disk, but **not** off-site unless the NAS is.
+
+Tested against a TrueNAS SCALE 25.10.7 VM on Tron (stable at the time; 26 was beta),
+with the Incus pool created by `incus storage create nas truenas source=tank/incus ...`:
+
+| Question | Result |
+|---|---|
+| Does a cross-driver copy work (btrfs pool to `truenas` pool), snapshots included? | **Yes [verified].** 20 MB volume + 2 snapshots in ~3 s; both snapshots arrived with their original timestamps. |
+| Is the data faithful? | **Yes [verified].** Identical sha256, uid/gid, symlink; the NAS volume is an ext4 filesystem on a ZFS zvol over iSCSI. |
+| Does `copy --refresh` update an existing copy? | **Yes [verified].** A new snapshot and +20 MB of new data arrived with identical hashes in under a second. Whether it transfers only the delta (vs everything) is **unmeasured**: the volumes were too small to tell. |
+| Does restore from the NAS work (NAS snapshot to a new local volume)? | **Yes [verified].** Correct point-in-time contents (a file added after the snapshot was absent), identical hash, ~4 s. |
+| Do the snapshots exist on the NAS itself? | **Yes [verified].** As real ZFS snapshots (`tank/incus/custom/<project>_<vol>@snapshot-<name>`), so the NAS's own tooling can see them. |
+| Does tier-1 (`snapshots.schedule`/`expiry`) work on a NAS-backed volume? | **Yes [verified].** Scheduled snapshots appeared with the expected expiry. |
+| Can a **snapshot be cloned** on the NAS pool (needed for the ephemeral job engine's read-only clone)? | **No, on this version combination [verified].** Incus 7.2 + bundled `truenas_incus_ctl` 0.7.7 + TrueNAS 25.10.7: the default ZFS-clone path fails with `[EINVAL] properties.managedby: Property does not exist and cannot be inherited`. With `truenas.clone_copy=false` the fallback `replication start` call is rejected by the tool's own argument parser (it prints its usage). Not yet tried on Incus 7.4. |
+
+What this means for the design: **the replicate and restore legs work on a NAS pool
+today; the job engine's clone-then-attach step does not**, so on a NAS pool the engine
+would have to read from a *local* clone and push to the NAS, not the other way round.
+That fits the direction anyway (copy first, engine later), but it should be re-checked
+on a newer Incus before it is relied on.
+
+Setup facts that a real deployment has to account for, all hit while building the test:
+
+- The host needs `open-iscsi` (`iscsiadm`); `truenas_incus_ctl` already ships in the
+  Incus package at `/opt/incus/bin`. [verified]
+- **TLS:** the driver connects to the TrueNAS API over HTTPS and rejects the NAS's
+  default self-signed certificate (no IP SAN). A real setup needs a proper certificate
+  and hostname; `truenas.allow_insecure=true` is a test-only workaround. [verified]
+- **The NAS needs a static IP.** The iSCSI portal is created listening on the NAS's
+  address and TrueNAS refuses an address that only came from DHCP. [verified]
+- The iSCSI service must be started and enabled on the NAS
+  (`truenas_incus_ctl service start --enable iscsitarget`). [verified]
+- **The API key appears in plain text** in Incus's error output and in the process
+  arguments of the `truenas_incus_ctl` calls the driver makes. Treat it as a secret
+  that leaks to anyone who can read those; scope it narrowly. [verified]
 
 ### Who runs it
 
@@ -240,7 +270,7 @@ All **[verified]** on Tron, in a throwaway Incus project, since deleted:
 
 | Question | Result |
 |---|---|
-| Can a snapshot be attached directly as a disk device (`source=<vol>/<snap>`, `readonly=true`)? | The device is accepted, but on this btrfs pool the container saw an **empty** directory, and Incus left an empty `<snap>` directory inside the *live* volume. Not investigated further. **Don't use direct snapshot attach.** |
+| Can a snapshot be attached directly as a disk device (`source=<vol>/<snap>`, `readonly=true`)? | **No, by design.** For a custom volume, `source=<vol>/<x>` means *subpath `x` inside the live volume*, not snapshot `x`. The container saw an empty directory, and Incus created an empty `<x>` directory inside the **live** volume as a side effect. Reproduced identically on btrfs and on the `truenas` pool, which rules out a driver quirk. **Never use it for backups.** |
 | Does a copy-on-write clone of the snapshot work instead? | Yes. `storage volume copy <vol>/<snap> <clone>` is instant, the clone mounts read-only (`touch` fails with EROFS), and it holds the point-in-time state (a file written after the snapshot is absent). |
 | Does restic back up a clone and restore it to a *fresh volume* faithfully? | Yes: identical sha256, uid/gid 1000 preserved, symlink and timestamps preserved. |
 | Do exit codes reach the caller? | Yes via exec: success was 0, a bad `restore` returned 1. |
@@ -277,11 +307,12 @@ All **[verified]** on Tron, in a throwaway Incus project, since deleted:
 
 1. Tier 1's behaviour is verified end to end (snapshot taken by the Incus scheduler
    from tink-set config, correct expiry).
-2. `truenas` is an available driver on a current Incus **[verified]**; its behaviour as
-   a copy target is not.
-3. The "attach a snapshot" shortcut is not trustworthy on btrfs; clone-then-attach is.
-   Any design here that wants read-only access to a point in time should use the
-   clone.
+2. The `truenas` driver works as a copy and restore target on a current Incus
+   **[verified]**; snapshot cloning on it does not yet.
+3. A disk device cannot attach a snapshot: `source=<vol>/<x>` is a subpath of the live
+   volume (and silently creates it). Read-only access to a point in time needs a clone
+   of the snapshot, which works on btrfs but currently fails on the `truenas` driver
+   (see above).
 
 ## Phasing
 
@@ -301,9 +332,10 @@ Ordered so each step is useful alone, and the Incus-supported path comes first.
 
 ## Open questions
 
-- **TrueNAS target:** does cross-pool copy from btrfs to the `truenas` driver work,
-  and is `--refresh` incremental there or a full copy each time? Does it preserve
-  snapshots and expiry? (Needs the box.)
+- **TrueNAS target:** copy, refresh, restore and snapshot preservation work (above). Still
+  open: is `--refresh` truly incremental at realistic sizes; do copied snapshots carry
+  the source's expiry; does Incus 7.4 fix snapshot cloning on the NAS pool; and how does
+  Incus behave at boot or mid-copy when the NAS is unreachable (not tested).
 - **Remote targets:** how does tink hold the credentials (client cert + trust token)
   for an Incus remote? It already connects to the local socket only.
 - **Retention on a target:** do refreshed copies carry the source's snapshot expiry, or
