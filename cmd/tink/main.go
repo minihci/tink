@@ -44,6 +44,7 @@ made executable instead of just documented.`,
 	root.AddCommand(newDeployCmd())
 	root.AddCommand(newRunCmd())
 	root.AddCommand(newPlanCmd())
+	root.AddCommand(newSecretCmd())
 	root.AddCommand(newIngressCmd())
 	root.AddCommand(newMongoCmd())
 	root.AddCommand(newDaemonCmd())
