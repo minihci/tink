@@ -91,6 +91,70 @@ The runner, restore and verify are the next slices (see `volume-backup-design.md
 
 Like the missing-`backup:` warning, the 3-2-1 warning is meant to become an error later.
 
+## Restore and verify
+
+A backup you have never restored is a hope. Two commands, local snapshots only for now (restoring from
+a backup *target* needs the copy engine, a later slice; `--from` says so rather than pretending):
+
+```
+tink backup restore VOLUME [--snapshot S] [--as NAME]
+tink backup verify  VOLUME [--snapshot S]
+```
+
+Both read the volume's pool, project and verify settings from the stack file (`-f FILE`, default
+`./tink.yaml` if it exists); `--pool` and `--project` override or stand in for it. `--snapshot` defaults
+to the most recent.
+
+**Restore** copies a snapshot to a **new** volume, `VOLUME-restore-<UTC time>` unless `--as` is given. On
+btrfs and ZFS that is a copy-on-write clone: fast, and it takes almost no space. It **never** restores in
+place and refuses to overwrite any existing volume: replacing live data is the one destructive step in the
+whole feature, so swapping the restored volume in (attaching it, or repointing the instance's disk device)
+is left to you.
+
+**Verify** proves a backup is usable:
+
+1. restore the snapshot to a scratch volume,
+2. run the declared check against it in a throwaway instance, with the volume mounted **read-only**,
+3. delete the instance and the scratch volume (on every path, including failure; if cleanup itself fails the
+   error names what to delete by hand),
+4. if it all passed, stamp the source volume.
+
+```yaml
+backup:
+  snapshots: {schedule: "0 3 * * *", retain: 14d}
+  verify:
+    every: weekly                        # daily | weekly | monthly; omit to verify only on demand
+    check:
+      image: docker-oci:library/alpine:3 # an OCI image that has `sleep`
+      command: [sh, -c, "test -s /data/important.db"]   # argv; exit 0 means the data is good
+      mount: /data                       # where the restored volume appears (default /data)
+```
+
+`verify: weekly` on its own is still accepted. The throwaway instance has no network and its entrypoint is
+replaced by a `sleep` so it can be exec'd into, which is why the image must be an OCI image with `sleep`.
+
+**The stamp.** A passing verify records `user.tink.backup.verified-at` (UTC), `verified-snapshot` and
+`verified-with` (`check` or `restore`) on the source volume, as ordinary Incus volume config. There is no
+state file of tink's own; `plan` reads these. A failed check leaves the stamp untouched, so a failed
+verification never looks fresh.
+
+**What `plan` says.** Only when a `verify` cadence is declared and the volume exists:
+
+```
+warning: verify: weekly is declared but this volume has never been verified -- run `tink backup verify lib`
+warning: last verified 12d ago, older than the declared verify: weekly -- run `tink backup verify lib`
+warning: a verify check is declared, but the last verification only proved the snapshot restores -- ...
+```
+
+The last one closes a hole: running `verify` somewhere the stack file is not found would otherwise
+restore-only and make the volume look freshly verified while the check that matters never ran.
+
+**What it does and does not prove.** With a check, it proves the snapshot restores *and* that your check
+passes against the restored data, which is only as good as the check. Without one it proves only that the
+snapshot can be restored to a volume, and says so in its output. Neither proves the application would
+start on it; a check that does the real thing (e.g. `pg_controldata`, or opening the database) is the way
+to get closer. Verification reads a crash-consistent snapshot, like everything here.
+
 ## What tink does with it
 
 `schedule` and `retain` map one-to-one onto Incus's own volume keys
@@ -138,6 +202,6 @@ The direction for everything below is in [`volume-backup-design.md`](volume-back
   power was cut -- fine for Postgres (it replays WAL), not a substitute for a
   logical dump. Nothing coordinates *two* volumes: a volume pair snapshotted on
   the same schedule is not captured at the same instant.
-- **No restore command.** Restore is
-  `incus storage volume snapshot restore <pool> <volume> <snapshot>`.
-- **Unproven restores.** Nothing yet verifies that a snapshot is usable.
+- **Restore and verify cover local snapshots only.** Restoring or verifying from a backup target needs the
+  copy engine (`--from` is rejected for now).
+- **Verify is only as strong as its check**, and an unchecked verify only proves the snapshot restores.
