@@ -53,6 +53,8 @@ anything blocked; an instance's `on_image_change` field says whether
 image drift is reported, ignored, or converged by rebuilding an OCI app
 container onto a digest-pinned image - see
 [`docs/image-updates.md`](docs/image-updates.md).
+`tink backup restore` / `tink backup verify` restore a volume's snapshot to a new volume and prove the
+backup is usable - see [`docs/volume-backup.md`](docs/volume-backup.md).
 `plan` also asks every storage volume to declare how it is backed up
 (scheduled snapshots, or an explicit opt-out with a reason), warning about any
 that does not - see [`docs/volume-backup.md`](docs/volume-backup.md).

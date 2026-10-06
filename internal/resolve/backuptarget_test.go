@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/lxc/incus/v7/shared/api"
 )
 
 func target(name, location, remote, pool string) Resource {
@@ -221,5 +224,139 @@ func TestBackupWarningsSaysSoWhenATargetIsUnknown(t *testing.T) {
 	got := strings.Join(backupWarnings(volWith("v", "", true, "macpro"), nil), "\n")
 	if !strings.Contains(got, `copy target "macpro" is not known to the planner`) {
 		t.Errorf("a missing target must be reported loudly, got:\n%s", got)
+	}
+}
+
+func TestVerifyWarning(t *testing.T) {
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	stampAt := func(age time.Duration) map[string]string {
+		return map[string]string{StampVerifiedAt: now.Add(-age).Format(time.RFC3339)}
+	}
+	vol := func(cadence string) Resource {
+		return Resource{Kind: KindStorageVolume, Name: "lib", Backup: &VolumeBackup{
+			Snapshots: &SnapshotPolicy{Schedule: "@daily", Retain: "7d"}, Verify: cadence}}
+	}
+	tests := []struct {
+		name    string
+		r       Resource
+		current map[string]string
+		want    string // substring; "" means no warning
+	}{
+		{"never verified", vol("weekly"), nil, "never been verified -- run `tink backup verify lib`"},
+		{"fresh within the cadence", vol("weekly"), stampAt(6 * 24 * time.Hour), ""},
+		{"stale by days", vol("weekly"), stampAt(12 * 24 * time.Hour), "last verified 12d ago, older than the declared verify: weekly"},
+		{"stale by hours (daily cadence)", vol("daily"), stampAt(30 * time.Hour), "last verified 30h ago"},
+		{"monthly allows 31 days", vol("monthly"), stampAt(30 * 24 * time.Hour), ""},
+		{"a stamp tink did not write is replaced, not trusted", vol("weekly"), map[string]string{StampVerifiedAt: "last tuesday"}, "not a timestamp tink wrote"},
+		{"no cadence declared: no nagging", vol(""), nil, ""},
+		{"fresh restore-only stamp does not satisfy a declared check",
+			func() Resource {
+				r := vol("weekly")
+				r.Backup.VerifyCheck = &VerifyCheck{Image: "i", Command: []string{"true"}}
+				return r
+			}(),
+			map[string]string{StampVerifiedAt: now.Add(-time.Hour).Format(time.RFC3339), StampVerifiedWith: "restore"},
+			"only proved the snapshot restores"},
+		{"fresh check stamp satisfies a declared check",
+			func() Resource {
+				r := vol("weekly")
+				r.Backup.VerifyCheck = &VerifyCheck{Image: "i", Command: []string{"true"}}
+				return r
+			}(),
+			map[string]string{StampVerifiedAt: now.Add(-time.Hour).Format(time.RFC3339), StampVerifiedWith: "check"},
+			""},
+		{"restore-only is fine when no check is declared", vol("weekly"),
+			map[string]string{StampVerifiedAt: now.Add(-time.Hour).Format(time.RFC3339), StampVerifiedWith: "restore"}, ""},
+		{"opt-out: nothing to verify", Resource{Kind: KindStorageVolume, Name: "lib", Backup: &VolumeBackup{None: "x"}}, nil, ""},
+		{"no backup block", Resource{Kind: KindStorageVolume, Name: "lib"}, nil, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := verifyWarning(tc.r, tc.current, now)
+			if tc.want == "" && got != "" || !strings.Contains(got, tc.want) {
+				t.Errorf("warning = %q, want it to contain %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDecideVolumeWarnsAboutStaleVerificationOnlyForExistingVolumes(t *testing.T) {
+	r := Resource{Kind: KindStorageVolume, Name: "lib", Backup: &VolumeBackup{
+		Snapshots: &SnapshotPolicy{Schedule: "@daily", Retain: "7d"}, Verify: "weekly"}}
+	if w := strings.Join(decideVolume(r, nil).Warnings, "|"); strings.Contains(w, "verified") {
+		t.Errorf("a volume that does not exist yet has nothing to verify, got %q", w)
+	}
+	existing := &api.StorageVolume{StorageVolumePut: api.StorageVolumePut{Config: map[string]string{}}}
+	if w := strings.Join(decideVolume(r, existing).Warnings, "|"); !strings.Contains(w, "never been verified") {
+		t.Errorf("an existing, never-verified volume must be warned about, got %q", w)
+	}
+}
+
+func TestParseVerifyScalarAndMapping(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "tink.yaml")
+	doc := `kind: storage-volume
+name: a
+backup:
+  snapshots: {schedule: "@daily", retain: 7d}
+  verify: weekly
+---
+kind: storage-volume
+name: b
+backup:
+  snapshots: {schedule: "@daily", retain: 7d}
+  verify:
+    every: daily
+    check:
+      image: docker-oci:library/alpine:3
+      command: [sh, -c, "test -s /data/x"]
+      mount: /mnt/restored
+---
+kind: storage-volume
+name: c
+backup:
+  snapshots: {schedule: "@daily", retain: 7d}
+  verify:
+    check: {image: docker-oci:library/alpine:3, command: [true]}
+`
+	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rs, err := LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rs[0].Backup.Verify != "weekly" || rs[0].Backup.VerifyCheck != nil {
+		t.Errorf("scalar form: %+v", rs[0].Backup)
+	}
+	if b := rs[1].Backup; b.Verify != "daily" || b.VerifyCheck == nil || b.VerifyCheck.Image != "docker-oci:library/alpine:3" ||
+		len(b.VerifyCheck.Command) != 3 || b.VerifyCheck.Mount != "/mnt/restored" {
+		t.Errorf("mapping form: %+v / %+v", b, b.VerifyCheck)
+	}
+	if b := rs[2].Backup; b.Verify != "" || b.VerifyCheck == nil {
+		t.Errorf("a check with no cadence is allowed (verify on demand, no nagging): %+v", b)
+	}
+}
+
+func TestValidateVerifyCheck(t *testing.T) {
+	snap := &SnapshotPolicy{Schedule: "@daily", Retain: "7d"}
+	chk := func(c *VerifyCheck) error {
+		return Validate(Resource{Kind: KindStorageVolume, Name: "v", Backup: &VolumeBackup{Snapshots: snap, VerifyCheck: c}})
+	}
+	if err := chk(&VerifyCheck{Image: "i", Command: []string{"true"}}); err != nil {
+		t.Errorf("valid check rejected: %v", err)
+	}
+	for _, c := range []*VerifyCheck{
+		{Command: []string{"true"}},
+		{Image: "i"},
+		{Image: "i", Command: []string{"true"}, Mount: "relative/path"},
+	} {
+		if err := chk(c); err == nil {
+			t.Errorf("%+v: expected an error", c)
+		}
+	}
+	if err := Validate(Resource{Kind: KindStorageVolume, Name: "v", Backup: &VolumeBackup{
+		None: "x", VerifyCheck: &VerifyCheck{Image: "i", Command: []string{"true"}}}}); err == nil {
+		t.Error("none excludes a verify check")
 	}
 }

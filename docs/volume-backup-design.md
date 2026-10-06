@@ -340,7 +340,15 @@ Ordered so each step is useful alone, and the Incus-supported path comes first.
 2. **Local restore and verify.** `tink backup restore` from tier-1 snapshots into a new
    volume, and `verify` with a scratch volume plus the user's check, with the stamp and
    the stale-verification warning. This exercises the disposable-instance mechanism
-   with no new engine, and covers the restore half early.
+   with no new engine, and covers the restore half early. **Done** (see `volume-backup.md`).
+   Differences from the design above: `--from <target>` is accepted but rejected until the copy
+   engine exists; the check runs in an OCI instance whose entrypoint is replaced by `sleep`, with
+   no network, and the restored volume mounted read-only; and the stale-verification warning also
+   fires when a check is declared but the last verification was restore-only, because otherwise
+   running `verify` without the stack file would refresh the stamp without running the check.
+   Verified live: restore gives correct point-in-time contents and refuses to overwrite; a passing
+   check stamps the volume; a failing check (run against a snapshot with the critical file
+   deleted) leaves the stamp unchanged; nothing is left behind on either path.
 3. **`engine: incus` copies.** `copy --refresh` to a remote or a second pool, scheduled
    by the daemon or `tink backup run`; restore and verify `--from` a target.
 4. **Off-site restic job engine**, built on the mechanism from step 2, for hosts with

@@ -89,15 +89,54 @@ type yamlBackup struct {
 		Schedule string `yaml:"schedule"`
 		Retain   string `yaml:"retain"`
 	} `yaml:"copies"`
-	Verify string `yaml:"verify"`
-	None   string `yaml:"none"`
+	Verify yamlVerify `yaml:"verify"`
+	None   string     `yaml:"none"`
+}
+
+// yamlVerify accepts both `verify: weekly` and
+//
+//	verify:
+//	  every: weekly
+//	  check: {image: ..., command: [...], mount: /data}
+type yamlVerify struct {
+	Every string
+	Check *struct {
+		Image   string   `yaml:"image"`
+		Command []string `yaml:"command"`
+		Mount   string   `yaml:"mount"`
+	}
+}
+
+func (v *yamlVerify) UnmarshalYAML(node *yaml.Node) error {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		return node.Decode(&v.Every)
+	case yaml.MappingNode:
+		var m struct {
+			Every string `yaml:"every"`
+			Check *struct {
+				Image   string   `yaml:"image"`
+				Command []string `yaml:"command"`
+				Mount   string   `yaml:"mount"`
+			} `yaml:"check"`
+		}
+		if err := node.Decode(&m); err != nil {
+			return err
+		}
+		v.Every, v.Check = m.Every, m.Check
+		return nil
+	}
+	return fmt.Errorf("line %d: verify must be a cadence (daily, weekly, monthly) or a mapping with every and check", node.Line)
 }
 
 func (b *yamlBackup) toVolumeBackup() *VolumeBackup {
 	if b == nil {
 		return nil
 	}
-	out := &VolumeBackup{None: b.None, Verify: b.Verify}
+	out := &VolumeBackup{None: b.None, Verify: b.Verify.Every}
+	if c := b.Verify.Check; c != nil {
+		out.VerifyCheck = &VerifyCheck{Image: c.Image, Command: c.Command, Mount: c.Mount}
+	}
 	for _, c := range b.Copies {
 		out.Copies = append(out.Copies, BackupCopy{Target: c.Target, Schedule: c.Schedule, Retain: c.Retain})
 	}
