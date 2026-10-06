@@ -1,0 +1,166 @@
+package resolve
+
+import (
+	"fmt"
+	"regexp"
+	"strings"
+
+	"github.com/lxc/incus/v7/shared/api"
+)
+
+// VolumeBackup is a storage-volume's answer to "how is this backed up?".
+// Every custom volume should give one: either a snapshot policy, or an explicit
+// opt-out with a reason. A volume that says nothing gets a warning from plan --
+// the point is to force the backup question at authoring time, not to discover
+// at restore time that nobody asked it. The warning is a stepping stone: it
+// exists so stacks written before this field keep applying, and is meant to
+// become an error (BLOCKED, like image drift) once the feature has matured.
+//
+// Tier 1 only: local, Incus-native snapshots. Same pool, same disk, so this
+// protects against mistakes (a bad upgrade, a deleted file), not against
+// losing the disk. See docs/volume-backup.md.
+type VolumeBackup struct {
+	// Snapshots is a scheduled-snapshot policy. Mutually exclusive with None.
+	Snapshots *SnapshotPolicy
+	// None is the reason this volume is deliberately not backed up. A
+	// non-empty string is the opt-out: a bare "none" with no reason would be
+	// indistinguishable from not having thought about it.
+	None string
+}
+
+// SnapshotPolicy maps one-to-one onto Incus's own snapshots.schedule and
+// snapshots.expiry volume keys, so Incus does the work and tink only converges
+// the config -- no daemon, no state of its own.
+type SnapshotPolicy struct {
+	// Schedule is a cron expression (5 fields) or a comma-separated list of
+	// @hourly/@daily/@midnight/@weekly/@monthly/@annually/@yearly.
+	Schedule string
+	// Retain is how long a snapshot lives, in Incus's expiry syntax
+	// ("14d", "1w 3d", "6m"). Required: a schedule with no expiry fills the
+	// pool forever.
+	Retain string
+}
+
+const (
+	volKeySnapshotSchedule = "snapshots.schedule"
+	volKeySnapshotExpiry   = "snapshots.expiry"
+)
+
+var (
+	// One Incus expiry field: units are S|M|H|d|w|m|y. Zero is excluded --
+	// Incus treats a zero expiry as "never expires", the opposite of retaining
+	// for a bounded time.
+	expiryFieldRe   = regexp.MustCompile(`^([1-9][0-9]*)(S|M|H|d|w|m|y)$`)
+	scheduleAliases = map[string]bool{"@hourly": true, "@daily": true, "@midnight": true, "@weekly": true, "@monthly": true, "@annually": true, "@yearly": true}
+)
+
+const cronFields = 5
+
+// validateBackup rejects a malformed backup block at load time. A missing block
+// is NOT an error here: it is a plan-time warning (see decideVolume).
+func validateBackup(r Resource) error {
+	b := r.Backup
+	if b == nil {
+		return nil
+	}
+	hasSnap, hasNone := b.Snapshots != nil, b.None != ""
+	switch {
+	case hasSnap && hasNone:
+		return fmt.Errorf("resource %q: backup: snapshots and none are mutually exclusive", r.Name)
+	case !hasSnap && !hasNone:
+		return fmt.Errorf("resource %q: backup: give either snapshots (schedule + retain) or none (the reason this volume is not backed up)", r.Name)
+	case hasNone && strings.TrimSpace(b.None) == "":
+		return fmt.Errorf("resource %q: backup.none needs a reason, not whitespace", r.Name)
+	}
+	if hasSnap {
+		if err := validateSchedule(b.Snapshots.Schedule); err != nil {
+			return fmt.Errorf("resource %q: backup.snapshots.schedule: %w", r.Name, err)
+		}
+		if err := validateRetain(b.Snapshots.Retain); err != nil {
+			return fmt.Errorf("resource %q: backup.snapshots.retain: %w", r.Name, err)
+		}
+	}
+	return nil
+}
+
+func validateSchedule(s string) error {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return fmt.Errorf("required")
+	}
+	if strings.HasPrefix(s, "@") {
+		for _, a := range strings.Split(s, ",") {
+			if !scheduleAliases[strings.TrimSpace(a)] {
+				return fmt.Errorf("%q is not one of @hourly, @daily, @midnight, @weekly, @monthly, @annually, @yearly", strings.TrimSpace(a))
+			}
+		}
+		return nil
+	}
+	if n := len(strings.Fields(s)); n != cronFields {
+		return fmt.Errorf("%q is neither a list of @aliases nor a %d-field cron expression", s, cronFields)
+	}
+	return nil
+}
+
+func validateRetain(s string) error {
+	if strings.TrimSpace(s) == "" {
+		return fmt.Errorf("required: a schedule with no expiry keeps snapshots forever and eventually fills the pool")
+	}
+	seen := map[string]bool{}
+	for _, f := range strings.Split(s, " ") {
+		m := expiryFieldRe.FindStringSubmatch(f)
+		if m == nil {
+			return fmt.Errorf("%q is not valid Incus expiry syntax: space-separated <positive integer><unit> fields, units S|M|H|d|w|m|y (e.g. \"14d\" or \"1w 3d\")", s)
+		}
+		if seen[m[2]] {
+			return fmt.Errorf("%q repeats the unit %q", s, m[2])
+		}
+		seen[m[2]] = true
+	}
+	return nil
+}
+
+// backupVolumeConfig is the Incus volume config a snapshot policy converges
+// to. Nil for no policy (no block, or an opt-out): tink only ever sets keys it
+// owns, matching diffConfig's one-directional rule.
+func backupVolumeConfig(b *VolumeBackup) map[string]string {
+	if b == nil || b.Snapshots == nil {
+		return nil
+	}
+	return map[string]string{
+		volKeySnapshotSchedule: strings.TrimSpace(b.Snapshots.Schedule),
+		volKeySnapshotExpiry:   strings.TrimSpace(b.Snapshots.Retain),
+	}
+}
+
+// decideVolume is planStorageVolume's decision with the Incus read already
+// done, so the policy is testable without a daemon. current is nil when the
+// volume does not exist yet.
+//
+// A volume with no backup block is converged exactly as before, plus a warning
+// whether or not it already exists: the question should be answered in the
+// YAML, and a volume that predates the field is the one that most needs it
+// asked. (This is the line to flip to ActionBlocked when the warning graduates
+// to an error.)
+func decideVolume(r Resource, current *api.StorageVolume) PlannedResource {
+	desired := backupVolumeConfig(r.Backup)
+	var warnings []string
+	if r.Backup == nil {
+		warnings = append(warnings, "no backup declared -- add `backup: {snapshots: {schedule: ..., retain: ...}}`, "+
+			"or `backup: {none: \"<why this volume needs no backup>\"}` if it really does not need one; "+
+			"this will become an error in a future release")
+	}
+	if r.Backup != nil && r.Backup.None != "" && current != nil && current.Config[volKeySnapshotSchedule] != "" {
+		warnings = append(warnings, fmt.Sprintf(
+			"backup: none, but the volume still has %s=%q set live -- tink does not remove it; clear it with `incus storage volume unset`",
+			volKeySnapshotSchedule, current.Config[volKeySnapshotSchedule]))
+	}
+
+	if current == nil {
+		return PlannedResource{Resource: r, Action: ActionCreate, Changes: diffConfig(nil, desired, nil), Warnings: warnings}
+	}
+	if changes := diffConfig(current.Config, desired, nil); len(changes) > 0 {
+		return PlannedResource{Resource: r, Action: ActionUpdate, Changes: changes, Warnings: warnings}
+	}
+	return PlannedResource{Resource: r, Action: ActionNone, Warnings: warnings}
+}

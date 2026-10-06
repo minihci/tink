@@ -37,9 +37,10 @@ func createOne(server incus.InstanceServer, r Resource) error {
 			pool = "default"
 		}
 		return scopedServer(server, r).CreateStoragePoolVolume(pool, api.StorageVolumesPost{
-			Name:        r.Name,
-			Type:        "custom",
-			ContentType: "filesystem",
+			StorageVolumePut: api.StorageVolumePut{Config: backupVolumeConfig(r.Backup)},
+			Name:             r.Name,
+			Type:             "custom",
+			ContentType:      "filesystem",
 		})
 	case KindInstance:
 		return createInstance(server, r)
@@ -220,6 +221,23 @@ func updateOne(server incus.InstanceServer, r Resource) error {
 			put.Devices[name] = dev
 		}
 		return s.UpdateProfile(r.Name, put, etag)
+	case KindStorageVolume:
+		pool := r.Pool
+		if pool == "" {
+			pool = "default"
+		}
+		current, etag, err := s.GetStoragePoolVolume(pool, "custom", r.Name)
+		if err != nil {
+			return err
+		}
+		put := current.Writable()
+		if put.Config == nil {
+			put.Config = map[string]string{}
+		}
+		for k, v := range backupVolumeConfig(r.Backup) {
+			put.Config[k] = v
+		}
+		return s.UpdateStoragePoolVolume(pool, "custom", r.Name, put, etag)
 	case KindInstance:
 		return updateInstance(s, r)
 	case KindFile:
@@ -227,10 +245,10 @@ func updateOne(server incus.InstanceServer, r Resource) error {
 		// changed -- CreateInstanceFile overwrites either way.
 		return pushFile(server, r)
 	default:
-		// Not exercised in this spike: storage volumes and projects are
-		// create-only so far, matching every real deployment on this
-		// platform to date -- nothing has ever needed to mutate one in
-		// place.
+		// Not exercised in this spike: projects are create-only so far,
+		// matching every real deployment on this platform to date --
+		// nothing has ever needed to mutate one in place. (Storage volumes
+		// became updatable for their backup snapshot policy.)
 		return fmt.Errorf("update not implemented for kind %q in this spike", r.Kind)
 	}
 }

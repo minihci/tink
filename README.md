@@ -53,6 +53,9 @@ anything blocked; an instance's `on_image_change` field says whether
 image drift is reported, ignored, or converged by rebuilding an OCI app
 container onto a digest-pinned image - see
 [`docs/image-updates.md`](docs/image-updates.md).
+`plan` also asks every storage volume to declare how it is backed up
+(scheduled snapshots, or an explicit opt-out with a reason), warning about any
+that does not - see [`docs/volume-backup.md`](docs/volume-backup.md).
 `ingress reconcile` discovers instances that opt in via
 `user.ingress.{domain,port,enabled}` config and converges the shared
 `ingress` instance's routes to match, without a restart or a manual file

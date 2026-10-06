@@ -241,7 +241,12 @@ docs/image-updates.md.
 
 An instance's environment.* values may be ${secret:NAME}, read from an
 age-encrypted secrets.yaml beside the stack (see "tink secret" and
-docs/secrets.md). plan never prints a secret, or the value it replaces.`, resolve.DefaultFile),
+docs/secrets.md). plan never prints a secret, or the value it replaces.
+
+Every storage-volume should also answer "how is this backed up?" with a
+backup: block -- scheduled snapshots, or an explicit none: with a reason.
+For now a volume that does not only gets a warning; that will become an
+error. See docs/volume-backup.md.`, resolve.DefaultFile),
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			resources, err := resolve.LoadFiles(args)

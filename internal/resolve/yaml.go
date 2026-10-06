@@ -29,6 +29,9 @@ type yamlResource struct {
 	Config    map[string]string            `yaml:"config"`
 	Devices   map[string]map[string]string `yaml:"devices"`
 
+	// Storage-volume-only -- see VolumeBackup.
+	Backup *yamlBackup `yaml:"backup"`
+
 	// File-only.
 	Instance   string `yaml:"instance"`
 	Path       string `yaml:"path"`
@@ -68,6 +71,26 @@ type yamlResource struct {
 	Source       string            `yaml:"source"`
 	Architecture string            `yaml:"architecture"`
 	Properties   map[string]string `yaml:"properties"`
+}
+
+// yamlBackup is the on-disk shape of a volume's backup block.
+type yamlBackup struct {
+	Snapshots *struct {
+		Schedule string `yaml:"schedule"`
+		Retain   string `yaml:"retain"`
+	} `yaml:"snapshots"`
+	None string `yaml:"none"`
+}
+
+func (b *yamlBackup) toVolumeBackup() *VolumeBackup {
+	if b == nil {
+		return nil
+	}
+	out := &VolumeBackup{None: b.None}
+	if b.Snapshots != nil {
+		out.Snapshots = &SnapshotPolicy{Schedule: b.Snapshots.Schedule, Retain: b.Snapshots.Retain}
+	}
+	return out
 }
 
 // DefaultFile is what tink plan / tink plan apply read when given no
@@ -219,6 +242,7 @@ func (d yamlResource) toResource(dir string) (Resource, error) {
 		Profiles:        d.Profiles,
 		VM:              d.VM,
 		Pool:            d.Pool,
+		Backup:          d.Backup.toVolumeBackup(),
 		Config:          d.Config,
 		Devices:         d.Devices,
 		Instance:        d.Instance,
