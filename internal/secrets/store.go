@@ -12,8 +12,11 @@
 // line in git and each can be decrypted independently. The matching private key (the identity)
 // is never in the repo; see LoadIdentity.
 //
-// The age ciphertext is plain age: `base64 -d | age -d -i identity.txt` reads a value with no
-// tink involved, so the store has an escape hatch.
+// The age ciphertext is plain age: `base64 -d | age -d -i identity.txt | tail -n +2` reads a value
+// with no tink involved, so the store has an escape hatch. The first line of the decrypted payload is
+// a header naming the secret ("tink:1:<name>"); tink checks it, so two lines swapped by a bad merge
+// or an edit are an error instead of two secrets silently exchanged. (It does not stop someone who
+// can commit from writing a value of their own: the recipients are public keys.)
 package secrets
 
 import (
@@ -54,6 +57,7 @@ func ValidateName(name string) error {
 // Store is the decoded secrets file. The zero value is not usable; use Open.
 type Store struct {
 	path       string
+	exists     bool              // the file was there when opened
 	recipients []string          // age1... public keys, in file order
 	values     map[string]string // name -> base64 of the age ciphertext
 }
@@ -74,6 +78,7 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	s.exists = true
 	var f fileFormat
 	if err := yaml.Unmarshal(data, &f); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
@@ -98,6 +103,11 @@ func Open(path string) (*Store, error) {
 
 // Path is where the store lives.
 func (s *Store) Path() string { return s.path }
+
+// Exists reports whether the file was there when the store was opened. A store that does not exist
+// is empty, but "no store at this path" (a wrong directory) is a different thing to say than
+// "this secret is unset".
+func (s *Store) Exists() bool { return s.exists }
 
 // Recipients returns the public keys values are encrypted to.
 func (s *Store) Recipients() []string { return append([]string(nil), s.recipients...) }
@@ -128,7 +138,7 @@ func (s *Store) Set(name, value string) error {
 	if len(s.recipients) == 0 {
 		return errors.New("the store has no recipients to encrypt to: run `tink secret keygen`, then `tink secret recipients add <key>`")
 	}
-	ct, err := encrypt(value, s.recipients)
+	ct, err := encrypt(name, value, s.recipients)
 	if err != nil {
 		return err
 	}
@@ -145,7 +155,7 @@ func (s *Store) Get(name string, ids []age.Identity) (string, error) {
 	if len(ids) == 0 {
 		return "", errors.New("no age identity available to decrypt with")
 	}
-	return decrypt(ct, ids)
+	return decrypt(name, ct, ids)
 }
 
 // Remove deletes name from the store (a no-op if it is not there).
@@ -166,14 +176,14 @@ func (s *Store) SetRecipients(recipients []string, ids []age.Identity) error {
 		if len(ids) == 0 {
 			return errors.New("re-encrypting the existing secrets needs an age identity that can decrypt them")
 		}
-		plain, err := decrypt(ct, ids)
+		plain, err := decrypt(name, ct, ids)
 		if err != nil {
 			return fmt.Errorf("secret %q: %w", name, err)
 		}
 		if len(recipients) == 0 {
 			return errors.New("a store with secrets needs at least one recipient")
 		}
-		if next[name], err = encrypt(plain, recipients); err != nil {
+		if next[name], err = encrypt(name, plain, recipients); err != nil {
 			return err
 		}
 	}
@@ -192,7 +202,7 @@ func (s *Store) Save() error {
 	}
 	var out bytes.Buffer
 	out.WriteString("# tink secret store: age-encrypted values, safe to commit.\n")
-	out.WriteString("# Edit with `tink secret ...`; read one without tink via `base64 -d | age -d -i <identity>`.\n")
+	out.WriteString("# Edit with `tink secret ...`; read one without tink via `base64 -d | age -d -i <identity> | tail -n +2`.\n")
 	out.Write(body)
 
 	tmp, err := os.CreateTemp(filepath.Dir(s.path), ".secrets-*.tmp")
@@ -214,7 +224,10 @@ func (s *Store) Save() error {
 	return os.Rename(tmp.Name(), s.path)
 }
 
-func encrypt(value string, recipients []string) (string, error) {
+// payloadHeader is the first line of what is encrypted: it binds the value to its name.
+func payloadHeader(name string) string { return "tink:1:" + name + "\n" }
+
+func encrypt(name, value string, recipients []string) (string, error) {
 	rs := make([]age.Recipient, 0, len(recipients))
 	for _, r := range recipients {
 		rec, err := age.ParseX25519Recipient(r)
@@ -228,7 +241,7 @@ func encrypt(value string, recipients []string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if _, err := io.WriteString(w, value); err != nil {
+	if _, err := io.WriteString(w, payloadHeader(name)+value); err != nil {
 		return "", err
 	}
 	if err := w.Close(); err != nil {
@@ -237,7 +250,7 @@ func encrypt(value string, recipients []string) (string, error) {
 	return base64.StdEncoding.EncodeToString(buf.Bytes()), nil
 }
 
-func decrypt(b64 string, ids []age.Identity) (string, error) {
+func decrypt(name, b64 string, ids []age.Identity) (string, error) {
 	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(b64))
 	if err != nil {
 		return "", err
@@ -250,5 +263,9 @@ func decrypt(b64 string, ids []age.Identity) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return string(plain), nil
+	header := payloadHeader(name)
+	if !strings.HasPrefix(string(plain), header) {
+		return "", fmt.Errorf("secret %q: the stored value is not the one encrypted for this name (swapped or edited by hand?)", name)
+	}
+	return strings.TrimPrefix(string(plain), header), nil
 }

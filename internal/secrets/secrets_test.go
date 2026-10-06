@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -363,5 +364,65 @@ func TestResolver(t *testing.T) {
 	}
 	if _, err := noid.Get("db-password"); !errors.Is(err, ErrNoIdentity) {
 		t.Errorf("Get without an identity must be ErrNoIdentity, got %v", err)
+	}
+}
+
+func TestNameIsBoundToTheCiphertext(t *testing.T) {
+	k := newKey(t)
+	s := storeWith(t, k)
+	s.Set("db-password", "the-database-password")
+	s.Set("api-token", "the-api-token-value")
+	// a bad merge or a hand edit swaps the two lines
+	s.values["db-password"], s.values["api-token"] = s.values["api-token"], s.values["db-password"]
+	for _, n := range []string{"db-password", "api-token"} {
+		if v, err := s.Get(n, ids(k)); err == nil || !strings.Contains(err.Error(), "swapped or edited by hand") {
+			t.Errorf("%s: swapped ciphertext was accepted (%q, %v): two secrets would be silently exchanged", n, v, err)
+		}
+	}
+	// and rekeying a store whose lines were swapped must not launder the swap into a valid-looking store
+	if err := s.SetRecipients(s.Recipients(), ids(k)); err == nil {
+		t.Error("rekey of a store with a swapped value must fail, not re-encrypt it under the wrong name")
+	}
+}
+
+func TestStoreExistsReflectsTheFile(t *testing.T) {
+	dir := t.TempDir()
+	missing, _ := Open(filepath.Join(dir, "nope.yaml"))
+	if missing.Exists() {
+		t.Error("a store that is not on disk must say so (a wrong directory is not 'every secret unset')")
+	}
+	k := newKey(t)
+	s := storeWith(t, k)
+	s.Set("a-secret", "a-secret-value")
+	s.Save()
+	reopened, _ := Open(s.Path())
+	if !reopened.Exists() {
+		t.Error("an existing store must report that it exists")
+	}
+}
+
+// The store's promise: a value can be read with the plain age tool, no tink involved.
+func TestPlainAgeCLICanReadAValue(t *testing.T) {
+	if _, err := exec.LookPath("age"); err != nil {
+		t.Skip("the age CLI is not installed")
+	}
+	dir := t.TempDir()
+	idPath := filepath.Join(dir, "id.txt")
+	pub, err := GenerateIdentity(idPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, _ := Open(filepath.Join(dir, DefaultFile))
+	s.recipients = []string{pub}
+	s.Set("x-secret", "interop-check-value")
+	raw, _ := base64.StdEncoding.DecodeString(s.values["x-secret"])
+	cmd := exec.Command("age", "-d", "-i", idPath)
+	cmd.Stdin = bytes.NewReader(raw)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("age -d failed: %v", err)
+	}
+	if got := strings.TrimPrefix(string(out), "tink:1:x-secret\n"); got != "interop-check-value" {
+		t.Errorf("age -d output = %q", out)
 	}
 }
