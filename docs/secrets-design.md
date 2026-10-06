@@ -1,193 +1,161 @@
 # Secrets: design
 
-**Status: design, not implemented.** Nothing here exists yet except the problems it solves.
+**Status: phase 1 is implemented** (see [`secrets.md`](secrets.md) for how to use it). This document is the
+reasoning: why, what was decided, what was rejected, and what is left. It was reviewed adversarially against the code
+by a separate agent before phase 1 was built; the [review outcomes](#what-the-review-changed) are recorded below.
 
-Claims are marked **[verified]** (tried live on a real host while writing this), **[docs]** (read in upstream
-documentation), **[code]** (read in this repo), or **[hypothesis]** (believed, to be checked before relying on it).
+Claims are marked **[verified]** (tried live; the commands are in the [appendix](#appendix-how-the-claims-were-verified)),
+**[docs]** (read in upstream documentation), **[code]** (read in this repo), or **[hypothesis]** (believed, to be checked).
 
-## Why now
+## Why
 
-Tink has no story for secrets, and the real stack it runs already needs one. Concrete cases from using it:
+Tink had no story for secrets, and the real stack it runs already needed one:
 
-| # | Need | Today |
+| # | Need | Before this work |
 |---|---|---|
-| R1 | Immich's Postgres password, shared by two containers | `sed`-rendered from a placeholder into a file on the host, then stored as plain `environment.DB_PASSWORD` in Incus config |
+| R1 | Immich's Postgres password, shared by two containers | `sed`-rendered from a placeholder into a file on the host, then plain `environment.DB_PASSWORD` in Incus config |
 | R2 | Credentials for a remote Incus server (client cert and trust token) for backup copies | no mechanism |
-| R3 | restic repository password and S3/B2 keys for the off-site engine | no mechanism |
-| R4 | A `backup.verify.check` that needs credentials (e.g. to open a database) | no mechanism |
+| R3 | restic repository password and S3/B2 keys for the off-site backup engine | no mechanism |
+| R4 | A `backup.verify.check` that needs credentials | no mechanism |
 | R5 | The TrueNAS API key behind an Incus `truenas` pool | lives in Incus pool config; appeared in plain text in Incus error output and in process arguments **[verified]** |
-| R6 | Keeping secrets out of the repo while the stack YAML stays in it | placeholder + `sed` step, by hand |
+| R6 | Keeping secrets out of the repo while the stack YAML stays in it | placeholder plus a `sed` step, by hand |
 
-### Leaks in tink itself today
+### Leaks in tink itself, found while designing
 
-- `plan` prints **both the old and the new value** of any changed config key: `config.%s: %q -> %q`
-  (`internal/resolve/plan.go`). A changed `environment.DB_PASSWORD` would be printed in clear. **[code]**
-- `kind: file` always pushes with mode `0644` (`internal/resolve/apply.go`), so a secret written that way would be
-  world-readable inside the container. **[code]**
-- `tink run --env K=V` writes straight into `environment.*` (`internal/run/flags.go`) and so lands in shell
-  history and the host process list. **[code]**
-- Errors from Incus or its drivers can echo values (R5 is a live example). Tink wraps and prints them. **[verified]**
+- `plan` printed **both the old and new value** of any changed config key, and `apply` printed the same lines. **[code]**
+  *(fixed: phase 1)*
+- The image-drift report printed the live and image values of undeclared `environment.*` keys, and `tink run --dry-run` printed
+  the whole config it would set. **[code]** *(fixed: phase 1)*
+- Stack YAML decoding ignored fields it did not know, so a misspelled or misindented key, or a field from a newer tink, was dropped
+  silently. **[code]** *(fixed: phase 1; also seen for real when a stack using a newer field loaded on an older binary and did nothing)*
+- `kind: file` always pushes with mode `0644`, after the instance has started. **[code]** *(why file content cannot carry a secret yet)*
+- `tink run --env K=V` writes the value into `environment.*`, and so passes it on a command line. **[code]**
+  *(documented as not for secrets)*
+- `tink deploy` passes the image-registry token to `incus remote add --token` on a command line. **[code]**
+  *(separate, existing; tracked on its own)*
+- Errors from Incus or its drivers can echo values (R5 is a live example). **[verified]** *(the redactor is a net for this)*
 
 ## Threat model, stated plainly
 
-**Protected against:** the secret appearing in git, in `plan`/`apply`/`run` output and logs, in shell history, in
-`ps`, and to ordinary (non-root, non-`incus-admin`) users on the host.
+**Protected against:** the secret appearing in git, in `plan`/`apply`/`run` output and logs, in shell history, in `ps`, and to
+ordinary (non-root, non-`incus-admin`) users on the host.
 
-**Not protected against: root on the host, or anyone with the Incus socket.** Checked on a real Incus host:
+**Not protected against: root on the host, or anyone with the Incus socket.** The value has to reach the container and Incus
+holds it **[verified]**:
 
-| How a secret reaches the container | Who can read it afterwards |
+| How it reaches the container | Who can read it afterwards |
 |---|---|
-| `environment.X` config key | anyone with Incus API access, via `incus config get` / `show` **[verified]**; root on the host via `/proc/<pid>/environ`; not an ordinary host user **[verified]** |
-| a file pushed into the container | a file in the container's root filesystem: readable by root on the host; **not** an ordinary host user (mode `0400` root, and the directory is root-only) **[verified]** |
+| `environment.X` config key | anyone with Incus API access, via `incus config get`/`show`; root on the host via `/proc/<pid>/environ`; not an ordinary host user |
+| a file pushed into the container | a file in the container's root filesystem: readable by root, not by an ordinary host user |
 
-Two further facts that shape the design **[verified]**:
+Two more facts that shape the design **[verified]**: pushing a file works on a **stopped** container with the mode honored (so
+*create, push, start* is possible), and in an OCI container `/run` is an ordinary directory on the root filesystem (only `/dev/shm`
+is tmpfs), so a pushed file **survives restarts and is included in instance snapshots**. There is no free "tmpfs for secrets".
 
-- Pushing a file works on a **stopped** container, with the requested mode honored. So *create, push, start* is
-  possible, and a secret file can exist before the app first starts.
-- In an OCI container `/run` is an ordinary directory on the root filesystem; only `/dev/shm` is tmpfs. A pushed
-  file therefore **survives restarts and is included in instance snapshots**. There is no free "tmpfs for secrets".
+So delivery is at-rest plaintext on the host in both modes, protected by host permissions. The store is what keeps secrets out of
+git. Tink says this in its docs rather than implying more.
 
-So: delivery to a container is at-rest plaintext on the host in both modes, protected by host permissions. The
-store (below) is what keeps secrets out of git. Tink should say this in its docs rather than imply more.
+**Within the store, there is no least privilege.** Every recipient can decrypt every secret in a store; one store is one trust
+domain. And because recipients are public keys, anyone who can commit can write a value of their own. Both are stated in
+`secrets.md`; neither is solved by cryptography here.
 
-## Design
+## What was built (phase 1)
 
-### 1. A secret store of age-encrypted values, committed next to the stack
+**A store** of age-encrypted values, committed beside the stack: `secrets.yaml` with `recipients:` (public keys) and `secrets:`
+(name to base64 age ciphertext). Each value is encrypted separately to every recipient (clean diffs; independently readable).
+The decrypted payload begins with a `tink:1:<name>` line that is verified on read, so a swap of two lines is an error rather than a
+silent exchange of two secrets. The identity (private key) is `$TINK_AGE_IDENTITY` or `~/.config/tink/identity.txt`; tink refuses a
+file group- or other-readable, and never overwrites one. No passphrase, so `apply` runs unattended. A new host generates its own
+identity and its public key is added from the editing machine, so no private key ever travels.
 
-`secrets.yaml` beside `tink.yaml`: a map of secret name to an [age](https://github.com/FiloSottile/age)-encrypted
-value, **each value encrypted on its own**. Names are visible, values are not. Per-value encryption gives clean git
-diffs and merges (one changed secret is one changed line), unlike one encrypted blob.
+**Library: `filippo.io/age`.** Adding it to this repo added two modules (`age`, `hpke`) because the rest were already
+dependencies; in a fresh module it pulls in about 11 **[verified]**. The alternative, **sops**, needs 340 modules for its decrypt
+entry point alone and grows a binary from 19 MB to 60 MB **[verified]**. The store is also plain age: the real `age` CLI reads a
+value (`base64 -d | age -d -i ID | tail -n +2`) **[verified]**.
 
-```yaml
-# secrets.yaml -- safe to commit
-immich-db-password: age1:YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUx...
-macpro-incus-client: age1:YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUx...
-```
+**References:** `${secret:NAME}`, accepted **only in an instance's `environment.*` values**. Validation walks every string-ish field of
+every resource and rejects a reference anywhere else, so the list of safe places is an allowlist and a field added later is covered by
+default. A `$` before the opener makes it literal.
 
-- **Recipients** (public keys) are listed in the file, so several machines can decrypt: the person's Mac to edit,
-  and each host that applies the stack. The matching **identity** (private key) lives outside the repo: `$TINK_AGE_IDENTITY`,
-  else `~/.config/tink/identity.txt` (mode 0600). It is the one thing that must be backed up elsewhere; lose it and
-  the secrets are gone, though they can be regenerated and rotated.
-- **Library, not a subprocess: `filippo.io/age`.** It is pure Go and pulls in about 11 modules (mostly `golang.org/x`);
-  an encrypt/decrypt round trip with armor is about 20 lines **[verified]**. The alternative, **sops**, needs 340 modules
-  for just its decrypt entry point and grows the binary from 19 MB to 60 MB **[verified]**; it is the wrong shape for a
-  single small binary. age ciphertext also stays readable by the plain `age` CLI, so there is an escape hatch with no tink
-  involved.
-- Rejected for the first version: Vault / 1Password / Bitwarden CLIs (a service or an account to depend on), and
-  host-local plaintext files (no repo story, nothing to restore from). A pluggable resolver can add `op://`-style
-  backends later without changing how secrets are *referenced*.
+**Expansion** happens once, after loading and before the graph is built, into fresh copies (the input is never mutated, no maps are
+shared), and records which config keys held a secret so no diff prints them. A stack with no references never opens the store or an
+identity.
 
-### 2. Declaring a secret: `kind: secret`
+**Unresolved secrets block the whole resource**, never part of it, with different messages for *no store here*, *not set*, and *set but
+cannot be decrypted here*. The last must not suggest `tink secret set`, which would overwrite a good secret. A guard blocks any resource
+that still holds an unexpanded reference, so the literal text `${secret:...}` can never be pushed as a password.
 
-```yaml
-kind: secret
-name: immich-db-password
-generate: {length: 32, charset: alnum}   # optional: how `tink secret init` creates it
-```
+**Output:** sensitive-looking `environment.*` keys (`PASSWORD`, `SECRET`, `TOKEN`, `KEY`, ...) print `(value hidden)` on both sides of
+a change whether or not a reference is involved; and everything tink prints, including the final error, passes through a redactor of
+every decrypted value. The redactor is **best effort**, a net under places tink already avoids printing a secret.
 
-A `kind: secret` says "this stack needs a secret called this". `plan` reports it as **set**, **unset**, or
-**unset but generatable**. A resource that references an unset secret is **BLOCKED**, with the command that fixes it.
+**Strict YAML:** unknown fields are an error.
 
-**Apply never writes the store.** Generating on first apply would mean `apply`, running on the host, modifies a
-git-tracked file in a checkout that is not the one you edit. Instead creation is an explicit step run where the repo is
-edited:
+## What the review changed
 
-```
-tink secret init                    # create every missing secret that declares `generate:`
-tink secret set NAME                # read the value from stdin (never from a flag: history and ps)
-tink secret list                    # names, and set / unset; never values
-tink secret rotate NAME             # explicit; a new generated value
-tink secret rm NAME
-tink secret reveal NAME             # deliberate, for recovery; prints the value and says so
-tink secret rekey                   # re-encrypt every value after the recipients change
-```
+An adversarial review of the first version of this document against the code found these; each is how it was resolved.
 
-### 3. Referencing a secret: `${secret:NAME}`
-
-Expanded at plan/apply time into specific fields, never at load, so the YAML stays inert and reviewable:
-
-| Allowed in | Not allowed in (load-time error, with the reason) |
+| Finding | Resolution |
 |---|---|
-| instance `config` values (e.g. `environment.*`) | names, `image`, device `source`s |
-| `kind: file` `content` | `command` / `check` argv of `exec` and `incus` resources, and verify checks: argv is visible in the guest's and the host's process lists and in logs |
+| Secrets in `kind: file` content in phase 1, but the 0644 mode fix and push-before-start ordering are phase 2 | **Env only in phase 1.** Reference in file content is a load error. |
+| Masking only "the desired side" misses the old value, `apply`'s `updated (%v)`, the image-drift report, and `run --dry-run` | Mask at the source, **both sides**, plus the drift report and the dry run; a name heuristic as well as provenance. |
+| The "allowed fields" list was too wide (`user.*`, `oci.entrypoint`, `cloud-init.*`, profile/project config) and not an enforced allowlist | **Allowlist of exactly one place**, enforced by reflection over every field. |
+| Expansion placement and failure semantics undefined; `applyOne` plans then creates with the same resource; `Levels` shares maps | Expand once, up front, into copies; carry provenance and problems on the resource; the plan guards block unresolved or unexpanded. **Whole-resource block** (the doc had contradicted itself). Added the **"set but cannot decrypt"** state. |
+| The redactor was overclaimed; R5's value is never registered; encodings incomplete; main's `os.Exit` skips the flush; guest exec output goes into errors | Documented as **best effort**; added hex and JSON forms; stdout, stderr and the final error all wrapped and flushed (tested on each path). R5 is stated as out of reach. |
+| Least privilege: every recipient reads everything; age gives no authenticity, so ciphertext is not bound to the name | **Name bound inside the payload.** Trust domain and committer-can-substitute stated plainly. |
+| Rotation: an env change on a running instance is written but nothing restarts, and the next plan reads converged; Postgres reads its password once; `init` on a deployed R1 would cause an outage | `apply` now says "not restarted"; docs call out Postgres; the Immich migration reads the *live* value into the store and says not to use `--generate` on a running database. |
+| Defer `kind: secret`: collides in the global name map with instances, needs new cases in many switches, and cross-resource checks per-resource `Validate` cannot do | **Deferred.** An unset or misspelled reference gives the same BLOCKED outcome without it; `set --generate` covers generation. |
+| Silent YAML field drops | `KnownFields(true)`. |
+| A missing `secrets.yaml` opens empty, so a wrong directory reports everything "unset" | `Store.Exists()`; "no secret store at PATH (wrong directory?)" is its own message. |
+| Existing argv leak in `tink deploy` | Out of scope; spun off as its own task. |
+| Several [verified] claims had no evidence in the repo | The [appendix](#appendix-how-the-claims-were-verified) records the commands. |
 
-This is deliberately narrow and grep-able. Anything outside the list is rejected rather than quietly leaking.
+Considered and **not** taken: dropping `reveal` (kept: it is how a value is recovered, and it is plainly named) and the extra
+encodings (kept: they are cheap); a `--file` flag for multi-line values (kept simple: `set NAME < file` works).
 
-### 4. Delivery: environment or file
+## Later phases
 
-**Environment** is the simplest: `environment.DB_PASSWORD: ${secret:immich-db-password}`. Visible through the Incus
-API (see the threat model), and what most apps without file support need.
-
-**File** keeps the value out of `incus config show` and out of the environment of every process in the container:
-
-```yaml
-kind: instance
-name: immich-server
-secrets:
-  - {name: immich-db-password, path: /run/secrets/db_password, mode: "0400"}
-config:
-  environment.DB_PASSWORD_FILE: /run/secrets/db_password
-```
-
-Tink pushes the file after create and **before first start** (verified possible above), mode `0400`, owner root unless
-`uid`/`gid` is given. This works wherever the app has the `_FILE` convention: Immich documents `DB_PASSWORD_FILE` and the
-other database variables **[docs]**, and the official Postgres image documents `POSTGRES_PASSWORD_FILE` **[docs]**. `kind: file`
-gains `mode`, `uid` and `gid` (it hard-codes 0644 today), which also makes it usable for non-secret files that should not
-be world-readable.
-
-**Recommended default:** files where the app supports `_FILE`, environment where it does not.
-
-**Rejected for the first version: a host-side tmpfs bind-mounted into the container**, which would keep secrets out of
-snapshots. Autostarted instances come up at boot before anything runs tink, so nothing would be there to re-create the
-tmpfs contents. **[hypothesis]** Worth revisiting if snapshots containing secrets turn out to matter.
-
-### 5. How `plan` and `apply` treat secrets
-
-- **Stateless drift still works.** `plan` decrypts, reads the live value (the config key, or the file's content), and
-  compares. It reports `config.environment.DB_PASSWORD: (secret) differs`, **never either value**.
-- **No identity available?** `plan` still runs; secret-bearing keys are reported `unverified (no identity)` and apply
-  refuses to touch them. `plan` stays usable on a machine that is not trusted with the keys.
-- **A redactor over all output.** Every decrypted value (and its base64 and URL-encoded forms) is registered, and anything
-  tink prints (`plan`, `apply`, `run`, wrapped errors) passes through it, replacing matches with `***`. This is the
-  defense for leaks tink does not control, such as an Incus driver echoing a credential in an error (R5).
-- **Rotation** is "change the value, apply": the diff is shown as above, config or file is updated, and the instance restart
-  follows the existing `restart:` rules. Tink does not rotate on its own.
-- **Existing diffs are fixed regardless of the store.** `diffConfig` stops printing values for any key whose desired value
-  came from a secret, and prints `(changed)` for keys named like `*PASSWORD*`, `*SECRET*`, `*TOKEN*`, `*KEY*` as defense in
-  depth. (The name heuristic is a policy choice; see open questions.)
-
-### 6. How each need maps
-
-| # | Mechanism |
-|---|---|
-| R1 | `kind: secret` with `generate`; delivered as files to Immich (`DB_PASSWORD_FILE`) and Postgres (`POSTGRES_PASSWORD_FILE`), or as env. Removes the `sed` step. |
-| R2 | A secret holding the client cert+key (and token); a `backup-target` names it (`credentials: {secret: ...}`); tink materialises it as a 0600 file under its own config dir only for the duration of use. Detail belongs to the copy-engine slice. |
-| R3 | The off-site job instance is created by tink, so it uses the same instance-secrets path: `RESTIC_PASSWORD_FILE` plus S3/B2 keys as files or env. |
-| R4 | `backup.verify.check` gains `secrets:` (and env) with the same semantics, delivered to the throwaway instance; never argv. |
-| R5 | Not tink's to store: it is Incus pool config. Tink's contribution is the redactor, and docs advising a narrowly scoped key. |
-| R6 | `${secret:...}` in committed YAML replaces the placeholder; the store is the committed, encrypted counterpart. |
-
-## Phasing
-
-Each step is useful on its own.
-
-1. **Store and references.** `filippo.io/age`, `secrets.yaml`, the `tink secret` commands, `kind: secret`, `${secret:}` in
-   config values and `kind: file` content, environment delivery, the redactor, and the `diffConfig` fix. Migrates the Immich
-   password off the `sed` step.
-2. **File delivery.** `secrets:` on instances, `mode`/`uid`/`gid` on `kind: file`, create-push-start ordering, drift by reading
-   the file.
-3. **Hooks for the backup work.** Target credentials (R2), the restic job instance (R3), and verify-check secrets (R4).
+2. **File delivery.** `secrets:` on instances, pushed after create and **before first start**, mode `0400`; `mode`/`uid`/`gid` on
+   `kind: file`; drift by reading the file. Right for software with `_FILE` variables: Immich documents `DB_PASSWORD_FILE` and the other
+   database variables **[docs]**, and the Postgres image documents `POSTGRES_PASSWORD_FILE` **[docs]**. Rejected for now: a host-side tmpfs
+   bind-mounted in (it would keep secrets out of snapshots, but autostarted instances come up before anything runs tink to re-create it)
+   **[hypothesis]**.
+3. **Backup hooks.** Target credentials (R2), the restic job instance (R3), and verify-check secrets (R4), all delivered through the same
+   instance-secret path; never argv.
+4. **`kind: secret`** with `generate:` policies and an unused/missing report, if the reasons for deferring it go away.
 
 ## Open questions
 
-- **Identity distribution.** Each applying host needs the identity file; where does it come from on a fresh VPS, and should an
-  identity be passphrase-protected (age supports it, but then apply cannot run unattended)?
-- **One store per stack, or shared?** Several stacks (Tron, VPSes) may share a secret or must not. A store per stack directory is
-  simplest; sharing then means copying, which is a reason to keep secrets few and generated.
-- **The name heuristic.** Masking by key name (`*PASSWORD*`...) catches mistakes (a plain value in a secret-looking key) but is a
-  guess; the alternative is only masking what came from `${secret:}`.
-- **`tink run --env`.** Add `--secret-env NAME=secret`, or document `run` as not for secrets?
-- **Reading a live env secret to compare it** requires the same Incus access tink already has, but means decrypted values sit in
-  tink's memory during `plan`. Compare by hash instead? That needs a stored hash, which is state tink avoids.
-- **Backups of instances and exports contain the delivered secret** in both modes (config for env, rootfs for files). Volumes, which
-  the backup feature backs up, do not, unless an app writes it there.
+- Identity on a fresh VPS: the manual round trip (generate there, add the key, pull) is documented; is there a better bootstrap?
+- A store per stack directory is simplest; sharing a secret across stacks means copying it.
+- Rekeying rewrites every line of the store, so two branches that touch it conflict. Acceptable, or worth a smarter format?
+- Whether `tink run` should grow a way to take a secret at all.
+
+## Appendix: how the claims were verified
+
+**Delivery and visibility** (a throwaway Incus project on a real host; an OCI Alpine container with `oci.entrypoint=sleep`):
+
+```
+incus config set c environment.APP_PASSWORD=<value>; incus config get c environment.APP_PASSWORD     # readable via the API
+incus file push ./secret c/etc/app-secret --mode 0400 --uid 0 --gid 0     # while the container is STOPPED: succeeds
+incus start c; incus exec c -- ls -ln /etc/app-secret                      # -r-------- 0 0, content present
+incus exec c -- mount | grep -E ' /run | /tmp | /dev/shm '                 # only /dev/shm is tmpfs; /run is not
+incus file push ./secret c/run/secrets/app; incus restart c; ls /run/secrets/app   # still there
+incus snapshot create c s1; find <pool>/containers-snapshots -name app-secret       # in the snapshot, root-only
+sudo cat /proc/<pid>/environ | tr '\0' '\n' | grep APP_PASSWORD           # root: yes; an ordinary user: permission denied
+```
+
+**Library cost:** a scratch module importing `filippo.io/age` (round trip with `armor`) reported 11 modules in `go list -m all`; one
+importing `github.com/getsops/sops/v3/decrypt` reported 340, and built to 60 MB against 19 MB for tink. In this repo, `go get` added
+two modules.
+
+**Escape hatch:** `TestPlainAgeCLICanReadAValue` runs the real `age` binary over a stored value (skipped if `age` is not installed).
+
+**End to end on a real host:** a stack with `environment.APP_PASSWORD: ${secret:app-password}` was planned and applied; the container's
+environment matched the stored secret (compared by fingerprint, never printed); a second plan reported no changes; rotating the secret
+printed `(value hidden) changed` and the not-restarted note, PID 1 kept the old value while the instance config held the new one; and
+a scan of everything printed found no occurrence of either value. The four blocked cases (no store, unset, cannot decrypt, no identity)
+each produced their own message.
+
+**Immich `_FILE` variables:** the Immich environment-variables documentation lists `DB_PASSWORD_FILE` and the other database variables
+as supporting files **[docs]**; Postgres's `POSTGRES_PASSWORD_FILE` is referenced there and documented by the official image **[docs]**.

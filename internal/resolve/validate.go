@@ -61,6 +61,9 @@ func Validate(r Resource) error {
 			return fmt.Errorf("resource %q: kind %q does not use field %q", r.Name, r.Kind, name)
 		}
 	}
+	if err := validateSecretRefs(r); err != nil {
+		return err
+	}
 	return validateOnImageChange(r)
 }
 

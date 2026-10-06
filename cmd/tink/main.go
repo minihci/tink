@@ -6,6 +6,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"runtime"
@@ -25,10 +26,25 @@ import (
 )
 
 func main() {
-	if err := newRootCmd().Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+	if err := execute(newRootCmd(), os.Stdout, os.Stderr); err != nil {
 		os.Exit(1)
 	}
+}
+
+// execute runs root with everything it prints, and the final error, passed through the redactor,
+// which scrubs any secret tink has decrypted. The writers are line-buffered, so they are flushed
+// before returning: main's os.Exit would skip a defer.
+func execute(root *cobra.Command, stdout, stderr io.Writer) error {
+	out, errw := redactor.Writer(stdout), redactor.Writer(stderr)
+	root.SetOut(out)
+	root.SetErr(errw)
+	err := root.Execute()
+	if err != nil {
+		fmt.Fprintln(errw, err)
+	}
+	out.Flush()
+	errw.Flush()
+	return err
 }
 
 func newRootCmd() *cobra.Command {
@@ -194,6 +210,7 @@ existing convention.`,
 func newPlanCmd() *cobra.Command {
 	var socket string
 	var offline bool
+	var secretFlags stackSecretFlags
 
 	cmd := &cobra.Command{
 		Use:   "plan [flags] [FILE...]",
@@ -220,11 +237,18 @@ image its YAML names, by asking the registry what the YAML's reference
 resolves to now (--offline skips that). What a difference means is
 set per instance by on_image_change: report (the default: the instance
 is BLOCKED and nothing on it changes), ignore, or rebuild. See
-docs/image-updates.md.`, resolve.DefaultFile),
+docs/image-updates.md.
+
+An instance's environment.* values may be ${secret:NAME}, read from an
+age-encrypted secrets.yaml beside the stack (see "tink secret" and
+docs/secrets.md). plan never prints a secret, or the value it replaces.`, resolve.DefaultFile),
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			resources, err := resolve.LoadFiles(args)
 			if err != nil {
+				return err
+			}
+			if resources, err = secretFlags.expand(resources, args); err != nil {
 				return err
 			}
 			levels, err := resolve.Levels(resources)
@@ -252,6 +276,7 @@ docs/image-updates.md.`, resolve.DefaultFile),
 
 	cmd.Flags().StringVar(&socket, "socket", "", "Incus daemon unix socket path (default: Incus's own resolution)")
 	cmd.Flags().BoolVar(&offline, "offline", false, "do not consult OCI registries; images that cannot then be verified are blocked under on_image_change: rebuild and only warned about otherwise")
+	secretFlags.bind(cmd)
 	cmd.AddCommand(newPlanApplyCmd())
 	return cmd
 }
@@ -259,6 +284,7 @@ docs/image-updates.md.`, resolve.DefaultFile),
 func newPlanApplyCmd() *cobra.Command {
 	var socket string
 	var offline bool
+	var secretFlags stackSecretFlags
 
 	cmd := &cobra.Command{
 		Use:   "apply [flags] [FILE...]",
@@ -286,6 +312,9 @@ says on_image_change: rebuild; see docs/image-updates.md.`, resolve.DefaultFile)
 			if err != nil {
 				return err
 			}
+			if resources, err = secretFlags.expand(resources, args); err != nil {
+				return err
+			}
 			actions, err := resolve.ApplyWithOptions(socket, resources, resolve.NewPlanOptions(offline))
 			for _, a := range actions {
 				fmt.Fprintln(cmd.OutOrStdout(), a)
@@ -296,6 +325,7 @@ says on_image_change: rebuild; see docs/image-updates.md.`, resolve.DefaultFile)
 
 	cmd.Flags().StringVar(&socket, "socket", "", "Incus daemon unix socket path (default: Incus's own resolution)")
 	cmd.Flags().BoolVar(&offline, "offline", false, "do not consult OCI registries; images that cannot then be verified are blocked under on_image_change: rebuild and only warned about otherwise")
+	secretFlags.bind(cmd)
 	return cmd
 }
 

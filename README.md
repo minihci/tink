@@ -62,6 +62,13 @@ apply) the systemd unit or OpenRC init script needed to supervise it, for
 whichever init system the host actually runs. `mongo snapshot` doesn't
 have a settled design yet.
 
+## Secrets
+
+A stack can refer to a secret as `${secret:NAME}` in an instance's `environment.*` values instead of containing it. Secrets are
+encrypted with [age](https://github.com/FiloSottile/age) in a `secrets.yaml` that is safe to commit, managed with `tink secret`,
+and never printed by `plan` or `apply`. See [`docs/secrets.md`](docs/secrets.md) for how it works and what it does not protect
+against, and [`docs/secrets-design.md`](docs/secrets-design.md) for the reasoning.
+
 ## Relationship to `incus-host`
 
 Tink started as a separate repo from

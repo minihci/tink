@@ -37,7 +37,7 @@ func planInstance(server incus.InstanceServer, r Resource, opts PlanOptions) (Pl
 	if err != nil {
 		return PlannedResource{Resource: r, Action: ActionCreate}, nil
 	}
-	changes := diffConfig(current.Config, r.Config, nil)
+	changes := diffConfig(current.Config, r.Config, r.SecretKeys)
 	changes = append(changes, diffDevices(current.Devices, r.Devices)...)
 
 	env := opts.env
