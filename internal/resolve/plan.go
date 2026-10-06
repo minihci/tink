@@ -18,6 +18,10 @@ const (
 	ActionNone Action = iota
 	ActionCreate
 	ActionUpdate
+	// ActionRebuild: image drift on an on_image_change: rebuild instance.
+	ActionRebuild
+	// ActionBlocked: differences exist that apply will deliberately not fix.
+	ActionBlocked
 )
 
 // PlannedResource is one resource's computed action, with human-readable
@@ -27,6 +31,11 @@ type PlannedResource struct {
 	Resource Resource
 	Action   Action
 	Changes  []string
+	// Drift: confirmed image drift. Blocked: why apply will not converge this
+	// resource. Warnings: things that could not be verified or were ignored.
+	Drift    []string
+	Blocked  []string
+	Warnings []string
 }
 
 // Plan computes what would happen for each resource without touching
@@ -46,6 +55,14 @@ type PlannedResource struct {
 // existing yet, so unlike Levels there's no ordering to respect, only a
 // result slot to fill in.
 func Plan(server incus.InstanceServer, resources []Resource) ([]PlannedResource, error) {
+	return PlanWithOptions(server, resources, PlanOptions{})
+}
+
+// PlanWithOptions is Plan with explicit options.
+func PlanWithOptions(server incus.InstanceServer, resources []Resource, opts PlanOptions) ([]PlannedResource, error) {
+	if opts.env == nil {
+		opts.env = newImageEnv(opts.Offline)
+	}
 	plans := make([]PlannedResource, len(resources))
 	errs := make([]error, len(resources))
 
@@ -54,7 +71,7 @@ func Plan(server incus.InstanceServer, resources []Resource) ([]PlannedResource,
 		wg.Add(1)
 		go func(i int, r Resource) {
 			defer wg.Done()
-			plans[i], errs[i] = planOne(server, r)
+			plans[i], errs[i] = planOne(server, r, opts)
 		}(i, r)
 	}
 	wg.Wait()
@@ -77,7 +94,7 @@ func scopedServer(server incus.InstanceServer, r Resource) incus.InstanceServer 
 	return server
 }
 
-func planOne(server incus.InstanceServer, r Resource) (PlannedResource, error) {
+func planOne(server incus.InstanceServer, r Resource, opts PlanOptions) (PlannedResource, error) {
 	s := scopedServer(server, r)
 	switch r.Kind {
 	case KindProject:
@@ -87,7 +104,7 @@ func planOne(server incus.InstanceServer, r Resource) (PlannedResource, error) {
 	case KindStorageVolume:
 		return planStorageVolume(s, r)
 	case KindInstance:
-		return planInstance(s, r)
+		return planInstance(s, r, opts)
 	case KindFile:
 		return planFile(s, r)
 	case KindIncus:
@@ -135,23 +152,6 @@ func planStorageVolume(server incus.InstanceServer, r Resource) (PlannedResource
 		return PlannedResource{Resource: r, Action: ActionCreate}, nil
 	}
 	return PlannedResource{Resource: r, Action: ActionNone}, nil
-}
-
-// planInstance reports drift but Apply doesn't act on ActionUpdate for
-// instances in this spike -- tink run itself has no in-place
-// reconfigure-an-existing-instance story either (see its own DESIGN.md
-// non-goals), so this matches rather than exceeds that scope.
-func planInstance(server incus.InstanceServer, r Resource) (PlannedResource, error) {
-	current, _, err := server.GetInstance(r.Name)
-	if err != nil {
-		return PlannedResource{Resource: r, Action: ActionCreate}, nil
-	}
-	changes := diffConfig(current.Config, r.Config)
-	changes = append(changes, diffDevices(current.Devices, r.Devices)...)
-	if len(changes) == 0 {
-		return PlannedResource{Resource: r, Action: ActionNone}, nil
-	}
-	return PlannedResource{Resource: r, Action: ActionUpdate, Changes: changes}, nil
 }
 
 // planFile reads the file's actual current byte content from inside the

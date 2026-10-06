@@ -192,6 +192,7 @@ existing convention.`,
 
 func newPlanCmd() *cobra.Command {
 	var socket string
+	var offline bool
 
 	cmd := &cobra.Command{
 		Use:   "plan [flags] [FILE...]",
@@ -211,7 +212,14 @@ never a separately stored record of what was created last time.
 
 plan only ever reads -- there's no --dry-run flag here because there's
 nothing to opt out of. Run "tink plan apply" on the same files to
-actually converge.`, resolve.DefaultFile),
+actually converge.
+
+plan also compares the image each instance was built from with the
+image its YAML names, by asking the registry what the YAML's reference
+resolves to now (--offline skips that). What a difference means is
+set per instance by on_image_change: report (the default: the instance
+is BLOCKED and nothing on it changes), ignore, or rebuild. See
+docs/image-updates.md.`, resolve.DefaultFile),
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			resources, err := resolve.LoadFiles(args)
@@ -226,14 +234,15 @@ actually converge.`, resolve.DefaultFile),
 			if err != nil {
 				return fmt.Errorf("connecting to incus: %w", err)
 			}
+			opts := resolve.NewPlanOptions(offline)
 			for i, level := range levels {
 				fmt.Fprintf(cmd.OutOrStdout(), "level %d:\n", i)
-				plans, err := resolve.Plan(server, level)
+				plans, err := resolve.PlanWithOptions(server, level, opts)
 				if err != nil {
 					return err
 				}
 				for _, p := range plans {
-					fmt.Fprintf(cmd.OutOrStdout(), "  %s/%s: %s %v\n", p.Resource.Kind, p.Resource.Name, actionLabel(p.Action), p.Changes)
+					printPlanned(cmd.OutOrStdout(), p)
 				}
 			}
 			return nil
@@ -241,12 +250,14 @@ actually converge.`, resolve.DefaultFile),
 	}
 
 	cmd.Flags().StringVar(&socket, "socket", "", "Incus daemon unix socket path (default: Incus's own resolution)")
+	cmd.Flags().BoolVar(&offline, "offline", false, "do not consult OCI registries; images that cannot then be verified are blocked under on_image_change: rebuild and only warned about otherwise")
 	cmd.AddCommand(newPlanApplyCmd())
 	return cmd
 }
 
 func newPlanApplyCmd() *cobra.Command {
 	var socket string
+	var offline bool
 
 	cmd := &cobra.Command{
 		Use:   "apply [flags] [FILE...]",
@@ -262,14 +273,19 @@ Deliberately stateless: every check queries the Incus daemon directly at
 apply time -- there's no saved plan file from "tink plan" to feed back
 in here, so nothing can go stale between the two. If a real workflow
 ever needs to apply exactly what a specific "tink plan" run showed,
-possibly later or by someone else, that gap is the reason to add one.`, resolve.DefaultFile),
+possibly later or by someone else, that gap is the reason to add one.
+
+apply ends with a one-line summary and exits non-zero if it left
+anything BLOCKED or SKIPPED, so an exit status of 0 means converged.
+An instance with image drift is only converged by apply if its YAML
+says on_image_change: rebuild; see docs/image-updates.md.`, resolve.DefaultFile),
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			resources, err := resolve.LoadFiles(args)
 			if err != nil {
 				return err
 			}
-			actions, err := resolve.Apply(socket, resources)
+			actions, err := resolve.ApplyWithOptions(socket, resources, resolve.NewPlanOptions(offline))
 			for _, a := range actions {
 				fmt.Fprintln(cmd.OutOrStdout(), a)
 			}
@@ -278,6 +294,7 @@ possibly later or by someone else, that gap is the reason to add one.`, resolve.
 	}
 
 	cmd.Flags().StringVar(&socket, "socket", "", "Incus daemon unix socket path (default: Incus's own resolution)")
+	cmd.Flags().BoolVar(&offline, "offline", false, "do not consult OCI registries; images that cannot then be verified are blocked under on_image_change: rebuild and only warned about otherwise")
 	return cmd
 }
 
@@ -287,8 +304,25 @@ func actionLabel(a resolve.Action) string {
 		return "would create"
 	case resolve.ActionUpdate:
 		return "would update"
+	case resolve.ActionRebuild:
+		return "would REBUILD"
+	case resolve.ActionBlocked:
+		return "BLOCKED"
 	default:
 		return "no changes"
+	}
+}
+
+func printPlanned(w interface{ Write([]byte) (int, error) }, p resolve.PlannedResource) {
+	fmt.Fprintf(w, "  %s/%s: %s %v\n", p.Resource.Kind, p.Resource.Name, actionLabel(p.Action), p.Changes)
+	for _, d := range p.Drift {
+		fmt.Fprintf(w, "      drift: %s\n", d)
+	}
+	for _, b := range p.Blocked {
+		fmt.Fprintf(w, "      blocked: %s\n", b)
+	}
+	for _, x := range p.Warnings {
+		fmt.Fprintf(w, "      warning: %s\n", x)
 	}
 }
 

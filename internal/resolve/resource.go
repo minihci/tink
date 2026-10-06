@@ -110,6 +110,18 @@ type Resource struct {
 	// does.
 	Restart bool
 
+	// OnImageChange (instance-only) says what apply may do when the image the
+	// instance was built from no longer matches Image: "report" (default;
+	// the instance is BLOCKED and nothing on it is changed), "ignore" (drift
+	// is shown but config still applies), or "rebuild" (converge it by
+	// rebuilding the root filesystem -- OCI app containers only, digest-pinned
+	// images only). See rebuild.go.
+	OnImageChange string
+
+	// SnapshotVolumes (instance-only, rebuild only) snapshots the
+	// instance's custom volumes after the stop and before the rebuild.
+	SnapshotVolumes bool
+
 	// Incus-only: the escape hatch for anything the `incus` CLI itself can
 	// do that resolve has no first-class resource for -- named, not a
 	// general scripting layer, matching the one real precedent this

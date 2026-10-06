@@ -38,6 +38,9 @@ type yamlResource struct {
 	// comment.
 	Restart bool `yaml:"restart"`
 
+	OnImageChange   string `yaml:"on_image_change"`
+	SnapshotVolumes bool   `yaml:"snapshot_volumes"`
+
 	// Incus-only. Both are argv for the incus binary, e.g. `command: [image,
 	// import, /path/to.qcow2, --alias, haos-x86-64]` -- never a shell
 	// string, so there's no quoting/escaping question and no way to run
@@ -200,27 +203,29 @@ func (d yamlResource) toResource(dir string) (Resource, error) {
 	}
 
 	return Resource{
-		Kind:         kind,
-		Name:         d.Name,
-		Project:      d.Project,
-		DependsOn:    d.DependsOn,
-		Image:        d.Image,
-		Profiles:     d.Profiles,
-		VM:           d.VM,
-		Pool:         d.Pool,
-		Config:       d.Config,
-		Devices:      d.Devices,
-		Instance:     d.Instance,
-		Path:         d.Path,
-		Content:      content,
-		Restart:      d.Restart,
-		Check:        d.Check,
-		Command:      d.Command,
-		Triggers:     d.Triggers,
-		AgentTimeout: agentTimeout,
-		Alias:        d.Alias,
-		Source:       source,
-		Architecture: architecture,
-		Properties:   d.Properties,
+		Kind:            kind,
+		Name:            d.Name,
+		Project:         d.Project,
+		DependsOn:       d.DependsOn,
+		Image:           d.Image,
+		Profiles:        d.Profiles,
+		VM:              d.VM,
+		Pool:            d.Pool,
+		Config:          d.Config,
+		Devices:         d.Devices,
+		Instance:        d.Instance,
+		Path:            d.Path,
+		Content:         content,
+		Restart:         d.Restart,
+		OnImageChange:   d.OnImageChange,
+		SnapshotVolumes: d.SnapshotVolumes,
+		Check:           d.Check,
+		Command:         d.Command,
+		Triggers:        d.Triggers,
+		AgentTimeout:    agentTimeout,
+		Alias:           d.Alias,
+		Source:          source,
+		Architecture:    architecture,
+		Properties:      d.Properties,
 	}, nil
 }
