@@ -18,13 +18,29 @@ the wrong server. `local` means the local daemon. `--socket` and `--remote` cont
 
 Tink stores no credentials of its own. A remote is a name in the **Incus client configuration** of the user running tink (the Incus
 client's own configuration directory; `$INCUS_CONF` overrides it; under `sudo` it is root's), and the server must trust that client's
-certificate. Add one with the Incus client:
+certificate. `tink remote` manages those entries, with no Incus client installed, writing the same files `incus remote` does:
 
 ```
-incus remote add tron https://tron:8443 --token <token from `incus config trust add` on the server>
+# on the server: a trust token (it carries the server's certificate fingerprint and addresses)
+incus config trust add my-laptop > token.txt
+
+# on the client
+tink remote add tron --token-file token.txt          # the token supplies the address and verifies the server
+tink --remote tron plan stack.yaml
 ```
 
-(A way to do this with tink alone, with no Incus client installed, is not built yet.)
+- **The server is verified before anything secret is sent to it**, one of three ways: the token's own fingerprint, `--fingerprint FP`, or
+  `--accept-certificate` (trust on first use; at a terminal you are shown the fingerprint and asked). The server's certificate is then stored
+  and every later connection is **pinned** to it. A certificate that does not match is refused and the token is never presented.
+- **The token never goes on the command line** (shell history, `ps`): `--token-file FILE`, `--token-file -` for standard input, or
+  `$TINK_REMOTE_TOKEN`. A token works once. A server that already trusts this machine's certificate (an admin ran `incus config trust
+  add-certificate` with `client.crt` from the configuration directory) needs no token at all.
+- `tink remote add NAME ADDRESS --fingerprint FP` for a given address; `--project` to pick the project the remote defaults to.
+- Nothing is saved, and no server certificate is left behind, unless the whole thing succeeds.
+- `tink remote list` shows the remotes and the built-in image remotes; `tink remote remove NAME` forgets one and its stored certificate. It
+  cannot make the server forget this machine: `incus config trust remove` on the server does that.
+- **TLS only.** A server that offers OIDC as well is still added with TLS. (`incus remote add` prefers OIDC, an interactive browser login,
+  whenever the server advertises it, unless given `--auth-type tls`.)
 
 ## Image remotes need no setup
 
@@ -57,5 +73,5 @@ laptop, and `backup run` prints a note saying so. The planned way around this is
 
 ## Not covered yet
 
-- Setting up a remote with tink itself (no Incus client installed).
+- OIDC remotes (use the `incus` client for those).
 - Latency: every API call is a network round trip; large stacks will feel it.
