@@ -1,6 +1,7 @@
 # The tink helper: design
 
-**Status: design only. Nothing here is built.** This is the second revision: the first was reviewed adversarially against the code and
+**Status: design only. Nothing here is built.** Phase 0 (the spike) has run for three of its four parts on the lab host and its
+[findings](#phase-0-findings) have changed the design below; the macOS-client part is waiting. This is the second revision: the first was reviewed adversarially against the code and
 the Incus 7.4 source by a separate agent, and the design below was changed to answer what that found
 ([what changed](#what-the-review-changed)). Claims are marked **[code]** (read in this repo or in the Incus source; the three that
 most changed the design were re-checked by hand), **[verified]** (tried live), **[docs]** or **[hypothesis]** (to be checked in
@@ -70,16 +71,26 @@ refuses with the reason, and does not fail obscurely.
   an OCI image from a local file. **[code]** A local-build route for a host with no registry access (a non-OCI image) is deferred.
 - **Instance**: lives in its **own project** (`tink-helper`), so who can reach it is a project-level question; `boot.autostart=true`,
   `boot.autorestart=true`, `oci.entrypoint=tink daemon run ...`, discovered by `user.tink.helper=<protocol version>`.
-- **Reaching Incus**: a **proxy device** with `bind=container`, `connect=unix:/var/lib/incus/unix.socket`. **[code]** It is supported
-  (unix to unix, with the AppArmor profile allowing both paths). The forkproxy dials the host socket as host root for every client, so any
-  process in the container has full admin. The socket it creates defaults to mode `0644`, so a non-root entrypoint cannot connect; run the
-  entrypoint as root, or set `uid`/`gid`/`mode`. The proxy starts in a post-start hook, so **the entrypoint can run before the socket
-  exists**: the loop retries with backoff and **never exits on a connect failure** (see supervision).
-- **Supervision**: `boot.autorestart` allows **10 restarts per rolling minute**, tracked in incusd's memory, and only for exits the
-  instance itself initiated. **[code]** A crash loop beyond that leaves the helper down until a human acts. So the entrypoint must never
-  exit on a transient failure, and the helper writes a **heartbeat**: each tick it sets `user.tink.helper.tick` (an RFC3339 time) on its own
-  instance config. `tink plan` and `tink helper status` warn when the heartbeat is stale or the instance is stopped, even though the logs
-  are gone, because the console log is a bounded ring buffer. **[code]**
+- **Reaching Incus**: a **proxy device** with `bind=container` and `connect=unix:/var/lib/incus/unix.socket`, **[verified]** working
+  from an OCI app container, with these constraints found in phase 0:
+  - the listening socket must go in a directory that **exists in the image**: `listen=unix:/run/incus.sock`. The default
+    `/var/lib/incus/unix.socket` fails because the proxy cannot create `/var/lib/incus/`, and the instance will not start;
+  - the entrypoint passes **`--socket /run/incus.sock`**. It must **never set `environment.INCUS_SOCKET`** (or, presumably, `INCUS_DIR`):
+    the instance's environment is inherited by Incus's own start hook, which then looks at the wrong socket and the instance **fails to
+    start at all**. Setting any other variable is fine;
+  - the forkproxy dials the host socket as host root for every client, so any process in the container has full admin;
+  - the socket's default mode is `0644` root-owned, so **a non-root entrypoint gets `permission denied`**; with `oci.uid`/`oci.gid` set, give the
+    proxy `uid`, `gid` and `mode=0660` (they are in-container ids). Simplest for now: run the entrypoint as root;
+  - the socket **appears about a second after the entrypoint starts** (the proxy starts in a post-start hook): a first attempt at start-up
+    fails with `no such file or directory` and a retry a second later succeeds. The loop retries with backoff and never exits on a connect failure;
+  - the proxy is re-established on `incus restart` and on stop plus start. Not tested: a host reboot, and restarting the Incus daemon.
+- **Supervision**: `boot.autorestart` **[verified]**: an entrypoint that exits, with status 1 **or 0**, is restarted **10 times and then left
+  stopped**: a container that exits immediately ran 11 times in about 8 seconds, then stayed `STOPPED`. One that lives 15 seconds before
+  exiting was restarted indefinitely (about 6 a minute, under the limit). A control without `boot.autorestart` ran once. So the entrypoint
+  **must not exit**: a fatal condition (a bad config, an unreachable Incus) is logged and waited on with backoff, never an `exit`. If it does
+  stop, the limit makes it stay down, and the helper writes a **heartbeat**: each tick it sets `user.tink.helper.tick` (an RFC3339 time) on
+  its own instance config. `tink plan` and `tink helper status` warn when the heartbeat is stale or the instance is stopped, even though the
+  logs are gone, because the console log is a bounded ring buffer. **[code]**
 - **Volumes**: `tink-helper-config` (the Incus client config, holding certificates for remote backup targets) and `tink-helper-data`
   (stacks and jobs, below). The config volume is **sensitive**: it holds client keys, possibly admin keys on other servers. It is excluded
   from any backup that leaves the host, and re-issuing its contents is a manual trust-token exercise, not a free rebuild.
@@ -104,8 +115,10 @@ log             bounded, redacted best-effort
 cancel          created by a client to ask the job to stop
 ```
 
-Because the file API **truncates in place** (not atomic, **[code]**), nothing reads a directory until `READY` exists, and stack activation
-works the same way (below). `proto` is a small integer, the protocol version: it is what the CLI and the helper must agree on.
+Because the file API **truncates in place** (not atomic, **[code]**; **[verified]**: a reader polling a 300 MB file during its push saw 22
+different sizes on the way up), nothing reads a directory until `READY` exists, and stack activation works the same way (below). **[verified]**:
+with `READY` pushed last, a reader polling every 50 ms read all 40 test jobs (12 files of 10 KB to 3 MB each) intact, while a reader that acted as soon
+as a directory had any file once saw only 7 of 12 files. `proto` is a small integer, the protocol version: it is what the CLI and the helper must agree on.
 
 **Locks**: there is one executor, so jobs run in order, and a **per-(volume, target) guard** means the same copy never runs twice at once.
 The scheduler skips anything queued or running. A triggered job for something already running is queued behind it, or refused with
@@ -212,11 +225,11 @@ the proxy's `security.uid`/`security.gid` can be set to a host user in the `incu
 
 Each phase is useful alone and ends in something checkable on the lab host.
 
-0. **Spike.** On Tron, with a throwaway container: (a) the proxy-device socket from an unprivileged container, including the entrypoint
-   racing the proxy, a restart, and a host reboot; (b) `boot.autorestart` behaviour in a crash loop and what `status` can still say;
-   (c) the job-directory protocol over the file API: `READY` last, a concurrent reader, a large bundle, a large `log`; (d) pulling an OCI
-   image and running `plan`/`apply` against Tron from a **macOS** client (skopeo, architecture). *Done when:* each hypothesis above is
-   confirmed or contradicted in this document, and the design is changed where it was wrong.
+0. **Spike.** *Status: (a), (b) and (c) done, see [Phase 0 findings](#phase-0-findings); (d) waits for a client on a Mac.* On Tron, with a throwaway
+   container: (a) the proxy-device socket from an unprivileged container, including the entrypoint racing the proxy, a restart, and a host reboot;
+   (b) `boot.autorestart` behaviour in a crash loop; (c) the job-directory protocol over the file API; (d) pulling an OCI image and running
+   `plan`/`apply` against Tron from a **macOS** client (skopeo, architecture). *Done when:* each hypothesis is confirmed or contradicted in this
+   document, and the design is changed where it was wrong.
 1. **Remote-capable tink.** One connect function and `--remote`; `kind: incus` and host-path features refuse under a remote;
    `tink deploy` stays host-local. *Done when:* `plan`, `apply` (an OCI instance), `backup restore` and `backup verify` run from a laptop
    against Tron, and a stack with `kind: incus` is refused there with the reason.
@@ -246,6 +259,25 @@ Each phase is useful alone and ends in something checkable on the lab host.
 - **Server name as identity.** `server_name` is the host name by default; hosts that share a name would collide. Whether the Incus server UUID is
   available and stable enough is to be checked in phase 2.
 - **Several helpers or a cluster.** One helper per Incus server is enforced at `install`. Incus clustering is not considered.
+
+## Phase 0 findings
+
+Run on the lab host (Incus 7.5.1, an alpine OCI app container, the tink binary mounted read-only, a throwaway project, all deleted afterwards).
+
+| Question | Result |
+|---|---|
+| Does `bind=container` proxy the host's Incus socket to an OCI app container? | **Yes.** `tink plan` ran through it. The default listen path `/var/lib/incus/unix.socket` **fails** (the proxy cannot create that directory in the image); `/run/incus.sock` works. |
+| Can the helper set `INCUS_SOCKET` for tink? | **No, and it is a trap.** `environment.INCUS_SOCKET` on an instance stops the instance from starting (Incus's own start hook inherits it). Use `--socket`. |
+| Does the entrypoint race the proxy? | **Yes, by about a second.** The first attempt fails, a retry succeeds. |
+| Non-root entrypoint? | `permission denied` with the default mode; works with proxy `uid`/`gid`/`mode=0660` set to the in-container ids. |
+| Survives `incus restart` and stop plus start? | **Yes**, and the retry loop reconnected each time. A host reboot and an Incus daemon restart were **not tested**: the lab host runs other services. |
+| `boot.autorestart` limits? | 10 restarts then it stays stopped, whether the exit is 0 or 1. A slow loop (15 s per cycle) is restarted forever. |
+| Is a half-pushed file visible to a reader? | **Yes** (22 sizes seen while pushing 300 MB). A job directory is therefore read only once `READY` exists, which worked 40 of 40 with a concurrent reader; the same reader without `READY` once saw a partial job. |
+| File API cost, over the local socket | 300 MB push 0.5 s; pull of 1, 5, 20 MB: 34, 49, 107 ms; 200 x 1 KB files with `-r`: 0.16 s; one small file push or pull about 30 ms. **Network latency from a laptop was not measured.** |
+| Tron's API exposure | Already listening on `:8443`; the SSH user is **not** in `incus-admin`, so forwarding the unix socket over SSH does not work for it, but a laptop can reach `:8443` if it is trusted. |
+
+**Still to do in phase 0:** (d), the macOS client: whether `plan` and `apply` of an OCI instance work from a Mac (skopeo on the client, the architecture
+the client reports), and how the file API and `status` behave over the network. It needs the Mac's certificate to be trusted by the server.
 
 ## What the review changed
 
