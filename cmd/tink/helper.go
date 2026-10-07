@@ -41,8 +41,9 @@ install waits for and reports.
 
 It needs the host's API to be listening (core.https_address); the loopback address is enough, and tink deploy sets one.
 
-Give the instance an image with --image (an OCI image that has tink at /usr/local/bin/tink), or --binary FILE to put a linux tink binary in a stock
-alpine image: the way to run a development build, or a helper where the image cannot be pulled. It is safe to run again: what exists is left alone,
+With no flag, a release build installs the helper image published for its own version (ghcr:minihci/tink-helper:vX.Y.Z), the same binary built from the
+same tag. A development build has no such image: give --image (an OCI image that has tink at /usr/local/bin/tink), or --binary FILE to put a linux tink
+binary in a stock alpine image: the way to run a development build, or a helper where the image cannot be pulled. It is safe to run again: what exists is left alone,
 and an enrolled helper is not enrolled twice. --reissue enrols it again with a fresh key pair (the old certificate is removed from the trust store).
 
 The helper's certificate is revocable ("tink helper remove", or "incus config trust remove") and its requests are attributed to it. It is not
@@ -50,7 +51,10 @@ confined: it has the reach of root on the host, and nothing here claims otherwis
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if opts.Image == "" && opts.Binary == "" {
-				return fmt.Errorf("give --image (an OCI image with tink at /usr/local/bin/tink) or --binary FILE (a linux tink binary, run in a stock alpine image)")
+				// a release build knows the image published for it; a development build has none
+				if opts.Image = helper.ReleaseImage(injectedVersion); opts.Image == "" {
+					return fmt.Errorf("this is not a release build, so there is no published helper image that matches it: give --image (an OCI image with tink at /usr/local/bin/tink) or --binary FILE (a linux tink binary, run in a stock alpine image)")
+				}
 			}
 			if opts.TZ == "" {
 				opts.TZ = os.Getenv("TZ")

@@ -119,6 +119,11 @@ func newVersionCmd() *cobra.Command {
 // buildVersion reads Go's own embedded VCS metadata (available whenever
 // this binary was built with `go build` inside a git checkout) rather than
 // relying on -ldflags injected by a release script that doesn't exist yet.
+// injectedVersion is the release version, compiled in with `-ldflags "-X main.injectedVersion=v1.2.3"` by the release workflow. A
+// build in a container has no .git, so Go's embedded VCS metadata is empty there and two such builds could not be told apart;
+// this is what the helper image reports, and what `tink helper install` uses to pick the image that matches the binary.
+var injectedVersion string
+
 func buildVersion() string {
 	version := "unknown"
 	commit := "unknown"
@@ -136,6 +141,9 @@ func buildVersion() string {
 		}
 	}
 
+	if injectedVersion != "" {
+		version = injectedVersion
+	}
 	return fmt.Sprintf("tink %s (commit %s, built %s, %s)", version, commit, buildDate, runtime.Version())
 }
 

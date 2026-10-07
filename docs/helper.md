@@ -7,9 +7,14 @@ document, and the commands that read it.** The published image, `upgrade`, the i
 ## Installing it
 
 ```
+tink helper install                                                       # a release build: the image published for its own version
+tink helper install --image ghcr:minihci/tink-helper:v0.1.0               # a particular image (tink at /usr/local/bin/tink)
 tink helper install --binary ./tink-linux --timezone America/Denver      # a linux tink binary, in a stock alpine image
-tink helper install --image ghcr.io/.../tink-helper@sha256:...            # an image that has tink at /usr/local/bin/tink
 ```
+
+With no flag, a **release build** installs `ghcr:minihci/tink-helper:<its own version>`: the same binary, built by the same workflow from the same
+tag. A development build has no image that matches it, and says so: give `--image` or `--binary`. The instance records the image's fingerprint (an OCI
+image's digest) on itself, `user.tink.helper.image-fingerprint`, because a tag can move and a fingerprint cannot.
 
 It creates, in a project of its own (`tink-helper`): an OCI app container named `helper` that runs `tink daemon run --remote host ...`; two volumes,
 `tink-helper-config` (its Incus client configuration, mounted where the client looks for it) and `tink-helper-data` (its jobs); a NIC; and a **proxy
@@ -114,3 +119,19 @@ after the helper has gone. Nothing here sends a notification: this is what a not
 
 **Under `--remote`.** It works from anywhere that can reach the server: it reads instance config. `daemon run` itself accepts a remote (the
 helper runs as a client of its own host): see `docs/remote.md` for what it needs for its ingress half.
+
+## The image, and releasing it
+
+`build/helper/Containerfile` is the helper image: the static tink binary in a small base (alpine, pinned by digest) that has CA certificates and a shell,
+about 27 MB. It builds no Go itself: the workflow compiles the binaries and the image carries exactly those.
+
+`.github/workflows/helper-image.yml` builds it for **amd64 and arm64**, with the version compiled in (`-X main.injectedVersion=<tag>`, which is what `tink
+version` reports and what `tink helper install` uses to pick its image; a build in a container has no `.git`, so nothing else could tell two builds apart).
+On a pull request that touches the image it only builds, so a broken Containerfile or workflow is found early. **On a tag it also publishes:**
+
+```
+git tag v0.1.0 && git push origin v0.1.0        # publishes ghcr.io/minihci/tink-helper:v0.1.0, multi-arch
+```
+
+The first publication creates the package **private**; make it public once in the repository's package settings, so a host can pull it without a login.
+To try the image locally: build the binaries into `dist/tink-linux-<arch>` as the workflow does, then `podman build -f build/helper/Containerfile .`.

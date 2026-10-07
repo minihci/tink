@@ -681,3 +681,46 @@ func TestCheckTrustCatchesARevocationAtOnceInsteadOfAfterTheHeartbeatsGoStale(t 
 		t.Errorf("%s", r.Summary())
 	}
 }
+
+func TestReleaseImageIsOnlyForAReleaseBuild(t *testing.T) {
+	for in, want := range map[string]string{
+		"v1.2.3":                               "ghcr:minihci/tink-helper:v1.2.3",
+		"v0.1.0":                               "ghcr:minihci/tink-helper:v0.1.0",
+		"v1.2.3-rc.1":                          "ghcr:minihci/tink-helper:v1.2.3-rc.1",
+		"":                                     "", // a build that was given no version
+		"unknown":                              "",
+		"(devel)":                              "",
+		"v0.0.0-20261007111551-e8a148ba0ea5":   "", // a Go pseudo-version: a commit, not a release, and no image exists for it
+		"v1.2.4-0.20261007111551-e8a148ba0ea5": "",
+		"v1.2.3+dirty":                         "",
+		"1.2.3":                                "", // no leading v: not a tag this repository publishes
+	} {
+		if got := ReleaseImage(in); got != want {
+			t.Errorf("ReleaseImage(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestInstallRecordsTheExactImageSoAnUpgradeCanTellWhichItIs(t *testing.T) {
+	h := newHost()
+	var specs []*run.Spec
+	in, _ := installer(h, &specs)
+	base := in.Create
+	in.Create = func(s incus.InstanceServer, spec *run.Spec, project string) error {
+		if err := base(s, spec, project); err != nil {
+			return err
+		}
+		// what Incus records when it makes an instance from an image: the image's fingerprint (an OCI image's digest)
+		h.instances[spec.Name].Config = map[string]string{"volatile.base_image": "sha256:abc123"}
+		return nil
+	}
+	if err := in.Install(InstallOptions{Image: "ghcr:minihci/tink-helper:v1.2.3", Wait: -1}); err != nil {
+		t.Fatal(err)
+	}
+	if got := specs[0].Config[MarkerKey+".image-fingerprint"]; got != "sha256:abc123" {
+		t.Errorf("a tag can move and a fingerprint cannot: %q", got)
+	}
+	if got := h.instances["helper"].Config[MarkerKey+".image-fingerprint"]; got != "sha256:abc123" {
+		t.Errorf("and it is on the instance: %q", got)
+	}
+}
