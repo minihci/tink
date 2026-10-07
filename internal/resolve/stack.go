@@ -5,12 +5,6 @@ import (
 	"regexp"
 )
 
-// StackKey is the volume config key that points a storage volume back at the stack that applied it: the name given by
-// that stack's `kind: stack` declaration. It makes a volume traceable (`incus storage volume show` says whose YAML to
-// edit) and lets a stack find its own volumes without guessing, for instance the ones it applied once and no longer
-// declares. It is written by `apply` and never removed by tink: a stack that is applied unnamed leaves it alone.
-const StackKey = "user.tink.stack"
-
 var stackNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
 
 // validateStack rejects a `kind: stack` whose name could not be kept as a config value people read: lower case letters,

@@ -10,10 +10,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/minihci/tink/internal/backupmeta"
 	"github.com/minihci/tink/internal/backuprun"
 	"github.com/minihci/tink/internal/helper"
 	"github.com/minihci/tink/internal/jobs"
-	"github.com/minihci/tink/internal/resolve"
 )
 
 // Live is what the workers learn that the status document reports: the scheduler's view of the volumes and the ingress pass's last
@@ -136,7 +136,7 @@ func buildStatus(o StatusOptions, live *Live, started, now time.Time) helper.Sta
 	s := helper.Status{
 		Version:     o.Version,
 		JobProto:    jobs.Proto,
-		PolicyProto: resolve.PolicyProto,
+		PolicyProto: backupmeta.PolicyProto,
 		Started:     started.UTC(),
 		Skipped:     skipped,
 		Failing:     failing,

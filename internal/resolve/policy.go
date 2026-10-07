@@ -5,22 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/minihci/tink/internal/backupmeta"
 )
 
-// PolicyKey is the one volume config key tink owns outright for a volume's copy policy: the answer to "where does this
-// volume get copied, how often, and how is the copy checked?", written by `apply` and read by whatever runs the copies
-// (the helper's scheduler), so that the volume itself says what is meant to happen to it, `plan` can see when the
-// declaration and the volume differ, and nothing has to keep a second copy of the stack.
-//
-// It is the one key tink also REMOVES: a volume whose declaration no longer has copies or verification must stop
-// being copied, which a key tink never clears would not allow. The snapshot policy stays on Incus's own keys.
-const PolicyKey = "user.tink.backup.policy"
-
-// PolicyProto is the version of the policy document. A reader refuses a document with another one rather than
-// guessing at it.
-const PolicyProto = 1
-
-// BackupPolicy is what the PolicyKey holds, as JSON. It is resolved: each copy carries its target inline, so the reader
+// BackupPolicy is what the backupmeta.PolicyKey holds, as JSON. It is resolved: each copy carries its target inline, so the reader
 // does not need the stack's kind: backup-target resources. Secrets can never be in it (it is plain volume config).
 type BackupPolicy struct {
 	Proto  int           `json:"proto"`
@@ -65,7 +54,7 @@ func BuildPolicy(r Resource, targets map[string]Resource) (string, error) {
 	if b == nil || b.None != "" || (len(b.Copies) == 0 && b.Verify == "" && b.VerifyCheck == nil) {
 		return "", nil
 	}
-	p := BackupPolicy{Proto: PolicyProto}
+	p := BackupPolicy{Proto: backupmeta.PolicyProto}
 	for _, c := range b.Copies {
 		t, ok := targets[c.Target]
 		if !ok {
@@ -93,39 +82,39 @@ func BuildPolicy(r Resource, targets map[string]Resource) (string, error) {
 	return string(bytes.TrimRight(buf.Bytes(), "\n")), nil
 }
 
-// ParsePolicy reads a PolicyKey value. It refuses a document of another protocol, an unknown field, and a copy that
+// ParsePolicy reads a backupmeta.PolicyKey value. It refuses a document of another protocol, an unknown field, and a copy that
 // could not be scheduled, so a reader skips a volume it cannot understand instead of acting on half of it.
 func ParsePolicy(s string) (BackupPolicy, error) {
 	var p BackupPolicy
 	dec := json.NewDecoder(bytes.NewReader([]byte(s)))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&p); err != nil {
-		return BackupPolicy{}, fmt.Errorf("%s is not a policy tink wrote: %w", PolicyKey, err)
+		return BackupPolicy{}, fmt.Errorf("%s is not a policy tink wrote: %w", backupmeta.PolicyKey, err)
 	}
-	if p.Proto != PolicyProto {
-		return BackupPolicy{}, fmt.Errorf("%s was written for protocol %d; this tink speaks %d", PolicyKey, p.Proto, PolicyProto)
+	if p.Proto != backupmeta.PolicyProto {
+		return BackupPolicy{}, fmt.Errorf("%s was written for protocol %d; this tink speaks %d", backupmeta.PolicyKey, p.Proto, backupmeta.PolicyProto)
 	}
 	seen := map[string]bool{}
 	for i, c := range p.Copies {
 		if c.Target.Name == "" {
-			return BackupPolicy{}, fmt.Errorf("%s: copies[%d] has no target name", PolicyKey, i)
+			return BackupPolicy{}, fmt.Errorf("%s: copies[%d] has no target name", backupmeta.PolicyKey, i)
 		}
 		if c.Target.Remote == "" && c.Target.Pool == "" {
-			return BackupPolicy{}, fmt.Errorf("%s: copies[%d] (%s) has neither a remote nor a pool", PolicyKey, i, c.Target.Name)
+			return BackupPolicy{}, fmt.Errorf("%s: copies[%d] (%s) has neither a remote nor a pool", backupmeta.PolicyKey, i, c.Target.Name)
 		}
 		if seen[c.Target.Name] {
-			return BackupPolicy{}, fmt.Errorf("%s: names target %q twice", PolicyKey, c.Target.Name)
+			return BackupPolicy{}, fmt.Errorf("%s: names target %q twice", backupmeta.PolicyKey, c.Target.Name)
 		}
 		seen[c.Target.Name] = true
 		if err := validateSchedule(c.Schedule); err != nil {
-			return BackupPolicy{}, fmt.Errorf("%s: copies[%d] (%s) schedule: %w", PolicyKey, i, c.Target.Name, err)
+			return BackupPolicy{}, fmt.Errorf("%s: copies[%d] (%s) schedule: %w", backupmeta.PolicyKey, i, c.Target.Name, err)
 		}
 		if err := validateRetain(c.Retain); err != nil {
-			return BackupPolicy{}, fmt.Errorf("%s: copies[%d] (%s) retain: %w", PolicyKey, i, c.Target.Name, err)
+			return BackupPolicy{}, fmt.Errorf("%s: copies[%d] (%s) retain: %w", backupmeta.PolicyKey, i, c.Target.Name, err)
 		}
 	}
 	if v := p.Verify; v != nil && v.Every != "" && !verifyCadences[v.Every] {
-		return BackupPolicy{}, fmt.Errorf("%s: verify.every must be daily, weekly or monthly, got %q", PolicyKey, v.Every)
+		return BackupPolicy{}, fmt.Errorf("%s: verify.every must be daily, weekly or monthly, got %q", backupmeta.PolicyKey, v.Every)
 	}
 	return p, nil
 }

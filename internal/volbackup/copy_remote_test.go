@@ -11,7 +11,7 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
 
-	"github.com/minihci/tink/internal/resolve"
+	"github.com/minihci/tink/internal/backupmeta"
 )
 
 // fakeIncus is just enough of an Incus server to run the copy engine against: storage volumes and their
@@ -246,13 +246,13 @@ func TestCopyToARemoteServer(t *testing.T) {
 	remote := newFake("vps", "default")
 	useRemote(t, "vps", remote)
 
-	owner := resolve.CopyOf("", "default", "lib")
+	owner := backupmeta.CopyOf("", "default", "lib")
 	old := time.Date(2026, 9, 25, 4, 0, 0, 0, time.UTC).Format(time.RFC3339)
 	older := time.Date(2026, 7, 1, 4, 0, 0, 0, time.UTC).Format(time.RFC3339)
-	remote.add("default", "lib-bk-20260925-040000", map[string]string{resolve.MarkerCopyOf: owner, resolve.MarkerCopyAt: old})
-	remote.add("default", "lib-bk-20260701-040000", map[string]string{resolve.MarkerCopyOf: owner, resolve.MarkerCopyAt: older})
+	remote.add("default", "lib-bk-20260925-040000", map[string]string{backupmeta.MarkerCopyOf: owner, backupmeta.MarkerCopyAt: old})
+	remote.add("default", "lib-bk-20260701-040000", map[string]string{backupmeta.MarkerCopyOf: owner, backupmeta.MarkerCopyAt: older})
 	remote.add("default", "lib-bk-20200101-000000", nil) // looks like ours, carries no marker
-	remote.add("default", "other-bk-20260701-040000", map[string]string{resolve.MarkerCopyOf: resolve.CopyOf("", "default", "other"), resolve.MarkerCopyAt: older})
+	remote.add("default", "other-bk-20260701-040000", map[string]string{backupmeta.MarkerCopyOf: backupmeta.CopyOf("", "default", "other"), backupmeta.MarkerCopyAt: older})
 
 	res, err := Copy(local, Volume{Name: "lib"}, remoteTarget(), CopyOptions{Retain: "30d", Now: func() time.Time { return remoteNow }})
 	if err != nil {
@@ -271,14 +271,14 @@ func TestCopyToARemoteServer(t *testing.T) {
 	}
 	// the new restore point has its markers; the temporary snapshot is gone
 	rp := remote.vols["default/"+res.Volume]
-	if rp == nil || rp.Config[resolve.MarkerCopyOf] != owner || rp.Config[resolve.MarkerCopyTarget] != "vps" {
+	if rp == nil || rp.Config[backupmeta.MarkerCopyOf] != owner || rp.Config[backupmeta.MarkerCopyTarget] != "vps" {
 		t.Fatalf("the restore point must carry its markers: %+v", rp)
 	}
 	if got := local.snaps["default/lib"]; len(got) != 0 {
 		t.Errorf("temporary snapshot left on the source: %v", got)
 	}
 	// the source is stamped
-	if local.vols["default/lib"].Config[resolve.CopyStampAt("vps")] == "" || local.vols["default/lib"].Config[resolve.CopyStampVolume("vps")] != res.Volume {
+	if local.vols["default/lib"].Config[backupmeta.CopyStampAt("vps")] == "" || local.vols["default/lib"].Config[backupmeta.CopyStampVolume("vps")] != res.Volume {
 		t.Errorf("source not stamped: %v", local.vols["default/lib"].Config)
 	}
 	// pruning removed exactly the older marked point on the remote, not the newest, not look-alikes
@@ -312,7 +312,7 @@ func TestCopyToARemoteThatIsCutOffLeavesNoRestorePoint(t *testing.T) {
 	if got := local.snaps["default/lib"]; len(got) != 0 {
 		t.Errorf("temporary snapshot left on the source: %v", got)
 	}
-	if local.vols["default/lib"].Config[resolve.CopyStampAt("vps")] != "" {
+	if local.vols["default/lib"].Config[backupmeta.CopyStampAt("vps")] != "" {
 		t.Error("a failed copy must not stamp the source as copied")
 	}
 }
@@ -352,10 +352,10 @@ func TestUnreachableRemoteFailsBeforeTouchingTheSource(t *testing.T) {
 		t.Error("an unreachable target must not leave a snapshot on the source")
 	}
 	cfg := local.vols["default/lib"].Config
-	if cfg[resolve.CopyStampAt("vps")] != "" {
+	if cfg[backupmeta.CopyStampAt("vps")] != "" {
 		t.Error("an unreachable target must not stamp the copy as done")
 	}
-	if cfg[resolve.CopyFailCount("vps")] != "1" {
+	if cfg[backupmeta.CopyFailCount("vps")] != "1" {
 		t.Errorf("it must record exactly one failed attempt, and nothing else: %v", cfg)
 	}
 }
@@ -382,9 +382,9 @@ func TestRestoreFromARemoteScrubsMarkersAndNeedsNoSourceVolume(t *testing.T) {
 	local := newFake("tron", "default") // the source volume is GONE
 	remote := newFake("vps", "default")
 	useRemote(t, "vps", remote)
-	owner := resolve.CopyOf("", "default", "lib")
+	owner := backupmeta.CopyOf("", "default", "lib")
 	at := time.Date(2026, 10, 1, 4, 0, 0, 0, time.UTC).Format(time.RFC3339)
-	remote.add("default", "lib-bk-20261001-040000", map[string]string{resolve.MarkerCopyOf: owner, resolve.MarkerCopyAt: at, resolve.MarkerCopyTarget: "vps"})
+	remote.add("default", "lib-bk-20261001-040000", map[string]string{backupmeta.MarkerCopyOf: owner, backupmeta.MarkerCopyAt: at, backupmeta.MarkerCopyTarget: "vps"})
 
 	res, err := Restore(local, Volume{Name: "lib"}, RestoreOptions{From: &Target{Name: "vps", Remote: "vps"}, As: "lib-recovered"})
 	if err != nil {
@@ -409,7 +409,7 @@ func TestRestoreFromARemoteThatFailsLeavesNoPartialVolume(t *testing.T) {
 	remote := newFake("vps", "default")
 	useRemote(t, "vps", remote)
 	at := time.Date(2026, 10, 1, 4, 0, 0, 0, time.UTC).Format(time.RFC3339)
-	remote.add("default", "lib-bk-20261001-040000", map[string]string{resolve.MarkerCopyOf: resolve.CopyOf("", "default", "lib"), resolve.MarkerCopyAt: at})
+	remote.add("default", "lib-bk-20261001-040000", map[string]string{backupmeta.MarkerCopyOf: backupmeta.CopyOf("", "default", "lib"), backupmeta.MarkerCopyAt: at})
 
 	_, err := Restore(local, Volume{Name: "lib"}, RestoreOptions{From: &Target{Name: "vps", Remote: "vps"}, As: "lib-recovered"})
 	if err == nil || !strings.Contains(err.Error(), "tunnel dropped") {

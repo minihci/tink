@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minihci/tink/internal/backupmeta"
 )
 
 func TestAStackNamesItselfInYAMLAndIsNotAResource(t *testing.T) {
@@ -68,34 +70,34 @@ func TestVolumesAreStampedWithTheStackThatAppliedThem(t *testing.T) {
 	env := volumeEnv{targets: policyTargets(), stack: "immich"}
 	optOut := Resource{Kind: KindStorageVolume, Name: "v", Backup: &VolumeBackup{None: "x"}}
 
-	if p := decideVolume(optOut, nil, env); p.Action != ActionCreate || !strings.Contains(strings.Join(p.Changes, "|"), StackKey) {
+	if p := decideVolume(optOut, nil, env); p.Action != ActionCreate || !strings.Contains(strings.Join(p.Changes, "|"), backupmeta.StackKey) {
 		t.Errorf("every volume is stamped, even one that opts out of backup: %v %v", p.Action, p.Changes)
 	}
 	if p := decideVolume(optOut, liveVolume(map[string]string{}), env); p.Action != ActionUpdate {
 		t.Errorf("a volume applied before the stack was named is updated with the pointer: %v %v", p.Action, p.Changes)
 	}
-	if p := decideVolume(optOut, liveVolume(map[string]string{StackKey: "immich"}), env); p.Action != ActionNone {
+	if p := decideVolume(optOut, liveVolume(map[string]string{backupmeta.StackKey: "immich"}), env); p.Action != ActionNone {
 		t.Errorf("already stamped is converged: %v %v", p.Action, p.Changes)
 	}
 	// an unnamed stack never writes the pointer, and never removes one
-	if p := decideVolume(optOut, liveVolume(map[string]string{StackKey: "immich"}), volumeEnv{}); p.Action != ActionNone {
+	if p := decideVolume(optOut, liveVolume(map[string]string{backupmeta.StackKey: "immich"}), volumeEnv{}); p.Action != ActionNone {
 		t.Errorf("an unnamed stack leaves another's pointer alone: %v %v", p.Action, p.Changes)
 	}
-	if set, _, _ := volumeBackupConfig(optOut, volumeEnv{}); set[StackKey] != "" {
+	if set, _, _ := volumeBackupConfig(optOut, volumeEnv{}); set[backupmeta.StackKey] != "" {
 		t.Errorf("an unnamed stack writes no pointer: %v", set)
 	}
 }
 
 func TestApplyingAVolumeAnotherStackOwnsWarnsAndSaysWhoseItWas(t *testing.T) {
 	r := Resource{Kind: KindStorageVolume, Name: "v", Backup: &VolumeBackup{None: "x"}}
-	p := decideVolume(r, liveVolume(map[string]string{StackKey: "nextcloud"}), volumeEnv{stack: "immich"})
+	p := decideVolume(r, liveVolume(map[string]string{backupmeta.StackKey: "nextcloud"}), volumeEnv{stack: "immich"})
 	if p.Action != ActionUpdate {
 		t.Errorf("it is taken over: %v", p.Action)
 	}
 	if w := strings.Join(p.Warnings, "|"); !strings.Contains(w, `"nextcloud"`) || !strings.Contains(w, `"immich"`) {
 		t.Errorf("the warning names both stacks: %q", w)
 	}
-	if p := decideVolume(r, liveVolume(map[string]string{StackKey: "immich"}), volumeEnv{stack: "immich"}); len(p.Warnings) != 0 {
+	if p := decideVolume(r, liveVolume(map[string]string{backupmeta.StackKey: "immich"}), volumeEnv{stack: "immich"}); len(p.Warnings) != 0 {
 		t.Errorf("no warning for its own volume: %v", p.Warnings)
 	}
 }

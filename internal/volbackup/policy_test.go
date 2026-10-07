@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/minihci/tink/internal/resolve"
+	"github.com/minihci/tink/internal/backupmeta"
 )
 
 const somePolicy = `{"proto":1,"copies":[{"target":{"name":"vps","remote":"vps"},"schedule":"@daily","retain":"7d"}]}`
@@ -15,7 +15,7 @@ const somePolicy = `{"proto":1,"copies":[{"target":{"name":"vps","remote":"vps"}
 
 func TestARestorePointDoesNotCarryTheSourcesPolicy(t *testing.T) {
 	local := newFake("tron", "default")
-	local.add("default", "lib", map[string]string{resolve.PolicyKey: somePolicy})
+	local.add("default", "lib", map[string]string{backupmeta.PolicyKey: somePolicy})
 	remote := newFake("vps", "default")
 	remote.inherit = true // even if Incus copies the snapshot's config onto the new volume
 	useRemote(t, "vps", remote)
@@ -25,13 +25,13 @@ func TestARestorePointDoesNotCarryTheSourcesPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := remote.vols["default/"+res.Volume].Config
-	if _, has := cfg[resolve.PolicyKey]; has {
+	if _, has := cfg[backupmeta.PolicyKey]; has {
 		t.Errorf("a restore point must not carry the policy: %v", cfg)
 	}
-	if cfg[resolve.MarkerCopyOf] == "" {
+	if cfg[backupmeta.MarkerCopyOf] == "" {
 		t.Errorf("it is still a restore point: %v", cfg)
 	}
-	if _, has := local.vols["default/lib"].Config[resolve.PolicyKey]; !has {
+	if _, has := local.vols["default/lib"].Config[backupmeta.PolicyKey]; !has {
 		t.Error("the SOURCE keeps its policy")
 	}
 }
@@ -41,16 +41,16 @@ func TestARestoredVolumeDoesNotCarryThePolicyFromARestorePoint(t *testing.T) {
 	remote := newFake("vps", "default")
 	remote.inherit = true
 	useRemote(t, "vps", remote)
-	owner := resolve.CopyOf("", "default", "lib")
+	owner := backupmeta.CopyOf("", "default", "lib")
 	at := time.Date(2026, 10, 1, 4, 0, 0, 0, time.UTC).Format(time.RFC3339)
 	remote.add("default", "lib-bk-20261001-040000", map[string]string{
-		resolve.MarkerCopyOf: owner, resolve.MarkerCopyAt: at, resolve.MarkerCopyTarget: "vps", resolve.PolicyKey: somePolicy})
+		backupmeta.MarkerCopyOf: owner, backupmeta.MarkerCopyAt: at, backupmeta.MarkerCopyTarget: "vps", backupmeta.PolicyKey: somePolicy})
 	local.inherit = true
 
 	if _, err := Restore(local, Volume{Name: "lib"}, RestoreOptions{From: &Target{Name: "vps", Remote: "vps"}, As: "lib-recovered"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, has := local.vols["default/lib-recovered"].Config[resolve.PolicyKey]; has {
+	if _, has := local.vols["default/lib-recovered"].Config[backupmeta.PolicyKey]; has {
 		t.Errorf("the restored volume carries the policy: %v", local.vols["default/lib-recovered"].Config)
 	}
 }
@@ -58,14 +58,14 @@ func TestARestoredVolumeDoesNotCarryThePolicyFromARestorePoint(t *testing.T) {
 func TestARestoreFromALocalSnapshotDoesNotCarryThePolicy(t *testing.T) {
 	local := newFake("tron", "default")
 	local.inherit = true
-	local.add("default", "lib", map[string]string{resolve.PolicyKey: somePolicy, "snapshots.schedule": "@daily"})
+	local.add("default", "lib", map[string]string{backupmeta.PolicyKey: somePolicy, "snapshots.schedule": "@daily"})
 	local.snaps["default/lib"] = []string{"snap0"}
 
 	if _, err := Restore(local, Volume{Name: "lib"}, RestoreOptions{As: "lib-restored"}); err != nil {
 		t.Fatal(err)
 	}
 	cfg := local.vols["default/lib-restored"].Config
-	if _, has := cfg[resolve.PolicyKey]; has {
+	if _, has := cfg[backupmeta.PolicyKey]; has {
 		t.Errorf("the restored volume carries the policy: %v", cfg)
 	}
 	if cfg["snapshots.schedule"] == "" {

@@ -7,13 +7,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/minihci/tink/internal/resolve"
+	"github.com/minihci/tink/internal/backupmeta"
 )
 
 func point(name, server, at string) map[string]string {
-	c := map[string]string{resolve.MarkerCopyOf: resolve.CopyOf("", "default", "lib"), resolve.MarkerCopyAt: at}
+	c := map[string]string{backupmeta.MarkerCopyOf: backupmeta.CopyOf("", "default", "lib"), backupmeta.MarkerCopyAt: at}
 	if server != "" {
-		c[resolve.MarkerCopyServer] = server
+		c[backupmeta.MarkerCopyServer] = server
 	}
 	return c
 }
@@ -28,7 +28,7 @@ func TestACopyRecordsWhichServerMadeIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	// the SOURCE server's name, not the target's and not this machine's
-	if got := remote.vols["default/"+res.Volume].Config[resolve.MarkerCopyServer]; got != "tron" {
+	if got := remote.vols["default/"+res.Volume].Config[backupmeta.MarkerCopyServer]; got != "tron" {
 		t.Errorf("copy-server = %q, want the source server's name %q", got, "tron")
 	}
 }
@@ -164,7 +164,7 @@ func TestTheSameCopyDoesNotRunTwiceAtOnce(t *testing.T) {
 	if !errors.Is(err, ErrBusy) {
 		t.Fatalf("a second copy of the same volume to the same target must be refused as busy: %v", err)
 	}
-	if got := local.vols["default/lib"].Config[resolve.CopyFailCount("vps")]; got != "" {
+	if got := local.vols["default/lib"].Config[backupmeta.CopyFailCount("vps")]; got != "" {
 		t.Errorf("being busy is not a failed copy, but the failure count is %q", got)
 	}
 	// a different target is not blocked by it: the guard is per (volume, target)

@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/lxc/incus/v7/shared/api"
+
+	"github.com/minihci/tink/internal/backupmeta"
 )
 
 func at(s string) time.Time {
@@ -70,7 +72,7 @@ func TestCopyIsDue(t *testing.T) {
 		if last == "" {
 			return nil
 		}
-		return map[string]string{CopyStampAt("nas"): at(last).Format(time.RFC3339)}
+		return map[string]string{backupmeta.CopyStampAt("nas"): at(last).Format(time.RFC3339)}
 	}
 	tests := []struct {
 		name, last, now string
@@ -89,7 +91,7 @@ func TestCopyIsDue(t *testing.T) {
 		}
 	}
 	// a stamp tink did not write is as good as none
-	if due, _ := CopyIsDue("0 4 * * *", map[string]string{CopyStampAt("nas"): "yesterday-ish"}, "nas", at("2026-10-06 12:00")); !due {
+	if due, _ := CopyIsDue("0 4 * * *", map[string]string{backupmeta.CopyStampAt("nas"): "yesterday-ish"}, "nas", at("2026-10-06 12:00")); !due {
 		t.Error("an unreadable stamp must not suppress a copy")
 	}
 }
@@ -102,7 +104,7 @@ func TestCopyWarnings(t *testing.T) {
 			Copies:    []BackupCopy{{Target: "nas", Schedule: schedule, Retain: "30d"}},
 		}}
 	}
-	stamp := func(s string) map[string]string { return map[string]string{CopyStampAt("nas"): s} }
+	stamp := func(s string) map[string]string { return map[string]string{backupmeta.CopyStampAt("nas"): s} }
 	tests := []struct {
 		name    string
 		r       Resource
@@ -144,14 +146,5 @@ func TestDecideVolumeWarnsAboutCopiesOnlyForExistingVolumes(t *testing.T) {
 	existing := &api.StorageVolume{StorageVolumePut: api.StorageVolumePut{Config: map[string]string{}}}
 	if w := strings.Join(decideVolume(r, existing, volumeEnv{targets: nasTarget}).Warnings, "|"); !strings.Contains(w, "the copy to nas has never run") {
 		t.Errorf("an existing volume whose copy never ran must say so, got %q", w)
-	}
-}
-
-func TestCopyOf(t *testing.T) {
-	if got := CopyOf("", "", "lib"); got != "default/default/lib" {
-		t.Errorf("CopyOf = %q", got)
-	}
-	if got := CopyOf("immich", "fast", "lib"); got != "immich/fast/lib" {
-		t.Errorf("CopyOf = %q", got)
 	}
 }

@@ -6,7 +6,7 @@ import (
 
 	incus "github.com/lxc/incus/v7/client"
 
-	"github.com/minihci/tink/internal/resolve"
+	"github.com/minihci/tink/internal/backupmeta"
 )
 
 // ListedVolume is a custom volume found by listing the server, with the config it carries now.
@@ -58,12 +58,12 @@ func Forget(s incus.InstanceServer, v Volume) (had bool, owner string, err error
 	if err != nil {
 		return false, "", fmt.Errorf("volume %s/%s: %w", v.pool(), v.Name, err)
 	}
-	owner = vol.Config[resolve.StackKey]
-	if _, has := vol.Config[resolve.PolicyKey]; !has {
+	owner = vol.Config[backupmeta.StackKey]
+	if _, has := vol.Config[backupmeta.PolicyKey]; !has {
 		return false, owner, nil
 	}
 	put := vol.Writable()
-	delete(put.Config, resolve.PolicyKey)
+	delete(put.Config, backupmeta.PolicyKey)
 	if err := v.scoped(s).UpdateStoragePoolVolume(v.pool(), "custom", v.Name, put, etag); err != nil {
 		return false, owner, fmt.Errorf("clearing the copy policy of %s/%s: %w", v.pool(), v.Name, err)
 	}

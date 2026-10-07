@@ -6,18 +6,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/minihci/tink/internal/resolve"
+	"github.com/minihci/tink/internal/backupmeta"
 )
 
 var sweepNow = remoteNow // 2026-10-07 04:00 UTC
 
 func partialCfg(volume, server string, started time.Time) map[string]string {
 	c := map[string]string{
-		resolve.MarkerPartialOf: resolve.CopyOf("", "default", volume),
-		resolve.MarkerPartialAt: started.UTC().Format(time.RFC3339),
+		backupmeta.MarkerPartialOf: backupmeta.CopyOf("", "default", volume),
+		backupmeta.MarkerPartialAt: started.UTC().Format(time.RFC3339),
 	}
 	if server != "" {
-		c[resolve.MarkerCopyServer] = server
+		c[backupmeta.MarkerCopyServer] = server
 	}
 	return c
 }
@@ -50,10 +50,10 @@ func TestACopyIsMarkedInProgressUntilItCompletes(t *testing.T) {
 			mid = v.Config
 		}
 	}
-	if mid[resolve.MarkerPartialOf] != resolve.CopyOf("", "default", "lib") || mid[resolve.MarkerPartialAt] == "" {
+	if mid[backupmeta.MarkerPartialOf] != backupmeta.CopyOf("", "default", "lib") || mid[backupmeta.MarkerPartialAt] == "" {
 		t.Errorf("a copy under way must carry the in-progress mark: %v", mid)
 	}
-	if _, isPoint := mid[resolve.MarkerCopyOf]; isPoint {
+	if _, isPoint := mid[backupmeta.MarkerCopyOf]; isPoint {
 		t.Errorf("a copy under way must NOT look like a restore point: %v", mid)
 	}
 	if pts, _ := ListRestorePoints(local, Volume{Name: "lib"}, remoteTarget()); len(pts) != 0 {
@@ -64,13 +64,13 @@ func TestACopyIsMarkedInProgressUntilItCompletes(t *testing.T) {
 		t.Fatal(err)
 	}
 	final := remote.vols["default/"+res.Volume].Config
-	if final[resolve.MarkerCopyOf] == "" {
+	if final[backupmeta.MarkerCopyOf] == "" {
 		t.Errorf("a finished copy is a restore point: %v", final)
 	}
-	if _, left := final[resolve.MarkerPartialOf]; left {
+	if _, left := final[backupmeta.MarkerPartialOf]; left {
 		t.Error("the in-progress mark must be gone once the copy is finished")
 	}
-	if _, left := final[resolve.MarkerPartialAt]; left {
+	if _, left := final[backupmeta.MarkerPartialAt]; left {
 		t.Error("the in-progress time must be gone once the copy is finished")
 	}
 	if pts, _ := ListRestorePoints(local, Volume{Name: "lib"}, remoteTarget()); len(pts) != 1 {
@@ -94,13 +94,13 @@ func TestSweepRemovesOnlyAbandonedCopiesOfThisVolumeFromThisServer(t *testing.T)
 		"lib-bk-other-server": partialCfg("lib", "other-host", old),
 		"other-bk-abandoned":  partialCfg("other", "tron", old), // another volume's
 		"lib-bk-unmarked":     {},                               // looks like ours, has no mark: never touched
-		"lib-bk-no-time":      {resolve.MarkerPartialOf: resolve.CopyOf("", "default", "lib"), resolve.MarkerCopyServer: "tron"},
-		"lib-bk-bad-time":     {resolve.MarkerPartialOf: resolve.CopyOf("", "default", "lib"), resolve.MarkerPartialAt: "last tuesday", resolve.MarkerCopyServer: "tron"},
+		"lib-bk-no-time":      {backupmeta.MarkerPartialOf: backupmeta.CopyOf("", "default", "lib"), backupmeta.MarkerCopyServer: "tron"},
+		"lib-bk-bad-time":     {backupmeta.MarkerPartialOf: backupmeta.CopyOf("", "default", "lib"), backupmeta.MarkerPartialAt: "last tuesday", backupmeta.MarkerCopyServer: "tron"},
 	}
 	// a RESTORE POINT that somehow still carries an in-progress mark: a finished copy is never swept
 	both := partialCfg("lib", "tron", old)
-	both[resolve.MarkerCopyOf] = resolve.CopyOf("", "default", "lib")
-	both[resolve.MarkerCopyAt] = old.Format(time.RFC3339)
+	both[backupmeta.MarkerCopyOf] = backupmeta.CopyOf("", "default", "lib")
+	both[backupmeta.MarkerCopyAt] = old.Format(time.RFC3339)
 	keeps["lib-bk-finished-but-marked"] = both
 	for name, cfg := range keeps {
 		remote.add("default", name, cfg)
@@ -154,10 +154,10 @@ func TestASweepFailureIsNotAFailedCopy(t *testing.T) {
 		t.Fatalf("the error must say the copy succeeded and what failed: %v", err)
 	}
 	cfg := local.vols["default/lib"].Config
-	if cfg[resolve.CopyStampAt("vps")] == "" {
+	if cfg[backupmeta.CopyStampAt("vps")] == "" {
 		t.Error("the copy succeeded, so it is stamped")
 	}
-	if _, has := cfg[resolve.CopyFailAt("vps")]; has {
+	if _, has := cfg[backupmeta.CopyFailAt("vps")]; has {
 		t.Error("a sweep failure must not put the copy into backoff")
 	}
 }

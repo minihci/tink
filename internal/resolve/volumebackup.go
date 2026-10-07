@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/lxc/incus/v7/shared/api"
+
+	"github.com/minihci/tink/internal/backupmeta"
 )
 
 // VolumeBackup is a storage-volume's answer to "how is this backed up?".
@@ -53,17 +55,6 @@ type VerifyCheck struct {
 	// Mount is where the restored volume appears. Defaults to /data.
 	Mount string
 }
-
-// The state `tink backup verify` leaves on the SOURCE volume as Incus config, so
-// `plan` can see it without tink keeping a state file of its own (the same idea as
-// user.ingress.*). Written only when a verification passes: a failed one must not
-// look fresh.
-const (
-	StampVerifiedAt       = "user.tink.backup.verified-at"       // RFC 3339, UTC
-	StampVerifiedSnapshot = "user.tink.backup.verified-snapshot" // which snapshot was restored
-	StampVerifiedWith     = "user.tink.backup.verified-with"     // "check" or "restore"
-	StampVerifiedFrom     = "user.tink.backup.verified-from"     // "local" (a snapshot on the volume's pool) or a backup-target's name
-)
 
 // DefaultVerifyMount is where a verify check sees the restored volume.
 const DefaultVerifyMount = "/data"
@@ -211,28 +202,28 @@ func backupVolumeConfig(b *VolumeBackup) map[string]string {
 }
 
 // volumeBackupConfig is everything a storage volume's declaration converges its config to: the snapshot keys, and the
-// copy policy (PolicyKey). set is what to write; remove is the keys tink owns outright that must not be there, which
+// copy policy (backupmeta.PolicyKey). set is what to write; remove is the keys tink owns outright that must not be there, which
 // today is the policy when the declaration has none. It errors when a copy names a target that is not in targets, which
 // loading a stack already rejects.
 func volumeBackupConfig(r Resource, env volumeEnv) (set map[string]string, remove []string, err error) {
 	set = backupVolumeConfig(r.Backup)
-	if env.stack != "" { // the pointer back to the stack that applied it; never removed (see StackKey)
+	if env.stack != "" { // the pointer back to the stack that applied it; never removed (see backupmeta.StackKey)
 		if set == nil {
 			set = map[string]string{}
 		}
-		set[StackKey] = env.stack
+		set[backupmeta.StackKey] = env.stack
 	}
 	policy, err := BuildPolicy(r, env.targets)
 	if err != nil {
 		return nil, nil, err
 	}
 	if policy == "" {
-		return set, []string{PolicyKey}, nil
+		return set, []string{backupmeta.PolicyKey}, nil
 	}
 	if set == nil {
 		set = map[string]string{}
 	}
-	set[PolicyKey] = policy
+	set[backupmeta.PolicyKey] = policy
 	return set, nil, nil
 }
 
@@ -242,7 +233,7 @@ type volumeEnv struct {
 	targets map[string]Resource
 	stack   string
 	// helperReads and helperLabel are what the helper says it can read (see PlanOptions); policyProto is the protocol this tink writes
-	// (0 means PolicyProto: it is a field only so a test can ask what happens when a newer one is written).
+	// (0 means backupmeta.PolicyProto: it is a field only so a test can ask what happens when a newer one is written).
 	helperReads int
 	helperLabel string
 	// helperRemotes are the remotes the helper can reach (nil: it has not said, so none is checked).
@@ -254,7 +245,7 @@ func (e volumeEnv) writes() int {
 	if e.policyProto > 0 {
 		return e.policyProto
 	}
-	return PolicyProto
+	return backupmeta.PolicyProto
 }
 
 // helperCannotRead is the reason a policy must not be written, or "" when it may be: the helper reads older policies than this tink
@@ -320,9 +311,9 @@ func decideVolume(r Resource, current *api.StorageVolume, env volumeEnv) Planned
 	}
 
 	if current != nil && env.stack != "" {
-		if owner := current.Config[StackKey]; owner != "" && owner != env.stack {
+		if owner := current.Config[backupmeta.StackKey]; owner != "" && owner != env.stack {
 			warnings = append(warnings, fmt.Sprintf("this volume is stamped as belonging to stack %q, and applying takes it over for %q (%s) -- if two stacks declare it they will keep taking it from each other",
-				owner, env.stack, StackKey))
+				owner, env.stack, backupmeta.StackKey))
 		}
 	}
 
@@ -335,10 +326,10 @@ func decideVolume(r Resource, current *api.StorageVolume, env volumeEnv) Planned
 
 	// The policy is one escaped line of JSON, which is for the volume and not for a reader: it is described in words, and left out of the
 	// raw config diff.
-	wantPolicy := desired[PolicyKey]
+	wantPolicy := desired[backupmeta.PolicyKey]
 	rest := make(map[string]string, len(desired))
 	for k, v := range desired {
-		if k != PolicyKey {
+		if k != backupmeta.PolicyKey {
 			rest[k] = v
 		}
 	}
@@ -346,9 +337,9 @@ func decideVolume(r Resource, current *api.StorageVolume, env volumeEnv) Planned
 		return PlannedResource{Resource: r, Action: ActionCreate, Changes: append(diffConfig(nil, rest, nil), DescribePolicyChange("", wantPolicy)...), Warnings: warnings}
 	}
 	changes := diffConfig(current.Config, rest, nil)
-	changes = append(changes, DescribePolicyChange(current.Config[PolicyKey], wantPolicy)...)
+	changes = append(changes, DescribePolicyChange(current.Config[backupmeta.PolicyKey], wantPolicy)...)
 	for _, k := range remove {
-		if _, there := current.Config[k]; there && k != PolicyKey { // the policy's removal is said above
+		if _, there := current.Config[k]; there && k != backupmeta.PolicyKey { // the policy's removal is said above
 			changes = append(changes, fmt.Sprintf("config.%s: removed (the declaration no longer has one)", k))
 		}
 	}
@@ -376,18 +367,18 @@ func verifyWarning(r Resource, current map[string]string, now time.Time) string 
 		return ""
 	}
 	maxAge := verifyCadenceAge[r.Backup.Verify]
-	stamp := current[StampVerifiedAt]
+	stamp := current[backupmeta.StampVerifiedAt]
 	if stamp == "" {
 		return fmt.Sprintf("verify: %s is declared but this volume has never been verified -- run `tink backup verify %s`", r.Backup.Verify, r.Name)
 	}
 	at, err := time.Parse(time.RFC3339, stamp)
 	if err != nil {
-		return fmt.Sprintf("%s=%q is not a timestamp tink wrote -- run `tink backup verify %s` to replace it", StampVerifiedAt, stamp, r.Name)
+		return fmt.Sprintf("%s=%q is not a timestamp tink wrote -- run `tink backup verify %s` to replace it", backupmeta.StampVerifiedAt, stamp, r.Name)
 	}
 	// A restore-only verification does not satisfy a declared check: otherwise running verify from
 	// somewhere the stack file is not found would make the volume look freshly verified while the
 	// check that matters never ran.
-	if r.Backup.VerifyCheck != nil && current[StampVerifiedWith] != "check" {
+	if r.Backup.VerifyCheck != nil && current[backupmeta.StampVerifiedWith] != "check" {
 		return fmt.Sprintf("a verify check is declared, but the last verification only proved the snapshot restores -- run `tink backup verify %s` with the stack file so the check runs", r.Name)
 	}
 	if age := now.Sub(at); age > maxAge {

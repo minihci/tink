@@ -7,6 +7,8 @@ import (
 
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
+
+	"github.com/minihci/tink/internal/backupmeta"
 )
 
 func policyTargets() map[string]Resource {
@@ -38,7 +40,7 @@ func TestBuildPolicyResolvesTargetsInline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("what BuildPolicy wrote must parse: %v\n%s", err, text)
 	}
-	if p.Proto != PolicyProto || len(p.Copies) != 2 {
+	if p.Proto != backupmeta.PolicyProto || len(p.Copies) != 2 {
 		t.Fatalf("policy = %+v", p)
 	}
 	nas, vps := p.Copies[0], p.Copies[1]
@@ -155,13 +157,13 @@ func TestDecideVolumeConvergesThePolicy(t *testing.T) {
 	if p := decideVolume(r, with(nil), volumeEnv{targets: targets}); p.Action != ActionUpdate || !strings.Contains(strings.Join(p.Changes, "|"), "backup policy: ") {
 		t.Errorf("a volume that lacks the policy is updated: %v %v", p.Action, p.Changes)
 	}
-	if p := decideVolume(r, with(map[string]string{PolicyKey: policy}), volumeEnv{targets: targets}); p.Action != ActionNone {
+	if p := decideVolume(r, with(map[string]string{backupmeta.PolicyKey: policy}), volumeEnv{targets: targets}); p.Action != ActionNone {
 		t.Errorf("a volume carrying exactly the policy is converged: %v %v", p.Action, p.Changes)
 	}
 	// drift: someone edited the key by hand, or the YAML moved on
 	r2 := volWithCopies()
 	r2.Backup.Copies[0].Retain = "60d"
-	p := decideVolume(r2, with(map[string]string{PolicyKey: policy}), volumeEnv{targets: targets})
+	p := decideVolume(r2, with(map[string]string{backupmeta.PolicyKey: policy}), volumeEnv{targets: targets})
 	if p.Action != ActionUpdate || !strings.Contains(strings.Join(p.Changes, "|"), "backup policy: ") {
 		t.Errorf("a changed declaration must show as an update, which is the point of keeping the policy on the volume: %v %v", p.Action, p.Changes)
 	}
@@ -169,7 +171,7 @@ func TestDecideVolumeConvergesThePolicy(t *testing.T) {
 
 func TestDecideVolumeRemovesAPolicyTheDeclarationNoLongerHas(t *testing.T) {
 	targets := policyTargets()
-	stale := liveVolume(map[string]string{PolicyKey: `{"proto":1}`})
+	stale := liveVolume(map[string]string{backupmeta.PolicyKey: `{"proto":1}`})
 	for name, r := range map[string]Resource{
 		"copies removed": {Kind: KindStorageVolume, Name: "v", Backup: &VolumeBackup{Snapshots: &SnapshotPolicy{Schedule: "@daily", Retain: "7d"}}},
 		"opted out":      {Kind: KindStorageVolume, Name: "v", Backup: &VolumeBackup{None: "regenerable"}},
@@ -195,11 +197,11 @@ func TestDecideVolumeBlocksOnAMissingTarget(t *testing.T) {
 
 func TestVolumeBackupConfigSetAndRemove(t *testing.T) {
 	set, remove, err := volumeBackupConfig(volWithCopies(), volumeEnv{targets: policyTargets()})
-	if err != nil || remove != nil || set[PolicyKey] == "" || set["snapshots.schedule"] != "0 3 * * *" {
+	if err != nil || remove != nil || set[backupmeta.PolicyKey] == "" || set["snapshots.schedule"] != "0 3 * * *" {
 		t.Errorf("set = %v remove = %v err = %v", set, remove, err)
 	}
 	set, remove, err = volumeBackupConfig(Resource{Kind: KindStorageVolume, Name: "v"}, volumeEnv{})
-	if err != nil || len(set) != 0 || len(remove) != 1 || remove[0] != PolicyKey {
+	if err != nil || len(set) != 0 || len(remove) != 1 || remove[0] != backupmeta.PolicyKey {
 		t.Errorf("a bare volume sets nothing and clears the policy: set = %v remove = %v err = %v", set, remove, err)
 	}
 }
@@ -235,7 +237,7 @@ func TestAPolicyTheHelperCannotReadIsNotWritten(t *testing.T) {
 		}
 	}
 	// an update that would write it too
-	if p := planVolume(t, map[string]string{PolicyKey: "{}"}, volumeEnv{helperReads: 1, policyProto: 2}); p.Action != ActionBlocked {
+	if p := planVolume(t, map[string]string{backupmeta.PolicyKey: "{}"}, volumeEnv{helperReads: 1, policyProto: 2}); p.Action != ActionBlocked {
 		t.Errorf("an update: %v", p.Action)
 	}
 }
@@ -245,7 +247,7 @@ func TestAPolicyTheHelperCanReadIsWrittenAsBefore(t *testing.T) {
 		"the helper reads what this tink writes":   {helperReads: 2, policyProto: 2},
 		"the helper reads newer":                   {helperReads: 3, policyProto: 2},
 		"there is no helper":                       {helperReads: 0, policyProto: 2},
-		"the real protocol and a helper that does": {helperReads: PolicyProto},
+		"the real protocol and a helper that does": {helperReads: backupmeta.PolicyProto},
 	} {
 		if p := planVolume(t, nil, env); p.Action != ActionCreate {
 			t.Errorf("%s: action = %v %v", name, p.Action, p.Blocked)
@@ -257,7 +259,7 @@ func TestAPolicyAlreadyOnTheVolumeIsNotBlockedAndAVolumeWithoutCopiesNeverIs(t *
 	// the same policy is already there: nothing is being written, so nothing to refuse (the helper's own status says it skips it)
 	want, _ := BuildPolicy(volumeWithCopies(), policyTargets())
 	env := volumeEnv{helperReads: 1, policyProto: 2}
-	if p := planVolume(t, map[string]string{PolicyKey: want}, env); p.Action == ActionBlocked {
+	if p := planVolume(t, map[string]string{backupmeta.PolicyKey: want}, env); p.Action == ActionBlocked {
 		t.Errorf("nothing is written, so nothing is refused: %v", p.Blocked)
 	}
 	// a volume that declares no copies writes no policy, whatever the helper reads

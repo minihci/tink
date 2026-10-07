@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/minihci/tink/internal/backupmeta"
 	"github.com/minihci/tink/internal/backuprun"
 	"github.com/minihci/tink/internal/jobs"
 	"github.com/minihci/tink/internal/resolve"
@@ -115,7 +116,7 @@ func (r *rig) volume(t *testing.T, names ...string) {
 	for _, n := range names {
 		r.eng.listed = append(r.eng.listed, volbackup.ListedVolume{
 			Volume: volbackup.Volume{Project: "default", Pool: "default", Name: n},
-			Config: map[string]string{resolve.PolicyKey: policyText(t)},
+			Config: map[string]string{backupmeta.PolicyKey: policyText(t)},
 		})
 	}
 }
@@ -133,12 +134,12 @@ func TestTickQueuesAJobOnlyWhenACopyIsDue(t *testing.T) {
 	r := newRig(t)
 	r.volume(t, "lib")
 	recent := now0.Add(-10 * time.Minute).UTC().Format(time.RFC3339) // 10:20: an hourly copy is not due until 11:00
-	r.eng.live["lib"] = map[string]string{resolve.CopyStampAt("nas"): recent}
+	r.eng.live["lib"] = map[string]string{backupmeta.CopyStampAt("nas"): recent}
 	var st SchedulerState
 	if n := r.h.Tick(&st); n != 0 {
 		t.Errorf("nothing is due, nothing is queued: %d", n)
 	}
-	r.eng.live["lib"] = map[string]string{resolve.CopyStampAt("nas"): now0.Add(-3 * time.Hour).UTC().Format(time.RFC3339)}
+	r.eng.live["lib"] = map[string]string{backupmeta.CopyStampAt("nas"): now0.Add(-3 * time.Hour).UTC().Format(time.RFC3339)}
 	if n := r.h.Tick(&st); n != 1 {
 		t.Fatalf("a due copy queues one job: %d", n)
 	}
@@ -158,9 +159,9 @@ func TestTickRespectsBackoffSoAFailingCopyIsNotQueuedEveryMinute(t *testing.T) {
 	r := newRig(t)
 	r.volume(t, "lib")
 	r.eng.live["lib"] = map[string]string{
-		resolve.CopyStampAt("nas"):   now0.Add(-3 * time.Hour).UTC().Format(time.RFC3339),
-		resolve.CopyFailAt("nas"):    now0.Add(-time.Minute).UTC().Format(time.RFC3339),
-		resolve.CopyFailCount("nas"): "3",
+		backupmeta.CopyStampAt("nas"):   now0.Add(-3 * time.Hour).UTC().Format(time.RFC3339),
+		backupmeta.CopyFailAt("nas"):    now0.Add(-time.Minute).UTC().Format(time.RFC3339),
+		backupmeta.CopyFailCount("nas"): "3",
 	}
 	var st SchedulerState
 	if n := r.h.Tick(&st); n != 0 {
@@ -187,8 +188,8 @@ func TestOnlyOneBackupJobWaitsAtATime(t *testing.T) {
 	r := newRig(t)
 	r.volume(t, "a", "b")
 	old := now0.Add(-3 * time.Hour).UTC().Format(time.RFC3339)
-	r.eng.live["a"] = map[string]string{resolve.CopyStampAt("nas"): old}
-	r.eng.live["b"] = map[string]string{resolve.CopyStampAt("nas"): old}
+	r.eng.live["a"] = map[string]string{backupmeta.CopyStampAt("nas"): old}
+	r.eng.live["b"] = map[string]string{backupmeta.CopyStampAt("nas"): old}
 	var st SchedulerState
 	if n := r.h.Tick(&st); n != 1 {
 		t.Fatalf("two due volumes are one job (the job finds both when it runs): %d", n)
@@ -219,7 +220,7 @@ func TestProblemsAreLoggedOnceAndRecoveriesAreNoted(t *testing.T) {
 		t.Errorf("a standing problem is logged once, not every tick (%d times):\n%s", got, r.logs.String())
 	}
 	delete(r.eng.liveErr, "lib")
-	r.eng.live["lib"] = map[string]string{resolve.CopyStampAt("nas"): now0.UTC().Format(time.RFC3339)}
+	r.eng.live["lib"] = map[string]string{backupmeta.CopyStampAt("nas"): now0.UTC().Format(time.RFC3339)}
 	r.h.Tick(&st)
 	if !strings.Contains(r.logs.String(), "recovered:") {
 		t.Errorf("a recovery is noted:\n%s", r.logs.String())
@@ -237,8 +238,8 @@ func TestAVolumeWhosePolicyCannotBeReadDoesNotStopTheOthersAndIsReportedOnce(t *
 	r.volume(t, "lib")
 	r.eng.listed = append(r.eng.listed, volbackup.ListedVolume{
 		Volume: volbackup.Volume{Project: "tenant", Pool: "default", Name: "broken"},
-		Config: map[string]string{resolve.PolicyKey: `{"proto":2}`}})
-	r.eng.live["lib"] = map[string]string{resolve.CopyStampAt("nas"): now0.Add(-3 * time.Hour).UTC().Format(time.RFC3339)}
+		Config: map[string]string{backupmeta.PolicyKey: `{"proto":2}`}})
+	r.eng.live["lib"] = map[string]string{backupmeta.CopyStampAt("nas"): now0.Add(-3 * time.Hour).UTC().Format(time.RFC3339)}
 	var st SchedulerState
 	for i := 0; i < 3; i++ {
 		r.h.Tick(&st)
@@ -278,8 +279,8 @@ func TestABackupJobRunsAndRecordsWhatItDid(t *testing.T) {
 	r := newRig(t)
 	r.volume(t, "lib", "photos")
 	var st SchedulerState
-	r.eng.live["lib"] = map[string]string{resolve.CopyStampAt("nas"): now0.Add(-3 * time.Hour).UTC().Format(time.RFC3339)}
-	r.eng.live["photos"] = map[string]string{resolve.CopyStampAt("nas"): now0.Add(-5 * time.Minute).UTC().Format(time.RFC3339)} // not due
+	r.eng.live["lib"] = map[string]string{backupmeta.CopyStampAt("nas"): now0.Add(-3 * time.Hour).UTC().Format(time.RFC3339)}
+	r.eng.live["photos"] = map[string]string{backupmeta.CopyStampAt("nas"): now0.Add(-5 * time.Minute).UTC().Format(time.RFC3339)} // not due
 	r.h.Tick(&st)
 	if n := r.runJobs(t); n != 1 {
 		t.Fatalf("ran %d", n)
@@ -342,7 +343,7 @@ func TestAJobSaysWhichVolumesItSkippedAndStillRunsTheRest(t *testing.T) {
 	r.volume(t, "lib")
 	r.eng.listed = append(r.eng.listed, volbackup.ListedVolume{
 		Volume: volbackup.Volume{Project: "tenant", Pool: "default", Name: "garbled"},
-		Config: map[string]string{resolve.PolicyKey: "{nope"}})
+		Config: map[string]string{backupmeta.PolicyKey: "{nope"}})
 	id, _ := r.h.Store.Enqueue(jobs.Request{Kind: KindBackupRun, Origin: jobs.OriginTrigger}, now0)
 	r.runJobs(t)
 	st, _ := r.h.Store.Status(id)
