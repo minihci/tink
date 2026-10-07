@@ -94,6 +94,7 @@ func Run(ctx context.Context, out io.Writer, opts RunOptions) error {
 	if opts.Status != nil {
 		started := time.Now()
 		so := *opts.Status
+		so.WaitForBackup = so.WaitForBackup || opts.Helper != nil
 		start("status", func(ctx context.Context) error { return runStatus(ctx, out, so, live, started) })
 	}
 	wg.Wait()
@@ -110,19 +111,34 @@ func orInterval(d time.Duration) time.Duration {
 	return d
 }
 
-// runScheduler ticks immediately and then every SchedulerInterval until ctx is done.
+// defaultRetryAfter is how soon the scheduler looks again after a pass that could not look: Incus not reachable yet (the helper's
+// proxy to the host's API comes up a moment after its process does) or a listing that failed. A pass that worked waits the full
+// interval; one that did not should not leave a minute of nothing.
+const defaultRetryAfter = 5 * time.Second
+
+// runScheduler ticks immediately and then every SchedulerInterval until ctx is done; after a pass that could not look, it tries again
+// sooner.
 func (h *Helper) runScheduler(ctx context.Context) error {
 	var state SchedulerState
-	h.Tick(&state)
-	t := time.NewTicker(orInterval(h.SchedulerInterval))
-	defer t.Stop()
+	interval := orInterval(h.SchedulerInterval)
+	retry := h.RetryAfter
+	if retry <= 0 {
+		retry = defaultRetryAfter
+	}
+	timer := time.NewTimer(0)
+	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-t.C:
-			h.Tick(&state)
+		case <-timer.C:
 		}
+		h.Tick(&state)
+		next := interval
+		if !h.tickLooked.Load() && retry < interval {
+			next = retry
+		}
+		timer.Reset(next)
 	}
 }
 

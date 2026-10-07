@@ -20,6 +20,7 @@ import (
 // result. The workers write it as they go; the status worker reads it and publishes only what changed.
 type Live struct {
 	mu      sync.Mutex
+	known   bool // the scheduler has completed a pass, so skipped and failing are facts and not "not looked yet"
 	skipped []helper.Skip
 	failing []helper.Failing
 	ingress *helper.IngressState
@@ -28,7 +29,14 @@ type Live struct {
 func (l *Live) setBackup(skipped []helper.Skip, failing []helper.Failing) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.skipped, l.failing = skipped, failing
+	l.skipped, l.failing, l.known = skipped, failing, true
+}
+
+// backupKnown says whether the scheduler has looked at the volumes at least once.
+func (l *Live) backupKnown() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.known
 }
 
 func (l *Live) setIngress(ok bool, warnings int, at time.Time) {
@@ -106,6 +114,10 @@ type StatusOptions struct {
 	Zone     *time.Location
 	// Store is the job directory, for the last finished job; the zero Store means this daemon runs no jobs.
 	Store jobs.Store
+	// WaitForBackup holds the first publication until the scheduler has completed a pass. Before that the document would say "nothing
+	// skipped, nothing failing" about volumes nobody has looked at, which reads as healthy: a helper that cannot reach Incus at all (a
+	// revoked certificate, a proxy not up yet) must publish nothing, not a clean bill.
+	WaitForBackup bool
 }
 
 func (o StatusOptions) interval() time.Duration {
@@ -171,6 +183,9 @@ func lastJob(store jobs.Store) *helper.LastJob {
 func runStatus(ctx context.Context, out io.Writer, o StatusOptions, live *Live, started time.Time) error {
 	var state SchedulerState
 	publish := func() {
+		if o.WaitForBackup && !live.backupKnown() {
+			return
+		}
 		now := time.Now()
 		state.begin()
 		defer state.end(func(format string, args ...any) { fmt.Fprintf(out, "tink daemon: "+format+"\n", args...) })

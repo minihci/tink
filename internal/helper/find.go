@@ -138,6 +138,23 @@ func Evaluate(f Found, now time.Time) Report {
 	return r
 }
 
+// CheckTrust adds what the host's trust store says about a helper that enrolled with a certificate of its own (install records the
+// address it dialled on the instance): if the certificate named TrustName is not there, the helper cannot act, whatever its last
+// document says, and the document stays fresh for 2.5 heartbeats after it is revoked. Pass the certificates as listed; a helper that
+// uses no certificate of its own (the socket fallback) has nothing to check.
+func (r *Report) CheckTrust(certs []api.Certificate) {
+	if r.Found.Config[MarkerKey+".remote"] == "" {
+		return
+	}
+	for _, c := range certs {
+		if c.Name == TrustName {
+			return
+		}
+	}
+	r.Health = Down
+	r.Reasons = append(r.Reasons, fmt.Sprintf("its certificate (%s) is not in the host's trust store: it was revoked, or never enrolled (tink helper install --reissue enrols it again)", TrustName))
+}
+
 func skipList(s []Skip) string {
 	parts := make([]string, len(s))
 	for i, x := range s {

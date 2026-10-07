@@ -1,8 +1,55 @@
 # The helper
 
-The helper is an Incus instance that runs `tink daemon run` next to the data: the backup scheduler, the job executor and the ingress
-reconcile. The design is in `docs/helper-design.md` (PR #16); this page covers what exists. **Today that is the status document and the
-commands that read it.** `tink helper install` and the image are later slices of the same phase.
+The helper is an Incus instance that runs `tink daemon run` next to the data: the backup scheduler, the job executor and (later) the ingress
+reconcile. The design is in `docs/helper-design.md` (PR #16); this page covers what exists: **`tink helper install` and `remove`, the status
+document, and the commands that read it.** The published image, `upgrade`, the ingress half and `plan` reading the status are later slices.
+
+## Installing it
+
+```
+tink helper install --binary ./tink-linux --timezone America/Denver      # a linux tink binary, in a stock alpine image
+tink helper install --image ghcr.io/.../tink-helper@sha256:...            # an image that has tink at /usr/local/bin/tink
+```
+
+It creates, in a project of its own (`tink-helper`): an OCI app container named `helper` that runs `tink daemon run --remote host ...`; two volumes,
+`tink-helper-config` (its Incus client configuration, mounted where the client looks for it) and `tink-helper-data` (its jobs); a NIC; and a **proxy
+device** that gives it the host's HTTPS API on its own loopback (`127.0.0.1:8443` inside the container), so the API is not exposed to anything it was
+not already exposed to. It starts the instance, enrols it, and waits for the first status document.
+
+**The helper's own certificate.** The helper is a client of its own host, with a certificate of its own. `install` does not hand it a credential:
+it mints a **single-use trust token** and runs `tink remote add host ... --token-file -` **inside the instance** with the token on standard input
+(never on a command line, never on disk). The key pair is generated inside, and the private key stays there (mode 0600 in `tink-helper-config`).
+The host verifies nothing secret until the helper has verified the host, by the fingerprint the token carries.
+
+- **Revocable:** `tink helper remove`, or `incus config trust remove` on the `tink-helper` entry, ends its access at once.
+- **Auditable:** what the helper does to your data reaches Incus as `tls` with the certificate's fingerprint as the user, not as `unix`/`root`:
+  checked on Incus 7.5.1 for a volume update (a copy stamp), a snapshot create and delete, and an instance update. **One exception:** the helper's
+  status write is an instance PATCH, and the lifecycle event for a PATCH carries no requestor at all, so those writes (one on change and one
+  per heartbeat) are not attributed. They are bookkeeping on the helper's own instance; the operations that move data are attributed.
+- **Not confined.** The certificate is unrestricted: it has the reach of root on the host. A restricted certificate is not a boundary on current Incus
+  (see `docs/helper-design.md`, "Security"), and nothing here claims one.
+
+**When it is "down", and how fast you hear it.** `tink helper status` also checks the host's trust store (if it may read it): a helper whose
+certificate has been revoked is reported **down at once**, not after its last document has aged. Without that check the helper would look healthy for
+25 minutes, because it can no longer write.
+
+**It does not claim health it has not earned.** The helper publishes nothing until its scheduler has completed a pass over the volumes; before that a
+"nothing skipped, nothing failing" would be about volumes nobody had looked at. A pass that could not look (the proxy to the host's API comes up a
+moment after the helper's process does) is retried in 5 seconds, not after the full minute.
+
+**What it needs:** the host's API listening (`core.https_address`; the loopback address is enough, and `tink deploy` sets one), and a network for the NIC
+(`--network`, else the default profile's, else `incusbr0`). It refuses, before creating anything, if either is missing, or if another helper exists on
+the server.
+
+**Running it again** is safe: what exists is left alone, and an enrolled helper is not enrolled twice. `--reissue` enrols it again with a fresh key pair
+and removes the old certificate. `--binary` puts the binary in the instance, which is also how a helper runs where an image cannot be pulled.
+
+```
+tink helper remove [--purge]
+```
+
+Revokes the certificate, stops and deletes the instance. The volumes stay (the job history; the client configuration, which holds the keys for any
+remote backup target) unless `--purge`, which removes them and the project if that leaves it empty.
 
 ## The status document
 

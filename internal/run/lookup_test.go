@@ -82,3 +82,18 @@ func TestALocalImageReferenceFallsBackToAFingerprintOnlyForARealMiss(t *testing.
 		t.Errorf("and it must not go on to treat the name as a fingerprint: %v", f.fetchedImages)
 	}
 }
+
+func TestARootDiskIsNotAManagedVolume(t *testing.T) {
+	// a root disk names a pool and no source: there is no volume to create for it, and "" is not a volume name
+	spec := &Spec{Devices: map[string]map[string]string{
+		"root": {"type": "disk", "path": "/", "pool": "default"},
+		"data": {"type": "disk", "pool": "default", "source": "vol1", "path": "/data"},
+	}}
+	f := &readFake{volErr: errNotFound}
+	if err := ensureManagedVolumes(f, spec); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.created) != 1 || f.created[0] != "default/vol1" {
+		t.Errorf("only the data volume is created: %v", f.created)
+	}
+}

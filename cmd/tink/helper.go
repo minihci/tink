@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -22,7 +23,84 @@ func newHelperCmd() *cobra.Command {
 		Long: `The helper is an Incus instance that runs "tink daemon run" next to the data: the backup scheduler and the ingress
 reconcile. It publishes what it is doing on its own instance config, and these commands read that back. See docs/helper.md.`,
 	}
-	cmd.AddCommand(newHelperStatusCmd())
+	cmd.AddCommand(newHelperInstallCmd(), newHelperRemoveCmd(), newHelperStatusCmd())
+	return cmd
+}
+
+func newHelperInstallCmd() *cobra.Command {
+	var socket string
+	var opts helper.InstallOptions
+	cmd := &cobra.Command{
+		Use:   "install",
+		Short: "Create the helper instance, start it, and enrol it with its own certificate",
+		Long: `install creates the helper: a project of its own (tink-helper), an OCI app container in it that runs "tink daemon run", two volumes
+(its client configuration, and its jobs), a NIC, and a proxy device that gives it the host's HTTPS API on its own loopback. It starts it,
+and enrols it: the host is told to trust a certificate that the helper generates INSIDE the instance, so the private key never leaves it, using
+a single-use token handed over on standard input (never on a command line, never on disk). The helper then publishes a status document, which
+install waits for and reports.
+
+It needs the host's API to be listening (core.https_address); the loopback address is enough, and tink deploy sets one.
+
+Give the instance an image with --image (an OCI image that has tink at /usr/local/bin/tink), or --binary FILE to put a linux tink binary in a stock
+alpine image: the way to run a development build, or a helper where the image cannot be pulled. It is safe to run again: what exists is left alone,
+and an enrolled helper is not enrolled twice. --reissue enrols it again with a fresh key pair (the old certificate is removed from the trust store).
+
+The helper's certificate is revocable ("tink helper remove", or "incus config trust remove") and its requests are attributed to it. It is not
+confined: it has the reach of root on the host, and nothing here claims otherwise.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if opts.Image == "" && opts.Binary == "" {
+				return fmt.Errorf("give --image (an OCI image with tink at /usr/local/bin/tink) or --binary FILE (a linux tink binary, run in a stock alpine image)")
+			}
+			if opts.TZ == "" {
+				opts.TZ = os.Getenv("TZ")
+			}
+			server, err := incusapi.Connect(socket)
+			if err != nil {
+				return fmt.Errorf("connecting to incus: %w", err)
+			}
+			out := cmd.OutOrStdout()
+			if opts.TZ == "" {
+				fmt.Fprintln(out, "note: no --timezone given (and no $TZ), so the helper evaluates schedules in UTC")
+			}
+			return (&helper.Installer{Server: server, Out: out}).Install(opts)
+		},
+	}
+	cmd.Flags().StringVar(&socket, "socket", "", "Incus daemon unix socket path (default: Incus's own resolution)")
+	cmd.Flags().StringVar(&opts.Project, "project", helper.DefaultProject, "the project to put the helper in")
+	cmd.Flags().StringVar(&opts.Name, "name", helper.DefaultName, "the helper instance's name")
+	cmd.Flags().StringVar(&opts.Pool, "pool", "default", "the storage pool for its root disk and volumes")
+	cmd.Flags().StringVar(&opts.Network, "network", "", "the network its NIC joins (default: the default profile's, else incusbr0)")
+	cmd.Flags().StringVar(&opts.Image, "image", "", "the OCI image it runs (with tink at /usr/local/bin/tink)")
+	cmd.Flags().StringVar(&opts.Binary, "binary", "", "a linux tink binary to put in the instance; with no --image, a stock alpine image is used")
+	cmd.Flags().StringVar(&opts.TZ, "timezone", "", "the time zone schedules are evaluated in, e.g. America/Denver (default: $TZ, else UTC)")
+	cmd.Flags().BoolVar(&opts.Reissue, "reissue", false, "enrol the helper again with a fresh key pair, removing its old certificate from the trust store")
+	cmd.Flags().DurationVar(&opts.Wait, "wait", 90*time.Second, "how long to wait for the helper to report in (negative: do not wait)")
+	return cmd
+}
+
+func newHelperRemoveCmd() *cobra.Command {
+	var socket string
+	var opts helper.RemoveOptions
+	cmd := &cobra.Command{
+		Use:   "remove",
+		Short: "Revoke the helper's certificate, then stop and delete it",
+		Long: `remove revokes the helper's certificate in the host's trust store, then stops and deletes the instance. Its two volumes (the job history, and its
+client configuration with any keys for remote backup targets) stay, so installing again picks up where it was; --purge deletes them too, and the
+project if that leaves it empty. Nothing is removed from the volumes' data: restore points on the backup targets are not the helper's to remove.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			server, err := incusapi.Connect(socket)
+			if err != nil {
+				return fmt.Errorf("connecting to incus: %w", err)
+			}
+			return (&helper.Installer{Server: server, Out: cmd.OutOrStdout()}).Remove(opts)
+		},
+	}
+	cmd.Flags().StringVar(&socket, "socket", "", "Incus daemon unix socket path (default: Incus's own resolution)")
+	cmd.Flags().StringVar(&opts.Project, "project", "", "the helper's project (default: wherever the helper is found)")
+	cmd.Flags().StringVar(&opts.Name, "name", "", "the helper instance's name (default: the helper found)")
+	cmd.Flags().BoolVar(&opts.Purge, "purge", false, "also delete the helper's volumes, and its project if that leaves it empty")
 	return cmd
 }
 
@@ -87,10 +165,15 @@ func runHelperStatus(out io.Writer, server incus.InstanceServer, instance, proje
 		return errors.New(what)
 	}
 
+	// Reading the trust store takes admin access; a client that cannot is simply not told, and the rest still holds.
+	certs, certErr := server.GetCertificates()
 	reports := make([]helper.Report, len(found))
 	worst := helper.Healthy
 	for i, f := range found {
 		reports[i] = helper.Evaluate(f, now)
+		if certErr == nil {
+			reports[i].CheckTrust(certs)
+		}
 		if reports[i].Health > worst {
 			worst = reports[i].Health
 		}

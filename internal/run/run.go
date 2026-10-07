@@ -293,8 +293,8 @@ func ApplyConfig(server incus.InstanceServer, spec *Spec) error {
 // translated config/device change too.
 func ensureManagedVolumes(server incus.InstanceServer, spec *Spec) error {
 	for _, dev := range spec.Devices {
-		if dev["type"] != "disk" || dev["pool"] == "" {
-			continue // a bind mount (no pool) or a non-disk device
+		if dev["type"] != "disk" || dev["pool"] == "" || dev["source"] == "" {
+			continue // a bind mount (no pool), a non-disk device, or a root disk (a pool, but no volume of its own to create)
 		}
 
 		pool, name := dev["pool"], dev["source"]
