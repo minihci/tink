@@ -261,10 +261,7 @@ Restore from a restore point with: tink backup restore VOLUME --from TARGET`,
 					targets[r.Name] = r
 				}
 			}
-			want := map[string]bool{}
-			for _, a := range args {
-				want[a] = true
-			}
+			selected, unknown := selectCopyVolumes(resources, args)
 
 			server, err := incusapi.Connect(f.socket)
 			if err != nil {
@@ -272,14 +269,7 @@ Restore from a restore point with: tink backup restore VOLUME --from TARGET`,
 			}
 			out := cmd.OutOrStdout()
 			var tried, failed, skipped int
-			for _, r := range resources {
-				if r.Kind != resolve.KindStorageVolume || r.Backup == nil || len(r.Backup.Copies) == 0 {
-					continue
-				}
-				if len(want) > 0 && !want[r.Name] {
-					continue
-				}
-				delete(want, r.Name)
+			for _, r := range selected {
 				v := volbackup.Volume{Project: r.Project, Pool: r.Pool, Name: r.Name}
 				live, err := volbackup.LiveConfig(server, v)
 				if err != nil {
@@ -322,7 +312,7 @@ Restore from a restore point with: tink backup restore VOLUME --from TARGET`,
 					fmt.Fprintln(out)
 				}
 			}
-			for name := range want {
+			for _, name := range unknown {
 				fmt.Fprintf(out, "%s: not a storage-volume with copies in the stack\n", name)
 				failed++
 			}
@@ -339,4 +329,32 @@ Restore from a restore point with: tink backup restore VOLUME --from TARGET`,
 	cmd.Flags().BoolVar(&due, "due", false, "only the copies whose schedule has come round since their last success")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "say what would happen; change nothing")
 	return cmd
+}
+
+// selectCopyVolumes picks the volumes `tink backup run` acts on: every storage volume that declares
+// copies, or with names, only those. Names that are not such a volume come back in unknown, in the order
+// given, so that asking for a volume that cannot be backed up is an error and not silently nothing.
+func selectCopyVolumes(resources []resolve.Resource, names []string) (selected []resolve.Resource, unknown []string) {
+	asked := map[string]bool{}
+	for _, n := range names {
+		asked[n] = true
+	}
+	found := map[string]bool{}
+	for _, r := range resources {
+		if r.Kind != resolve.KindStorageVolume || r.Backup == nil || len(r.Backup.Copies) == 0 {
+			continue
+		}
+		if len(names) > 0 && !asked[r.Name] {
+			continue
+		}
+		found[r.Name] = true
+		selected = append(selected, r)
+	}
+	for _, n := range names {
+		if !found[n] {
+			unknown = append(unknown, n)
+			found[n] = true // a name given twice is reported once
+		}
+	}
+	return selected, unknown
 }
