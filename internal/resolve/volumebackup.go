@@ -281,8 +281,14 @@ func (e volumeEnv) helperRemoteWarnings(r Resource) []string {
 			continue
 		}
 		said[t.Remote] = true
-		out = append(out, fmt.Sprintf("copies to %q (remote %q) will fail: the helper (%s) has no remote of that name. Add it with: tink helper remote add %s ADDRESS --token-file -",
-			t.Name, t.Remote, e.helperLabel, t.Remote))
+		msg := fmt.Sprintf("copies to %q (remote %q) will fail: the helper (%s) has no remote of that name. Add it with: tink helper remote add %s ADDRESS --token-file -",
+			t.Name, t.Remote, e.helperLabel, t.Remote)
+		if addr, fp, ok := t.DeclaredRemote(); ok {
+			// the stack opted in to saying where the server is: a server that already trusts the helper's certificate needs no token
+			msg += fmt.Sprintf(". This stack declares where it is, so if that server already trusts the helper's certificate no token is needed: tink helper remote add %s %s --fingerprint %s",
+				t.Remote, addr, fp)
+		}
+		out = append(out, msg)
 	}
 	return out
 }

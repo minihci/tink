@@ -18,6 +18,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -108,6 +109,25 @@ func NormalizeAddr(addr string) (string, error) {
 	return "https://" + net.JoinHostPort(host, port), nil
 }
 
+// canonicalFingerprint is how a certificate fingerprint is compared: lower case, with the colons some tools print between bytes left out.
+func canonicalFingerprint(fp string) string {
+	return strings.ToLower(strings.ReplaceAll(fp, ":", ""))
+}
+
+// fingerprintForm is what a SHA-256 certificate fingerprint looks like once canonical: 64 hex digits.
+var fingerprintForm = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// NormalizeFingerprint returns fp in the form Add compares (lower case, no colons) and an error unless it is the 64 hex digits of a SHA-256
+// certificate fingerprint. It is for a fingerprint written down ahead of time (a stack declaring a server), where a typo should be refused
+// when the file is read, not when a connection is first refused.
+func NormalizeFingerprint(fp string) (string, error) {
+	c := canonicalFingerprint(strings.TrimSpace(fp))
+	if !fingerprintForm.MatchString(c) {
+		return "", fmt.Errorf("fingerprint %q is not a SHA-256 certificate fingerprint (64 hex digits, colons allowed)", fp)
+	}
+	return c, nil
+}
+
 // Add adds a TLS remote to conf and saves it. Nothing is saved, and no server certificate file is left behind,
 // unless the whole thing succeeds.
 func Add(conf *cliconfig.Config, opts AddOptions) (res Result, err error) {
@@ -150,7 +170,7 @@ func Add(conf *cliconfig.Config, opts AddOptions) (res Result, err error) {
 	if len(addrs) == 0 {
 		return res, errors.New("no server address: give one, or a trust token that carries the server's addresses")
 	}
-	wantFingerprint := strings.ToLower(strings.ReplaceAll(opts.Fingerprint, ":", ""))
+	wantFingerprint := canonicalFingerprint(opts.Fingerprint)
 	how := ""
 	switch {
 	case tok != nil && tok.Fingerprint != "":

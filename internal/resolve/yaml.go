@@ -34,6 +34,10 @@ type yamlResource struct {
 	Config   map[string]string            `yaml:"config"`
 	Devices  map[string]map[string]string `yaml:"devices"`
 
+	// Backup-target-only, optional, and only with remote: the server's address and certificate fingerprint -- see Resource.Address.
+	Address     string `yaml:"address"`
+	Fingerprint string `yaml:"fingerprint"`
+
 	// Storage-volume-only -- see VolumeBackup.
 	Backup *yamlBackup `yaml:"backup"`
 
@@ -367,6 +371,8 @@ func (d yamlResource) toResource(dir, confine string, deps *Deps) (Resource, err
 		Location:        d.Location,
 		Engine:          d.Engine,
 		Remote:          d.Remote,
+		Address:         d.Address,
+		Fingerprint:     d.Fingerprint,
 		Backup:          d.Backup.toVolumeBackup(),
 		Config:          d.Config,
 		Devices:         d.Devices,

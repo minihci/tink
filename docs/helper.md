@@ -98,6 +98,10 @@ tink helper remote remove nas2
 - **`--project`** is the project on that server the remote defaults to, as for `incus remote add`; it is where the copies land.
 - **It needs the helper running** (the remote is added by running tink inside it), and each of these reads or changes only the helper's own client configuration.
 
+A stack can also say where the server is, as an opt-in ([`address` and `fingerprint` on the target](volume-backup.md#saying-where-the-server-is-optional)). The
+bare name stays the default and the helper still goes by the name; what the stack's description adds is the exact command in the warning below, with no token,
+for a server that already trusts the helper's certificate: `tink helper remote add nas2 https://10.0.0.7:8443 --fingerprint SHA256HEX`.
+
 **What you see when it is missing.** `tink plan` and `tink plan apply` **warn** for every copy to a remote the helper does not have, naming the command to run. It
 is a warning, not a block, because the policy and the remote can be set up in either order. If it is left, the helper's scheduler tries the copy and fails: the
 copy shows as `failing` in `tink helper status`, the helper is `degraded`, and the job's log says which remote and what to do. Once the remote is added the

@@ -357,3 +357,119 @@ func TestValidateVerifyCheck(t *testing.T) {
 		t.Error("none excludes a verify check")
 	}
 }
+
+// A target may say where its remote is, as an opt-in: the bare remote name stays the default, and the stack says nothing about the server.
+
+const declaredFingerprint = "0f3a9c2d7b6e41805a9e3c7d2f1b8a4960d5e7c3b2a19f8e7d6c5b4a39281706"
+
+func declaring(r Resource, address, fingerprint string) Resource {
+	r.Address, r.Fingerprint = address, fingerprint
+	return r
+}
+
+// colonised prints a fingerprint the way some tools do: upper case, a colon between bytes.
+func colonised(fp string) string {
+	var parts []string
+	for i := 0; i < len(fp); i += 2 {
+		parts = append(parts, strings.ToUpper(fp[i:i+2]))
+	}
+	return strings.Join(parts, ":")
+}
+
+func TestValidateDeclaredRemote(t *testing.T) {
+	ok := func(r Resource) {
+		t.Helper()
+		if err := Validate(r); err != nil {
+			t.Errorf("%+v: unexpected error %v", r, err)
+		}
+	}
+	bad := func(r Resource, want string) {
+		t.Helper()
+		if err := Validate(r); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%+v: error = %v, want it to contain %q", r, err, want)
+		}
+	}
+	vps := target("t", LocationOffsite, "vps", "backups")
+	ok(vps) // the default: a bare name
+	ok(declaring(vps, "https://10.0.0.7:8443", declaredFingerprint))
+	ok(declaring(vps, "vps.example.com", colonised(declaredFingerprint))) // a bare host, and the way some tools print a fingerprint
+
+	bad(declaring(target("t", LocationOtherHost, "", "nas"), "https://10.0.0.7:8443", declaredFingerprint), "has no remote")
+	bad(declaring(vps, "", declaredFingerprint), "fingerprint needs address")
+	bad(declaring(vps, "https://10.0.0.7:8443", ""), "address needs fingerprint")
+	bad(declaring(vps, "http://10.0.0.7:8443", declaredFingerprint), "only https")
+	bad(declaring(vps, "https://", declaredFingerprint), "no host")
+	bad(declaring(vps, "https://10.0.0.7:8443", "abc123"), "not a SHA-256")
+	bad(declaring(vps, "https://10.0.0.7:8443", strings.Repeat("zz", 32)), "not a SHA-256")
+	// only a backup-target describes a remote
+	bad(Resource{Kind: KindInstance, Name: "i", Address: "https://10.0.0.7:8443"}, "does not use field")
+	bad(Resource{Kind: KindStorageVolume, Name: "v", Fingerprint: declaredFingerprint}, "does not use field")
+}
+
+func TestDeclaredRemoteIsInTheFormTinkRemoteAddTakes(t *testing.T) {
+	addr, fp, ok := declaring(target("t", LocationOffsite, "vps", ""), "vps.example.com", colonised(declaredFingerprint)).DeclaredRemote()
+	if !ok || addr != "https://vps.example.com:8443" || fp != declaredFingerprint {
+		t.Errorf("DeclaredRemote() = %q, %q, %v: want the https URL with the default port, and lower-case hex", addr, fp, ok)
+	}
+	for name, r := range map[string]Resource{
+		"a bare name":           target("t", LocationOffsite, "vps", ""),
+		"a pool on this server": target("t", LocationOffsite, "", "nas"),
+		"half of it":            declaring(target("t", LocationOffsite, "vps", ""), "https://10.0.0.7:8443", ""),
+	} {
+		if _, _, ok := r.DeclaredRemote(); ok {
+			t.Errorf("%s declares nothing", name)
+		}
+	}
+}
+
+func TestLoadFileReadsADeclaredRemoteAndStaysStrict(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	base := "kind: backup-target\nname: offsite\nlocation: offsite\nengine: incus\nremote: vps\npool: backups\n"
+	rs, err := LoadFile(write("good.yaml", base+"address: https://10.0.0.7:8443\nfingerprint: "+declaredFingerprint+"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rs) != 1 || rs[0].Address != "https://10.0.0.7:8443" || rs[0].Fingerprint != declaredFingerprint {
+		t.Fatalf("LoadFile() = %+v", rs)
+	}
+	if rs, err = LoadFile(write("bare.yaml", base)); err != nil || rs[0].Address != "" || rs[0].Fingerprint != "" {
+		t.Errorf("without the opt-in nothing is declared: %+v, %v", rs, err)
+	}
+	// a misspelling must not silently turn the opt-in into a bare name
+	if _, err := LoadFile(write("typo.yaml", base+"adress: https://10.0.0.7:8443\nfingerprint: "+declaredFingerprint+"\n")); err == nil {
+		t.Error("a misspelled key must be refused, not ignored")
+	}
+	if _, err := LoadFile(write("half.yaml", base+"address: https://10.0.0.7:8443\n")); err == nil || !strings.Contains(err.Error(), "needs fingerprint") {
+		t.Errorf("an address with no fingerprint must be refused at load: %v", err)
+	}
+}
+
+// The opt-in is plan-time and error-time only: the policy written on the volume is the same with it or without it, so no helper needs to
+// be upgraded to read one and no address lands in plain volume config.
+func TestADeclaredRemoteDoesNotChangeTheCopyPolicy(t *testing.T) {
+	plain := policyTargets()
+	opted := policyTargets()
+	opted["vps"] = declaring(opted["vps"], "https://10.0.0.7:8443", declaredFingerprint)
+
+	want, err := BuildPolicy(volWithCopies(), plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := BuildPolicy(volWithCopies(), opted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Errorf("the policy must not depend on the opt-in:\n  with:    %s\n  without: %s", got, want)
+	}
+	if strings.Contains(got, "10.0.0.7") || strings.Contains(got, declaredFingerprint) {
+		t.Errorf("neither the address nor the fingerprint may reach the volume: %s", got)
+	}
+}
