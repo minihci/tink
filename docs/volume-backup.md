@@ -209,7 +209,17 @@ $ incus storage volume get immich-library user.tink.backup.policy
 ```
 
 - **Drift shows in `plan`.** The key is converged like any other config: a changed `retain`, a new copy, or a hand edit of the key is an `update` until applied. A change to
-  the YAML takes effect when it is **applied**.
+  the YAML takes effect when it is **applied**. `plan` describes the policy in words, one line per difference, and not as the escaped JSON the key holds:
+
+  ```
+  storage-volume/immich-library: would update
+      backup policy: ~ copy to nas: schedule "0 5 * * *" -> "0 6 * * *", keep 30d -> 60d
+      backup policy: + copy to offsite (remote vps, pool backups): schedule "@daily", keep 7d
+      backup policy: - verify weekly
+  ```
+
+  `+` is added, `-` removed, `~` changed (only what differs). A policy the volume carries that cannot be read (another protocol, a hand edit) is "replaced", and
+  everything wanted is listed as added. Removing it says what stops: `removed (...): the volume stops being copied and verified`.
 - **Tink owns the key outright, and removes it.** Take the `backup:` block off, switch it to `none:`, or drop its last copy and `verify`, and `apply` deletes the key, so
   the volume stops being copied. (This is the one place tink clears config; it never removes the snapshot keys.) A volume deleted from the YAML but still on the server
   keeps its key, and so keeps being copied.

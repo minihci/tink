@@ -294,8 +294,9 @@ Every storage-volume should also answer "how is this backed up?" with a
 backup: block -- scheduled snapshots, or an explicit none: with a reason.
 For now a volume that does not only gets a warning; that will become an
 error. A volume can also declare copies to kind: backup-target resources;
-plan checks them against 3-2-1 and warns, but nothing runs them yet.
-See docs/volume-backup.md.`, resolve.DefaultFile),
+plan checks them against 3-2-1 and warns. Copies are run by the helper
+(tink helper install): plan notes when a stack declares copies and there is
+none, and when the helper is not well. See docs/volume-backup.md and docs/helper.md.`, resolve.DefaultFile),
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			resources, err := resolve.LoadFiles(args)
@@ -327,7 +328,7 @@ See docs/volume-backup.md.`, resolve.DefaultFile),
 				}
 			}
 			noteUndeclaredPolicies(cmd.OutOrStdout(), backuprun.ServerEngine{Server: server}, resources)
-			noteHelper(cmd.OutOrStdout(), server, time.Now())
+			noteHelper(cmd.OutOrStdout(), server, time.Now(), resources)
 			return nil
 		},
 	}
@@ -385,7 +386,7 @@ says on_image_change: rebuild; see docs/image-updates.md.`, resolve.DefaultFile)
 			}
 			if cerr == nil {
 				noteUndeclaredPolicies(cmd.OutOrStdout(), backuprun.ServerEngine{Server: server}, resources)
-				noteHelper(cmd.OutOrStdout(), server, time.Now())
+				noteHelper(cmd.OutOrStdout(), server, time.Now(), resources)
 			}
 			return err
 		},
@@ -413,7 +414,10 @@ func actionLabel(a resolve.Action) string {
 }
 
 func printPlanned(w interface{ Write([]byte) (int, error) }, p resolve.PlannedResource) {
-	fmt.Fprintf(w, "  %s/%s: %s %v\n", p.Resource.Kind, p.Resource.Name, actionLabel(p.Action), p.Changes)
+	fmt.Fprintf(w, "  %s/%s: %s\n", p.Resource.Kind, p.Resource.Name, actionLabel(p.Action))
+	for _, c := range p.Changes {
+		fmt.Fprintf(w, "      %s\n", c)
+	}
 	for _, d := range p.Drift {
 		fmt.Fprintf(w, "      drift: %s\n", d)
 	}

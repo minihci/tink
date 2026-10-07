@@ -106,6 +106,10 @@ next attempt works: the scheduler retries a failing copy with a growing delay (u
 
 ## What `plan` and `apply` do about the helper
 
+- **They tell you when nothing will run the copies.** A stack that declares copies, on a server with **no helper**, ends with a note naming the volumes and
+  `tink helper install`. (Something else may be running them, `tink backup run --due` from cron or a `tink daemon run --jobs DIR` unit, which tink cannot see from here;
+  the note says so.) With a helper there, that note is not shown, and the next point applies. This replaced a warning that was printed for every volume with copies
+  whether or not anything ran them, which is to say a warning nobody read.
 - **They tell you when the helper is not well.** `tink plan` and `tink plan apply` end with a note when the server has a helper that is degraded or down
   (skipping a volume, failing a copy, stopped, silent, or without its certificate), the same judgement `tink helper status` makes. A note, never a
   failure, and nothing is said when there is no helper or it is healthy.

@@ -111,7 +111,6 @@ func TestBackupWarnings(t *testing.T) {
 		"local":   target("local", LocationSameHost, "", "default"),
 		"tank2":   target("tank2", LocationSameHost, "", "tank"),
 	}
-	const declared = "run only when something runs them"
 	tests := []struct {
 		name string
 		vol  Resource
@@ -119,14 +118,12 @@ func TestBackupWarnings(t *testing.T) {
 		deny []string // substrings that must not
 	}{
 		{"snapshots only: no copies at all", volWith("v", "", true),
-			[]string{"3-2-1 not met (1 of 3 copies", "2 copies in other failure domains", "off-site copy"}, []string{declared}},
+			[]string{"3-2-1 not met (1 of 3 copies", "2 copies in other failure domains", "off-site copy"}, nil},
 		{"one copy, other host", volWith("v", "", true, "macpro"),
 			[]string{"(2 of 3 copies", "1 more copy in another failure domain", "off-site copy"}, nil},
-		{"two copies in different domains, one off-site: met",
-			volWith("v", "", true, "macpro", "vps"),
-			[]string{declared}, []string{"3-2-1 not met"}},
-		{"NAS pool + off-site VPS: met", volWith("v", "", true, "nas", "vps"),
-			[]string{declared}, []string{"3-2-1 not met"}},
+		{"two copies in different domains, one off-site: met, and nothing to say",
+			volWith("v", "", true, "macpro", "vps"), nil, nil},
+		{"NAS pool + off-site VPS: met, and nothing to say", volWith("v", "", true, "nas", "vps"), nil, nil},
 		{"two copies on different hosts but none off-site", volWith("v", "", false, "macpro", "nas"),
 			[]string{"(3 of 3 copies", "off-site copy"}, []string{"share one failure domain"}},
 		{"two copies on the same remote and pool share a domain",

@@ -12,9 +12,11 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/spf13/cobra"
 
+	"github.com/minihci/tink/internal/backuprun"
 	"github.com/minihci/tink/internal/helper"
 	"github.com/minihci/tink/internal/incusapi"
 	"github.com/minihci/tink/internal/resolve"
+	"github.com/minihci/tink/internal/volbackup"
 )
 
 func newHelperCmd() *cobra.Command {
@@ -302,12 +304,25 @@ func helperPolicyOptions(server incus.InstanceServer, opts resolve.PlanOptions) 
 	return opts
 }
 
-// noteHelper ends `plan` and `plan apply` with what the helper says about itself, when it is not well: a helper that has stopped, gone
-// quiet, lost its certificate, or is skipping volumes is the thing a plan of backups should not leave you to find out about at a
-// restore. A note, never a failure, and silent when there is no helper or it is healthy.
-func noteHelper(out io.Writer, server incus.InstanceServer, now time.Time) {
+// noteHelper ends `plan` and `plan apply` with what they know about whatever is going to run the stack's copies. A helper that has stopped,
+// gone quiet, lost its certificate, or is skipping volumes is the thing a plan of backups should not leave you to find out about at a
+// restore. No helper at all, while the stack declares copies, is the plainer version of the same trap: a policy that is applied and that
+// nothing ever runs. Both are notes, never failures, and nothing is said when the helper is healthy, or when the stack declares no copies.
+func noteHelper(out io.Writer, server incus.InstanceServer, now time.Time, resources []resolve.Resource) {
 	found, err := helper.Find(server)
 	if err != nil {
+		return // not knowing whether there is a helper is not the same as there being none
+	}
+	if len(found) == 0 {
+		if copying := copyingVolumes(resources); len(copying) > 0 {
+			verb := "declare"
+			if len(copying) == 1 {
+				verb = "declares"
+			}
+			fmt.Fprintf(out, "note: %s %s copies (%s), and there is no helper on this server, so nothing here will run them.\n"+
+				"      `tink helper install` adds one. (If something else runs them, `tink backup run --due` from cron or a `tink daemon run --jobs DIR` unit, this does not apply.)\n",
+				countOf(len(copying), "volume"), verb, nameList(copying, 5))
+		}
 		return
 	}
 	for _, r := range judgeHelpers(server, found, now) {
@@ -315,6 +330,32 @@ func noteHelper(out io.Writer, server incus.InstanceServer, now time.Time) {
 			fmt.Fprintf(out, "note: the helper is %s (see `tink helper status`)\n", r.Summary())
 		}
 	}
+}
+
+// copyingVolumes names the storage volumes the stack gives copies to, the way a run labels them.
+func copyingVolumes(resources []resolve.Resource) []string {
+	var out []string
+	for _, r := range resources {
+		if r.Kind == resolve.KindStorageVolume && r.Backup != nil && r.Backup.None == "" && len(r.Backup.Copies) > 0 {
+			out = append(out, backuprun.Label(volbackup.Volume{Project: r.Project, Name: r.Name}))
+		}
+	}
+	return out
+}
+
+func countOf(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
+}
+
+// nameList is the first max names, and how many more there are.
+func nameList(names []string, max int) string {
+	if len(names) <= max {
+		return strings.Join(names, ", ")
+	}
+	return fmt.Sprintf("%s, and %d more", strings.Join(names[:max], ", "), len(names)-max)
 }
 
 type helperJSON struct {

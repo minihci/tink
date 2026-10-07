@@ -327,12 +327,22 @@ func decideVolume(r Resource, current *api.StorageVolume, env volumeEnv) Planned
 		warnings = append(warnings, copyWarnings(r, current.Config, timeNow())...)
 	}
 
-	if current == nil {
-		return PlannedResource{Resource: r, Action: ActionCreate, Changes: diffConfig(nil, desired, nil), Warnings: warnings}
+	// The policy is one escaped line of JSON, which is for the volume and not for a reader: it is described in words, and left out of the
+	// raw config diff.
+	wantPolicy := desired[PolicyKey]
+	rest := make(map[string]string, len(desired))
+	for k, v := range desired {
+		if k != PolicyKey {
+			rest[k] = v
+		}
 	}
-	changes := diffConfig(current.Config, desired, nil)
+	if current == nil {
+		return PlannedResource{Resource: r, Action: ActionCreate, Changes: append(diffConfig(nil, rest, nil), DescribePolicyChange("", wantPolicy)...), Warnings: warnings}
+	}
+	changes := diffConfig(current.Config, rest, nil)
+	changes = append(changes, DescribePolicyChange(current.Config[PolicyKey], wantPolicy)...)
 	for _, k := range remove {
-		if _, there := current.Config[k]; there {
+		if _, there := current.Config[k]; there && k != PolicyKey { // the policy's removal is said above
 			changes = append(changes, fmt.Sprintf("config.%s: removed (the declaration no longer has one)", k))
 		}
 	}
