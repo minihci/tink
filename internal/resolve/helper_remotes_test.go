@@ -95,3 +95,34 @@ func TestWithHelperRemotes(t *testing.T) {
 		t.Errorf("label = %q", o.helperLabel)
 	}
 }
+
+// A stack that opts in to saying where its remote is gets the exact command; one that does not gets the same text as ever.
+
+func TestTheWarningForARemoteWithNoDeclaredAddressIsUnchanged(t *testing.T) {
+	env := volumeEnv{targets: policyTargets(), helperLabel: "tink-helper/helper", helperRemotes: map[string]bool{"host": true}}
+	got := env.helperRemoteWarnings(volumeCopyingToVPS())
+	want := `copies to "vps" (remote "vps") will fail: the helper (tink-helper/helper) has no remote of that name. Add it with: tink helper remote add vps ADDRESS --token-file -`
+	if len(got) != 1 || got[0] != want {
+		t.Errorf("the default text must not change:\n  got:  %v\n  want: %s", got, want)
+	}
+}
+
+func TestTheWarningNamesTheExactCommandWhenTheStackDeclaresTheAddress(t *testing.T) {
+	targets := policyTargets()
+	targets["vps"] = declaring(targets["vps"], "10.0.0.7", colonised(declaredFingerprint))
+	env := volumeEnv{targets: targets, helperLabel: "tink-helper/helper", helperRemotes: map[string]bool{"host": true}}
+	got := env.helperRemoteWarnings(volumeCopyingToVPS())
+	if len(got) != 1 {
+		t.Fatalf("one warning: %v", got)
+	}
+	base := `copies to "vps" (remote "vps") will fail: the helper (tink-helper/helper) has no remote of that name. Add it with: tink helper remote add vps ADDRESS --token-file -`
+	if !strings.HasPrefix(got[0], base) {
+		t.Errorf("the token route stays as it was, and the hint is added after it: %s", got[0])
+	}
+	if want := "tink helper remote add vps https://10.0.0.7:8443 --fingerprint " + declaredFingerprint; !strings.Contains(got[0], want) {
+		t.Errorf("the warning must give the command in the form the helper takes (normalised address, lower-case hex) %q: %s", want, got[0])
+	}
+	if !strings.Contains(got[0], "already trusts") {
+		t.Errorf("it must say when the no-token form applies: %s", got[0])
+	}
+}

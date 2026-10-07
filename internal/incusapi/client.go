@@ -72,6 +72,17 @@ var remoteAdvice string
 // this process: the helper container has no incus CLI. advice is a format with one %s, the remote's name.
 func SetRemoteAdvice(advice string) { remoteAdvice = advice }
 
+// RemoteNotConfiguredError is what ConnectRemote returns for a name the client configuration does not have. It is a type so a caller that
+// knows more about the remote than the name (a stack that declares its address) can add that to the advice without reading the message.
+type RemoteNotConfiguredError struct {
+	Name   string
+	Advice string
+}
+
+func (e *RemoteNotConfiguredError) Error() string {
+	return fmt.Sprintf("no Incus remote %q is configured for the user running tink (%s)", e.Name, e.Advice)
+}
+
 // ConnectRemote opens the named remote from the Incus client configuration of the user running tink (the
 // Incus client's own configuration directory, which $INCUS_CONF overrides; root's under sudo). That is where
 // `incus remote add` keeps the address, the client certificate and the project, so tink stores no credentials
@@ -89,7 +100,7 @@ func ConnectRemote(name string) (incus.InstanceServer, error) {
 		} else {
 			advice = fmt.Sprintf("add it with `incus remote add`; sudo uses root's configuration, in %s", conf.ConfigPath())
 		}
-		return nil, fmt.Errorf("no Incus remote %q is configured for the user running tink (%s)", name, advice)
+		return nil, &RemoteNotConfiguredError{Name: name, Advice: advice}
 	}
 	if r.Public || r.Protocol != "incus" {
 		return nil, errors.New("remote " + name + " is an image server, not an Incus server to manage")

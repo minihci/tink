@@ -22,6 +22,8 @@ var fieldOwners = map[string][]Kind{
 	"Location":        {KindBackupTarget},
 	"Engine":          {KindBackupTarget},
 	"Remote":          {KindBackupTarget},
+	"Address":         {KindBackupTarget},
+	"Fingerprint":     {KindBackupTarget},
 	"Backup":          {KindStorageVolume},
 	"Config":          {KindProject, KindProfile, KindInstance},
 	"Devices":         {KindProfile, KindInstance},

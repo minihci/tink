@@ -1,6 +1,7 @@
 package volbackup
 
 import (
+	"errors"
 	"fmt"
 
 	incus "github.com/lxc/incus/v7/client"
@@ -41,6 +42,12 @@ func (t Target) dest(local incus.InstanceServer, v Volume) (incus.InstanceServer
 	}
 	d, err := connectRemote(t.Remote)
 	if err != nil {
+		var missing *incusapi.RemoteNotConfiguredError
+		if t.Address != "" && errors.As(err, &missing) {
+			return nil, fmt.Errorf("target %q: remote %q: %w. The stack declares where it is, so add it with: tink remote add %s %s --fingerprint %s "+
+				"(or a trust token made on that server, `incus config trust add NAME`, instead of --fingerprint, if it does not trust this machine yet)",
+				t.Name, t.Remote, err, t.Remote, t.Address, t.Fingerprint)
+		}
 		return nil, fmt.Errorf("target %q: remote %q: %w", t.Name, t.Remote, err)
 	}
 	return d, nil

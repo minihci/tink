@@ -1,6 +1,8 @@
 package incusapi
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -74,5 +76,24 @@ func TestConnectRemoteRefusesAnImageServer(t *testing.T) {
 	_, err := ConnectRemote("docker-oci")
 	if err == nil || !strings.Contains(err.Error(), "image server") {
 		t.Fatalf("an image remote is not an Incus server to manage: %v", err)
+	}
+}
+
+// A caller that knows more about a remote than its name (a stack that declares its address) adds to the advice, so it must be able to tell this
+// error from any other without reading the message.
+func TestAMissingRemoteIsATypedError(t *testing.T) {
+	t.Setenv("INCUS_CONF", t.TempDir())
+	_, err := ConnectRemote("nope")
+	var missing *RemoteNotConfiguredError
+	if !errors.As(err, &missing) || missing.Name != "nope" || missing.Advice == "" {
+		t.Fatalf("want a *RemoteNotConfiguredError naming the remote, with advice: %#v", err)
+	}
+	wrapped := fmt.Errorf("target %q: %w", "nas", err)
+	if !errors.As(wrapped, &missing) {
+		t.Error("it must still be found once a caller has wrapped it")
+	}
+	// an image server is a different problem, with different advice
+	if _, err := ConnectRemote("docker-oci"); errors.As(err, &missing) {
+		t.Errorf("a remote that exists but is an image server is not a missing remote: %v", err)
 	}
 }

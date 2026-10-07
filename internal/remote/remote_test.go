@@ -374,3 +374,34 @@ func TestRemoveAndList(t *testing.T) {
 	}
 	nothingLeft(t, dir, "tron")
 }
+
+func TestNormalizeFingerprint(t *testing.T) {
+	const fp = "0f3a9c2d7b6e41805a9e3c7d2f1b8a4960d5e7c3b2a19f8e7d6c5b4a39281706"
+	var colons []string
+	for i := 0; i < len(fp); i += 2 {
+		colons = append(colons, strings.ToUpper(fp[i:i+2]))
+	}
+	for name, in := range map[string]string{
+		"as is":                       fp,
+		"upper case with colons":      strings.Join(colons, ":"),
+		"surrounding space":           "  " + fp + "\n",
+		"upper case, no colons":       strings.ToUpper(fp),
+		"the form `incus` prints too": strings.ToLower(strings.Join(colons, ":")),
+	} {
+		if got, err := NormalizeFingerprint(in); err != nil || got != fp {
+			t.Errorf("%s: NormalizeFingerprint(%q) = %q, %v; want %q", name, in, got, err, fp)
+		}
+	}
+	for name, in := range map[string]string{
+		"empty":       "",
+		"too short":   fp[:62],
+		"too long":    fp + "00",
+		"not hex":     strings.Repeat("zz", 32),
+		"a SHA-1":     fp[:40],
+		"words in it": "SHA256:" + fp,
+	} {
+		if got, err := NormalizeFingerprint(in); err == nil {
+			t.Errorf("%s: NormalizeFingerprint(%q) = %q, want an error", name, in, got)
+		}
+	}
+}

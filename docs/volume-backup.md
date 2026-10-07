@@ -109,7 +109,8 @@ A target is either another **storage pool on this server** (another disk, or the
 
 ### Remote targets
 
-`remote:` is the name `incus remote add` gave the other server. Tink does **not** store credentials or addresses: it opens that
+`remote:` is the name `incus remote add` gave the other server. Tink does **not** store credentials, and by default no addresses either (a
+stack may [say where the server is](#saying-where-the-server-is-optional), as an opt-in): it opens that
 remote the way the `incus` command does, from the Incus client configuration of the user running tink (`~/.config/incus`, or
 `$INCUS_CONF`; under `sudo` that is *root's*, so add the remote as root). The remote's **project** is the one configured for the
 remote (`incus remote add NAME URL --project tink-backup`), and its pool is `pool:` on the target, default `default`.
@@ -120,6 +121,36 @@ remote (`incus remote add NAME URL --project tink-backup`), and its pool is `poo
 ```
 incus remote add homelabvps https://127.0.0.1:18444 --project tink-backup   # as the user that runs tink
 ```
+
+#### Saying where the server is (optional)
+
+The bare name is the default, and a stack that says nothing about the server can live in a public repository: nothing in it names a machine.
+A stack that would rather describe the server itself can add the public half of it, **both together**: the server's address and the SHA-256
+fingerprint of its certificate (`certificate_fingerprint` in `incus info` on that server). An address on its own is refused when the stack is
+read, because it would mean trusting whatever answers there the first time.
+
+```yaml
+kind: backup-target
+name: offsite
+location: offsite
+engine: incus
+remote: homelabvps
+pool: backups
+address: https://203.0.113.7:8443     # optional, and only with fingerprint ("host" or "host:port" also work; the port defaults to 8443)
+fingerprint: 0f3a9c2d7b6e4180...      # optional, and only with address (upper case and colons are fine)
+```
+
+- **What it changes:** the commands tink prints. `tink plan` and `tink plan apply` already warn about a copy to a remote the helper does not have; with
+  this they also give the exact `tink helper remote add NAME ADDRESS --fingerprint FP` for a server that already trusts the helper's certificate. A
+  local `tink backup run`, `restore` or `verify` that finds no remote of that name in your Incus client configuration says to add it with
+  `tink remote add NAME ADDRESS --fingerprint FP`.
+- **What it does not change:** copies still go by the remote's *name*. Neither field is written to the volume with the copy policy (the helper does
+  not read them, and the policy stays protocol 1), and nothing is added to any client configuration for you.
+- **Trust is still one step you take.** The other server has to trust the certificate of whoever connects. A server that does not yet trust it needs
+  a token made on that server (`incus config trust add NAME`), which carries its own address and fingerprint, so a stack gains little there; the opt-in
+  earns its keep for a server that already trusts the machine, and for saying in one place which server a name means.
+- **Anything in the stack is as public as the stack.** An address is not a credential, but if the repository is public, so is where your server is.
+  Leave both out and nothing about the server is published.
 
 - **The data is relayed through tink.** Neither server has to reach the other, only the machine running tink has to reach the
   remote, so an SSH tunnel is enough (`ssh -N -L 18444:<remote's Incus address>:9443 host`, with the remote added at `127.0.0.1:18444`).
