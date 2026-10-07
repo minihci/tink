@@ -17,6 +17,7 @@ import (
 	"github.com/lxc/incus/v7/shared/api"
 	"github.com/lxc/incus/v7/shared/cliconfig"
 
+	"github.com/minihci/tink/internal/incusapi"
 	"github.com/minihci/tink/internal/incusconf"
 
 	"github.com/minihci/tink/internal/secrets"
@@ -51,8 +52,11 @@ type imageCheck struct {
 // imageProbe holds the outside lookups so the logic can be tested without a
 // daemon or a registry.
 type imageProbe struct {
-	remotes     map[string]cliconfig.Remote
-	aliasTarget func(alias string) (string, bool)
+	remotes map[string]cliconfig.Remote
+	// aliasTarget resolves a local image alias to its fingerprint. ok is false when the alias does not
+	// exist (nothing to compare against); any other failure is err, so it is reported as unverified
+	// instead of being read as "no drift".
+	aliasTarget func(alias string) (fingerprint string, ok bool, err error)
 	registryFP  func(remote, ref string) (string, error)
 }
 
@@ -71,7 +75,10 @@ func checkImage(cfg map[string]string, image string, p imageProbe) imageCheck {
 	if base == "" {
 		return imageCheck{} // no image metadata (imported disk, etc.)
 	}
-	fp, ok := p.aliasTarget(image)
+	fp, ok, err := p.aliasTarget(image)
+	if err != nil {
+		return imageCheck{Unverified: []string{fmt.Sprintf("image: could not look up the alias %q to compare it with the instance: %v", image, err)}}
+	}
 	if !ok || fp == base {
 		return imageCheck{}
 	}
@@ -472,12 +479,12 @@ func (e *imageEnv) checkInstance(server incus.InstanceServer, current *api.Insta
 	}
 	return checkImage(current.Config, r.Image, imageProbe{
 		remotes: e.remotes(),
-		aliasTarget: func(alias string) (string, bool) {
-			a, _, err := server.GetImageAlias(alias)
-			if err != nil || a == nil {
-				return "", false
+		aliasTarget: func(alias string) (string, bool, error) {
+			a, _, found, err := incusapi.LookupImageAlias(server, alias)
+			if err != nil || !found {
+				return "", false, err
 			}
-			return a.Target, true
+			return a.Target, true, nil
 		},
 		registryFP: func(remote, ref string) (string, error) {
 			img, err := e.registryImage(remote, ref)

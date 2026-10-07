@@ -2,6 +2,7 @@ package volbackup
 
 import (
 	"errors"
+	"net/http"
 	"sort"
 	"strings"
 	"testing"
@@ -29,8 +30,11 @@ type fakeIncus struct {
 	failDelete bool // deleting a volume fails (e.g. the connection died)
 	// inherit makes a copy carry the source volume's own config under the config it was given: the worst case for
 	// what Incus may do with a copy from a snapshot, which tink must not depend on.
-	inherit     bool
-	failPool    map[string]error // listing this pool fails
+	inherit  bool
+	failPool map[string]error // listing this pool fails
+	// getFails makes reading one volume ("pool/name") fail with err (a 403, say, not a 404) from the call after the first `after` ones.
+	getFails    map[string]getFail
+	getCalls    map[string]int
 	modesSeen   []string
 	copiesFrom  []string
 	deletedVols []string
@@ -70,15 +74,28 @@ func (f *fakeIncus) GetServer() (*api.Server, string, error) {
 
 func (f *fakeIncus) GetStoragePool(name string) (*api.StoragePool, string, error) {
 	if !f.pools[name] {
-		return nil, "", errors.New("storage pool not found")
+		return nil, "", api.StatusErrorf(http.StatusNotFound, "storage pool not found")
 	}
 	return &api.StoragePool{Name: name}, "", nil
 }
 
+type getFail struct {
+	err   error
+	after int
+}
+
 func (f *fakeIncus) GetStoragePoolVolume(pool, _, name string) (*api.StorageVolume, string, error) {
-	v, ok := f.vols[pool+"/"+name]
+	k := pool + "/" + name
+	if f.getCalls == nil {
+		f.getCalls = map[string]int{}
+	}
+	f.getCalls[k]++
+	if g, ok := f.getFails[k]; ok && f.getCalls[k] > g.after {
+		return nil, "", g.err
+	}
+	v, ok := f.vols[k]
 	if !ok {
-		return nil, "", errors.New("storage volume not found")
+		return nil, "", api.StatusErrorf(http.StatusNotFound, "storage volume not found")
 	}
 	c := *v
 	c.Config = map[string]string{}
@@ -123,7 +140,7 @@ func (f *fakeIncus) GetStoragePoolVolumeSnapshots(pool, _, name string) ([]api.S
 func (f *fakeIncus) UpdateStoragePoolVolume(pool, _, name string, put api.StorageVolumePut, _ string) error {
 	v, ok := f.vols[pool+"/"+name]
 	if !ok {
-		return errors.New("storage volume not found")
+		return api.StatusErrorf(http.StatusNotFound, "storage volume not found")
 	}
 	v.StorageVolumePut = put
 	return nil

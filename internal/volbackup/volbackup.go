@@ -89,7 +89,11 @@ func Restore(server incus.InstanceServer, v Volume, opts RestoreOptions) (Restor
 	if name == "" {
 		name = restoreName(v.Name, now())
 	}
-	if volumeExists(s, v.pool(), name) {
+	exists, err := volumeExists(s, v.pool(), name)
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("checking whether volume %s/%s already exists: %w", v.pool(), name, err)
+	}
+	if exists {
 		return RestoreResult{}, fmt.Errorf("volume %s/%s already exists: restore only ever creates a new volume (pick another --as)", v.pool(), name)
 	}
 	if err := restoreFrom.run(name); err != nil {
@@ -238,12 +242,16 @@ func Verify(server incus.InstanceServer, v Volume, opts VerifyOptions) (res Veri
 		}
 	}
 
-	if volumeExists(s, v.pool(), v.Name) {
+	// A failed look-up does not fail a verification that passed: the result simply is not recorded, and it says why.
+	switch exists, lerr := volumeExists(s, v.pool(), v.Name); {
+	case lerr != nil:
+		say("could not check whether the source volume %s/%s exists (%v), so the result is not recorded on it", v.pool(), v.Name, lerr)
+	case exists:
 		if err := stamp(s, v, snap, res.With, from, now()); err != nil {
 			return res, err
 		}
 		res.Recorded = true
-	} else {
+	default:
 		say("the source volume %s/%s does not exist (lost?), so the result is not recorded on it", v.pool(), v.Name)
 	}
 	res.Duration = now().Sub(start)
@@ -310,9 +318,11 @@ type restoreFunc struct {
 	run    func(newName string) error
 }
 
-func volumeExists(s incus.InstanceServer, pool, name string) bool {
-	_, _, err := s.GetStoragePoolVolume(pool, "custom", name)
-	return err == nil
+// volumeExists says whether the custom volume is there. A look-up that failed is an error, never "not there": a guard that
+// proceeds on a failed read overwrites or double-creates, and a cleanup that skips on one leaves a partial copy behind.
+func volumeExists(s incus.InstanceServer, pool, name string) (bool, error) {
+	_, _, found, err := incusapi.LookupVolume(s, pool, "custom", name)
+	return found, err
 }
 
 func copySnapshot(s incus.InstanceServer, v Volume, snap, newName string) error {
@@ -337,7 +347,13 @@ func copySnapshot(s incus.InstanceServer, v Volume, snap, newName string) error 
 }
 
 func deleteInstance(s incus.InstanceServer, name string) error {
-	if _, _, err := s.GetInstance(name); err != nil {
+	_, _, found, err := incusapi.LookupInstance(s, name)
+	if err != nil {
+		// Not "never got created": skipping on a failed read would leave the throwaway instance, and the volume mounted in it, behind
+		// with nothing said. The cleanup reports it, naming the instance to remove by hand.
+		return fmt.Errorf("instance %s: could not check whether it exists, so it was not removed: %w", name, err)
+	}
+	if !found {
 		return nil // never got created
 	}
 	if op, err := s.UpdateInstanceState(name, api.InstanceStatePut{Action: "stop", Force: true, Timeout: 30}, ""); err == nil {

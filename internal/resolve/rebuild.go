@@ -10,6 +10,7 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
 
+	"github.com/minihci/tink/internal/incusapi"
 	"github.com/minihci/tink/internal/run"
 )
 
@@ -225,7 +226,12 @@ func (o incusRebuildOps) PullImage(image string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if _, _, err := o.server.GetImage(img.Fingerprint); err == nil {
+	_, _, local, err := incusapi.LookupImage(o.server, img.Fingerprint)
+	if err != nil {
+		// Not "not local": copying on a lookup that merely failed would hide the real problem behind a second one.
+		return "", fmt.Errorf("checking whether the image is already local: %w", err)
+	}
+	if local {
 		return img.Fingerprint, nil // already local
 	}
 	op, err := o.server.CopyImage(is, *img, &incus.ImageCopyArgs{})
