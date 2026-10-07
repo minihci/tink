@@ -1,6 +1,7 @@
 package volbackup
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -62,7 +63,24 @@ type CopyResult struct {
 // Copy backs v up to t: it takes a snapshot of the source (a consistent point in time), copies that
 // snapshot into a new restore-point volume on the target, removes the temporary snapshot, stamps the
 // source, and prunes restore points older than opts.Retain.
-func Copy(server incus.InstanceServer, v Volume, t Target, opts CopyOptions) (res CopyResult, err error) {
+func Copy(server incus.InstanceServer, v Volume, t Target, opts CopyOptions) (CopyResult, error) {
+	res, err := copyTo(server, v, t, opts)
+	if err == nil || opts.DryRun || errors.Is(err, errPrune) {
+		return res, err
+	}
+	// The copy itself failed: leave a mark on the volume, so a scheduler backs off instead of retrying every tick
+	// and `plan` can say the copy is failing. A copy that succeeded but could not prune is not a failed copy.
+	if serr := recordFailure(server, v, t.Name, nowOr(opts.Now)()); serr != nil {
+		err = fmt.Errorf("%w (and the failure could not be recorded on the volume: %v)", err, serr)
+	}
+	return res, err
+}
+
+// errPrune marks the one failure after a successful copy: the restore point exists and the source is stamped,
+// but older restore points could not be removed.
+var errPrune = errors.New("pruning failed")
+
+func copyTo(server incus.InstanceServer, v Volume, t Target, opts CopyOptions) (res CopyResult, err error) {
 	now := nowOr(opts.Now)
 	s := v.scoped(server)
 	say := func(format string, args ...any) {
@@ -173,7 +191,7 @@ func Copy(server incus.InstanceServer, v Volume, t Target, opts CopyOptions) (re
 	if opts.Retain != "" {
 		say("pruning restore points older than %s", opts.Retain)
 		if res.Pruned, err = prune(dst, v, t, opts.Retain, start, res.Volume, false); err != nil {
-			return res, fmt.Errorf("the copy succeeded, but pruning failed: %w", err)
+			return res, fmt.Errorf("the copy succeeded, but %w: %w", errPrune, err)
 		}
 	}
 	return res, nil
@@ -210,8 +228,35 @@ func stampCopy(s incus.InstanceServer, v Volume, target, restorePoint string, at
 	}
 	put.Config[resolve.CopyStampAt(target)] = at.UTC().Format(time.RFC3339)
 	put.Config[resolve.CopyStampVolume(target)] = restorePoint
+	// a success ends any run of failures
+	delete(put.Config, resolve.CopyFailAt(target))
+	delete(put.Config, resolve.CopyFailCount(target))
 	if err := s.UpdateStoragePoolVolume(v.pool(), "custom", v.Name, put, etag); err != nil {
 		return fmt.Errorf("recording the copy on %s/%s: %w", v.pool(), v.Name, err)
+	}
+	return nil
+}
+
+// recordFailure notes on the source volume that the copy to target just failed: when, and how many attempts in
+// a row (one more than the run of failures already recorded, if any). No message is stored.
+func recordFailure(server incus.InstanceServer, v Volume, target string, at time.Time) error {
+	s := v.scoped(server)
+	vol, etag, err := s.GetStoragePoolVolume(v.pool(), "custom", v.Name)
+	if err != nil {
+		return fmt.Errorf("reading %s/%s: %w", v.pool(), v.Name, err)
+	}
+	n := 1
+	if prior, failing := resolve.FailureOf(vol.Config, target); failing {
+		n = prior.N + 1
+	}
+	put := vol.Writable()
+	if put.Config == nil {
+		put.Config = map[string]string{}
+	}
+	put.Config[resolve.CopyFailAt(target)] = at.UTC().Format(time.RFC3339)
+	put.Config[resolve.CopyFailCount(target)] = fmt.Sprintf("%d", n)
+	if err := s.UpdateStoragePoolVolume(v.pool(), "custom", v.Name, put, etag); err != nil {
+		return fmt.Errorf("recording the failure on %s/%s: %w", v.pool(), v.Name, err)
 	}
 	return nil
 }

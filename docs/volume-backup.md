@@ -145,6 +145,22 @@ volume (project, pool and name) they back up. Pruning and restoring consider **o
 question: a volume tink did not make, a lookalike name, another volume's restore point, or one whose marker it cannot read is never
 touched.
 
+**When a copy fails.** The source volume is marked with when the last attempt failed and how many in a row
+(`user.tink.backup.copy.<target>.fail.at` and `.fail.n`); a success removes both. **No reason is stored**: errors from Incus and its
+drivers can echo credentials, and a volume's config is the wrong place for that, so the reason is only in the output of the run that
+failed. `plan` says the copy is failing (or "has never succeeded"). With `--due`, a failing copy is **not retried every time the command
+is called**: it waits `5 minutes x 2^(failures-1)`, but never longer than the copy's own schedule interval (an hourly copy retries at
+least hourly), and says so:
+
+```
+lib -> dead: backing off after 2 failed attempt(s), next try after 2026-10-07 00:56 MDT
+lib -> nas: not yet due, next at 2026-10-07 01:00 MDT
+```
+
+A run you ask for by name (`tink backup run lib`) ignores the backoff: you asking is not a scheduler retrying. A copy that succeeded but
+could not prune older restore points is **not** a failed copy (the restore point exists and the source is stamped); its error says so and
+the copy is not put into backoff.
+
 **`--due`** runs only the copies whose `schedule` has come round since their last success (by the stamp), so cron or a timer can call
 `tink backup run --due` every few minutes. **Tink does not schedule copies itself yet**, so until something calls it, `plan` warns
 that a copy "has never run" or "is overdue" (the schedule's next time after the last success plus a grace of a quarter of the

@@ -280,14 +280,14 @@ Restore from a restore point with: tink backup restore VOLUME --from TARGET`,
 				}
 				for _, c := range r.Backup.Copies {
 					if due {
-						isDue, err := resolve.CopyIsDue(c.Schedule, live, c.Target, time.Now())
+						decision, err := resolve.CopyDue(c.Schedule, live, c.Target, time.Now())
 						if err != nil {
 							fmt.Fprintf(out, "%s -> %s: %v\n", r.Name, c.Target, err)
 							failed++
 							continue
 						}
-						if !isDue {
-							fmt.Fprintf(out, "%s -> %s: not due\n", r.Name, c.Target)
+						if !decision.Due {
+							fmt.Fprintf(out, "%s -> %s: %s\n", r.Name, c.Target, decision.Reason)
 							skipped++
 							continue
 						}
