@@ -114,7 +114,7 @@ func planOne(server incus.InstanceServer, r Resource, opts PlanOptions) (Planned
 	case KindProfile:
 		return planProfile(s, r)
 	case KindStorageVolume:
-		return planStorageVolume(s, r, volumeEnv{targets: opts.targets, stack: opts.stack})
+		return planStorageVolume(s, r, volumeEnv{targets: opts.targets, stack: opts.stack, helperReads: opts.helperReads, helperLabel: opts.helperLabel})
 	case KindBackupTarget:
 		// A declaration only: there is no Incus object to create or converge.
 		return PlannedResource{Resource: r, Action: ActionNone}, nil
@@ -175,6 +175,12 @@ func planStorageVolume(server incus.InstanceServer, r Resource, env volumeEnv) (
 		return PlannedResource{}, fmt.Errorf("reading the live volume in pool %q: %w", pool, err)
 	}
 	// not found leaves current nil: decideVolume plans a create (or blocks it)
+	// A policy this tink would write, and the helper cannot read, is not written: the volume's copies would stop and nothing would say so.
+	if why := env.helperCannotRead(); why != "" {
+		if want, _, err := volumeBackupConfig(r, env); err == nil && want[PolicyKey] != "" && (current == nil || current.Config[PolicyKey] != want[PolicyKey]) {
+			return PlannedResource{Resource: r, Action: ActionBlocked, Blocked: []string{why}}, nil
+		}
+	}
 	p := decideVolume(r, current, env)
 	p.Warnings = append(p.Warnings, backupWarnings(r, env.targets)...)
 	return p, nil

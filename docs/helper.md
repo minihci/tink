@@ -49,6 +49,17 @@ the server.
 **Running it again** is safe: what exists is left alone, and an enrolled helper is not enrolled twice. `--reissue` enrols it again with a fresh key pair
 and removes the old certificate. `--binary` puts the binary in the instance, which is also how a helper runs where an image cannot be pulled.
 
+## What `plan` and `apply` do about the helper
+
+- **They tell you when the helper is not well.** `tink plan` and `tink plan apply` end with a note when the server has a helper that is degraded or down
+  (skipping a volume, failing a copy, stopped, silent, or without its certificate), the same judgement `tink helper status` makes. A note, never a
+  failure, and nothing is said when there is no helper or it is healthy.
+- **They will not write a copy policy the helper cannot read.** The status document says the newest policy protocol the helper reads
+  (`policy_proto`). If this tink would write a policy of a newer protocol, the volume is **BLOCKED** with the reason, instead of being applied and then
+  skipped by the helper without a word: that is how copies would stop and nothing would say so. The way out is `tink helper upgrade`. Nothing is
+  checked on a server with no helper, or one that has not said what it reads (an older helper). There is only protocol 1 today, so no helper is older
+  than the policies written now; this is the net for the first time that stops being true.
+
 ## Upgrading it
 
 ```

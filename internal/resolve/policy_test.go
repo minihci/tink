@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
 )
 
@@ -201,4 +202,92 @@ func TestVolumeBackupConfigSetAndRemove(t *testing.T) {
 	if err != nil || len(set) != 0 || len(remove) != 1 || remove[0] != PolicyKey {
 		t.Errorf("a bare volume sets nothing and clears the policy: set = %v remove = %v err = %v", set, remove, err)
 	}
+}
+
+// The helper reads copy policies up to some protocol. A policy of a newer one would be skipped by it, silently, and the volume's copies
+// would stop: so it is not written.
+
+func volumeWithCopies() Resource {
+	return Resource{Kind: KindStorageVolume, Name: "lib", Backup: &VolumeBackup{
+		Copies: []BackupCopy{{Target: "nas", Schedule: "@daily", Retain: "30d"}}}}
+}
+
+func planVolume(t *testing.T, current map[string]string, env volumeEnv) PlannedResource {
+	t.Helper()
+	env.targets = policyTargets()
+	srv := &volumeServer{vol: current}
+	p, err := planStorageVolume(srv, volumeWithCopies(), env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestAPolicyTheHelperCannotReadIsNotWritten(t *testing.T) {
+	// this tink writes protocol 2; the helper reads up to 1
+	p := planVolume(t, nil, volumeEnv{helperReads: 1, helperLabel: "tink-helper/helper", policyProto: 2})
+	if p.Action != ActionBlocked || len(p.Blocked) != 1 {
+		t.Fatalf("action = %v %v: a create that would write a policy the helper skips must be blocked", p.Action, p.Blocked)
+	}
+	for _, want := range []string{"tink-helper/helper", "up to protocol 1", "writes protocol 2", "silently", "tink helper upgrade"} {
+		if !strings.Contains(p.Blocked[0], want) {
+			t.Errorf("the reason must say %q: %s", want, p.Blocked[0])
+		}
+	}
+	// an update that would write it too
+	if p := planVolume(t, map[string]string{PolicyKey: "{}"}, volumeEnv{helperReads: 1, policyProto: 2}); p.Action != ActionBlocked {
+		t.Errorf("an update: %v", p.Action)
+	}
+}
+
+func TestAPolicyTheHelperCanReadIsWrittenAsBefore(t *testing.T) {
+	for name, env := range map[string]volumeEnv{
+		"the helper reads what this tink writes":   {helperReads: 2, policyProto: 2},
+		"the helper reads newer":                   {helperReads: 3, policyProto: 2},
+		"there is no helper":                       {helperReads: 0, policyProto: 2},
+		"the real protocol and a helper that does": {helperReads: PolicyProto},
+	} {
+		if p := planVolume(t, nil, env); p.Action != ActionCreate {
+			t.Errorf("%s: action = %v %v", name, p.Action, p.Blocked)
+		}
+	}
+}
+
+func TestAPolicyAlreadyOnTheVolumeIsNotBlockedAndAVolumeWithoutCopiesNeverIs(t *testing.T) {
+	// the same policy is already there: nothing is being written, so nothing to refuse (the helper's own status says it skips it)
+	want, _ := BuildPolicy(volumeWithCopies(), policyTargets())
+	env := volumeEnv{helperReads: 1, policyProto: 2}
+	if p := planVolume(t, map[string]string{PolicyKey: want}, env); p.Action == ActionBlocked {
+		t.Errorf("nothing is written, so nothing is refused: %v", p.Blocked)
+	}
+	// a volume that declares no copies writes no policy, whatever the helper reads
+	env.targets = policyTargets()
+	plain := Resource{Kind: KindStorageVolume, Name: "scratch", Backup: &VolumeBackup{None: "regenerable"}}
+	if p, err := planStorageVolume(&volumeServer{}, plain, env); err != nil || p.Action == ActionBlocked {
+		t.Errorf("%v %v", p.Action, err)
+	}
+}
+
+func TestWithHelperPolicyIsWhatPlanningIsToldAndNothingIsCheckedWithout(t *testing.T) {
+	o := (PlanOptions{}).WithHelperPolicy("h", 1)
+	if o.helperReads != 1 || o.helperLabel != "h" {
+		t.Errorf("%+v", o)
+	}
+	if (volumeEnv{}).helperCannotRead() != "" {
+		t.Error("a plan that was told nothing about a helper checks nothing")
+	}
+}
+
+// volumeServer answers the one read planStorageVolume makes: the volume's config, or not found.
+type volumeServer struct {
+	incus.InstanceServer
+	vol map[string]string
+}
+
+func (s *volumeServer) UseProject(string) incus.InstanceServer { return s }
+func (s *volumeServer) GetStoragePoolVolume(_, _, n string) (*api.StorageVolume, string, error) {
+	if s.vol == nil {
+		return nil, "", errNotFound
+	}
+	return &api.StorageVolume{Name: n, StorageVolumePut: api.StorageVolumePut{Config: s.vol}}, "", nil
 }

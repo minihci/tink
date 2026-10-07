@@ -24,6 +24,11 @@ type PlanOptions struct {
 	// because the targets and the volumes that copy to them land in different
 	// levels. PlanWithOptions/ApplyWithOptions only fill it in when it is unset.
 	targets map[string]Resource
+	// helperReads is the newest copy-policy protocol the server's helper says it can read (0: there is no helper, or it has said
+	// nothing), and helperLabel names it. A policy of a newer protocol would be skipped by that helper without a word, so plan blocks
+	// writing one.
+	helperReads int
+	helperLabel string
 	// stack is the name the stack gives itself (kind: stack), stamped on the storage volumes it applies. Set with
 	// targets, from the full stack, for the same reason.
 	stack string
@@ -46,6 +51,18 @@ func (o PlanOptions) withTargets(resources []Resource) PlanOptions {
 		o.stack, _ = StackName(resources)
 	}
 	return o
+}
+
+// WithHelperPolicy tells planning what the server's helper can read. Without it nothing is checked: a server with no helper has
+// nobody to skip a policy, and one that has not said what it reads cannot be held to it.
+func (o PlanOptions) WithHelperPolicy(label string, readsUpTo int) PlanOptions {
+	o.helperLabel, o.helperReads = label, readsUpTo
+	return o
+}
+
+// HelperPolicy is what planning was told the helper can read: its name and the newest copy-policy protocol, or 0 for nothing.
+func (o PlanOptions) HelperPolicy() (label string, readsUpTo int) {
+	return o.helperLabel, o.helperReads
 }
 
 // NewPlanOptions builds options with one registry cache shared by every

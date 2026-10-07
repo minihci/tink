@@ -241,6 +241,28 @@ func volumeBackupConfig(r Resource, env volumeEnv) (set map[string]string, remov
 type volumeEnv struct {
 	targets map[string]Resource
 	stack   string
+	// helperReads and helperLabel are what the helper says it can read (see PlanOptions); policyProto is the protocol this tink writes
+	// (0 means PolicyProto: it is a field only so a test can ask what happens when a newer one is written).
+	helperReads int
+	helperLabel string
+	policyProto int
+}
+
+func (e volumeEnv) writes() int {
+	if e.policyProto > 0 {
+		return e.policyProto
+	}
+	return PolicyProto
+}
+
+// helperCannotRead is the reason a policy must not be written, or "" when it may be: the helper reads older policies than this tink
+// writes, and would skip the volume's copies, silently.
+func (e volumeEnv) helperCannotRead() string {
+	if e.helperReads <= 0 || e.helperReads >= e.writes() {
+		return ""
+	}
+	return fmt.Sprintf("the helper (%s) reads copy policies up to protocol %d and this tink writes protocol %d, so it would skip this volume's copies, silently: "+
+		"upgrade the helper first (tink helper upgrade), or apply with a tink that writes protocol %d", e.helperLabel, e.helperReads, e.writes(), e.helperReads)
 }
 
 // decideVolume is planStorageVolume's decision with the Incus read already
