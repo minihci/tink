@@ -114,7 +114,7 @@ func planOne(server incus.InstanceServer, r Resource, opts PlanOptions) (Planned
 	case KindProfile:
 		return planProfile(s, r)
 	case KindStorageVolume:
-		return planStorageVolume(s, r, volumeEnv{targets: opts.targets, stack: opts.stack, helperReads: opts.helperReads, helperLabel: opts.helperLabel})
+		return planStorageVolume(s, r, volumeEnv{targets: opts.targets, stack: opts.stack, helperReads: opts.helperReads, helperLabel: opts.helperLabel, helperRemotes: opts.helperRemotes})
 	case KindBackupTarget:
 		// A declaration only: there is no Incus object to create or converge.
 		return PlannedResource{Resource: r, Action: ActionNone}, nil
@@ -183,6 +183,7 @@ func planStorageVolume(server incus.InstanceServer, r Resource, env volumeEnv) (
 	}
 	p := decideVolume(r, current, env)
 	p.Warnings = append(p.Warnings, backupWarnings(r, env.targets)...)
+	p.Warnings = append(p.Warnings, env.helperRemoteWarnings(r)...)
 	return p, nil
 }
 

@@ -77,6 +77,8 @@ func newRootCmd() *cobra.Command {
 opinionated, Incus-native primitives for running self-hosted projects,
 made executable instead of just documented.`,
 		SilenceUsage: true,
+		// execute prints the error (through the secret redactor); cobra printing it too said everything twice
+		SilenceErrors: true,
 		// Choose the server once for the whole invocation: --remote, else $TINK_REMOTE, else the local daemon.
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
 			name, _ := cmd.Flags().GetString("remote")
@@ -325,7 +327,7 @@ See docs/volume-backup.md.`, resolve.DefaultFile),
 				}
 			}
 			noteUndeclaredPolicies(cmd.OutOrStdout(), backuprun.ServerEngine{Server: server}, resources)
-			noteHelper(cmd.OutOrStdout(), server)
+			noteHelper(cmd.OutOrStdout(), server, time.Now())
 			return nil
 		},
 	}
@@ -383,7 +385,7 @@ says on_image_change: rebuild; see docs/image-updates.md.`, resolve.DefaultFile)
 			}
 			if cerr == nil {
 				noteUndeclaredPolicies(cmd.OutOrStdout(), backuprun.ServerEngine{Server: server}, resources)
-				noteHelper(cmd.OutOrStdout(), server)
+				noteHelper(cmd.OutOrStdout(), server, time.Now())
 			}
 			return err
 		},
@@ -635,7 +637,10 @@ reach. Anything else is refused rather than act on the wrong machine.`,
 					},
 					Version: buildVersion(),
 					Zone:    zone,
+					Remotes: helper.ConfiguredRemotes,
 				}
+				// this process is the helper: a missing remote is fixed from outside it, not with a CLI that is not in the container
+				incusapi.SetRemoteAdvice("this is the tink helper, which has no incus CLI: from a machine that manages the host, run `tink helper remote add %s ADDRESS`")
 				if jobsDir != "" {
 					ro.Status.Store = jobs.Store{Dir: jobsDir}
 				}

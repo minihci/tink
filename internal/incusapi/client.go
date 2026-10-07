@@ -65,6 +65,13 @@ func Connect(socketPath string) (incus.InstanceServer, error) {
 	return incus.ConnectIncusUnix(socketPath, nil)
 }
 
+// remoteAdvice replaces the usual advice for a remote that is not configured, in a process where `incus remote add` is not how it is fixed.
+var remoteAdvice string
+
+// SetRemoteAdvice says what to do about a remote that is not configured, when the usual answer (`incus remote add`) does not apply to
+// this process: the helper container has no incus CLI. advice is a format with one %s, the remote's name.
+func SetRemoteAdvice(advice string) { remoteAdvice = advice }
+
 // ConnectRemote opens the named remote from the Incus client configuration of the user running tink (the
 // Incus client's own configuration directory, which $INCUS_CONF overrides; root's under sudo). That is where
 // `incus remote add` keeps the address, the client certificate and the project, so tink stores no credentials
@@ -76,7 +83,13 @@ func ConnectRemote(name string) (incus.InstanceServer, error) {
 	}
 	r, ok := conf.Remotes[name]
 	if !ok {
-		return nil, fmt.Errorf("no Incus remote %q is configured for the user running tink (add it with `incus remote add`; sudo uses root's configuration, in %s)", name, conf.ConfigPath())
+		advice := ""
+		if remoteAdvice != "" {
+			advice = fmt.Sprintf(remoteAdvice, name)
+		} else {
+			advice = fmt.Sprintf("add it with `incus remote add`; sudo uses root's configuration, in %s", conf.ConfigPath())
+		}
+		return nil, fmt.Errorf("no Incus remote %q is configured for the user running tink (%s)", name, advice)
 	}
 	if r.Public || r.Protocol != "incus" {
 		return nil, errors.New("remote " + name + " is an image server, not an Incus server to manage")

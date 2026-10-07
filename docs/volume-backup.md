@@ -114,6 +114,9 @@ remote the way the `incus` command does, from the Incus client configuration of 
 `$INCUS_CONF`; under `sudo` that is *root's*, so add the remote as root). The remote's **project** is the one configured for the
 remote (`incus remote add NAME URL --project tink-backup`), and its pool is `pool:` on the target, default `default`.
 
+**Run by the helper**, the remote has to be in the *helper's* client configuration, not yours: see
+[Copying to another Incus server](helper.md#copying-to-another-incus-server) for `tink helper remote add`.
+
 ```
 incus remote add homelabvps https://127.0.0.1:18444 --project tink-backup   # as the user that runs tink
 ```

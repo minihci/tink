@@ -73,6 +73,37 @@ host path uses, so the files are the same bytes.
   deploy says so and leaves it: disable it (`systemctl disable --now tink-daemon`). A helper without `--ingress` leaves ingress to the host's daemon, as before.
 - **A failed pass is retried in 5 seconds**, not after the whole minute: the helper's first pass races its own enrolment.
 
+## Copying to another Incus server
+
+A backup target with `remote: nas2` is copied to by connecting to a remote **named `nas2` in the Incus client configuration of whoever runs the
+copy**. For the helper that is the helper's own configuration, and `install` puts exactly one remote in it: `host`, its own server. So a copy to any
+other server fails, every time, until the helper is given that remote:
+
+```
+incus config trust add helper -q | tink helper remote add nas2 --token-file -     # the token is made ON nas2; it carries nas2's address
+tink helper remote add nas2 https://10.0.0.7:8443 --fingerprint SHA256HEX        # a server that already trusts the helper's certificate
+tink helper remote list                                                         # what the helper says it can reach
+tink helper remote remove nas2
+```
+
+- **The name is the stack's name.** `nas2` must be exactly what the backup target says in `remote:`. `host` is reserved for the helper's own server and
+  cannot be added or removed this way.
+- **The helper does the connecting**, from inside, with its own client certificate (the one `host` already trusts, whose key never left the instance). The
+  token is read by this command and handed to the helper on standard input, never on a command line. It is single-use. The other server is told to trust the
+  helper's certificate, can see it in its own trust store, and can revoke it there (`incus config trust remove`); `tink helper remote remove` only makes the
+  helper forget the server.
+- **The server must be reachable from the helper's network**, not from yours. A tunnel on your laptop (`ssh -L ...`, as in
+  [volume-backup.md](volume-backup.md#remote-targets)) is not there for the helper; a name that only resolves on your machine will fail in the helper.
+  Without a token, give `--fingerprint` or `--accept-certificate`: there is no one to ask inside the helper.
+- **`--project`** is the project on that server the remote defaults to, as for `incus remote add`; it is where the copies land.
+- **It needs the helper running** (the remote is added by running tink inside it), and each of these reads or changes only the helper's own client configuration.
+
+**What you see when it is missing.** `tink plan` and `tink plan apply` **warn** for every copy to a remote the helper does not have, naming the command to run. It
+is a warning, not a block, because the policy and the remote can be set up in either order. If it is left, the helper's scheduler tries the copy and fails: the
+copy shows as `failing` in `tink helper status`, the helper is `degraded`, and the job's log says which remote and what to do. Once the remote is added the
+next attempt works: the scheduler retries a failing copy with a growing delay (up to the copy's own interval), and a job queued by hand
+(`tink daemon enqueue --jobs /data/jobs`, run inside the helper) does not wait for it.
+
 ## What `plan` and `apply` do about the helper
 
 - **They tell you when the helper is not well.** `tink plan` and `tink plan apply` end with a note when the server has a helper that is degraded or down
@@ -83,6 +114,9 @@ host path uses, so the files are the same bytes.
   skipped by the helper without a word: that is how copies would stop and nothing would say so. The way out is `tink helper upgrade`. Nothing is
   checked on a server with no helper, or one that has not said what it reads (an older helper). There is only protocol 1 today, so no helper is older
   than the policies written now; this is the net for the first time that stops being true.
+- **They warn about a copy to a remote the helper does not have** (see [above](#copying-to-another-incus-server)): the status document lists the remotes
+  the helper can reach, and a copy whose target names another one is warned about, naming `tink helper remote add`. An older helper that does not report
+  its remotes is not checked.
 
 ## Upgrading it
 
@@ -133,6 +167,7 @@ instance):
 | `skipped` | volumes it will **not** copy, and why: a policy of a protocol it does not read, one that does not parse, a pool it cannot list, a volume it cannot read |
 | `failing` | copies that have failed since their last success: volume, target, how many in a row, since when |
 | `last_job` | the newest finished job: id, state, when |
+| `remotes` | the Incus servers the helper can reach by name: `host`, and any added with `tink helper remote add` (name, address, project; no credential). Absent from an older helper, which is why a missing list is not read as "none" |
 | `ingress` | the last ingress reconcile: ok or not, when, how many warnings (only if this daemon runs ingress) |
 
 It holds **no error text**. Errors from Incus and its drivers can echo credentials, so the reasons it gives for something Incus refused are fixed

@@ -147,6 +147,7 @@ func TestStatusWithoutCheckPrintsDetailsAndExitsZero(t *testing.T) {
 		s.Failing = []helper.Failing{{Volume: "lib", Target: "nas", Count: 3, Since: helperNow.Add(-time.Hour)}}
 		s.LastJob = &helper.LastJob{ID: "20261007T110000Z-abc", State: "failed", Finished: helperNow.Add(-5 * time.Minute)}
 		s.Ingress = &helper.IngressState{OK: true, At: helperNow.Add(-time.Minute)}
+		s.Remotes = []helper.Remote{{Name: "host"}, {Name: "nas2"}}
 	})
 	out, err := statusRun(t, instancesServer{all: []api.Instance{helperInstance("tink-helper", "helper", "Running", st)}}, "", "", false, false)
 	if err != nil {
@@ -155,7 +156,7 @@ func TestStatusWithoutCheckPrintsDetailsAndExitsZero(t *testing.T) {
 	for _, want := range []string{
 		"helper tink-helper/helper: degraded", "1 copy(ies) failing", "version:     v1", "copy policies up to protocol 1",
 		"last heard:  2m ago (it writes at least every 10m)", "skipped:     none", "lib -> nas, 3 in a row",
-		"20261007T110000Z-abc failed, 5m ago", "ingress:     ok, 1m ago",
+		"20261007T110000Z-abc failed, 5m ago", "ingress:     ok, 1m ago", "remotes:     host; nas2",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the details must contain %q:\n%s", want, out)
@@ -313,7 +314,7 @@ func TestPlanIsToldWhatTheHelperCanReadAndOnlyWhenItHasSaidSo(t *testing.T) {
 func TestPlanEndsWithANoteAboutAHelperThatIsNotWellAndSaysNothingOtherwise(t *testing.T) {
 	note := func(srv instancesServer) string {
 		var out bytes.Buffer
-		noteHelper(&out, srv)
+		noteHelper(&out, srv, helperNow)
 		return out.String()
 	}
 	if got := note(instancesServer{}); got != "" {
@@ -334,5 +335,46 @@ func TestPlanEndsWithANoteAboutAHelperThatIsNotWellAndSaysNothingOtherwise(t *te
 	}
 	if got := note(instancesServer{err: errors.New("denied")}); got != "" {
 		t.Errorf("if it cannot be looked for, plan does not complain about that: %q", got)
+	}
+}
+
+func TestPlanIsToldWhichRemotesTheHelperCanReachAndOnlyWhenItHasSaid(t *testing.T) {
+	remotes := func(srvs ...api.Instance) []string {
+		return helperPolicyOptions(instancesServer{all: srvs}, resolve.PlanOptions{}).HelperRemotes()
+	}
+	with := func(project, name string, rs []helper.Remote) api.Instance {
+		return helperInstance(project, name, "Running", goodStatus(func(s *helper.Status) { s.Remotes = rs }))
+	}
+	if got := remotes(with("p", "h", []helper.Remote{{Name: "nas2"}, {Name: "host"}})); strings.Join(got, ",") != "host,nas2" {
+		t.Errorf("what the helper said it can reach: %v", got)
+	}
+	if got := remotes(with("p", "h", []helper.Remote{})); got == nil || len(got) != 0 {
+		t.Errorf("a helper with none is a statement, and the copies to a remote will fail: %#v", got)
+	}
+	// an older helper, no document, no helper: nothing to hold a stack to
+	if got := remotes(with("p", "h", nil)); got != nil {
+		t.Errorf("an older helper that does not report remotes: %#v", got)
+	}
+	if got := remotes(helperInstance("p", "h", "Running", nil)); got != nil {
+		t.Errorf("no document: %#v", got)
+	}
+	if got := remotes(); got != nil {
+		t.Errorf("no helper: %#v", got)
+	}
+	// two helpers cannot happen through install; if they did, only a remote both have can be counted on
+	two := remotes(
+		with("a", "one", []helper.Remote{{Name: "host"}, {Name: "nas2"}, {Name: "vps"}}),
+		with("b", "two", []helper.Remote{{Name: "host"}, {Name: "vps"}}))
+	if strings.Join(two, ",") != "host,vps" {
+		t.Errorf("%v", two)
+	}
+}
+
+func TestHelperRemoteCommandsAreThereAndSayWhatTheyNeed(t *testing.T) {
+	if err := runRoot(t, "helper", "remote", "add"); err == nil || !strings.Contains(err.Error(), "accepts between 1 and 2 arg") {
+		t.Errorf("a name is needed: %v", err)
+	}
+	if err := runRoot(t, "helper", "remote", "remove"); err == nil || !strings.Contains(err.Error(), "accepts 1 arg") {
+		t.Errorf("a name is needed: %v", err)
 	}
 }

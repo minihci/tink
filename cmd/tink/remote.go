@@ -151,7 +151,12 @@ func readToken(file, env string, stdin io.Reader) (string, error) {
 	default:
 		raw = env
 	}
+	// `incus config trust add NAME` prints a line saying what the token is before the token (unless it is run with -q), and a pipe from it
+	// carries both. A token is one line without whitespace, so the last line is it.
 	tok := strings.TrimSpace(raw)
+	if i := strings.LastIndexAny(tok, "\r\n"); i >= 0 {
+		tok = strings.TrimSpace(tok[i+1:])
+	}
 	if file != "" && tok == "" {
 		return "", errors.New("the token file is empty")
 	}

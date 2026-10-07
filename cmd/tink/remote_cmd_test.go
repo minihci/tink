@@ -22,13 +22,15 @@ func TestReadToken(t *testing.T) {
 		file, env, stdin string
 		want, wantErr    string
 	}{
-		"from a file, trimmed":         {f, "", "", "abc123", ""},
-		"from stdin":                   {"-", "", "from-stdin\n", "from-stdin", ""},
-		"from the environment":         {"", "from-env", "", "from-env", ""},
-		"a file beats the environment": {f, "from-env", "", "abc123", ""},
-		"none at all is fine":          {"", "", "", "", ""},
-		"an empty file is an error":    {empty, "", "", "", "empty"},
-		"a missing file is an error":   {filepath.Join(dir, "nope"), "", "", "", "reading the token file"},
+		"from a file, trimmed":          {f, "", "", "abc123", ""},
+		"from stdin":                    {"-", "", "from-stdin\n", "from-stdin", ""},
+		"from the environment":          {"", "from-env", "", "from-env", ""},
+		"a file beats the environment":  {f, "from-env", "", "abc123", ""},
+		"none at all is fine":           {"", "", "", "", ""},
+		"the banner incus prints first": {"-", "", "Client nas2 certificate add token:\nTOKEN123\n", "TOKEN123", ""},
+		"and its Windows line endings":  {"-", "", "Client nas2 certificate add token:\r\nTOKEN123\r\n", "TOKEN123", ""},
+		"an empty file is an error":     {empty, "", "", "", "empty"},
+		"a missing file is an error":    {filepath.Join(dir, "nope"), "", "", "", "reading the token file"},
 	} {
 		got, err := readToken(tc.file, tc.env, strings.NewReader(tc.stdin))
 		if tc.wantErr != "" {
