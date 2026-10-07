@@ -230,11 +230,13 @@ Each phase is useful alone and ends in something checkable on the lab host.
    with a throwaway container: (a) the proxy-device socket from an unprivileged container, including the entrypoint racing the proxy and a
    restart; (b) `boot.autorestart` behaviour in a crash loop; (c) the job-directory protocol over the file API; (d) `plan`, `apply`, `backup restore`,
    `backup verify` and `backup run` from a **macOS** client.
-1. **Remote-capable tink.** *Status: built as branch `remote-flag` (flag, `$TINK_REMOTE`, built-in image remotes, refusals, `kind: incus` blocked, relay
-   note) and **validated from a Mac over TLS**: with no tunnel and no `INCUS_CONF`, `plan` (0.36 s), `apply` of a project, volume and OCI instance
-   (6.6 s, `kind: incus` BLOCKED with its reason), `backup restore`, `verify`, `backup run` to a pool target and `restore --from` it all work, and `deploy`
-   refuses. **Not built:** setting up a remote with tink alone (`tink remote add`): the Mac's certificate and remote entry were created by hand.* One connect function and `--remote`; built-in image-remote definitions when the client config lacks them;
-   `kind: incus` and host-path features refuse under a remote; `tink deploy` stays host-local. *Done when:* `plan`, `apply` (an OCI instance), `backup restore` and `backup verify` run from a laptop
+1. **Remote-capable tink. Done and merged** (#15, #17): `--remote` / `$TINK_REMOTE` with no ambient default, one connect function, built-in image remotes,
+   refusals for host-local commands, `kind: incus` BLOCKED, a relay note in `backup run`, and **`tink remote add|list|remove`** so a machine with no Incus
+   client can be set up (TLS only; the server is verified by the token's fingerprint, `--fingerprint` or an explicit acceptance before anything secret is
+   sent; the token is never on argv). Validated from a Mac over TLS with no tunnel (`plan` 0.36 s, `apply` of a project, volume and OCI instance 6.6 s,
+   `backup restore`, `verify`, `run` to a pool target, `restore --from` it) and, for `remote add`, from a blank config directory with a real trust token.
+   Network latency over a real WAN link was not measured.
+*Done when:* `plan`, `apply` (an OCI instance), `backup restore` and `backup verify` run from a laptop
    **that has no Incus client config** against Tron, over `--remote` (TLS, a trusted certificate), and a stack with `kind: incus` is refused there with
    the reason.
 2. **The scheduler and the engine changes.** Failure stamps and backoff, the server marker, the per-copy guard, the job directory and
