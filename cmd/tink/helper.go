@@ -78,6 +78,8 @@ confined: it has the reach of root on the host, and nothing here claims otherwis
 	cmd.Flags().StringVar(&opts.Network, "network", "", "the network its NIC joins (default: the default profile's, else incusbr0)")
 	cmd.Flags().StringVar(&opts.Image, "image", "", "the OCI image it runs (with tink at /usr/local/bin/tink)")
 	cmd.Flags().StringVar(&opts.Binary, "binary", "", "a linux tink binary to put in the instance; with no --image, a stock alpine image is used")
+	cmd.Flags().BoolVar(&opts.Ingress, "ingress", false, "also run the ingress reconcile (through the ingress instance's file API): the helper then does what tink-daemon does on the host, and deploy stops installing that")
+	cmd.Flags().StringVar(&opts.IngressInstance, "ingress-instance", "", "the ingress instance to keep routes for (default \"ingress\"; with --ingress)")
 	cmd.Flags().StringVar(&opts.TZ, "timezone", "", "the time zone schedules are evaluated in, e.g. America/Denver (default: $TZ, else UTC)")
 	cmd.Flags().BoolVar(&opts.Reissue, "reissue", false, "enrol the helper again with a fresh key pair, removing its old certificate from the trust store")
 	cmd.Flags().DurationVar(&opts.Wait, "wait", 90*time.Second, "how long to wait for the helper to report in (negative: do not wait)")

@@ -67,6 +67,10 @@ type InstallOptions struct {
 	// It is how a helper runs where the helper image cannot be pulled, and what a development build is tried with.
 	Binary string
 	TZ     string
+	// Ingress makes the helper run the ingress reconcile as well, for the instance named IngressInstance (default "ingress"): through that
+	// instance's file API, so it needs no mount of the host's storage and no host path.
+	Ingress         bool
+	IngressInstance string
 	// Reissue enrols the helper again: it removes the old certificate from the trust store and redeems a fresh token.
 	Reissue bool
 	// Wait is how long to wait for the helper to report in once it is enrolled (default 90 seconds; negative: do not wait).
@@ -88,6 +92,9 @@ func (o *InstallOptions) defaults() {
 	}
 	if o.Wait == 0 {
 		o.Wait = 90 * time.Second
+	}
+	if o.Ingress && o.IngressInstance == "" {
+		o.IngressInstance = "ingress"
 	}
 }
 
@@ -303,9 +310,13 @@ func (in *Installer) ensureProject(name string) error {
 // spec is the helper instance: what it runs, what it mounts, how it reaches the host's API.
 func (in *Installer) spec(o InstallOptions, apiAddr, network string) *run.Spec {
 	_, port, _ := net.SplitHostPort(apiAddr)
-	entry := []string{binaryPath, "daemon", "run", "--remote", RemoteName,
-		"--jobs", dataMount + "/jobs", "--no-ingress",
-		"--status-instance", o.Name, "--status-project", o.Project}
+	entry := []string{binaryPath, "daemon", "run", "--remote", RemoteName, "--jobs", dataMount + "/jobs"}
+	if o.Ingress {
+		entry = append(entry, "--ingress-via-api", "--ingress-instance", o.IngressInstance)
+	} else {
+		entry = append(entry, "--no-ingress")
+	}
+	entry = append(entry, "--status-instance", o.Name, "--status-project", o.Project)
 	if o.TZ != "" {
 		entry = append(entry, "--timezone", o.TZ)
 	}
@@ -321,6 +332,9 @@ func (in *Installer) spec(o InstallOptions, apiAddr, network string) *run.Spec {
 	}
 	if o.TZ != "" {
 		cfg["environment.TZ"] = o.TZ
+	}
+	if o.Ingress {
+		cfg[MarkerKey+".ingress"] = o.IngressInstance
 	}
 	dev := map[string]map[string]string{
 		"root":   {"type": "disk", "path": "/", "pool": o.Pool},

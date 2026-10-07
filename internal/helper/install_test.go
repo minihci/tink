@@ -941,3 +941,48 @@ func TestUpgradeNeedsExactlyOneThingToUpgradeToAndAHelper(t *testing.T) {
 		t.Errorf("%v", err)
 	}
 }
+
+func TestInstallWithIngressRunsTheIngressReconcileThroughTheFileAPIAndMarksIt(t *testing.T) {
+	h := newHost()
+	var specs []*run.Spec
+	in, _ := installer(h, &specs)
+	if err := in.Install(InstallOptions{Image: "x", Ingress: true, Wait: -1}); err != nil {
+		t.Fatal(err)
+	}
+	s := specs[0]
+	entry := s.Config["oci.entrypoint"]
+	if strings.Contains(entry, "--no-ingress") || !strings.Contains(entry, "--ingress-via-api") || !strings.Contains(entry, "--ingress-instance ingress") {
+		t.Errorf("the ingress half is on, and goes through the instance's file API: %s", entry)
+	}
+	if s.Config[MarkerKey+".ingress"] != "ingress" {
+		t.Errorf("the instance says it runs ingress, so deploy knows not to install a second reconciler: %v", s.Config)
+	}
+	for name, dev := range s.Devices {
+		if strings.Contains(dev["source"], "ingress") {
+			t.Errorf("no volume of the ingress instance is mounted: it goes through the file API (%s: %v)", name, dev)
+		}
+	}
+	// the instance can be named
+	specs = nil
+	h = newHost()
+	in, _ = installer(h, &specs)
+	if err := in.Install(InstallOptions{Image: "x", Ingress: true, IngressInstance: "edge", Wait: -1}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(specs[0].Config["oci.entrypoint"], "--ingress-instance edge") || specs[0].Config[MarkerKey+".ingress"] != "edge" {
+		t.Errorf("%v", specs[0].Config)
+	}
+}
+
+func TestInstallWithoutIngressStillRunsBackupsOnly(t *testing.T) {
+	h := newHost()
+	var specs []*run.Spec
+	in, _ := installer(h, &specs)
+	in.Install(InstallOptions{Image: "x", Wait: -1})
+	if e := specs[0].Config["oci.entrypoint"]; !strings.Contains(e, "--no-ingress") || strings.Contains(e, "--ingress-via-api") {
+		t.Errorf("%s", e)
+	}
+	if _, has := specs[0].Config[MarkerKey+".ingress"]; has {
+		t.Error("and does not claim to run ingress")
+	}
+}

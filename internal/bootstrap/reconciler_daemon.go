@@ -6,7 +6,11 @@ import (
 	"os/exec"
 	"strings"
 
+	incus "github.com/lxc/incus/v7/client"
+
 	"github.com/minihci/tink/internal/daemon"
+	"github.com/minihci/tink/internal/helper"
+	"github.com/minihci/tink/internal/incusapi"
 )
 
 const legacyReconcilerCronMarker = "reconciler/reconcile.sh"
@@ -72,6 +76,16 @@ func applyReconcilerDaemon(r *runner, opts Options) error {
 		r.note("removed legacy reconciler cron entry")
 	}
 
+	// A helper that runs the ingress reconcile is that reconciler. A second one, installed here, would reconcile the same routes and
+	// reload the same Caddy from two places that do not know about each other.
+	if server, err := incusapi.Connect(opts.socket()); err == nil {
+		if label, runs := helperRunsIngress(server); runs {
+			r.note("the helper %s runs the ingress reconcile, so the host's tink-daemon is not installed; if one is already installed on this host, "+
+				"disable it (systemctl disable --now tink-daemon), or the two reconcile the same routes", label)
+			return nil
+		}
+	}
+
 	initSystem := daemon.DetectInit()
 	if initSystem == "" {
 		r.note("WARN: could not detect the running init system -- tink-daemon not installed, run `tink daemon install` manually")
@@ -116,6 +130,21 @@ func applyReconcilerDaemon(r *runner, opts Options) error {
 	}
 
 	return nil
+}
+
+// helperRunsIngress says whether a helper on this server runs the ingress reconcile, and which. A server that cannot be asked, or has no
+// helper, has none: deploy then does what it always did.
+func helperRunsIngress(server incus.InstanceServer) (label string, runs bool) {
+	found, err := helper.Find(server)
+	if err != nil {
+		return "", false
+	}
+	for _, f := range found {
+		if f.Config[helper.MarkerKey+".ingress"] != "" {
+			return f.Label(), true
+		}
+	}
+	return "", false
 }
 
 // removeLegacyReconcilerCronStep wraps removeLegacyReconcilerCron for

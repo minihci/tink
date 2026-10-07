@@ -2,9 +2,12 @@ package ingress
 
 import (
 	"fmt"
+	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	incus "github.com/lxc/incus/v7/client"
 
@@ -107,6 +110,10 @@ func apply(server incus.InstanceServer, dir, ingressInstance string, desired map
 		}
 	}
 
+	return reload(server, ingressInstance)
+}
+
+func reload(server incus.InstanceServer, ingressInstance string) error {
 	code, output, err := incusapi.ExecInGuest(server, ingressInstance, []string{"caddy", "reload", "--config", "/etc/caddy/Caddyfile"})
 	if err != nil {
 		return fmt.Errorf("reloading caddy: %w", err)
@@ -115,4 +122,95 @@ func apply(server incus.InstanceServer, dir, ingressInstance string, desired map
 		return fmt.Errorf("reloading caddy: exit %d: %s", code, output)
 	}
 	return nil
+}
+
+// readCurrentVia is readCurrent through the ingress instance's file API: every *.caddy file in dir, inside the instance. A directory
+// that is not there yet is no routes, as on the host.
+func readCurrentVia(server incus.InstanceServer, instance, dir string) (map[string]string, error) {
+	names, found, err := listVia(server, instance, dir)
+	if err != nil {
+		return nil, err
+	}
+	current := map[string]string{}
+	if !found {
+		return current, nil
+	}
+	for _, name := range names {
+		if filepath.Ext(name) != ".caddy" {
+			continue
+		}
+		content, found, err := readFileVia(server, instance, path.Join(dir, name))
+		if err != nil {
+			return nil, err
+		}
+		if found { // it can be removed between the listing and the read
+			current[name] = content
+		}
+	}
+	return current, nil
+}
+
+// applyVia is apply through the file API. The order is the safer one: the desired files are written first and the stale ones removed
+// after, so there is never a moment with no routes at all; Caddy is told to reload only once everything is in place. (The host-path
+// version removes first, which the file API makes unnecessary.)
+func applyVia(server incus.InstanceServer, dir, instance string, desired map[string]string) error {
+	names, found, err := listVia(server, instance, dir)
+	if err != nil {
+		return err
+	}
+	if !found {
+		if err := server.CreateInstanceFile(instance, dir, incus.InstanceFileArgs{Type: "directory", Mode: 0o755}); err != nil {
+			return fmt.Errorf("creating %s in %s: %w", dir, instance, err)
+		}
+	}
+	for name, content := range desired {
+		if err := server.CreateInstanceFile(instance, path.Join(dir, name), incus.InstanceFileArgs{
+			Content: strings.NewReader(content), Type: "file", Mode: 0o644, WriteMode: "overwrite",
+		}); err != nil {
+			return fmt.Errorf("writing %s in %s: %w", name, instance, err)
+		}
+	}
+	for _, name := range names {
+		if _, keep := desired[name]; keep || filepath.Ext(name) != ".caddy" {
+			continue
+		}
+		if err := server.DeleteInstanceFile(instance, path.Join(dir, name)); err != nil && !incusapi.IsNotFound(err) {
+			return fmt.Errorf("removing stale %s from %s: %w", name, instance, err)
+		}
+	}
+	return reload(server, instance)
+}
+
+// listVia lists a directory inside an instance. found is false when it is not there.
+func listVia(server incus.InstanceServer, instance, dir string) (names []string, found bool, err error) {
+	rc, resp, found, err := incusapi.LookupInstanceFile(server, instance, dir)
+	if err != nil {
+		return nil, false, fmt.Errorf("reading %s in %s: %w", dir, instance, err)
+	}
+	if !found {
+		return nil, false, nil
+	}
+	if rc != nil {
+		rc.Close()
+	}
+	if resp == nil || resp.Type != "directory" {
+		return nil, false, fmt.Errorf("%s in %s is not a directory", dir, instance)
+	}
+	return resp.Entries, true, nil
+}
+
+func readFileVia(server incus.InstanceServer, instance, file string) (content string, found bool, err error) {
+	rc, _, found, err := incusapi.LookupInstanceFile(server, instance, file)
+	if err != nil {
+		return "", false, fmt.Errorf("reading %s in %s: %w", file, instance, err)
+	}
+	if !found {
+		return "", false, nil
+	}
+	defer rc.Close()
+	b, err := io.ReadAll(rc)
+	if err != nil {
+		return "", false, fmt.Errorf("reading %s in %s: %w", file, instance, err)
+	}
+	return string(b), true, nil
 }

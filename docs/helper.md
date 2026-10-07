@@ -49,6 +49,30 @@ the server.
 **Running it again** is safe: what exists is left alone, and an enrolled helper is not enrolled twice. `--reissue` enrols it again with a fresh key pair
 and removes the old certificate. `--binary` puts the binary in the instance, which is also how a helper runs where an image cannot be pulled.
 
+## The ingress half
+
+```
+tink helper install --ingress                        # also reconcile the instance named ingress
+tink helper install --ingress --ingress-instance edge
+```
+
+The helper can do what `tink-daemon` does on the host: discover the instances that register with `user.ingress.{domain,port,enabled}`, render their Caddy
+routes, and reload Caddy. It does it **through the ingress instance's file API**, not through a path in the host's storage pool: it reads and writes
+`/etc/caddy/routes/generated/` *inside* the ingress instance (where the `ingress-routes` volume is mounted), then runs `caddy reload` in it. Nothing is mounted
+into the helper, and nothing depends on the machine the helper runs on, which is also what makes it work under `--remote`. The rendering is the same code the
+host path uses, so the files are the same bytes.
+
+- **The same thing is available by hand**, to try it: `tink ingress status --via-api` and `tink ingress reconcile --via-api [--ingress-instance NAME]`, from
+  anywhere that can reach the server (`--remote` included). `tink daemon run --ingress-via-api` is what the helper's entrypoint uses.
+- **It is opt-in, and the host path is unchanged.** Without `--via-api` everything works as it did, on the host's filesystem.
+- **A routes directory it cannot read is an error, never "no routes"**: a failed read taken for an empty directory would rewrite every route.
+- **Writes before removals.** It writes the desired files first and removes the stale ones after, so there is never a moment with no routes; Caddy is told to
+  reload only once everything is in place. A pass that changes nothing writes nothing and does not reload.
+- **One reconciler.** With `--ingress` the instance is marked `user.tink.helper.ingress`, and **`tink deploy` then does not install the host's `tink-daemon`**, which
+  would reconcile the same routes and reload the same Caddy from a place that does not know about the helper. If `tink-daemon` is already installed on the host,
+  deploy says so and leaves it: disable it (`systemctl disable --now tink-daemon`). A helper without `--ingress` leaves ingress to the host's daemon, as before.
+- **A failed pass is retried in 5 seconds**, not after the whole minute: the helper's first pass races its own enrolment.
+
 ## What `plan` and `apply` do about the helper
 
 - **They tell you when the helper is not well.** `tink plan` and `tink plan apply` end with a note when the server has a helper that is degraded or down

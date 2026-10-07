@@ -447,8 +447,9 @@ config and renders/applies the shared ingress instance's routes.
 Use --dry-run to compute and report what would change without writing
 anything or reloading Caddy -- this is how it's meant to be run alongside
 the live bash version before its cron entry actually gets moved over.`,
-		PreRunE: refuseUnderRemote("tink ingress reconcile"),
+		PreRunE: ingressUnderRemote("tink ingress reconcile", &opts),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			useInstanceRoutesDir(cmd, &opts)
 			result, err := ingress.Reconcile(opts)
 			if err != nil {
 				return err
@@ -467,8 +468,9 @@ func newIngressStatusCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "status",
 		Short:   "Show what's currently registered, without changing anything",
-		PreRunE: refuseUnderRemote("tink ingress status"),
+		PreRunE: ingressUnderRemote("tink ingress status", &opts),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			useInstanceRoutesDir(cmd, &opts)
 			result, err := ingress.Status(opts)
 			if err != nil {
 				return err
@@ -483,8 +485,28 @@ func newIngressStatusCmd() *cobra.Command {
 
 func addIngressFlags(cmd *cobra.Command, opts *ingress.Options) {
 	cmd.Flags().StringVar(&opts.Socket, "socket", opts.Socket, "Incus daemon unix socket path")
-	cmd.Flags().StringVar(&opts.RoutesDir, "routes-dir", opts.RoutesDir, "generated ingress routes directory")
+	cmd.Flags().StringVar(&opts.RoutesDir, "routes-dir", opts.RoutesDir, "generated ingress routes directory (with --via-api: the path inside the ingress instance)")
+	cmd.Flags().BoolVar(&opts.ViaAPI, "via-api", false, "read and write the route files through the ingress instance's file API instead of on this host's filesystem: works from anywhere, and under --remote")
 	cmd.Flags().StringVar(&opts.IngressInstance, "ingress-instance", opts.IngressInstance, "name of the ingress instance to reload")
+}
+
+// ingressUnderRemote is the PreRunE of the ingress commands: they work on a path inside the host's storage pool, which is the wrong place
+// on any other machine, unless they go through the ingress instance's file API instead (--via-api), which is the same everywhere.
+func ingressUnderRemote(what string, opts *ingress.Options) func(*cobra.Command, []string) error {
+	return func(cmd *cobra.Command, args []string) error {
+		if via, _ := cmd.Flags().GetBool("via-api"); via {
+			return nil
+		}
+		return refuseUnderRemote(what)(cmd, args)
+	}
+}
+
+// useInstanceRoutesDir points the reconcile at the generated directory inside the ingress instance when it goes through the file API and
+// the caller did not name another one.
+func useInstanceRoutesDir(cmd *cobra.Command, opts *ingress.Options) {
+	if opts.ViaAPI && !cmd.Flags().Changed("routes-dir") {
+		opts.RoutesDir = ingress.InstanceRoutesDir
+	}
 }
 
 func printIngressResult(cmd *cobra.Command, result *ingress.Result, dryRun bool) {
@@ -556,6 +578,7 @@ func newDaemonRunCmd() *cobra.Command {
 	var noIngress bool
 	var statusInstance, statusProject string
 	var statusHeartbeat time.Duration
+	var ingressViaAPI bool
 
 	cmd := &cobra.Command{
 		Use:   "run",
@@ -578,12 +601,15 @@ others. --no-ingress runs only the helper's work, beside an ingress daemon that 
 With --remote (or $TINK_REMOTE) the daemon manages that server over its API, which is how the
 helper runs: a client of its own host. The ingress half reads and writes a directory, and the
 default one is a path inside the host's storage pool, so under a remote it needs either
---no-ingress, or a --routes-dir that this process can actually reach (the ingress-routes volume
-mounted into the helper, say). Anything else is refused rather than act on the wrong machine.`,
+--ingress-via-api (the route files are read and written through the ingress instance's file API, so
+nothing depends on this machine), --no-ingress, or a --routes-dir that this process can actually
+reach. Anything else is refused rather than act on the wrong machine.`,
 		PreRunE: daemonRunUnderRemote,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
+			opts.ViaAPI = ingressViaAPI
+			useInstanceRoutesDir(cmd, &opts)
 			ro := daemon.RunOptions{Interval: interval, IngressOptions: opts, NoIngress: noIngress}
 			zone := time.Local
 			if timezone != "" {
@@ -649,6 +675,7 @@ mounted into the helper, say). Anything else is refused rather than act on the w
 	cmd.Flags().StringVar(&timezone, "timezone", "", "time zone schedules are evaluated in, e.g. America/Denver (default: this machine's)")
 	cmd.Flags().DurationVar(&schedulerInterval, "scheduler-interval", time.Minute, "how often the scheduler looks for due copies")
 	cmd.Flags().BoolVar(&noIngress, "no-ingress", false, "do not run the ingress reconcile loop (only the --jobs work)")
+	cmd.Flags().BoolVar(&ingressViaAPI, "ingress-via-api", false, "run the ingress reconcile through the ingress instance's file API instead of on this host's filesystem (the way the helper does, and the only way under --remote)")
 	cmd.Flags().StringVar(&statusInstance, "status-instance", "", "publish a status document on this instance's config (user.tink.helper.status), so `tink helper status` and `plan` can see this daemon; the helper sets it to itself")
 	cmd.Flags().StringVar(&statusProject, "status-project", "", "the project of --status-instance (default: the connection's own)")
 	cmd.Flags().DurationVar(&statusHeartbeat, "status-heartbeat", helper.DefaultHeartbeat, "how often the status document is written when nothing in it has changed")
@@ -707,8 +734,11 @@ func daemonRunUnderRemote(cmd *cobra.Command, _ []string) error {
 	if off, _ := cmd.Flags().GetBool("no-ingress"); off || cmd.Flags().Changed("routes-dir") {
 		return nil
 	}
+	if via, _ := cmd.Flags().GetBool("ingress-via-api"); via {
+		return nil
+	}
 	return fmt.Errorf("tink daemon run is pointed at the remote %q (--remote or $TINK_REMOTE), and its ingress half reads a path inside the host's storage pool, which is not this machine's: "+
-		"give --no-ingress to run only the backup work, or --routes-dir with a directory this process can reach (the ingress-routes volume mounted into it, say)", incusapi.Remote())
+		"give --ingress-via-api to run it through the ingress instance's file API, --no-ingress to run only the backup work, or --routes-dir with a directory this process can reach", incusapi.Remote())
 }
 
 // refuseUnderRemote is the PreRunE of every command that works on the host's own filesystem or processes (it
