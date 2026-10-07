@@ -429,28 +429,55 @@ func Run(ctx context.Context, eng Engine, items []Item, opts Options, out io.Wri
 // DueCopy is a copy that should run now.
 type DueCopy struct{ Volume, Target string }
 
+// FailingCopy is a copy that has failed since its last success.
+type FailingCopy struct {
+	Volume, Target string
+	Count          int
+	Since          time.Time
+}
+
+// Assessment is what a look at the volumes' live state finds: the copies that are due, the ones failing, and what could not be
+// decided.
+type Assessment struct {
+	Due     []DueCopy
+	Failing []FailingCopy
+	// Problems are a volume whose live configuration could not be read (keyed by its label) and a copy whose schedule could
+	// not be read (keyed "label -> target"). Neither is "due", and neither is silent.
+	Problems map[string]error
+}
+
+// Assess looks at each item's live state once: what is due, what is failing, and what could not be decided. Due is the part a
+// scheduler queues work from; Failing is what the helper reports about itself.
+func Assess(eng Engine, items []Item, now time.Time) Assessment {
+	a := Assessment{Problems: map[string]error{}}
+	for _, it := range items {
+		live, lerr := eng.LiveConfig(it.Volume)
+		if lerr != nil {
+			a.Problems[it.Label] = lerr
+			continue
+		}
+		for _, c := range it.Copies {
+			if f, ok := resolve.FailureOf(live, c.Target.Name); ok {
+				a.Failing = append(a.Failing, FailingCopy{Volume: it.Label, Target: c.Target.Name, Count: f.N, Since: f.At})
+			}
+			d, derr := resolve.CopyDue(c.Schedule, live, c.Target.Name, now)
+			if derr != nil {
+				a.Problems[it.Label+" -> "+c.Target.Name] = derr
+				continue
+			}
+			if d.Due {
+				a.Due = append(a.Due, DueCopy{Volume: it.Label, Target: c.Target.Name})
+			}
+		}
+	}
+	return a
+}
+
 // Due lists the copies a `Due` run would make now, without making any: what a scheduler asks before it queues work, so
 // it queues a job only when there is something to do. It applies the same decision as Run (the schedule, and the
 // backoff after failures). A volume whose live configuration cannot be read is reported in problems, not skipped
 // silently, and is not "due" (nothing can be decided about it).
 func Due(eng Engine, items []Item, now time.Time) (due []DueCopy, problems map[string]error) {
-	problems = map[string]error{}
-	for _, it := range items {
-		live, lerr := eng.LiveConfig(it.Volume)
-		if lerr != nil {
-			problems[it.Label] = lerr
-			continue
-		}
-		for _, c := range it.Copies {
-			d, derr := resolve.CopyDue(c.Schedule, live, c.Target.Name, now)
-			if derr != nil {
-				problems[it.Label+" -> "+c.Target.Name] = derr
-				continue
-			}
-			if d.Due {
-				due = append(due, DueCopy{Volume: it.Label, Target: c.Target.Name})
-			}
-		}
-	}
-	return due, problems
+	a := Assess(eng, items, now)
+	return a.Due, a.Problems
 }

@@ -22,13 +22,14 @@ var now0 = time.Date(2026, 10, 7, 10, 30, 0, 0, time.UTC)
 
 // stubEngine answers LiveConfig from a table and records copies.
 type stubEngine struct {
-	mu      sync.Mutex
-	listed  []volbackup.ListedVolume
-	listErr error
-	live    map[string]map[string]string
-	liveErr map[string]error
-	copyErr map[string]error
-	copied  []string
+	mu       sync.Mutex
+	listed   []volbackup.ListedVolume
+	listErr  error
+	poolErrs map[string]error
+	live     map[string]map[string]string
+	liveErr  map[string]error
+	copyErr  map[string]error
+	copied   []string
 }
 
 func (s *stubEngine) LiveConfig(v volbackup.Volume) (map[string]string, error) {
@@ -43,7 +44,7 @@ func (s *stubEngine) LiveConfig(v volbackup.Volume) (map[string]string, error) {
 func (s *stubEngine) Volumes() ([]volbackup.ListedVolume, map[string]error, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([]volbackup.ListedVolume(nil), s.listed...), nil, s.listErr
+	return append([]volbackup.ListedVolume(nil), s.listed...), s.poolErrs, s.listErr
 }
 
 func (s *stubEngine) Copy(v volbackup.Volume, t volbackup.Target, o volbackup.CopyOptions) (volbackup.CopyResult, error) {

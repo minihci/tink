@@ -5,6 +5,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -20,6 +21,7 @@ import (
 	"github.com/minihci/tink/internal/backuprun"
 	"github.com/minihci/tink/internal/bootstrap"
 	"github.com/minihci/tink/internal/daemon"
+	"github.com/minihci/tink/internal/helper"
 	"github.com/minihci/tink/internal/incusapi"
 	"github.com/minihci/tink/internal/ingress"
 	"github.com/minihci/tink/internal/jobs"
@@ -29,9 +31,23 @@ import (
 
 func main() {
 	if err := execute(newRootCmd(), os.Stdout, os.Stderr); err != nil {
+		var ec *exitCodeError
+		if errors.As(err, &ec) {
+			os.Exit(ec.code)
+		}
 		os.Exit(1)
 	}
 }
+
+// exitCodeError ends the process with a particular status, which `tink helper status --check` uses to say 0, 1 or 2 to a monitor.
+// A silent one has already said what it had to say on standard output, so it prints nothing more.
+type exitCodeError struct {
+	code   int
+	msg    string
+	silent bool
+}
+
+func (e *exitCodeError) Error() string { return e.msg }
 
 // execute runs root with everything it prints, and the final error, passed through the redactor,
 // which scrubs any secret tink has decrypted. The writers are line-buffered, so they are flushed
@@ -42,7 +58,10 @@ func execute(root *cobra.Command, stdout, stderr io.Writer) error {
 	root.SetErr(errw)
 	err := root.Execute()
 	if err != nil {
-		fmt.Fprintln(errw, err)
+		var ec *exitCodeError
+		if !errors.As(err, &ec) || !ec.silent {
+			fmt.Fprintln(errw, err)
+		}
 	}
 	out.Flush()
 	errw.Flush()
@@ -76,6 +95,7 @@ made executable instead of just documented.`,
 	root.AddCommand(newSecretCmd())
 	root.AddCommand(newVolBackupCmd())
 	root.AddCommand(newRemoteCmd())
+	root.AddCommand(newHelperCmd())
 	root.AddCommand(newIngressCmd())
 	root.AddCommand(newMongoCmd())
 	root.AddCommand(newDaemonCmd())
@@ -517,6 +537,8 @@ func newDaemonRunCmd() *cobra.Command {
 	var interval, schedulerInterval time.Duration
 	var jobsDir, timezone string
 	var noIngress bool
+	var statusInstance, statusProject string
+	var statusHeartbeat time.Duration
 
 	cmd := &cobra.Command{
 		Use:   "run",
@@ -546,14 +568,36 @@ mounted into the helper, say). Anything else is refused rather than act on the w
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 			ro := daemon.RunOptions{Interval: interval, IngressOptions: opts, NoIngress: noIngress}
-			if jobsDir != "" {
-				zone := time.Local
-				if timezone != "" {
-					var err error
-					if zone, err = time.LoadLocation(timezone); err != nil {
-						return fmt.Errorf("--timezone: %w", err)
-					}
+			zone := time.Local
+			if timezone != "" {
+				var err error
+				if zone, err = time.LoadLocation(timezone); err != nil {
+					return fmt.Errorf("--timezone: %w", err)
 				}
+			}
+			if statusInstance != "" {
+				socket := opts.Socket
+				project := statusProject
+				name := statusInstance
+				ro.Status = &daemon.StatusOptions{
+					Publisher: &helper.Publisher{
+						Heartbeat: statusHeartbeat,
+						Patch: func(config map[string]string) error {
+							server, err := incusapi.Connect(socket)
+							if err != nil {
+								return err
+							}
+							return incusapi.PatchInstanceConfig(server, project, name, config)
+						},
+					},
+					Version: buildVersion(),
+					Zone:    zone,
+				}
+				if jobsDir != "" {
+					ro.Status.Store = jobs.Store{Dir: jobsDir}
+				}
+			}
+			if jobsDir != "" {
 				socket := opts.Socket
 				ro.Helper = &daemon.Helper{
 					Store: jobs.Store{Dir: jobsDir},
@@ -584,6 +628,9 @@ mounted into the helper, say). Anything else is refused rather than act on the w
 	cmd.Flags().StringVar(&timezone, "timezone", "", "time zone schedules are evaluated in, e.g. America/Denver (default: this machine's)")
 	cmd.Flags().DurationVar(&schedulerInterval, "scheduler-interval", time.Minute, "how often the scheduler looks for due copies")
 	cmd.Flags().BoolVar(&noIngress, "no-ingress", false, "do not run the ingress reconcile loop (only the --jobs work)")
+	cmd.Flags().StringVar(&statusInstance, "status-instance", "", "publish a status document on this instance's config (user.tink.helper.status), so `tink helper status` and `plan` can see this daemon; the helper sets it to itself")
+	cmd.Flags().StringVar(&statusProject, "status-project", "", "the project of --status-instance (default: the connection's own)")
+	cmd.Flags().DurationVar(&statusHeartbeat, "status-heartbeat", helper.DefaultHeartbeat, "how often the status document is written when nothing in it has changed")
 	return cmd
 }
 
