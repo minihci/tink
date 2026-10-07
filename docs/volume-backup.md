@@ -275,6 +275,8 @@ The direction for everything below is in [`volume-backup-design.md`](volume-back
   power was cut -- fine for Postgres (it replays WAL), not a substitute for a
   logical dump. Nothing coordinates *two* volumes: a volume pair snapshotted on
   the same schedule is not captured at the same instant.
+- **A volume that lives on a TrueNAS pool cannot restore its own snapshots on stock TrueNAS 25.10** (an upstream middleware bug, fixed
+  in truenas/middleware#19962 and #19963): the same-pool clone Incus uses fails. Copies to and from TrueNAS pools are not affected.
 - **Each run is a full copy**, over the network for a remote target; there is no incremental transfer yet.
 - **Nothing schedules copies**: call `tink backup run --due` from cron or a timer.
 - **A restore point is crash-consistent**, like the snapshot it is copied from.
