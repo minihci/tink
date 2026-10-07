@@ -124,9 +124,12 @@ incus remote add homelabvps https://127.0.0.1:18444 --project tink-backup   # as
 - **A cut-off copy is never a backup.** The restore point carries its markers only once the copy has *completed*. A copy that dies
   part way (the tunnel drops, the disk fills) is deleted; if even that fails, the error names the volume to delete by hand, and
   because it has no markers tink will never list, prune, restore or verify from it.
-- **One source server per target project.** Restore points are matched by project, pool and volume name only, so two servers backing
-  a volume of the same name up into the same remote project would see (and prune) each other's. Give each source its own project
-  on the remote. (The hostname is not part of the match: after losing a host, the rebuilt one must still find its backups.)
+- **Several source servers can share a target.** Each restore point records the server it was made on (`user.tink.backup.copy-server`, the
+  server's name: its host name unless configured otherwise), and **pruning only ever removes points the pruning server made** (points from
+  before this marker existed count as that server's own). Two servers copying a volume of the same name into one remote pool therefore cannot
+  delete each other's backups, and `backup run` says when it sees another server's points and leaves them alone. Restore still sees **all**
+  of them, so a rebuilt host, under whatever name, finds its predecessor's backups; it says when the point it used was made by another server.
+  Separate projects are still tidier, but no longer needed for safety.
 - **Restore and verify `--from` a remote** pull the restore point back through tink the same way, and need nothing but the remote.
 - **Trust scoped to a project may not be enforced.** An Incus *restricted* client certificate is limited to its projects only if the
   server's authorization lets Incus's own check run. A server that routes `authorization.client.tls-restricted` through a custom
@@ -140,10 +143,16 @@ own snapshots. A mirror cannot keep a longer history than its source, and, worse
 the backup**. With one independent volume per run, nothing that happens to the source can reach an existing restore point. The price
 is a **full copy per run** (space and time proportional to the volume); incremental transfer is future work.
 
-**What tink will and won't delete.** Restore points carry markers (`user.tink.backup.copy-of`, `-at`, `-target`) naming exactly the
-volume (project, pool and name) they back up. Pruning and restoring consider **only** volumes with the marker for the volume in
-question: a volume tink did not make, a lookalike name, another volume's restore point, or one whose marker it cannot read is never
-touched.
+**What tink will and won't delete.** Restore points carry markers (`user.tink.backup.copy-of`, `-at`, `-target`, `-server`) naming
+exactly the volume (project, pool and name) they back up and the server it lived on. Pruning and restoring consider **only** volumes with
+the marker for the volume in question: a volume tink did not make, a lookalike name, another volume's restore point, or one whose marker it
+cannot read is never touched. **Pruning goes further: only points made by the server doing the pruning**, and "never the newest" means the
+newest of that server's own.
+
+**One copy at a time.** Within a process, the same copy (the same volume to the same target) never runs twice at once: the second is
+refused as "already running" and is not counted as a failed copy. This guard is per process: a `tink backup run` on a laptop and a scheduled
+run on the server are different processes, and nothing yet stops both copying the same volume at the same moment (it is wasteful, not unsafe:
+each makes its own restore point).
 
 **When a copy fails.** The source volume is marked with when the last attempt failed and how many in a row
 (`user.tink.backup.copy.<target>.fail.at` and `.fail.n`); a success removes both. **No reason is stored**: errors from Incus and its

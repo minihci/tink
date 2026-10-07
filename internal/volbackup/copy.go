@@ -32,6 +32,7 @@ type RestorePoint struct {
 	Volume   string
 	At       time.Time
 	Snapshot string // the source snapshot it was copied from
+	Server   string // the server the source volume lived on when it was made; empty for points made before this was recorded
 }
 
 // CopyOptions control Copy.
@@ -48,7 +49,10 @@ type CopyResult struct {
 	Snapshot string   // the source snapshot that was copied (removed again afterwards)
 	Volume   string   // the new restore point on the target
 	Pruned   []string // restore points removed for being older than Retain
-	Planned  []string // with DryRun: what would have happened
+	// OtherServers names the other servers that have restore points of a volume with this name on the target. They
+	// are left alone: only the server that made a restore point prunes it.
+	OtherServers []string
+	Planned      []string // with DryRun: what would have happened
 }
 
 // Why a new volume per run instead of refreshing one target volume, as `incus storage volume copy
@@ -64,6 +68,13 @@ type CopyResult struct {
 // snapshot into a new restore-point volume on the target, removes the temporary snapshot, stamps the
 // source, and prunes restore points older than opts.Retain.
 func Copy(server incus.InstanceServer, v Volume, t Target, opts CopyOptions) (CopyResult, error) {
+	// One copy of a volume to a target at a time in this process. Not a failure: nothing was tried.
+	key := copyKey(v, t)
+	if _, busy := running.LoadOrStore(key, struct{}{}); busy {
+		return CopyResult{}, fmt.Errorf("%s: %w", key, ErrBusy)
+	}
+	defer running.Delete(key)
+
 	res, err := copyTo(server, v, t, opts)
 	if err == nil || opts.DryRun || errors.Is(err, errPrune) {
 		return res, err
@@ -109,6 +120,11 @@ func copyTo(server incus.InstanceServer, v Volume, t Target, opts CopyOptions) (
 		return res, fmt.Errorf("volume %s/%s: %w", v.pool(), v.Name, err)
 	}
 
+	me, err := serverName(server)
+	if err != nil {
+		return res, err
+	}
+
 	start := now()
 	res.Snapshot = "tink-copy-" + stamped(start)
 	res.Volume = v.Name + "-bk-" + stamped(start)
@@ -124,10 +140,11 @@ func copyTo(server incus.InstanceServer, v Volume, t Target, opts CopyOptions) (
 			fmt.Sprintf("remove the temporary snapshot, and stamp %s", resolve.CopyStampAt(t.Name)),
 		}
 		if opts.Retain != "" {
-			pruned, perr := prune(dst, v, t, opts.Retain, start, "", true)
+			pruned, others, perr := prune(dst, v, t, opts.Retain, start, "", true, me)
 			if perr != nil {
 				return res, perr
 			}
+			res.OtherServers = others
 			for _, p := range pruned {
 				res.Planned = append(res.Planned, fmt.Sprintf("prune restore point %s/%s (older than %s)", t.where(), p, opts.Retain))
 			}
@@ -165,6 +182,7 @@ func copyTo(server incus.InstanceServer, v Volume, t Target, opts CopyOptions) (
 		resolve.MarkerCopyAt:     start.UTC().Format(time.RFC3339),
 		resolve.MarkerCopyTarget: t.Name,
 		resolve.MarkerCopySnap:   res.Snapshot,
+		resolve.MarkerCopyServer: me,
 	}
 	from := api.StorageVolume{Name: v.Name + "/" + res.Snapshot, Type: "custom", ContentType: src.ContentType}
 	cop, cerr := dst.CopyStoragePoolVolume(t.pool(), s, v.pool(), from, &incus.StoragePoolVolumeCopyArgs{Name: res.Volume, Mode: t.transferMode()})
@@ -190,7 +208,7 @@ func copyTo(server incus.InstanceServer, v Volume, t Target, opts CopyOptions) (
 	}
 	if opts.Retain != "" {
 		say("pruning restore points older than %s", opts.Retain)
-		if res.Pruned, err = prune(dst, v, t, opts.Retain, start, res.Volume, false); err != nil {
+		if res.Pruned, res.OtherServers, err = prune(dst, v, t, opts.Retain, start, res.Volume, false, me); err != nil {
 			return res, fmt.Errorf("the copy succeeded, but %w: %w", errPrune, err)
 		}
 	}
@@ -299,33 +317,35 @@ func restorePointsOf(vols []api.StorageVolume, copyOf string) []RestorePoint {
 		if err != nil {
 			continue // a marker we cannot read: leave the volume alone rather than guess its age
 		}
-		out = append(out, RestorePoint{Volume: vol.Name, At: at, Snapshot: vol.Config[resolve.MarkerCopySnap]})
+		out = append(out, RestorePoint{Volume: vol.Name, At: at, Snapshot: vol.Config[resolve.MarkerCopySnap], Server: vol.Config[resolve.MarkerCopyServer]})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].At.After(out[j].At) })
 	return out
 }
 
-// prune removes restore points older than retain, never the newest and never `keep` (the one just made).
-func prune(dst incus.InstanceServer, v Volume, t Target, retain string, now time.Time, keep string, dryRun bool) ([]string, error) {
-	points, err := listPoints(dst, v, t)
+// prune removes restore points older than retain, never the newest and never `keep` (the one just made). It only
+// ever considers restore points `me` made (or that predate the server marker): another server's are left alone,
+// and their servers are returned so the caller can say so. "Newest" is the newest of this server's own.
+func prune(dst incus.InstanceServer, v Volume, t Target, retain string, now time.Time, keep string, dryRun bool, me string) (pruned, others []string, err error) {
+	all, err := listPoints(dst, v, t)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	points, others := splitByServer(all, me)
 	victims, err := expired(points, retain, now, keep)
 	if err != nil {
-		return nil, err
+		return nil, others, err
 	}
 	if dryRun {
-		return victims, nil
+		return victims, others, nil
 	}
-	var done []string
 	for _, name := range victims {
 		if err := dst.DeleteStoragePoolVolume(t.pool(), "custom", name); err != nil {
-			return done, fmt.Errorf("pruning %s/%s: %w", t.where(), name, err)
+			return pruned, others, fmt.Errorf("pruning %s/%s: %w", t.where(), name, err)
 		}
-		done = append(done, name)
+		pruned = append(pruned, name)
 	}
-	return done, nil
+	return pruned, others, nil
 }
 
 // expired chooses which restore points to prune: those older than retain, except the newest, and
