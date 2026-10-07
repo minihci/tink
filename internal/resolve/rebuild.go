@@ -227,6 +227,9 @@ func (o incusRebuildOps) PullImage(image string) (string, error) {
 	}
 	if _, _, err := o.server.GetImage(img.Fingerprint); err == nil {
 		return img.Fingerprint, nil // already local
+	} else if !isNotFound(err) {
+		// Not "not local": copying on a lookup that merely failed would hide the real problem behind a second one.
+		return "", fmt.Errorf("checking whether the image is already local: %w", err)
 	}
 	op, err := o.server.CopyImage(is, *img, &incus.ImageCopyArgs{})
 	if err != nil {

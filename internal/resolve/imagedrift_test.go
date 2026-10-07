@@ -24,18 +24,22 @@ var (
 )
 
 type probe struct {
-	fp    string
-	err   error
-	calls int
-	alias map[string]string
+	fp       string
+	err      error
+	calls    int
+	alias    map[string]string
+	aliasErr error // a local alias lookup that fails for any reason but "not found"
 }
 
 func (p *probe) imageProbe() imageProbe {
 	return imageProbe{
 		remotes: testRemotes,
-		aliasTarget: func(a string) (string, bool) {
+		aliasTarget: func(a string) (string, bool, error) {
+			if p.aliasErr != nil {
+				return "", false, p.aliasErr
+			}
 			v, ok := p.alias[a]
-			return v, ok
+			return v, ok, nil
 		},
 		registryFP: func(remote, ref string) (string, error) {
 			p.calls++
@@ -79,6 +83,8 @@ func TestCheckImage(t *testing.T) {
 		{"local alias unchanged", map[string]string{"volatile.base_image": "aaa111aaa111xyz"}, "haos-x86-64-18.3", probe{alias: map[string]string{"haos-x86-64-18.3": "aaa111aaa111xyz"}}, "", "", 0},
 		{"local alias repointed", map[string]string{"volatile.base_image": "aaa111aaa111xyz"}, "haos-x86-64-18.3", probe{alias: map[string]string{"haos-x86-64-18.3": "bbb222bbb222xyz"}}, "now resolves to bbb222bbb222", "", 0},
 		{"local alias missing: no opinion", map[string]string{"volatile.base_image": "aaa"}, "nope", probe{}, "", "", 0},
+		// a lookup that failed says nothing about drift: it is unverified, not "no drift"
+		{"local alias lookup failed: unverified", map[string]string{"volatile.base_image": "aaa"}, "haos-x86-64-18.3", probe{aliasErr: errors.New("not authorized")}, "", "not authorized", 0},
 		{"unknown remote prefix is a local alias", map[string]string{"volatile.base_image": "aaa"}, "weird:thing", probe{alias: map[string]string{"weird:thing": "aaa"}}, "", "", 0},
 	}
 	for _, tc := range tests {

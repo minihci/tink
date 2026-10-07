@@ -64,6 +64,9 @@ func (r Resource) onImageChangePolicy() string {
 func planInstance(server incus.InstanceServer, r Resource, opts PlanOptions) (PlannedResource, error) {
 	current, _, err := server.GetInstance(r.Name)
 	if err != nil {
+		if !isNotFound(err) {
+			return PlannedResource{}, fmt.Errorf("reading the live instance: %w", err)
+		}
 		return PlannedResource{Resource: r, Action: ActionCreate}, nil
 	}
 	changes := diffConfig(current.Config, r.Config, r.SecretKeys)
