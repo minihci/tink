@@ -59,8 +59,9 @@ Almost every command opens Incus through one function, `incusapi.Connect(socket)
 ### 1. Connecting by remote
 
 One connect function used by every command: a remote name from the Incus client configuration (the file the `incus` CLI uses, via
-`cliconfig`, as remote backup targets already do **[code]**), else the local socket. `--remote` / `TINK_REMOTE`, defaulting to the Incus
-client's own default remote. A command that cannot work against a remote (anything that touches a host path, `tink deploy`, `kind: incus`)
+`cliconfig`, as remote backup targets already do **[code]**), else the local socket. `--remote` / `TINK_REMOTE`, **with no ambient default** (decided while building phase 1): the Incus
+client's own default remote is deliberately ignored, because tink applies infrastructure, and a forgotten `incus remote switch` must not send a stack to the
+wrong server. A command that cannot work against a remote (anything that touches a host path, `tink deploy`, `kind: incus`)
 refuses with the reason, and does not fail obscurely.
 
 ### 2. The helper instance
@@ -229,7 +230,9 @@ Each phase is useful alone and ends in something checkable on the lab host.
    with a throwaway container: (a) the proxy-device socket from an unprivileged container, including the entrypoint racing the proxy and a
    restart; (b) `boot.autorestart` behaviour in a crash loop; (c) the job-directory protocol over the file API; (d) `plan`, `apply`, `backup restore`,
    `backup verify` and `backup run` from a **macOS** client.
-1. **Remote-capable tink.** One connect function and `--remote`; built-in image-remote definitions when the client config lacks them;
+1. **Remote-capable tink.** *Status: built as branch `remote-flag` (flag, `$TINK_REMOTE`, built-in image remotes, refusals, `kind: incus` blocked, relay
+   note); validated locally and on the lab host. **Not yet validated:** the real TLS path from a laptop (a trusted certificate over `:8443`), and setting up
+   a remote with tink alone (`tink remote add`), which is not built.* One connect function and `--remote`; built-in image-remote definitions when the client config lacks them;
    `kind: incus` and host-path features refuse under a remote; `tink deploy` stays host-local. *Done when:* `plan`, `apply` (an OCI instance), `backup restore` and `backup verify` run from a laptop
    **that has no Incus client config** against Tron, over `--remote` (TLS, a trusted certificate), and a stack with `kind: incus` is refused there with
    the reason.
