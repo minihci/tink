@@ -103,8 +103,35 @@ For each volume that declares `copies` (or only the named ones), and each of its
 3. stamps the source volume (`user.tink.backup.copy.<target>.at` and `.volume`);
 4. **prunes** that volume's restore points older than the copy's `retain`, always keeping the newest.
 
-Only **pool targets** work so far (a second storage pool on this server: another disk, or the Incus `truenas` driver). A target
-that names a `remote:` is reported as an error for that copy and the others still run (the exit status is non-zero).
+A target is either another **storage pool on this server** (another disk, or the Incus `truenas` driver) or an **Incus remote**
+(another server). If a copy fails, the others still run and the exit status is non-zero.
+
+### Remote targets
+
+`remote:` is the name `incus remote add` gave the other server. Tink does **not** store credentials or addresses: it opens that
+remote the way the `incus` command does, from the Incus client configuration of the user running tink (`~/.config/incus`, or
+`$INCUS_CONF`; under `sudo` that is *root's*, so add the remote as root). The remote's **project** is the one configured for the
+remote (`incus remote add NAME URL --project tink-backup`), and its pool is `pool:` on the target, default `default`.
+
+```
+incus remote add homelabvps https://127.0.0.1:18444 --project tink-backup   # as the user that runs tink
+```
+
+- **The data is relayed through tink.** Neither server has to reach the other, only the machine running tink has to reach the
+  remote, so an SSH tunnel is enough (`ssh -N -L 18444:<remote's Incus address>:9443 host`, with the remote added at `127.0.0.1:18444`).
+  Pull mode needs the far server to dial back to this one and push mode needs this one to reach the far one's own advertised
+  address; both break behind NAT or through a tunnel, and a restricted project refuses pull anyway.
+- **A cut-off copy is never a backup.** The restore point carries its markers only once the copy has *completed*. A copy that dies
+  part way (the tunnel drops, the disk fills) is deleted; if even that fails, the error names the volume to delete by hand, and
+  because it has no markers tink will never list, prune, restore or verify from it.
+- **One source server per target project.** Restore points are matched by project, pool and volume name only, so two servers backing
+  a volume of the same name up into the same remote project would see (and prune) each other's. Give each source its own project
+  on the remote. (The hostname is not part of the match: after losing a host, the rebuilt one must still find its backups.)
+- **Restore and verify `--from` a remote** pull the restore point back through tink the same way, and need nothing but the remote.
+- **Trust scoped to a project may not be enforced.** An Incus *restricted* client certificate is limited to its projects only if the
+  server's authorization lets Incus's own check run. A server that routes `authorization.client.tls-restricted` through a custom
+  scriptlet that returns `True` (as an `incus-ui` setup might) gives that certificate full access. Check what the remote lets the
+  certificate see (`incus project list REMOTE:`) before relying on it.
 
 **Why a new volume each time, and not one target volume refreshed with `incus storage volume copy --refresh`?** Because a refresh
 makes the target *mirror* the source's snapshots. Tested on two TrueNAS-backed pools: when the source pruned a snapshot, the next
@@ -248,8 +275,7 @@ The direction for everything below is in [`volume-backup-design.md`](volume-back
   power was cut -- fine for Postgres (it replays WAL), not a substitute for a
   logical dump. Nothing coordinates *two* volumes: a volume pair snapshotted on
   the same schedule is not captured at the same instant.
-- **Copies go to pool targets only**; a remote Incus server target needs a second host to test against and is reported as an error.
-  Each run is a **full copy**; there is no incremental transfer yet.
+- **Each run is a full copy**, over the network for a remote target; there is no incremental transfer yet.
 - **Nothing schedules copies**: call `tink backup run --due` from cron or a timer.
 - **A restore point is crash-consistent**, like the snapshot it is copied from.
 - **Verify is only as strong as its check**, and an unchecked verify only proves the snapshot restores.

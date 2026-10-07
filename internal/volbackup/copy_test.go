@@ -115,9 +115,6 @@ func TestPickRestorePoint(t *testing.T) {
 
 func TestCopyRefusesWhatCannotBeABackup(t *testing.T) {
 	v := Volume{Name: "lib"}
-	if _, err := Copy(nil, v, Target{Name: "macpro", Remote: "macpro", Pool: "default"}, CopyOptions{}); err == nil || !strings.Contains(err.Error(), "remote Incus server") {
-		t.Errorf("a remote target is not supported yet and must say so: %v", err)
-	}
 	if _, err := Copy(nil, v, Target{Name: "x"}, CopyOptions{}); err == nil || !strings.Contains(err.Error(), "no pool") {
 		t.Errorf("a target without a pool: %v", err)
 	}

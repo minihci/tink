@@ -126,7 +126,7 @@ Why this is the right first engine:
 | Target | How | Status |
 |---|---|---|
 | Another Incus host on the LAN (e.g. the Mac Pro 5,1) | an Incus remote | [hypothesis] untested; needs the second host up and trusted |
-| A VPS running Incus | an Incus remote over the internet | [hypothesis] this is the off-site case; bandwidth and the API's exposure to the internet are the concerns, not mechanics |
+| A VPS running Incus | an Incus remote over the internet (an SSH tunnel to its API works) | [verified] copy to and from a `dir`-pool VPS over a two-hop SSH tunnel, relay mode, round-tripped byte for byte; see step 3b below. Bandwidth, not mechanics, is the concern |
 | A TrueNAS box | a *local* pool using Incus's `truenas` driver, copy across pools | [verified] against a TrueNAS SCALE 25.10.7 VM; see below, including what did **not** work |
 
 **TrueNAS.** Tron's Incus (7.2) lists the `truenas` driver (v0.7.7) as supported
@@ -349,8 +349,7 @@ Ordered so each step is useful alone, and the Incus-supported path comes first.
    Verified live: restore gives correct point-in-time contents and refuses to overwrite; a passing
    check stamps the volume; a failing check (run against a snapshot with the critical file
    deleted) leaves the stamp unchanged; nothing is left behind on either path.
-3. **`engine: incus` copies.** **Done for pool targets** (see `volume-backup.md`); remote Incus targets and a scheduler
-   are not. Differences from the design above, and why:
+3. **`engine: incus` copies.** **Done for pool targets and Incus remotes** (see `volume-backup.md`); a scheduler is not. Differences from the design above, and why:
    - **Not `copy --refresh`.** Two experiments on two TrueNAS-backed pools **[verified]**: (a) refreshing a volume makes the target
      mirror the source's snapshots, so a snapshot the source pruned is deleted from the target at the next refresh (also with
      `--refresh-exclude-older`), and target snapshots carry no expiry; (b) refreshing *from a snapshot* copies the right,
@@ -363,7 +362,15 @@ Ordered so each step is useful alone, and the Incus-supported path comes first.
      the result and says so.
    - **No scheduler.** `tink backup run --due` is meant to be called from cron or a timer; the daemon is not wired in. `plan` warns when a
      copy has never run or is overdue, which is what makes the missing scheduler visible instead of silent.
-   - **Remote targets are refused** with a clear error: without a second Incus host there is nothing real to test a push against.
+   **3b, remote targets [verified]** on a VPS reached only through an SSH tunnel (Tron -> Mac -> VPS API):
+   - Transfer modes with `incus storage volume copy`: **pull** is refused for a restricted project and could not dial back anyway;
+     **push** and **relay** both worked in both directions. Tink always uses **relay**: the only machine known to reach both ends is tink.
+   - `incus remote add` itself failed every time with `400 Bad Request {}` on its third request (with a token and with an already-trusted
+     certificate), while `curl` with the same certificate through the same tunnel, and every later `incus` command, worked. The cause is not
+     known; the remote entry was written into the client config by hand, which is all tink needs.
+   - The remote server's `authorization.client.tls-restricted: scriptlet` made a *restricted* certificate see every project: scoping a
+     certificate to a project is only as good as the server's authorization setting.
+
 4. **Off-site restic job engine**, built on the mechanism from step 2, for hosts with
    no second Incus server.
 
@@ -375,8 +382,8 @@ Ordered so each step is useful alone, and the Incus-supported path comes first.
   realistic sizes; do copied snapshots carry the source's expiry; will TrueNAS fix the
   query (or Incus work around it); and how does Incus behave at boot or mid-copy when the
   NAS is unreachable (not tested).
-- **Remote targets:** how does tink hold the credentials (client cert + trust token)
-  for an Incus remote? It already connects to the local socket only.
+- **Remote targets:** *resolved*: tink holds no credentials; it opens the remote from the Incus client configuration of the user
+  running it (`incus remote add` did the trust). Still open: where that configuration lives for a daemon, and a way to keep a tunnel up.
 - **Retention on a target:** do refreshed copies carry the source's snapshot expiry, or
   need their own `snapshots.expiry` on the target volume?
 - **Same-pool clones and quotas/space:** a clone is cheap on btrfs/ZFS, but a `dir`

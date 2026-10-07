@@ -71,17 +71,20 @@ func Copy(server incus.InstanceServer, v Volume, t Target, opts CopyOptions) (re
 		}
 	}
 
-	if t.Remote != "" {
-		return res, fmt.Errorf("target %q is a remote Incus server (%s); only pool targets can be copied to so far", t.Name, t.Remote)
+	if t.Remote == "" {
+		if t.Pool == "" {
+			return res, fmt.Errorf("target %q has no pool", t.Name)
+		}
+		if t.Pool == v.pool() {
+			return res, fmt.Errorf("target %q is pool %q, the volume's own pool: that is the same failure domain, not a copy", t.Name, t.Pool)
+		}
 	}
-	if t.Pool == "" {
-		return res, fmt.Errorf("target %q has no pool", t.Name)
+	dst, err := t.dest(server, v)
+	if err != nil {
+		return res, err
 	}
-	if t.Pool == v.pool() {
-		return res, fmt.Errorf("target %q is pool %q, the volume's own pool: that is the same failure domain, not a copy", t.Name, t.Pool)
-	}
-	if _, _, err := s.GetStoragePool(t.Pool); err != nil {
-		return res, fmt.Errorf("target %q: pool %q: %w", t.Name, t.Pool, err)
+	if _, _, err := dst.GetStoragePool(t.pool()); err != nil {
+		return res, fmt.Errorf("target %q: pool %q: %w", t.Name, t.where(), err)
 	}
 	src, _, err := s.GetStoragePoolVolume(v.pool(), "custom", v.Name)
 	if err != nil {
@@ -91,24 +94,24 @@ func Copy(server incus.InstanceServer, v Volume, t Target, opts CopyOptions) (re
 	start := now()
 	res.Snapshot = "tink-copy-" + stamped(start)
 	res.Volume = v.Name + "-bk-" + stamped(start)
-	if volumeExists(s, t.Pool, res.Volume) {
-		return res, fmt.Errorf("%s/%s already exists (a second run in the same second?)", t.Pool, res.Volume)
+	if volumeExists(dst, t.pool(), res.Volume) {
+		return res, fmt.Errorf("%s/%s already exists (a second run in the same second?)", t.where(), res.Volume)
 	}
 	copyOf := resolve.CopyOf(v.Project, v.pool(), v.Name)
 
 	if opts.DryRun {
 		res.Planned = []string{
 			fmt.Sprintf("snapshot %s/%s@%s", v.pool(), v.Name, res.Snapshot),
-			fmt.Sprintf("copy it to %s/%s", t.Pool, res.Volume),
+			fmt.Sprintf("copy it to %s/%s", t.where(), res.Volume),
 			fmt.Sprintf("remove the temporary snapshot, and stamp %s", resolve.CopyStampAt(t.Name)),
 		}
 		if opts.Retain != "" {
-			pruned, perr := prune(s, v, t, opts.Retain, start, "", true)
+			pruned, perr := prune(dst, v, t, opts.Retain, start, "", true)
 			if perr != nil {
 				return res, perr
 			}
 			for _, p := range pruned {
-				res.Planned = append(res.Planned, fmt.Sprintf("prune restore point %s/%s (older than %s)", t.Pool, p, opts.Retain))
+				res.Planned = append(res.Planned, fmt.Sprintf("prune restore point %s/%s (older than %s)", t.where(), p, opts.Retain))
 			}
 		}
 		return res, nil
@@ -135,28 +138,32 @@ func Copy(server incus.InstanceServer, v Volume, t Target, opts CopyOptions) (re
 		}
 	}()
 
-	say("copying it to %s/%s", t.Pool, res.Volume)
-	from := api.StorageVolume{
-		Name: v.Name + "/" + res.Snapshot, Type: "custom", ContentType: src.ContentType,
-		StorageVolumePut: api.StorageVolumePut{Config: map[string]string{
-			resolve.MarkerCopyOf:     copyOf,
-			resolve.MarkerCopyAt:     start.UTC().Format(time.RFC3339),
-			resolve.MarkerCopyTarget: t.Name,
-			resolve.MarkerCopySnap:   res.Snapshot,
-		}},
+	say("copying it to %s/%s", t.where(), res.Volume)
+	// The markers are applied only AFTER the copy has completed. A copy that is cut off part way (a tunnel
+	// that drops, a full disk) may leave a partial volume behind; without markers it is never listed as a
+	// restore point, so it can never be restored from, verified, or counted as the newest backup.
+	markers := map[string]string{
+		resolve.MarkerCopyOf:     copyOf,
+		resolve.MarkerCopyAt:     start.UTC().Format(time.RFC3339),
+		resolve.MarkerCopyTarget: t.Name,
+		resolve.MarkerCopySnap:   res.Snapshot,
 	}
-	cop, cerr := s.CopyStoragePoolVolume(t.Pool, s, v.pool(), from, &incus.StoragePoolVolumeCopyArgs{Name: res.Volume})
+	from := api.StorageVolume{Name: v.Name + "/" + res.Snapshot, Type: "custom", ContentType: src.ContentType}
+	cop, cerr := dst.CopyStoragePoolVolume(t.pool(), s, v.pool(), from, &incus.StoragePoolVolumeCopyArgs{Name: res.Volume, Mode: t.transferMode()})
 	if cerr == nil {
 		cerr = cop.Wait()
 	}
 	if cerr != nil {
 		// the name is unique to this run, so anything under it is ours: do not leave a half-made restore point
-		if volumeExists(s, t.Pool, res.Volume) {
-			_ = s.DeleteStoragePoolVolume(t.Pool, "custom", res.Volume)
+		note := ""
+		if volumeExists(dst, t.pool(), res.Volume) {
+			if derr := dst.DeleteStoragePoolVolume(t.pool(), "custom", res.Volume); derr != nil {
+				note = fmt.Sprintf(" (and the partial volume %s/%s could not be removed: %v; it carries no marker, so tink will never use it, delete it by hand)", t.where(), res.Volume, derr)
+			}
 		}
-		return res, fmt.Errorf("copying %s/%s@%s to %s/%s: %w", v.pool(), v.Name, res.Snapshot, t.Pool, res.Volume, cerr)
+		return res, fmt.Errorf("copying %s/%s@%s to %s/%s: %w%s", v.pool(), v.Name, res.Snapshot, t.where(), res.Volume, cerr, note)
 	}
-	if err := ensureMarkers(s, t.Pool, res.Volume, from.Config); err != nil {
+	if err := ensureMarkers(dst, t.pool(), res.Volume, markers); err != nil {
 		return res, err
 	}
 
@@ -165,7 +172,7 @@ func Copy(server incus.InstanceServer, v Volume, t Target, opts CopyOptions) (re
 	}
 	if opts.Retain != "" {
 		say("pruning restore points older than %s", opts.Retain)
-		if res.Pruned, err = prune(s, v, t, opts.Retain, start, res.Volume, false); err != nil {
+		if res.Pruned, err = prune(dst, v, t, opts.Retain, start, res.Volume, false); err != nil {
 			return res, fmt.Errorf("the copy succeeded, but pruning failed: %w", err)
 		}
 	}
@@ -221,9 +228,18 @@ func removeSnapshot(s incus.InstanceServer, v Volume, name string) error {
 // marker for exactly this volume count: a volume tink did not make, or one made for another volume, is
 // never listed, and so is never pruned or restored from.
 func ListRestorePoints(s incus.InstanceServer, v Volume, t Target) ([]RestorePoint, error) {
-	vols, err := s.GetStoragePoolVolumes(t.Pool)
+	dst, err := t.dest(s, v)
 	if err != nil {
-		return nil, fmt.Errorf("listing volumes in pool %q: %w", t.Pool, err)
+		return nil, err
+	}
+	return listPoints(dst, v, t)
+}
+
+// listPoints is ListRestorePoints on a server already resolved with dest.
+func listPoints(dst incus.InstanceServer, v Volume, t Target) ([]RestorePoint, error) {
+	vols, err := dst.GetStoragePoolVolumes(t.pool())
+	if err != nil {
+		return nil, fmt.Errorf("listing volumes in pool %q: %w", t.where(), err)
 	}
 	return restorePointsOf(vols, resolve.CopyOf(v.Project, v.pool(), v.Name)), nil
 }
@@ -245,8 +261,8 @@ func restorePointsOf(vols []api.StorageVolume, copyOf string) []RestorePoint {
 }
 
 // prune removes restore points older than retain, never the newest and never `keep` (the one just made).
-func prune(s incus.InstanceServer, v Volume, t Target, retain string, now time.Time, keep string, dryRun bool) ([]string, error) {
-	points, err := ListRestorePoints(s, v, t)
+func prune(dst incus.InstanceServer, v Volume, t Target, retain string, now time.Time, keep string, dryRun bool) ([]string, error) {
+	points, err := listPoints(dst, v, t)
 	if err != nil {
 		return nil, err
 	}
@@ -259,8 +275,8 @@ func prune(s incus.InstanceServer, v Volume, t Target, retain string, now time.T
 	}
 	var done []string
 	for _, name := range victims {
-		if err := s.DeleteStoragePoolVolume(t.Pool, "custom", name); err != nil {
-			return done, fmt.Errorf("pruning %s/%s: %w", t.Pool, name, err)
+		if err := dst.DeleteStoragePoolVolume(t.pool(), "custom", name); err != nil {
+			return done, fmt.Errorf("pruning %s/%s: %w", t.where(), name, err)
 		}
 		done = append(done, name)
 	}
@@ -308,17 +324,27 @@ func pickRestorePoint(points []RestorePoint, wanted string) (RestorePoint, error
 // copyFromTarget materialises a restore point as a new volume in the volume's own pool. The new volume
 // is scrubbed of the copy markers, so it can never be mistaken for a restore point.
 func copyFromTarget(s incus.InstanceServer, v Volume, t Target, rp RestorePoint, newName string) error {
-	src, _, err := s.GetStoragePoolVolume(t.Pool, "custom", rp.Volume)
+	dst, err := t.dest(s, v)
 	if err != nil {
-		return fmt.Errorf("restore point %s/%s: %w", t.Pool, rp.Volume, err)
+		return err
+	}
+	src, _, err := dst.GetStoragePoolVolume(t.pool(), "custom", rp.Volume)
+	if err != nil {
+		return fmt.Errorf("restore point %s/%s: %w", t.where(), rp.Volume, err)
 	}
 	from := api.StorageVolume{Name: rp.Volume, Type: "custom", ContentType: src.ContentType}
-	op, err := s.CopyStoragePoolVolume(v.pool(), s, t.Pool, from, &incus.StoragePoolVolumeCopyArgs{Name: newName})
+	op, err := s.CopyStoragePoolVolume(v.pool(), dst, t.pool(), from, &incus.StoragePoolVolumeCopyArgs{Name: newName, Mode: t.transferMode()})
 	if err == nil {
 		err = op.Wait()
 	}
 	if err != nil {
-		return fmt.Errorf("copying %s/%s to %s/%s: %w", t.Pool, rp.Volume, v.pool(), newName, err)
+		note := ""
+		if volumeExists(s, v.pool(), newName) {
+			if derr := s.DeleteStoragePoolVolume(v.pool(), "custom", newName); derr != nil {
+				note = fmt.Sprintf(" (and the partial volume %s/%s could not be removed: %v; delete it by hand)", v.pool(), newName, derr)
+			}
+		}
+		return fmt.Errorf("copying %s/%s to %s/%s: %w%s", t.where(), rp.Volume, v.pool(), newName, err, note)
 	}
 	return scrubMarkers(s, v.pool(), newName)
 }

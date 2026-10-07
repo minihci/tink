@@ -281,9 +281,6 @@ func sourceToRestore(s incus.InstanceServer, v Volume, from *Target, wanted stri
 		}
 		return restoreFunc{label: snap, run: func(newName string) error { return copySnapshot(s, v, snap, newName) }}, nil
 	}
-	if from.Remote != "" {
-		return restoreFunc{}, fmt.Errorf("target %q is a remote Incus server; only pool targets are supported so far", from.Name)
-	}
 	// The source volume is deliberately NOT required to exist here: restoring from a target is for exactly
 	// the case where it is gone. Restore points are found by their marker, which names the volume.
 	points, err := ListRestorePoints(s, v, *from)

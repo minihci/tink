@@ -89,6 +89,9 @@ func failureDomain(remote, pool string) string {
 		pool = "default"
 	}
 	if remote != "" {
+		if pool == "" {
+			pool = "default" // a remote target's unset pool is its default pool
+		}
 		return "remote:" + remote + "/" + pool
 	}
 	return "local:" + pool
