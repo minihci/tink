@@ -127,7 +127,7 @@ Why this is the right first engine:
 |---|---|---|
 | Another Incus host on the LAN (e.g. the Mac Pro 5,1) | an Incus remote | [hypothesis] untested; needs the second host up and trusted |
 | A VPS running Incus | an Incus remote over the internet (an SSH tunnel to its API works) | [verified] copy to and from a `dir`-pool VPS over a two-hop SSH tunnel, relay mode, round-tripped byte for byte; see step 3b below. Bandwidth, not mechanics, is the concern |
-| A TrueNAS box | a *local* pool using Incus's `truenas` driver, copy across pools | [verified] against a TrueNAS SCALE 25.10.7 VM; see below, including what did **not** work |
+| A TrueNAS box | a *local* pool using Incus's `truenas` driver, copy across pools | [verified] against stock TrueNAS SCALE 25.10.7 and 25.04.2.6; see below, including what did **not** work |
 
 **TrueNAS.** Tron's Incus (7.2) lists the `truenas` driver (v0.7.7) as supported
 **[verified]**. Per upstream it is block-based: each Incus volume becomes a ZFS volume
@@ -362,6 +362,20 @@ Ordered so each step is useful alone, and the Incus-supported path comes first.
      the result and says so.
    - **No scheduler.** `tink backup run --due` is meant to be called from cron or a timer; the daemon is not wired in. `plan` warns when a
      copy has never run or is overdue, which is what makes the missing scheduler visible instead of silent.
+   **TrueNAS pools, stock 25.10.7 [verified]** (a pristine install, none of the middleware fix applied; a control confirmed it still
+   fails Incus's same-pool snapshot clone with `properties.managedby: Property does not exist and cannot be inherited`, which a patched
+   25.10.7 does not):
+   - Everything tink does across pools works: `backup run` from a local pool into the stock TrueNAS pool (including the Incus volume
+     UPDATE that sets the restore-point markers), pruning, `restore`/`verify --from` it, the lost-source case, and a source volume that
+     *lives* on the stock TrueNAS pool copied out to another pool. The real Immich stack was backed up to it and its DB restore point verified.
+     Restoring a restore point *into* a TrueNAS pool works too (a copy from a volume, not from a snapshot).
+   - Why: the bug is `pool.dataset.update` failing when sent `user_properties` for a dataset that has `comments`/`managedby`. Incus
+     only does that after cloning a snapshot **within one TrueNAS pool**. Tink never does: copies between pools are not clones, and
+     `UpdateVolume` touches TrueNAS only for `size`/`truenas.use_refquota`, everything else (including the `user.tink.backup.*`
+     markers) lives in Incus's own database (read in the Incus 7.4 driver; confirmed live on 7.5.1).
+   - **What does fail on stock 25.10:** the local, tier-1 `tink backup restore VOLUME --snapshot S` of a volume that *lives* on a TrueNAS
+     pool, because restoring a snapshot into the same pool is exactly that clone. This is the upstream bug, not tink; the error is
+     Incus's, and it includes the TrueNAS API key on the command line, so treat tink's output for that failure as sensitive.
    **3b, remote targets [verified]** on a VPS reached only through an SSH tunnel (Tron -> Mac -> VPS API):
    - Transfer modes with `incus storage volume copy`: **pull** is refused for a restricted project and could not dial back anyway;
      **push** and **relay** both worked in both directions. Tink always uses **relay**: the only machine known to reach both ends is tink.
