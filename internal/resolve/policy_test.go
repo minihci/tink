@@ -149,10 +149,10 @@ func TestDecideVolumeConvergesThePolicy(t *testing.T) {
 		return liveVolume(c)
 	}
 
-	if p := decideVolume(r, nil, volumeEnv{targets: targets}); p.Action != ActionCreate || !strings.Contains(strings.Join(p.Changes, "|"), PolicyKey) {
+	if p := decideVolume(r, nil, volumeEnv{targets: targets}); p.Action != ActionCreate || !strings.Contains(strings.Join(p.Changes, "|"), "backup policy: ") {
 		t.Errorf("a new volume is created with the policy: %v %v", p.Action, p.Changes)
 	}
-	if p := decideVolume(r, with(nil), volumeEnv{targets: targets}); p.Action != ActionUpdate || !strings.Contains(strings.Join(p.Changes, "|"), PolicyKey) {
+	if p := decideVolume(r, with(nil), volumeEnv{targets: targets}); p.Action != ActionUpdate || !strings.Contains(strings.Join(p.Changes, "|"), "backup policy: ") {
 		t.Errorf("a volume that lacks the policy is updated: %v %v", p.Action, p.Changes)
 	}
 	if p := decideVolume(r, with(map[string]string{PolicyKey: policy}), volumeEnv{targets: targets}); p.Action != ActionNone {
@@ -162,7 +162,7 @@ func TestDecideVolumeConvergesThePolicy(t *testing.T) {
 	r2 := volWithCopies()
 	r2.Backup.Copies[0].Retain = "60d"
 	p := decideVolume(r2, with(map[string]string{PolicyKey: policy}), volumeEnv{targets: targets})
-	if p.Action != ActionUpdate || !strings.Contains(strings.Join(p.Changes, "|"), PolicyKey) {
+	if p.Action != ActionUpdate || !strings.Contains(strings.Join(p.Changes, "|"), "backup policy: ") {
 		t.Errorf("a changed declaration must show as an update, which is the point of keeping the policy on the volume: %v %v", p.Action, p.Changes)
 	}
 }

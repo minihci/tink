@@ -312,13 +312,13 @@ func TestPlanIsToldWhatTheHelperCanReadAndOnlyWhenItHasSaidSo(t *testing.T) {
 }
 
 func TestPlanEndsWithANoteAboutAHelperThatIsNotWellAndSaysNothingOtherwise(t *testing.T) {
-	note := func(srv instancesServer) string {
+	note := func(srv instancesServer, resources ...resolve.Resource) string {
 		var out bytes.Buffer
-		noteHelper(&out, srv, helperNow)
+		noteHelper(&out, srv, helperNow, resources)
 		return out.String()
 	}
 	if got := note(instancesServer{}); got != "" {
-		t.Errorf("no helper, nothing to say: %q", got)
+		t.Errorf("no helper and no copies declared, nothing to say: %q", got)
 	}
 	if got := note(instancesServer{all: []api.Instance{helperInstance("p", "h", "Running", goodStatus(nil))}}); got != "" {
 		t.Errorf("a healthy helper, nothing to say: %q", got)
@@ -376,5 +376,79 @@ func TestHelperRemoteCommandsAreThereAndSayWhatTheyNeed(t *testing.T) {
 	}
 	if err := runRoot(t, "helper", "remote", "remove"); err == nil || !strings.Contains(err.Error(), "accepts 1 arg") {
 		t.Errorf("a name is needed: %v", err)
+	}
+}
+
+func copyVolume(name, project string) resolve.Resource {
+	return resolve.Resource{Kind: resolve.KindStorageVolume, Name: name, Project: project, Backup: &resolve.VolumeBackup{
+		Copies: []resolve.BackupCopy{{Target: "nas", Schedule: "@daily", Retain: "7d"}}}}
+}
+
+func TestPlanSaysSoWhenAStackDeclaresCopiesAndNothingOnTheServerWillRunThem(t *testing.T) {
+	note := func(srv instancesServer, resources ...resolve.Resource) string {
+		var out bytes.Buffer
+		noteHelper(&out, srv, helperNow, resources)
+		return out.String()
+	}
+	none := instancesServer{}
+
+	got := note(none, copyVolume("lib", ""))
+	for _, want := range []string{"1 volume declares copies (lib)", "no helper on this server", "nothing here will run them", "tink helper install", "tink backup run --due"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("%q not in %q", want, got)
+		}
+	}
+	got = note(none, copyVolume("lib", ""), copyVolume("photos", "tenant"))
+	if !strings.Contains(got, "2 volumes declare copies (lib, tenant/photos)") {
+		t.Errorf("the volumes are named the way a run labels them: %q", got)
+	}
+	var many []resolve.Resource
+	for _, n := range []string{"a", "b", "c", "d", "e", "f", "g"} {
+		many = append(many, copyVolume(n, ""))
+	}
+	if got := note(none, many...); !strings.Contains(got, "7 volumes declare copies (a, b, c, d, e, and 2 more)") {
+		t.Errorf("a long list is cut short: %q", got)
+	}
+
+	// what does not count as declaring copies
+	snapshotsOnly := resolve.Resource{Kind: resolve.KindStorageVolume, Name: "s", Backup: &resolve.VolumeBackup{Snapshots: &resolve.SnapshotPolicy{Schedule: "@daily", Retain: "7d"}}}
+	optedOut := resolve.Resource{Kind: resolve.KindStorageVolume, Name: "o", Backup: &resolve.VolumeBackup{None: "regenerable"}}
+	instance := resolve.Resource{Kind: resolve.KindInstance, Name: "i"}
+	if got := note(none, snapshotsOnly, optedOut, instance); got != "" {
+		t.Errorf("only copies need something to run them: %q", got)
+	}
+
+	// a helper there is, well or not, replaces this note: the first says nothing, the second says what is wrong with it
+	if got := note(instancesServer{all: []api.Instance{helperInstance("p", "h", "Running", goodStatus(nil))}}, copyVolume("lib", "")); got != "" {
+		t.Errorf("a healthy helper will run them: %q", got)
+	}
+	got = note(instancesServer{all: []api.Instance{helperInstance("p", "h", "Stopped", goodStatus(nil))}}, copyVolume("lib", ""))
+	if !strings.Contains(got, "the helper is down") || strings.Contains(got, "no helper on this server") {
+		t.Errorf("%q", got)
+	}
+	// a server that cannot be asked is not a server with no helper
+	if got := note(instancesServer{err: errors.New("denied")}, copyVolume("lib", "")); got != "" {
+		t.Errorf("%q", got)
+	}
+}
+
+func TestPlanPrintsOneChangePerLine(t *testing.T) {
+	var out bytes.Buffer
+	printPlanned(&out, resolve.PlannedResource{
+		Resource: resolve.Resource{Kind: resolve.KindStorageVolume, Name: "lib"}, Action: resolve.ActionCreate,
+		Changes:  []string{`config.snapshots.schedule: "" -> "0 3 * * *"`, `backup policy: + copy to nas (pool nas): schedule "@daily", keep 7d`},
+		Warnings: []string{"3-2-1 not met"},
+	})
+	want := "  storage-volume/lib: would create\n" +
+		"      config.snapshots.schedule: \"\" -> \"0 3 * * *\"\n" +
+		"      backup policy: + copy to nas (pool nas): schedule \"@daily\", keep 7d\n" +
+		"      warning: 3-2-1 not met\n"
+	if out.String() != want {
+		t.Errorf("got:\n%s\nwant:\n%s", out.String(), want)
+	}
+	out.Reset()
+	printPlanned(&out, resolve.PlannedResource{Resource: resolve.Resource{Kind: resolve.KindInstance, Name: "web"}, Action: resolve.ActionNone})
+	if out.String() != "  instance/web: no changes\n" {
+		t.Errorf("%q", out.String())
 	}
 }

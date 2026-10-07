@@ -157,14 +157,14 @@ func applyOne(server incus.InstanceServer, r Resource, opts PlanOptions, note fu
 			return outConverged, err
 		}
 		if r.Kind == KindInstance && r.Restart {
-			note("%s/%s: updated and restarted (%v)", r.Kind, r.Name, plan.Changes)
+			note("%s/%s: updated and restarted (%s)", r.Kind, r.Name, strings.Join(plan.Changes, "; "))
 			return outChanged, nil
 		}
 		if r.Kind == KindInstance && !r.Restart && changesEnvironment(plan.Changes) {
-			note("%s/%s: updated (%v); its environment changed but it was not restarted, so running processes keep the old values until it is (restart: true does that on apply)", r.Kind, r.Name, plan.Changes)
+			note("%s/%s: updated (%s); its environment changed but it was not restarted, so running processes keep the old values until it is (restart: true does that on apply)", r.Kind, r.Name, strings.Join(plan.Changes, "; "))
 			return outChanged, nil
 		}
-		note("%s/%s: updated (%v)", r.Kind, r.Name, plan.Changes)
+		note("%s/%s: updated (%s)", r.Kind, r.Name, strings.Join(plan.Changes, "; "))
 		return outChanged, nil
 	case ActionRebuild:
 		rebuildMu.Lock()
