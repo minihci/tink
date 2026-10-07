@@ -220,8 +220,8 @@ not a dozen scalars, so it is applied and compared as a unit, and an older helpe
 `schedule` and `retain` stay on Incus's own keys, as today.
 
 **Discovery.** The scheduler lists custom volumes (every project the helper can see, every pool) and reads the key, the way the ingress reconcile
-reads `user.ingress.*` on instances. **[code]** for the pattern (`internal/ingress`); that a helper can list volumes across projects is **[hypothesis]**
-(see [open questions](#open-questions)). A volume with no key has no scheduled copies. The listing skips any volume that carries a restore-point or
+reads `user.ingress.*` on instances. **[code]** for the pattern (`internal/ingress`); that a helper can list volumes across projects is **[verified]**
+on the lab host (see [what the discovery test found](#what-the-discovery-test-found)). A volume with no key has no scheduled copies. The listing skips any volume that carries a restore-point or
 in-progress marker (`copy-of`, `copy-partial-of`), so a backup is never scheduled for a backup.
 
 **Drift becomes a `plan` update.** `plan` compares the key's content with what the YAML would write, exactly as it already does for the two
@@ -246,6 +246,27 @@ argument limit, not in Incus).
 
 **What it does not change.** `restore` and `verify` still take their target from the stack (`--from TARGET` names a `kind: backup-target`), because
 restoring is for the case where the source volume, and so its key, is gone. Failure stamps, markers, the server marker and the sweep are unchanged.
+
+## What the discovery test found
+
+Run on the lab host (Incus 7.5.1, two storage pools, one of them TrueNAS-backed) with the helper's own client library (`GetStoragePoolVolumesAllProjects`, Incus
+client v7.4.0 from `go.mod`) and throwaway projects, volumes, a container and a trust entry, all deleted afterwards.
+
+| Question | Result |
+|---|---|
+| Can one call list the custom volumes of every project in a pool, with their `user.*` config? | **Yes.** One call per pool returns all projects, with the full config, so no per-volume fetch is needed. **[verified]** |
+| Does the project the client is scoped to matter? | **No.** A client scoped to a project with no volumes of its own got the same list. **[verified]** |
+| Same volume name in two projects? | Distinguishable by the `project` field. **[verified]** |
+| Does it work from inside a container, through the proxy-device socket, as the helper would run? | **Yes**, same result. **[verified]** |
+| Cost | 46 volumes (all types) across 8 projects in about 70 ms on the default pool, 10 ms on the TrueNAS pool. One call per pool per tick is cheap here; larger hosts not measured. **[verified]** |
+| Is a restore point's inherited policy visible, so it can be skipped? | **Yes**: a volume with both the policy key and `user.tink.backup.copy-of` was listed with both. The key is carried by a copy unless scrubbed, as [the policy on the volume](#the-policy-on-the-volume) says. **[verified]** |
+| A 64 KiB `user.*` value on a volume | Accepted. **[verified]** |
+| A certificate **restricted to one project**, listing all projects | **Not bounded.** It saw its own project's volumes and also the **default project's** (custom, container, image and VM volumes, with config) on both pools, but **not** another throwaway project's. A direct `GET` of a default-project custom volume returned its full config; a `PUT` to it was refused (`User does not have permission for project "default"`). The same certificate's direct list of the default project returned nothing. **[verified]**, cause not established. |
+
+**What the last row does and does not show.** The lab host has **no authorization scriptlet and no other authorizer configured**, so the leak is not the
+`authorization.star` problem described under [Security](#security); it is Incus's own behaviour on 7.5.1 with a plain restricted certificate: reads of the
+default project are possible through `all-projects` and through a direct `GET`, while writes are refused. It was read-only, and the data read was
+configuration, not volume contents. It is a reason to treat a restricted helper identity as an open question, not as a boundary, and to re-test on each Incus version.
 
 ## What revision 3 changes
 
@@ -296,10 +317,14 @@ it is stated, not hidden. Consequences the design takes seriously:
   instance (no network, volume read-only), never in the helper. A restricted certificate (the hardening phase) should be checked against this.
 - **Failure text can contain credentials** (an Incus error echoed an API key). Stamps never carry it; logs are redacted best-effort.
 
-**Later (hardening).** Replace the socket with a client certificate scoped to the projects the helper manages. Two things to check first: an Incus
-*restricted* certificate is bounded only if the server's authorization lets Incus's own check run (a server routing
-`authorization.client.tls-restricted` through a scriptlet that returns `True` gives it everything, **[verified]** on a lab VPS); and whether
-the proxy's `security.uid`/`security.gid` can be set to a host user in the `incus` group for a restricted socket **[hypothesis, untested]**.
+**Later (hardening).** Replace the socket with a client certificate scoped to the projects the helper manages. Do not assume it will be bounded:
+
+- **On a host configured by `tink deploy`, it is not.** `configs/daemon/authorization.star` returns `True` for every TLS client, and an Incus
+  *restricted* certificate is bounded only if the server's authorization lets Incus's own check run (a server routing the decision through a scriptlet
+  that returns `True` gives it everything, **[verified]** on a lab VPS). The comment at the top of that file says the opposite and should be corrected.
+- **On the lab host, with no scriptlet at all, it was bounded only for writes and for other projects' volumes**, see
+  [what the discovery test found](#what-the-discovery-test-found). So a scriptlet is not the only way a restricted certificate leaks.
+- Whether the proxy's `security.uid`/`security.gid` can be set to a host user in the `incus` group for a restricted socket **[hypothesis, untested]**.
 
 ## Phasing
 
@@ -342,8 +367,8 @@ Each phase is useful alone and ends in something checkable on the lab host.
 
 - **Should the policy live on the volume (revision 3)?** The case is in [the policy on the volume](#the-policy-on-the-volume). It supersedes the
   question "should `tink apply` offer to sync the stack to the helper?" of revision 2, because `apply` would be the sync. Confirm before phase 3.
-- **Can the helper list volumes in every project it needs?** The scheduler's discovery depends on it. The socket should allow it; check on the lab host
-  with volumes in two projects before building phase 2f, and decide whether the helper's own project matters.
+- **Can the helper list volumes in every project it needs?** **Yes, answered on the lab host**; see
+  [what the discovery test found](#what-the-discovery-test-found). What is left open is only whether the same holds for a *restricted* identity (hardening).
 - **A volume removed from the YAML but still on the server.** Its key persists and the scheduler keeps copying it. Is "applied policy with no
   declaration" a `plan` warning, or should `apply` offer to clear it? Warning first is proposed.
 - **Per-volume cost of discovery.** Listing every custom volume every tick is cheap on one server; on a large one it may want a longer interval than
