@@ -30,24 +30,22 @@ func TestEnqueueJobsAndCancel(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// by default a job works from the copy policies on the volumes: nothing is sent with it
+	// a job works from the copy policies on the volumes: nothing but the request is sent
 	out, err := runCLI(t, "daemon", "enqueue", "--due", "--jobs", jobsDir)
 	if err != nil || !strings.Contains(out, "queued job ") {
 		t.Fatalf("enqueue: %v\n%s", err, out)
 	}
 	id := strings.Fields(strings.Split(out, "\n")[0])[2]
-	if _, err := os.Stat(filepath.Join(jobsDir, id, "bundle")); err == nil {
-		t.Error("a job that uses the volumes' policies carries no bundle")
+	if entries, _ := os.ReadDir(filepath.Join(jobsDir, id)); len(entries) != 2 {
+		t.Errorf("a job is its request.json and READY, nothing else: %v", entries)
 	}
-	out, err = runCLI(t, "daemon", "enqueue", "-f", stack, "lib", "--jobs", jobsDir)
+	out, err = runCLI(t, "daemon", "enqueue", "lib", "--jobs", jobsDir)
 	if err != nil || !strings.Contains(out, "queued job ") {
-		t.Fatalf("enqueue with a bundle: %v\n%s", err, out)
+		t.Fatalf("enqueue a named volume: %v\n%s", err, out)
 	}
-	// a stack that does not load is never bundled
-	bad := filepath.Join(root, "bad.yaml")
-	os.WriteFile(bad, []byte("kind: storage-volume\nname: x\nnonsense: 1\n"), 0o644)
-	if _, err := runCLI(t, "daemon", "enqueue", "-f", bad, "--jobs", jobsDir); err == nil {
-		t.Error("a stack that does not parse must not be sent")
+	// sending a stack with a job is gone: a stack that exists is still refused, as an unknown flag
+	if _, err := runCLI(t, "daemon", "enqueue", "-f", stack, "--jobs", jobsDir); err == nil || !strings.Contains(err.Error(), "unknown shorthand flag") {
+		t.Errorf("-f must no longer exist: %v", err)
 	}
 
 	out, err = runCLI(t, "daemon", "jobs", "--jobs", jobsDir)

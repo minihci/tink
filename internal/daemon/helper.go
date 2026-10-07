@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"path/filepath"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -13,7 +12,6 @@ import (
 
 	"github.com/minihci/tink/internal/backuprun"
 	"github.com/minihci/tink/internal/jobs"
-	"github.com/minihci/tink/internal/resolve"
 	"github.com/minihci/tink/internal/secrets"
 )
 
@@ -82,10 +80,8 @@ func (h *Helper) Executor() *jobs.Executor {
 	}
 }
 
-// backupRun is the backup-run job: make the copies, through the same code `tink backup run` uses. A job that carries
-// stack files (an operator's `daemon enqueue -f`) runs the copies that stack declares, for this job only. Any other job
-// runs the copies the volumes' own policies call for, found by listing the server: there is no stack held anywhere to
-// disagree with them.
+// backupRun is the backup-run job: make the copies, through the same code `tink backup run` uses, for the volumes whose own
+// policies call for them. They are found by listing the server: there is no stack held anywhere to disagree with them.
 func (h *Helper) backupRun(ctx context.Context, j jobs.Job, log io.Writer) (any, error) {
 	var args BackupRunArgs
 	if len(j.Request.Args) > 0 {
@@ -94,43 +90,19 @@ func (h *Helper) backupRun(ctx context.Context, j jobs.Job, log io.Writer) (any,
 		}
 	}
 	opts := backuprun.Options{Volumes: args.Volumes, Due: args.Due, DryRun: args.DryRun, Now: h.now}
-	var items []backuprun.Item
-	var eng backuprun.Engine
-	if len(j.Request.Entries) > 0 {
-		var resources []resolve.Resource
-		for _, e := range j.Request.Entries {
-			c, err := jobs.CleanBundlePath(e)
-			if err != nil {
-				return nil, fmt.Errorf("the job's stack file: %w", err)
-			}
-			rs, err := resolve.LoadFileConfined(filepath.Join(j.BundleDir, c), j.BundleDir)
-			if err != nil {
-				return nil, err
-			}
-			resources = append(resources, rs...)
-		}
-		var err error
-		if items, err = backuprun.FromStack(resources); err != nil {
-			return nil, err
-		}
-		if eng, err = h.Connect(); err != nil {
-			return nil, fmt.Errorf("connecting to incus: %w", err)
-		}
-	} else {
-		var err error
-		if eng, err = h.Connect(); err != nil {
-			return nil, fmt.Errorf("connecting to incus: %w", err)
-		}
-		var problems map[string]error
-		if items, problems, err = backuprun.Discover(eng); err != nil {
-			return nil, fmt.Errorf("listing the volumes: %w", err)
-		}
-		for _, what := range sortedKeys(problems) {
-			fmt.Fprintf(log, "skipped %s: %v\n", what, problems[what])
-		}
-		opts.UnknownMsg = "not a volume with a copy policy on this server"
-		opts.EmptyMsg = "nothing to do: no volume on this server carries a copy policy"
+	eng, err := h.Connect()
+	if err != nil {
+		return nil, fmt.Errorf("connecting to incus: %w", err)
 	}
+	items, problems, err := backuprun.Discover(eng)
+	if err != nil {
+		return nil, fmt.Errorf("listing the volumes: %w", err)
+	}
+	for _, what := range sortedKeys(problems) {
+		fmt.Fprintf(log, "skipped %s: %v\n", what, problems[what])
+	}
+	opts.UnknownMsg = "not a volume with a copy policy on this server"
+	opts.EmptyMsg = "nothing to do: no volume on this server carries a copy policy"
 	rep, err := backuprun.Run(ctx, eng, items, opts, log)
 	if err != nil {
 		return nil, err
@@ -200,7 +172,7 @@ func (h *Helper) Tick(state *SchedulerState) int {
 		return 0
 	}
 	args, _ := json.Marshal(BackupRunArgs{Due: true})
-	id, err := h.Store.Enqueue(jobs.Request{Kind: KindBackupRun, Origin: jobs.OriginSchedule, Args: args}, nil, now)
+	id, err := h.Store.Enqueue(jobs.Request{Kind: KindBackupRun, Origin: jobs.OriginSchedule, Args: args}, now)
 	if err != nil {
 		h.logf("queueing a backup: %v", err)
 		return 0

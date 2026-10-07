@@ -190,7 +190,7 @@ func (e *Executor) runJob(parent context.Context, queued Status) {
 	cancelled := make(chan struct{})
 	go e.watchCancel(ctx, dir, cancel, cancelled)
 
-	summary, runErr := e.invoke(ctx, h, Job{ID: id, Dir: dir, Request: req, BundleDir: filepath.Join(dir, "bundle")}, w)
+	summary, runErr := e.invoke(ctx, h, Job{ID: id, Dir: dir, Request: req}, w)
 	if rw != nil {
 		_ = rw.Flush()
 	}

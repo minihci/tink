@@ -45,21 +45,22 @@ not every minute.
 A job is a directory under `--jobs`:
 
 ```
-<id>/request.json   what to do (proto, kind, origin, the stack files it carries if any, arguments)
-<id>/bundle/        optional: stack files sent with this request only
+<id>/request.json   what to do (proto, kind, origin, arguments)
 <id>/READY          created LAST: nothing is read before it exists
 <id>/status.json    queued | running | succeeded | failed | cancelled, times, the error, and a summary of what was done
 <id>/log            what `tink backup run` printed (secrets scrubbed, at most 1 MiB)
 <id>/cancel         create it to ask the job to stop
 ```
 
-`READY` exists because the Incus file API writes files in place: a reader can see a half-written file, or a directory with only some of its files. A job is
-read only once `READY` says its writer has finished. `proto` (now 1) is the version of this layout, and what a client and the daemon must agree on.
+`READY` exists because the Incus file API writes files in place: a reader can see a half-written file. A job is read only once `READY` says its writer has
+finished, and it is written after the whole request. `proto` (now 1) is the version of this layout, and what a client and the daemon must agree on.
 
-A job works from the volumes' policies, found when the job runs. A job that carries a **bundle** (`tink daemon enqueue -f FILE`) instead runs the copies that
-stack declares, for this job only: it never changes what the scheduler does, so a checkout of a branch with a shortened `retain` cannot prune real restore
-points on the next tick. A stack that arrives this way is **data, not code**: it cannot make tink read a file outside the directory it was delivered in
-(paths, and symlinks, are checked). Image `source` files are not shipped (a helper has no use for them); one outside the stack's directory tree is an error.
+A job works from the volumes' policies, found when the job runs. Nothing but the request is sent with it, so what a job does cannot differ from what the volumes
+say, and a checkout of a branch with a shortened `retain` cannot prune real restore points: a policy only changes when `tink plan apply` writes it. To run one
+stack's copies, use `tink backup run -f FILE`, which runs where you start it.
+
+Earlier versions of tink could also send a stack with a job (`daemon enqueue -f`, with its files in a `bundle/` directory). That is gone, and a request that still
+carries one is **refused** (the job fails and says so), not run as an ordinary job, which would copy something other than what was asked for.
 
 - **A bad job never stops the executor.** A request that is not JSON, a protocol it does not speak, an unknown kind, an error and even a panic each become
   that job's `failed` status. Jobs left `running` by a process that died are marked `failed (interrupted)` when the daemon starts; the schedule retries the work.
