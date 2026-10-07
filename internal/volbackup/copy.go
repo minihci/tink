@@ -49,6 +49,8 @@ type CopyResult struct {
 	Snapshot string   // the source snapshot that was copied (removed again afterwards)
 	Volume   string   // the new restore point on the target
 	Pruned   []string // restore points removed for being older than Retain
+	// Swept are abandoned in-progress copies removed (see PartialGrace).
+	Swept []string
 	// OtherServers names the other servers that have restore points of a volume with this name on the target. They
 	// are left alone: only the server that made a restore point prunes it.
 	OtherServers []string
@@ -149,6 +151,13 @@ func copyTo(server incus.InstanceServer, v Volume, t Target, opts CopyOptions) (
 				res.Planned = append(res.Planned, fmt.Sprintf("prune restore point %s/%s (older than %s)", t.where(), p, opts.Retain))
 			}
 		}
+		swept, serr := sweepPartials(dst, v, t, start, "", true, me)
+		if serr != nil {
+			return res, serr
+		}
+		for _, p := range swept {
+			res.Planned = append(res.Planned, fmt.Sprintf("remove abandoned partial copy %s/%s (started more than %d days ago and never finished)", t.where(), p, int(PartialGrace/(24*time.Hour))))
+		}
 		return res, nil
 	}
 
@@ -174,9 +183,16 @@ func copyTo(server incus.InstanceServer, v Volume, t Target, opts CopyOptions) (
 	}()
 
 	say("copying it to %s/%s", t.where(), res.Volume)
-	// The markers are applied only AFTER the copy has completed. A copy that is cut off part way (a tunnel
-	// that drops, a full disk) may leave a partial volume behind; without markers it is never listed as a
-	// restore point, so it can never be restored from, verified, or counted as the newest backup.
+	// The restore point's markers are applied only AFTER the copy has completed. Until then the new volume carries an
+	// in-progress mark instead (a different key), so a copy that is cut off part way (a tunnel that drops, a full
+	// disk, tink killed) is never listed as a restore point, so it can never be restored from, verified, or counted
+	// as the newest backup, and yet tink can recognise it later and remove it (sweepPartials).
+	inProgress := map[string]string{
+		resolve.MarkerPartialOf:  copyOf,
+		resolve.MarkerPartialAt:  start.UTC().Format(time.RFC3339),
+		resolve.MarkerCopyTarget: t.Name,
+		resolve.MarkerCopyServer: me,
+	}
 	markers := map[string]string{
 		resolve.MarkerCopyOf:     copyOf,
 		resolve.MarkerCopyAt:     start.UTC().Format(time.RFC3339),
@@ -184,7 +200,8 @@ func copyTo(server incus.InstanceServer, v Volume, t Target, opts CopyOptions) (
 		resolve.MarkerCopySnap:   res.Snapshot,
 		resolve.MarkerCopyServer: me,
 	}
-	from := api.StorageVolume{Name: v.Name + "/" + res.Snapshot, Type: "custom", ContentType: src.ContentType}
+	from := api.StorageVolume{Name: v.Name + "/" + res.Snapshot, Type: "custom", ContentType: src.ContentType,
+		StorageVolumePut: api.StorageVolumePut{Config: inProgress}}
 	cop, cerr := dst.CopyStoragePoolVolume(t.pool(), s, v.pool(), from, &incus.StoragePoolVolumeCopyArgs{Name: res.Volume, Mode: t.transferMode()})
 	if cerr == nil {
 		cerr = cop.Wait()
@@ -194,30 +211,42 @@ func copyTo(server incus.InstanceServer, v Volume, t Target, opts CopyOptions) (
 		note := ""
 		if volumeExists(dst, t.pool(), res.Volume) {
 			if derr := dst.DeleteStoragePoolVolume(t.pool(), "custom", res.Volume); derr != nil {
-				note = fmt.Sprintf(" (and the partial volume %s/%s could not be removed: %v; it carries no marker, so tink will never use it, delete it by hand)", t.where(), res.Volume, derr)
+				note = fmt.Sprintf(" (and the partial volume %s/%s could not be removed: %v; tink will never use it, and removes it itself once it is %d days old if the target kept its in-progress mark, otherwise delete it by hand)", t.where(), res.Volume, derr, int(PartialGrace/(24*time.Hour)))
 			}
 		}
 		return res, fmt.Errorf("copying %s/%s@%s to %s/%s: %w%s", v.pool(), v.Name, res.Snapshot, t.where(), res.Volume, cerr, note)
 	}
-	if err := ensureMarkers(dst, t.pool(), res.Volume, markers); err != nil {
+	if err := ensureMarkers(dst, t.pool(), res.Volume, markers, []string{resolve.MarkerPartialOf, resolve.MarkerPartialAt}); err != nil {
 		return res, err
 	}
 
 	if err := stampCopy(s, v, t.Name, res.Volume, start); err != nil {
 		return res, err
 	}
+	// Tidy up after older runs: restore points past their retention, and copies another run started and never finished.
+	// A failure here is not a failed copy (the restore point exists and the source is stamped), so it is reported as
+	// its own kind of error.
+	var tidy []error
 	if opts.Retain != "" {
 		say("pruning restore points older than %s", opts.Retain)
-		if res.Pruned, res.OtherServers, err = prune(dst, v, t, opts.Retain, start, res.Volume, false, me); err != nil {
-			return res, fmt.Errorf("the copy succeeded, but %w: %w", errPrune, err)
+		var perr error
+		if res.Pruned, res.OtherServers, perr = prune(dst, v, t, opts.Retain, start, res.Volume, false, me); perr != nil {
+			tidy = append(tidy, perr)
 		}
+	}
+	var serr error
+	if res.Swept, serr = sweepPartials(dst, v, t, start, res.Volume, false, me); serr != nil {
+		tidy = append(tidy, serr)
+	}
+	if len(tidy) > 0 {
+		return res, fmt.Errorf("the copy succeeded, but %w: %w", errPrune, errors.Join(tidy...))
 	}
 	return res, nil
 }
 
 // ensureMarkers makes sure the restore point carries its markers: Incus may not apply the config
 // given on a copy from a snapshot, and the markers are what lets pruning and restore trust the volume.
-func ensureMarkers(s incus.InstanceServer, pool, name string, want map[string]string) error {
+func ensureMarkers(s incus.InstanceServer, pool, name string, want map[string]string, remove []string) error {
 	vol, etag, err := s.GetStoragePoolVolume(pool, "custom", name)
 	if err != nil {
 		return fmt.Errorf("reading the new restore point %s/%s: %w", pool, name, err)
@@ -228,6 +257,9 @@ func ensureMarkers(s incus.InstanceServer, pool, name string, want map[string]st
 	}
 	for k, val := range want {
 		put.Config[k] = val
+	}
+	for _, k := range remove {
+		delete(put.Config, k)
 	}
 	if err := s.UpdateStoragePoolVolume(pool, "custom", name, put, etag); err != nil {
 		return fmt.Errorf("marking the new restore point %s/%s: %w", pool, name, err)
@@ -441,4 +473,57 @@ func LiveConfig(server incus.InstanceServer, v Volume) (map[string]string, error
 		return nil, fmt.Errorf("volume %s/%s: %w", v.pool(), v.Name, err)
 	}
 	return vol.Config, nil
+}
+
+// PartialGrace is how old an in-progress copy must be before it is believed abandoned and swept. It is long on
+// purpose: a copy of a large volume over a slow link takes a long time, and removing one that is still going would be
+// worse than leaving a dead one for a few days.
+var PartialGrace = 7 * 24 * time.Hour
+
+// sweepPartials removes copies that were started and never finished, and returns their names. It is deliberately
+// narrow, because it deletes volumes: only a volume carrying THIS tink's in-progress mark for THIS volume qualifies,
+// and never one that
+//   - also carries a restore point's mark (a finished copy is never removed here, whatever else it carries),
+//   - was started by another server,
+//   - is the one this run just made,
+//   - is younger than PartialGrace, or whose start time cannot be read.
+//
+// Anything without the in-progress mark, a look-alike name included, is left alone.
+func sweepPartials(dst incus.InstanceServer, v Volume, t Target, now time.Time, keep string, dryRun bool, me string) ([]string, error) {
+	vols, err := dst.GetStoragePoolVolumes(t.pool())
+	if err != nil {
+		return nil, fmt.Errorf("listing volumes in pool %q: %w", t.where(), err)
+	}
+	copyOf := resolve.CopyOf(v.Project, v.pool(), v.Name)
+	var victims []string
+	for _, vol := range vols {
+		if vol.Type != "custom" || vol.Name == keep || vol.Config[resolve.MarkerPartialOf] != copyOf {
+			continue
+		}
+		if _, isRestorePoint := vol.Config[resolve.MarkerCopyOf]; isRestorePoint {
+			continue
+		}
+		if srv := vol.Config[resolve.MarkerCopyServer]; srv != "" && srv != me {
+			continue
+		}
+		started, err := time.Parse(time.RFC3339, vol.Config[resolve.MarkerPartialAt])
+		if err != nil || now.Sub(started) < PartialGrace {
+			continue
+		}
+		victims = append(victims, vol.Name)
+	}
+	sort.Strings(victims)
+	if dryRun {
+		return victims, nil
+	}
+	var swept []string
+	var errs []error
+	for _, name := range victims {
+		if err := dst.DeleteStoragePoolVolume(t.pool(), "custom", name); err != nil {
+			errs = append(errs, fmt.Errorf("removing the abandoned partial copy %s/%s: %w", t.where(), name, err))
+			continue
+		}
+		swept = append(swept, name)
+	}
+	return swept, errors.Join(errs...)
 }
