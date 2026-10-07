@@ -111,7 +111,7 @@ func TestBackupWarnings(t *testing.T) {
 		"local":   target("local", LocationSameHost, "", "default"),
 		"tank2":   target("tank2", LocationSameHost, "", "tank"),
 	}
-	const declared = "declared only"
+	const declared = "run only when `tink backup run` is invoked"
 	tests := []struct {
 		name string
 		vol  Resource

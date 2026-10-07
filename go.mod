@@ -5,6 +5,7 @@ go 1.26.7
 require (
 	filippo.io/age v1.3.2
 	github.com/lxc/incus/v7 v7.4.0
+	github.com/robfig/cron/v3 v3.0.1
 	github.com/spf13/cobra v1.10.2
 	go.yaml.in/yaml/v4 v4.0.0-rc.6
 	golang.org/x/term v0.45.0

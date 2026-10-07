@@ -167,8 +167,8 @@ func backupWarnings(v Resource, targets map[string]Resource) []string {
 	}
 
 	if len(v.Backup.Copies) > 0 {
-		warnings = append(warnings, "backup.copies are declared only: this tink has no copy engine yet, so nothing runs them, "+
-			"and the 3-2-1 result above is judged on the declaration")
+		warnings = append(warnings, "backup.copies run only when `tink backup run` is invoked (run `tink backup run --due` from cron or a timer): "+
+			"tink does not schedule them itself yet, and the 3-2-1 result above is judged on the declaration plus the copy warnings")
 	}
 	return warnings
 }
