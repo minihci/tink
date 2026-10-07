@@ -53,6 +53,9 @@ anything blocked; an instance's `on_image_change` field says whether
 image drift is reported, ignored, or converged by rebuilding an OCI app
 container onto a digest-pinned image - see
 [`docs/image-updates.md`](docs/image-updates.md).
+`--remote NAME` (or `$TINK_REMOTE`) points any command at a remote Incus server from the client configuration instead of the local
+daemon, so tink can run from another machine; see [`docs/remote.md`](docs/remote.md) for what that covers and what refuses.
+
 `tink backup run` copies volumes to the backup targets a stack declares, and `tink backup restore` / `tink backup verify` restore a
 volume's snapshot (or a restore point on a target) to a new volume and prove the backup is usable - see
 [`docs/volume-backup.md`](docs/volume-backup.md).

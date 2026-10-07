@@ -15,6 +15,7 @@ import (
 	"github.com/lxc/incus/v7/shared/cliconfig"
 
 	"github.com/minihci/tink/internal/incusapi"
+	"github.com/minihci/tink/internal/incusconf"
 	"github.com/minihci/tink/internal/secrets"
 )
 
@@ -158,7 +159,7 @@ func Create(server incus.InstanceServer, spec *Spec, project string) error {
 		scoped = server.UseProject(project)
 	}
 
-	conf, err := cliconfig.LoadConfig("")
+	conf, err := incusconf.Load()
 	if err != nil {
 		return fmt.Errorf("creating %s: loading incus client config: %w", spec.Name, err)
 	}

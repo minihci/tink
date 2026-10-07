@@ -55,7 +55,18 @@ func newRootCmd() *cobra.Command {
 opinionated, Incus-native primitives for running self-hosted projects,
 made executable instead of just documented.`,
 		SilenceUsage: true,
+		// Choose the server once for the whole invocation: --remote, else $TINK_REMOTE, else the local daemon.
+		PersistentPreRun: func(cmd *cobra.Command, args []string) {
+			name, _ := cmd.Flags().GetString("remote")
+			if !cmd.Flags().Changed("remote") {
+				if env := os.Getenv("TINK_REMOTE"); env != "" {
+					name = env
+				}
+			}
+			incusapi.UseRemote(name)
+		},
 	}
+	root.PersistentFlags().String("remote", "", "Incus remote (from the Incus client configuration) to manage instead of the local daemon; also $TINK_REMOTE")
 
 	root.AddCommand(newDeployCmd())
 	root.AddCommand(newRunCmd())
@@ -127,6 +138,7 @@ which isn't a single clean API call.
 
 Use --dry-run to compute and report every action without touching the
 daemon, the crontab, or any instance.`,
+		PreRunE: refuseUnderRemote("tink deploy"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if deployEnvPath == "" {
 				deployEnvPath = repoRoot + "/deploy.env"
@@ -391,6 +403,7 @@ config and renders/applies the shared ingress instance's routes.
 Use --dry-run to compute and report what would change without writing
 anything or reloading Caddy -- this is how it's meant to be run alongside
 the live bash version before its cron entry actually gets moved over.`,
+		PreRunE: refuseUnderRemote("tink ingress reconcile"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			result, err := ingress.Reconcile(opts)
 			if err != nil {
@@ -408,8 +421,9 @@ the live bash version before its cron entry actually gets moved over.`,
 func newIngressStatusCmd() *cobra.Command {
 	opts := ingress.DefaultOptions()
 	cmd := &cobra.Command{
-		Use:   "status",
-		Short: "Show what's currently registered, without changing anything",
+		Use:     "status",
+		Short:   "Show what's currently registered, without changing anything",
+		PreRunE: refuseUnderRemote("tink ingress status"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			result, err := ingress.Status(opts)
 			if err != nil {
@@ -500,6 +514,7 @@ func newDaemonRunCmd() *cobra.Command {
 		Long: `run reconciles ingress registrations immediately, then again every
 --interval, until it receives SIGTERM or SIGINT -- the mode an init
 system's unit file (see "tink daemon install") actually invokes.`,
+		PreRunE: refuseUnderRemote("tink daemon run"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
@@ -556,4 +571,16 @@ fails rather than guessing if detection is inconclusive.`,
 	cmd.Flags().StringVar(&initSystem, "init", "", fmt.Sprintf("init system to generate for (one of: %v; default: auto-detect)", daemon.InitSystems))
 	cmd.Flags().StringVar(&unitOpts.ExecPath, "exec-path", unitOpts.ExecPath, "path to the tink binary on the target host")
 	return cmd
+}
+
+// refuseUnderRemote is the PreRunE of every command that works on the host's own filesystem or processes (it
+// provisions the machine it runs on, or reads a path inside a storage pool). Pointed at a remote server it would
+// act on the wrong machine, or on a path that does not exist there, so it says so instead.
+func refuseUnderRemote(what string) func(*cobra.Command, []string) error {
+	return func(*cobra.Command, []string) error {
+		if incusapi.IsRemote() {
+			return fmt.Errorf("%s works on the host it runs on, and tink is pointed at the remote %q (--remote or $TINK_REMOTE): run it on that host, or unset the remote", what, incusapi.Remote())
+		}
+		return nil
+	}
 }

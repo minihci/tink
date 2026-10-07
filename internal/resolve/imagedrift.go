@@ -17,6 +17,8 @@ import (
 	"github.com/lxc/incus/v7/shared/api"
 	"github.com/lxc/incus/v7/shared/cliconfig"
 
+	"github.com/minihci/tink/internal/incusconf"
+
 	"github.com/minihci/tink/internal/secrets"
 )
 
@@ -360,7 +362,7 @@ type runtimeResult struct {
 
 func newImageEnv(offline bool) *imageEnv {
 	e := &imageEnv{offline: offline, images: map[string]registryResult{}, runtime: map[string]runtimeResult{}}
-	if conf, err := cliconfig.LoadConfig(""); err == nil {
+	if conf, err := incusconf.Load(); err == nil {
 		e.conf = conf
 	}
 	return e
