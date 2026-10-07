@@ -1,6 +1,6 @@
 # The tink helper: design
 
-**Status: phases 0 to 2 are built and validated on the lab host** (the [phase 0](#phase-0-findings) and [phase 2](#phase-2-findings) findings
+**Status: phases 0 to 2 are built, validated on the lab host, and merged** (#15, #17 and #18 to #22) (the [phase 0](#phase-0-findings) and [phase 2](#phase-2-findings) findings
 changed the design below); phase 1 is merged. The container itself (phase 3), the laptop trigger (phase 4) and retiring `daemon install` (phase 5) are design only. This is the second revision: the first was reviewed adversarially against the code and
 the Incus 7.4 source by a separate agent, and the design below was changed to answer what that found
 ([what changed](#what-the-review-changed)). Claims are marked **[code]** (read in this repo or in the Incus source; the three that
@@ -239,7 +239,7 @@ Each phase is useful alone and ends in something checkable on the lab host.
 *Done when:* `plan`, `apply` (an OCI instance), `backup restore` and `backup verify` run from a laptop
    **that has no Incus client config** against Tron, over `--remote` (TLS, a trusted certificate), and a stack with `kind: incus` is refused there with
    the reason.
-2. **The scheduler and the engine changes. Built and validated in the lab** (see [Phase 2 findings](#phase-2-findings)): failure stamps and backoff, the
+2. **The scheduler and the engine changes. Built, validated in the lab, and merged** (#18 to #22) (see [Phase 2 findings](#phase-2-findings)): failure stamps and backoff, the
    server marker, the per-copy guard, the job directory and executor, stack sync with atomic activation, the backup scheduler and heartbeat in `daemon run`
    (`--stacks`, `--jobs`, `--timezone`, `--no-ingress`), supervised workers, and local `daemon sync|enqueue|jobs|cancel`. It runs under any supervisor (a transient
    systemd unit on the lab host). **2e** adds the in-progress mark and the sweep of abandoned copies (below).
