@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -333,5 +335,36 @@ func TestTheSchedulerLooksAgainSoonAfterAPassThatCouldNotLookAndWaitsAfterOneTha
 	defer mu.Unlock()
 	if before != 3 || connects != before {
 		t.Errorf("connects: %d at the first success, %d later; want 3 and no more", before, connects)
+	}
+}
+
+func TestADrainQueuesNothingAndTheStatusDocumentSaysSo(t *testing.T) {
+	r := newRig(t)
+	r.h.Live = &Live{}
+	r.volume(t, "lib")
+	r.eng.live["lib"] = map[string]string{resolve.CopyStampAt("nas"): now0.Add(-3 * time.Hour).UTC().Format(time.RFC3339)} // due
+	if err := os.MkdirAll(r.h.Store.Dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(r.h.Store.Dir, jobs.DrainFile), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var st SchedulerState
+	if n := r.h.Tick(&st); n != 0 {
+		t.Errorf("a copy is due, but a drain queues nothing: %d", n)
+	}
+	if !strings.Contains(r.logs.String(), "draining") {
+		t.Errorf("and says why:\n%s", r.logs.String())
+	}
+	doc := buildStatus(StatusOptions{Store: r.h.Store}, r.h.Live, now0, now0)
+	if !doc.Draining {
+		t.Errorf("the status document says it is draining: %+v", doc)
+	}
+	os.Remove(filepath.Join(r.h.Store.Dir, jobs.DrainFile))
+	if n := r.h.Tick(&st); n != 1 {
+		t.Errorf("once the drain is lifted the due copy is queued: %d", n)
+	}
+	if doc := buildStatus(StatusOptions{Store: r.h.Store}, r.h.Live, now0, now0); doc.Draining || doc.Queued != 1 {
+		t.Errorf("%+v", doc)
 	}
 }

@@ -227,3 +227,10 @@ func TestFindReturnsOnlyMarkedInstancesInEveryProject(t *testing.T) {
 		t.Error("a failed listing is an error, not 'no helper'")
 	}
 }
+
+func TestADrainingHelperIsDegradedAndSaysHowToEndIt(t *testing.T) {
+	r := Evaluate(found("Running", fresh(func(s *Status) { s.Draining = true })), t0)
+	if r.Health != Degraded || !strings.Contains(r.Summary(), "draining") || !strings.Contains(r.Summary(), "DRAIN") {
+		t.Errorf("a drain that was left behind must not look healthy: %s", r.Summary())
+	}
+}

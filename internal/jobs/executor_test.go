@@ -432,3 +432,61 @@ func TestAJobIsNeverRunBeforeItsFilesAreThere(t *testing.T) {
 		t.Errorf("%d job(s) were run before their files were complete, e.g. %s", len(broken), broken[0])
 	}
 }
+
+func TestADrainStartsNothingNewButLetsTheRunningJobFinish(t *testing.T) {
+	var ran []string
+	var s Store
+	h := func(ctx context.Context, j Job, log io.Writer) (any, error) {
+		ran = append(ran, j.ID)
+		if len(ran) == 1 { // the drain starts while the first job is running
+			if err := os.WriteFile(filepath.Join(s.Dir, DrainFile), nil, 0o600); err != nil {
+				t.Error(err)
+			}
+		}
+		return nil, nil
+	}
+	e, st := newExec(t, map[string]Handler{"k": h})
+	s = st
+	a := enqueue(t, s, "k", t0)
+	b := enqueue(t, s, "k", t0.Add(time.Second))
+	if _, err := e.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(ran) != 1 || ran[0] != a {
+		t.Errorf("the job that was running finishes, and no other starts: %v", ran)
+	}
+	if status(t, s, a).State != Succeeded || status(t, s, b).State != Queued {
+		t.Errorf("the running one succeeded; the next waits, still queued: %v %v", status(t, s, a).State, status(t, s, b).State)
+	}
+	if !s.Draining() {
+		t.Error("it is draining")
+	}
+	running, queued, err := s.Counts()
+	if err != nil || running != 0 || queued != 1 {
+		t.Errorf("a drain waits on running reaching zero: %d running, %d queued, %v", running, queued, err)
+	}
+
+	// when the drain is lifted, the queue is picked up where it was
+	os.Remove(filepath.Join(s.Dir, DrainFile))
+	if _, err := e.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(ran) != 2 || ran[1] != b || s.Draining() {
+		t.Errorf("%v", ran)
+	}
+}
+
+func TestCountsSeparateRunningFromQueued(t *testing.T) {
+	_, s := newExec(t, nil)
+	enqueue(t, s, "k", t0)
+	id2 := enqueue(t, s, "k", t0.Add(time.Second))
+	if err := s.writeStatus(Status{ID: id2, Kind: "k", State: Running}); err != nil {
+		t.Fatal(err)
+	}
+	if r, q, err := s.Counts(); err != nil || r != 1 || q != 1 {
+		t.Errorf("%d %d %v", r, q, err)
+	}
+	if s.Draining() {
+		t.Error("not draining without the file")
+	}
+}

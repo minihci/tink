@@ -187,6 +187,10 @@ func (h *Helper) Tick(state *SchedulerState) int {
 	if len(due) == 0 {
 		return 0
 	}
+	if h.Store.Draining() {
+		state.note("draining", "draining: no new backup job is queued while it lasts", h.logf)
+		return 0
+	}
 	pending, err := h.Store.Pending(KindBackupRun)
 	if err != nil {
 		h.logf("looking for pending jobs: %v", err)

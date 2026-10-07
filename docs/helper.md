@@ -49,6 +49,28 @@ the server.
 **Running it again** is safe: what exists is left alone, and an enrolled helper is not enrolled twice. `--reissue` enrols it again with a fresh key pair
 and removes the old certificate. `--binary` puts the binary in the instance, which is also how a helper runs where an image cannot be pulled.
 
+## Upgrading it
+
+```
+tink helper upgrade                         # a release build: to the image published for its own version
+tink helper upgrade --image ghcr:minihci/tink-helper:v0.2.0
+tink helper upgrade --binary ./tink-linux   # replace only the binary in the instance
+```
+
+Upgrading **drains** the helper first. A file, `/data/jobs/DRAIN`, tells it to stop: the scheduler queues nothing new, the executor starts nothing, a job that
+is already running finishes, and queued jobs wait and run after the upgrade. Its status document says `draining` and how many jobs are running
+(`tink helper status` shows it as degraded, so a drain that was left behind cannot look healthy). When nothing is running the helper is replaced, the drain
+file removed (it lives on the data volume, so it would survive the replacement), and the new helper waited for.
+
+- **No new enrolment.** An image upgrade recreates the instance with the same configuration and devices and **keeps its volumes**, so the certificate and key
+  (on the config volume) are still there, and the host still trusts them. A binary upgrade only replaces the file.
+- **A job that will not finish.** After `--drain-timeout` (15 minutes) the upgrade gives up and **lifts the drain** instead of interrupting the job.
+  `--force` goes on anyway: the job is marked `failed (interrupted)` and its schedule retries the work.
+- **A helper that says nothing** cannot be seen to be idle; after 30 seconds without a document the upgrade goes on and says so.
+- **If the new helper does not come up**, the old image is named in the error: `tink helper upgrade --image <it>` goes back (the volumes carry the state).
+
+## Removing it
+
 ```
 tink helper remove [--purge]
 ```

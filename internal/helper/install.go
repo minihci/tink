@@ -103,6 +103,8 @@ type Installer struct {
 	Sleep    func(time.Duration)
 }
 
+var osReadFile = os.ReadFile
+
 func (in *Installer) say(format string, args ...any) {
 	if in.Out != nil {
 		fmt.Fprintf(in.Out, format+"\n", args...)
@@ -175,7 +177,7 @@ func (in *Installer) Install(opts InstallOptions) error {
 		if opts.Binary != "" {
 			read := in.ReadFile
 			if read == nil {
-				read = os.ReadFile
+				read = osReadFile
 			}
 			if blob, err = read(opts.Binary); err != nil {
 				return fmt.Errorf("reading --binary: %w", err)
