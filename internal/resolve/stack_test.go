@@ -68,7 +68,7 @@ func TestAStackIsNamedOnceAndWithAUsableName(t *testing.T) {
 
 func TestVolumesAreStampedWithTheStackThatAppliedThem(t *testing.T) {
 	env := volumeEnv{targets: policyTargets(), stack: "immich"}
-	optOut := Resource{Kind: KindStorageVolume, Name: "v", Backup: &VolumeBackup{None: "x"}}
+	optOut := Resource{Kind: KindStorageVolume, Name: "v", Backup: &backupmeta.VolumeBackup{None: "x"}}
 
 	if p := decideVolume(optOut, nil, env); p.Action != ActionCreate || !strings.Contains(strings.Join(p.Changes, "|"), backupmeta.StackKey) {
 		t.Errorf("every volume is stamped, even one that opts out of backup: %v %v", p.Action, p.Changes)
@@ -89,7 +89,7 @@ func TestVolumesAreStampedWithTheStackThatAppliedThem(t *testing.T) {
 }
 
 func TestApplyingAVolumeAnotherStackOwnsWarnsAndSaysWhoseItWas(t *testing.T) {
-	r := Resource{Kind: KindStorageVolume, Name: "v", Backup: &VolumeBackup{None: "x"}}
+	r := Resource{Kind: KindStorageVolume, Name: "v", Backup: &backupmeta.VolumeBackup{None: "x"}}
 	p := decideVolume(r, liveVolume(map[string]string{backupmeta.StackKey: "nextcloud"}), volumeEnv{stack: "immich"})
 	if p.Action != ActionUpdate {
 		t.Errorf("it is taken over: %v", p.Action)

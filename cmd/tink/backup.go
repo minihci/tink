@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/minihci/tink/internal/backupmeta"
 	"github.com/minihci/tink/internal/backuprun"
 	"github.com/minihci/tink/internal/incusapi"
 	"github.com/minihci/tink/internal/resolve"
@@ -37,14 +38,14 @@ func (f *volumeFlags) bind(cmd *cobra.Command) {
 // resolveVolume finds the volume's pool/project, and its declared verify check, in the stack file(s)
 // when it is declared there; flags override what the stack says. With --from it also resolves the
 // named backup target from the stack.
-func (f *volumeFlags) resolveVolume(name string) (volbackup.Volume, *resolve.VerifyCheck, *volbackup.Target, error) {
+func (f *volumeFlags) resolveVolume(name string) (volbackup.Volume, *backupmeta.VerifyCheck, *volbackup.Target, error) {
 	v := volbackup.Volume{Name: name, Pool: f.pool, Project: f.project}
 
 	resources, err := f.loadStack()
 	if err != nil {
 		return v, nil, nil, err
 	}
-	var check *resolve.VerifyCheck
+	var check *backupmeta.VerifyCheck
 	var vol *resolve.Resource
 	for i, r := range resources {
 		if r.Kind == resolve.KindStorageVolume && r.Name == name {

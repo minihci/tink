@@ -68,8 +68,8 @@ func (s *stubEngine) copies() []string {
 // policyText is the copy policy `apply` writes for a volume that copies hourly to the pool target "nas".
 func policyText(t *testing.T) string {
 	t.Helper()
-	r := resolve.Resource{Kind: resolve.KindStorageVolume, Name: "v", Backup: &resolve.VolumeBackup{
-		Copies: []resolve.BackupCopy{{Target: "nas", Schedule: "@hourly", Retain: "30d"}}}}
+	r := resolve.Resource{Kind: resolve.KindStorageVolume, Name: "v", Backup: &backupmeta.VolumeBackup{
+		Copies: []backupmeta.BackupCopy{{Target: "nas", Schedule: "@hourly", Retain: "30d"}}}}
 	text, err := resolve.BuildPolicy(r, map[string]resolve.Resource{"nas": {Kind: resolve.KindBackupTarget, Name: "nas", Location: "other-host", Engine: "incus", Pool: "nas"}})
 	if err != nil {
 		t.Fatal(err)

@@ -12,6 +12,7 @@ import (
 	"github.com/lxc/incus/v7/shared/api"
 	"github.com/spf13/cobra"
 
+	"github.com/minihci/tink/internal/backupmeta"
 	"github.com/minihci/tink/internal/helper"
 	"github.com/minihci/tink/internal/resolve"
 )
@@ -380,8 +381,8 @@ func TestHelperRemoteCommandsAreThereAndSayWhatTheyNeed(t *testing.T) {
 }
 
 func copyVolume(name, project string) resolve.Resource {
-	return resolve.Resource{Kind: resolve.KindStorageVolume, Name: name, Project: project, Backup: &resolve.VolumeBackup{
-		Copies: []resolve.BackupCopy{{Target: "nas", Schedule: "@daily", Retain: "7d"}}}}
+	return resolve.Resource{Kind: resolve.KindStorageVolume, Name: name, Project: project, Backup: &backupmeta.VolumeBackup{
+		Copies: []backupmeta.BackupCopy{{Target: "nas", Schedule: "@daily", Retain: "7d"}}}}
 }
 
 func TestPlanSaysSoWhenAStackDeclaresCopiesAndNothingOnTheServerWillRunThem(t *testing.T) {
@@ -411,8 +412,8 @@ func TestPlanSaysSoWhenAStackDeclaresCopiesAndNothingOnTheServerWillRunThem(t *t
 	}
 
 	// what does not count as declaring copies
-	snapshotsOnly := resolve.Resource{Kind: resolve.KindStorageVolume, Name: "s", Backup: &resolve.VolumeBackup{Snapshots: &resolve.SnapshotPolicy{Schedule: "@daily", Retain: "7d"}}}
-	optedOut := resolve.Resource{Kind: resolve.KindStorageVolume, Name: "o", Backup: &resolve.VolumeBackup{None: "regenerable"}}
+	snapshotsOnly := resolve.Resource{Kind: resolve.KindStorageVolume, Name: "s", Backup: &backupmeta.VolumeBackup{Snapshots: &backupmeta.SnapshotPolicy{Schedule: "@daily", Retain: "7d"}}}
+	optedOut := resolve.Resource{Kind: resolve.KindStorageVolume, Name: "o", Backup: &backupmeta.VolumeBackup{None: "regenerable"}}
 	instance := resolve.Resource{Kind: resolve.KindInstance, Name: "i"}
 	if got := note(none, snapshotsOnly, optedOut, instance); got != "" {
 		t.Errorf("only copies need something to run them: %q", got)

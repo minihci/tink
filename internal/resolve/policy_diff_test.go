@@ -16,14 +16,14 @@ func policyText(t *testing.T, r Resource) string {
 	return s
 }
 
-func copies(cs ...BackupCopy) Resource {
-	return Resource{Kind: KindStorageVolume, Name: "lib", Backup: &VolumeBackup{Copies: cs}}
+func copies(cs ...backupmeta.BackupCopy) Resource {
+	return Resource{Kind: KindStorageVolume, Name: "lib", Backup: &backupmeta.VolumeBackup{Copies: cs}}
 }
 
 func TestANewPolicyIsDescribedCopyByCopy(t *testing.T) {
 	r := volWithCopies()
 	r.Backup.Verify = "weekly"
-	r.Backup.VerifyCheck = &VerifyCheck{Image: "alpine:3", Command: []string{"sh", "-c", "test -s /data/x"}, Mount: "/data"}
+	r.Backup.VerifyCheck = &backupmeta.VerifyCheck{Image: "alpine:3", Command: []string{"sh", "-c", "test -s /data/x"}, Mount: "/data"}
 	got := DescribePolicyChange("", policyText(t, r))
 	want := []string{
 		`backup policy: + copy to nas (pool nas): schedule "0 4 * * *", keep 30d`,
@@ -41,8 +41,8 @@ func TestANewPolicyIsDescribedCopyByCopy(t *testing.T) {
 }
 
 func TestAChangedPolicyNamesOnlyWhatDiffers(t *testing.T) {
-	before := policyText(t, copies(BackupCopy{Target: "nas", Schedule: "@daily", Retain: "30d"}, BackupCopy{Target: "vps", Schedule: "@weekly", Retain: "8w"}))
-	after := policyText(t, copies(BackupCopy{Target: "nas", Schedule: "@hourly", Retain: "60d"}, BackupCopy{Target: "unused", Schedule: "@daily", Retain: "3d"}))
+	before := policyText(t, copies(backupmeta.BackupCopy{Target: "nas", Schedule: "@daily", Retain: "30d"}, backupmeta.BackupCopy{Target: "vps", Schedule: "@weekly", Retain: "8w"}))
+	after := policyText(t, copies(backupmeta.BackupCopy{Target: "nas", Schedule: "@hourly", Retain: "60d"}, backupmeta.BackupCopy{Target: "unused", Schedule: "@daily", Retain: "3d"}))
 	got := strings.Join(DescribePolicyChange(before, after), "\n")
 	for _, want := range []string{
 		`~ copy to nas: schedule "@daily" -> "@hourly", keep 30d -> 60d`,
@@ -59,10 +59,10 @@ func TestAChangedPolicyNamesOnlyWhatDiffers(t *testing.T) {
 }
 
 func TestMovingACopyToAnotherPlaceSaysWhereFromAndTo(t *testing.T) {
-	a := policyText(t, copies(BackupCopy{Target: "nas", Schedule: "@daily", Retain: "30d"}))
+	a := policyText(t, copies(backupmeta.BackupCopy{Target: "nas", Schedule: "@daily", Retain: "30d"}))
 	t2 := policyTargets()
 	t2["nas"] = Resource{Kind: KindBackupTarget, Name: "nas", Location: LocationOtherHost, Engine: EngineIncus, Pool: "nas2"}
-	b, err := BuildPolicy(copies(BackupCopy{Target: "nas", Schedule: "@daily", Retain: "30d"}), t2)
+	b, err := BuildPolicy(copies(backupmeta.BackupCopy{Target: "nas", Schedule: "@daily", Retain: "30d"}), t2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,10 +73,10 @@ func TestMovingACopyToAnotherPlaceSaysWhereFromAndTo(t *testing.T) {
 }
 
 func TestVerifyChangesAreDescribed(t *testing.T) {
-	base := copies(BackupCopy{Target: "nas", Schedule: "@daily", Retain: "30d"})
+	base := copies(backupmeta.BackupCopy{Target: "nas", Schedule: "@daily", Retain: "30d"})
 	with := func(every string) string {
 		r := base
-		r.Backup = &VolumeBackup{Copies: base.Backup.Copies, Verify: every}
+		r.Backup = &backupmeta.VolumeBackup{Copies: base.Backup.Copies, Verify: every}
 		return policyText(t, r)
 	}
 	if got := DescribePolicyChange(policyText(t, base), with("weekly")); len(got) != 1 || !strings.HasSuffix(got[0], "+ verify weekly") {

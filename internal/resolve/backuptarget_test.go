@@ -17,12 +17,12 @@ func target(name, location, remote, pool string) Resource {
 }
 
 func volWith(name, pool string, snap bool, copies ...string) Resource {
-	b := &VolumeBackup{}
+	b := &backupmeta.VolumeBackup{}
 	if snap {
-		b.Snapshots = &SnapshotPolicy{Schedule: "@daily", Retain: "14d"}
+		b.Snapshots = &backupmeta.SnapshotPolicy{Schedule: "@daily", Retain: "14d"}
 	}
 	for _, t := range copies {
-		b.Copies = append(b.Copies, BackupCopy{Target: t, Schedule: "@daily", Retain: "30d"})
+		b.Copies = append(b.Copies, backupmeta.BackupCopy{Target: t, Schedule: "@daily", Retain: "30d"})
 	}
 	return Resource{Kind: KindStorageVolume, Name: name, Pool: pool, Backup: b}
 }
@@ -57,34 +57,34 @@ func TestValidateBackupTarget(t *testing.T) {
 }
 
 func TestValidateBackupCopiesAndVerify(t *testing.T) {
-	bad := func(b *VolumeBackup, want string) {
+	bad := func(b *backupmeta.VolumeBackup, want string) {
 		t.Helper()
 		err := Validate(Resource{Kind: KindStorageVolume, Name: "v", Backup: b})
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%+v: error = %v, want it to contain %q", b, err, want)
 		}
 	}
-	cp := BackupCopy{Target: "t", Schedule: "@daily", Retain: "30d"}
+	cp := backupmeta.BackupCopy{Target: "t", Schedule: "@daily", Retain: "30d"}
 
-	for _, b := range []*VolumeBackup{
-		{Copies: []BackupCopy{cp}}, // copies without snapshots is fine
-		{Snapshots: &SnapshotPolicy{Schedule: "@daily", Retain: "7d"}, Copies: []BackupCopy{cp}, Verify: "weekly"},
-		{Snapshots: &SnapshotPolicy{Schedule: "@daily", Retain: "7d"}, Verify: "monthly"}, // verify a local snapshot
+	for _, b := range []*backupmeta.VolumeBackup{
+		{Copies: []backupmeta.BackupCopy{cp}}, // copies without snapshots is fine
+		{Snapshots: &backupmeta.SnapshotPolicy{Schedule: "@daily", Retain: "7d"}, Copies: []backupmeta.BackupCopy{cp}, Verify: "weekly"},
+		{Snapshots: &backupmeta.SnapshotPolicy{Schedule: "@daily", Retain: "7d"}, Verify: "monthly"}, // verify a local snapshot
 	} {
 		if err := Validate(Resource{Kind: KindStorageVolume, Name: "v", Backup: b}); err != nil {
 			t.Errorf("%+v: unexpected error %v", b, err)
 		}
 	}
 
-	bad(&VolumeBackup{Verify: "weekly"}, "give snapshots") // nothing to verify
-	bad(&VolumeBackup{None: "x", Copies: []BackupCopy{cp}}, "mutually exclusive")
-	bad(&VolumeBackup{None: "x", Verify: "daily"}, "mutually exclusive")
-	bad(&VolumeBackup{Copies: []BackupCopy{cp}, Verify: "hourly"}, "verify must be daily, weekly or monthly")
-	bad(&VolumeBackup{Copies: []BackupCopy{{Schedule: "@daily", Retain: "1d"}}}, "target is required")
-	bad(&VolumeBackup{Copies: []BackupCopy{cp, cp}}, "twice")
-	bad(&VolumeBackup{Copies: []BackupCopy{{Target: "t", Schedule: "", Retain: "1d"}}}, "schedule: required")
-	bad(&VolumeBackup{Copies: []BackupCopy{{Target: "t", Schedule: "@daily", Retain: ""}}}, "retain: required")
-	bad(&VolumeBackup{Copies: []BackupCopy{{Target: "t", Schedule: "@daily", Retain: "0d"}}}, "expiry syntax")
+	bad(&backupmeta.VolumeBackup{Verify: "weekly"}, "give snapshots") // nothing to verify
+	bad(&backupmeta.VolumeBackup{None: "x", Copies: []backupmeta.BackupCopy{cp}}, "mutually exclusive")
+	bad(&backupmeta.VolumeBackup{None: "x", Verify: "daily"}, "mutually exclusive")
+	bad(&backupmeta.VolumeBackup{Copies: []backupmeta.BackupCopy{cp}, Verify: "hourly"}, "verify must be daily, weekly or monthly")
+	bad(&backupmeta.VolumeBackup{Copies: []backupmeta.BackupCopy{{Schedule: "@daily", Retain: "1d"}}}, "target is required")
+	bad(&backupmeta.VolumeBackup{Copies: []backupmeta.BackupCopy{cp, cp}}, "twice")
+	bad(&backupmeta.VolumeBackup{Copies: []backupmeta.BackupCopy{{Target: "t", Schedule: "", Retain: "1d"}}}, "schedule: required")
+	bad(&backupmeta.VolumeBackup{Copies: []backupmeta.BackupCopy{{Target: "t", Schedule: "@daily", Retain: ""}}}, "retain: required")
+	bad(&backupmeta.VolumeBackup{Copies: []backupmeta.BackupCopy{{Target: "t", Schedule: "@daily", Retain: "0d"}}}, "expiry syntax")
 }
 
 func TestLevelsRejectsUnknownCopyTarget(t *testing.T) {
@@ -137,7 +137,7 @@ func TestBackupWarnings(t *testing.T) {
 			[]string{"not a separate failure domain and is not counted", "(2 of 3 copies", "1 more copy"}, nil},
 		{"live volume on another pool: same-named target pool matters", volWith("v", "tank", true, "tank2", "vps"),
 			[]string{"live volume's own pool (local:tank)", "(2 of 3 copies"}, nil},
-		{"opt-out is not evaluated", Resource{Kind: KindStorageVolume, Name: "v", Backup: &VolumeBackup{None: "x"}}, nil, nil},
+		{"opt-out is not evaluated", Resource{Kind: KindStorageVolume, Name: "v", Backup: &backupmeta.VolumeBackup{None: "x"}}, nil, nil},
 		{"no backup block is not evaluated here", Resource{Kind: KindStorageVolume, Name: "v"}, nil, nil},
 		{"not a volume", Resource{Kind: KindInstance, Name: "i"}, nil, nil},
 	}
@@ -196,7 +196,7 @@ backup:
 		t.Fatalf("targets parsed wrong: %+v %+v", rs[0], rs[1])
 	}
 	b := rs[2].Backup
-	if b == nil || len(b.Copies) != 2 || b.Copies[1] != (BackupCopy{Target: "nas", Schedule: "0 5 * * *", Retain: "30d"}) || b.Verify != "weekly" || b.Snapshots == nil {
+	if b == nil || len(b.Copies) != 2 || b.Copies[1] != (backupmeta.BackupCopy{Target: "nas", Schedule: "0 5 * * *", Retain: "30d"}) || b.Verify != "weekly" || b.Snapshots == nil {
 		t.Fatalf("volume backup parsed wrong: %+v", b)
 	}
 	if _, err := Levels(rs); err != nil {
@@ -232,8 +232,8 @@ func TestVerifyWarning(t *testing.T) {
 		return map[string]string{backupmeta.StampVerifiedAt: now.Add(-age).Format(time.RFC3339)}
 	}
 	vol := func(cadence string) Resource {
-		return Resource{Kind: KindStorageVolume, Name: "lib", Backup: &VolumeBackup{
-			Snapshots: &SnapshotPolicy{Schedule: "@daily", Retain: "7d"}, Verify: cadence}}
+		return Resource{Kind: KindStorageVolume, Name: "lib", Backup: &backupmeta.VolumeBackup{
+			Snapshots: &backupmeta.SnapshotPolicy{Schedule: "@daily", Retain: "7d"}, Verify: cadence}}
 	}
 	tests := []struct {
 		name    string
@@ -251,7 +251,7 @@ func TestVerifyWarning(t *testing.T) {
 		{"fresh restore-only stamp does not satisfy a declared check",
 			func() Resource {
 				r := vol("weekly")
-				r.Backup.VerifyCheck = &VerifyCheck{Image: "i", Command: []string{"true"}}
+				r.Backup.VerifyCheck = &backupmeta.VerifyCheck{Image: "i", Command: []string{"true"}}
 				return r
 			}(),
 			map[string]string{backupmeta.StampVerifiedAt: now.Add(-time.Hour).Format(time.RFC3339), backupmeta.StampVerifiedWith: "restore"},
@@ -259,14 +259,14 @@ func TestVerifyWarning(t *testing.T) {
 		{"fresh check stamp satisfies a declared check",
 			func() Resource {
 				r := vol("weekly")
-				r.Backup.VerifyCheck = &VerifyCheck{Image: "i", Command: []string{"true"}}
+				r.Backup.VerifyCheck = &backupmeta.VerifyCheck{Image: "i", Command: []string{"true"}}
 				return r
 			}(),
 			map[string]string{backupmeta.StampVerifiedAt: now.Add(-time.Hour).Format(time.RFC3339), backupmeta.StampVerifiedWith: "check"},
 			""},
 		{"restore-only is fine when no check is declared", vol("weekly"),
 			map[string]string{backupmeta.StampVerifiedAt: now.Add(-time.Hour).Format(time.RFC3339), backupmeta.StampVerifiedWith: "restore"}, ""},
-		{"opt-out: nothing to verify", Resource{Kind: KindStorageVolume, Name: "lib", Backup: &VolumeBackup{None: "x"}}, nil, ""},
+		{"opt-out: nothing to verify", Resource{Kind: KindStorageVolume, Name: "lib", Backup: &backupmeta.VolumeBackup{None: "x"}}, nil, ""},
 		{"no backup block", Resource{Kind: KindStorageVolume, Name: "lib"}, nil, ""},
 	}
 	for _, tc := range tests {
@@ -280,8 +280,8 @@ func TestVerifyWarning(t *testing.T) {
 }
 
 func TestDecideVolumeWarnsAboutStaleVerificationOnlyForExistingVolumes(t *testing.T) {
-	r := Resource{Kind: KindStorageVolume, Name: "lib", Backup: &VolumeBackup{
-		Snapshots: &SnapshotPolicy{Schedule: "@daily", Retain: "7d"}, Verify: "weekly"}}
+	r := Resource{Kind: KindStorageVolume, Name: "lib", Backup: &backupmeta.VolumeBackup{
+		Snapshots: &backupmeta.SnapshotPolicy{Schedule: "@daily", Retain: "7d"}, Verify: "weekly"}}
 	if w := strings.Join(decideVolume(r, nil, volumeEnv{}).Warnings, "|"); strings.Contains(w, "verified") {
 		t.Errorf("a volume that does not exist yet has nothing to verify, got %q", w)
 	}
@@ -338,14 +338,14 @@ backup:
 }
 
 func TestValidateVerifyCheck(t *testing.T) {
-	snap := &SnapshotPolicy{Schedule: "@daily", Retain: "7d"}
-	chk := func(c *VerifyCheck) error {
-		return Validate(Resource{Kind: KindStorageVolume, Name: "v", Backup: &VolumeBackup{Snapshots: snap, VerifyCheck: c}})
+	snap := &backupmeta.SnapshotPolicy{Schedule: "@daily", Retain: "7d"}
+	chk := func(c *backupmeta.VerifyCheck) error {
+		return Validate(Resource{Kind: KindStorageVolume, Name: "v", Backup: &backupmeta.VolumeBackup{Snapshots: snap, VerifyCheck: c}})
 	}
-	if err := chk(&VerifyCheck{Image: "i", Command: []string{"true"}}); err != nil {
+	if err := chk(&backupmeta.VerifyCheck{Image: "i", Command: []string{"true"}}); err != nil {
 		t.Errorf("valid check rejected: %v", err)
 	}
-	for _, c := range []*VerifyCheck{
+	for _, c := range []*backupmeta.VerifyCheck{
 		{Command: []string{"true"}},
 		{Image: "i"},
 		{Image: "i", Command: []string{"true"}, Mount: "relative/path"},
@@ -354,8 +354,8 @@ func TestValidateVerifyCheck(t *testing.T) {
 			t.Errorf("%+v: expected an error", c)
 		}
 	}
-	if err := Validate(Resource{Kind: KindStorageVolume, Name: "v", Backup: &VolumeBackup{
-		None: "x", VerifyCheck: &VerifyCheck{Image: "i", Command: []string{"true"}}}}); err == nil {
+	if err := Validate(Resource{Kind: KindStorageVolume, Name: "v", Backup: &backupmeta.VolumeBackup{
+		None: "x", VerifyCheck: &backupmeta.VerifyCheck{Image: "i", Command: []string{"true"}}}}); err == nil {
 		t.Error("none excludes a verify check")
 	}
 }

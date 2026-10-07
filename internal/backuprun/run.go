@@ -362,7 +362,7 @@ func Run(ctx context.Context, eng Engine, items []Item, opts Options, out io.Wri
 				continue
 			}
 			if opts.Due {
-				decision, err := resolve.CopyDue(c.Schedule, live, name, now())
+				decision, err := backupmeta.CopyDue(c.Schedule, live, name, now())
 				if err != nil {
 					fmt.Fprintf(out, "%s -> %s: %v\n", it.Label, name, err)
 					rep.Failed++
@@ -461,7 +461,7 @@ func Assess(eng Engine, items []Item, now time.Time) Assessment {
 			if f, ok := backupmeta.FailureOf(live, c.Target.Name); ok {
 				a.Failing = append(a.Failing, FailingCopy{Volume: it.Label, Target: c.Target.Name, Count: f.N, Since: f.At})
 			}
-			d, derr := resolve.CopyDue(c.Schedule, live, c.Target.Name, now)
+			d, derr := backupmeta.CopyDue(c.Schedule, live, c.Target.Name, now)
 			if derr != nil {
 				a.Problems[it.Label+" -> "+c.Target.Name] = derr
 				continue

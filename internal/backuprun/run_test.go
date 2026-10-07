@@ -17,9 +17,9 @@ import (
 var now = time.Date(2026, 10, 7, 10, 0, 0, 0, time.UTC)
 
 func vol(name string, targets ...string) resolve.Resource {
-	r := resolve.Resource{Kind: resolve.KindStorageVolume, Name: name, Backup: &resolve.VolumeBackup{}}
+	r := resolve.Resource{Kind: resolve.KindStorageVolume, Name: name, Backup: &backupmeta.VolumeBackup{}}
 	for _, t := range targets {
-		r.Backup.Copies = append(r.Backup.Copies, resolve.BackupCopy{Target: t, Schedule: "@hourly", Retain: "30d"})
+		r.Backup.Copies = append(r.Backup.Copies, backupmeta.BackupCopy{Target: t, Schedule: "@hourly", Retain: "30d"})
 	}
 	return r
 }
