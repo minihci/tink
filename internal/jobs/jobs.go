@@ -263,6 +263,34 @@ func (s Store) List() ([]Status, error) {
 	return out, nil
 }
 
+// DrainFile is the file whose presence makes the daemon drain: the scheduler queues nothing new and the executor starts nothing, while a
+// job already running finishes. `tink helper upgrade` creates it (through the instance file API, since the directory is on the helper's
+// own volume), waits for the running work to end, replaces the helper, and removes it.
+const DrainFile = "DRAIN"
+
+// Draining reports whether the directory is being drained.
+func (s Store) Draining() bool {
+	_, err := os.Stat(filepath.Join(s.Dir, DrainFile))
+	return err == nil
+}
+
+// Counts is how many jobs are running and how many are queued, which is what a drain waits on.
+func (s Store) Counts() (running, queued int, err error) {
+	list, err := s.List()
+	if err != nil {
+		return 0, 0, err
+	}
+	for _, st := range list {
+		switch st.State {
+		case Running:
+			running++
+		case Queued:
+			queued++
+		}
+	}
+	return running, queued, nil
+}
+
 // Pending reports whether a job of this kind is already queued or running, whoever queued it: a scheduler uses it so
 // it never queues the same work twice, and work an operator has just queued is not queued again behind it.
 func (s Store) Pending(kind string) (bool, error) {

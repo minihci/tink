@@ -146,6 +146,10 @@ func buildStatus(o StatusOptions, live *Live, started, now time.Time) helper.Sta
 	s.TZ = zoneName(zone, now)
 	if o.Store.Dir != "" {
 		s.LastJob = lastJob(o.Store)
+		s.Draining = o.Store.Draining()
+		if running, queued, err := o.Store.Counts(); err == nil {
+			s.Running, s.Queued = running, queued
+		}
 	}
 	return s
 }

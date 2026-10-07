@@ -23,7 +23,7 @@ func newHelperCmd() *cobra.Command {
 		Long: `The helper is an Incus instance that runs "tink daemon run" next to the data: the backup scheduler and the ingress
 reconcile. It publishes what it is doing on its own instance config, and these commands read that back. See docs/helper.md.`,
 	}
-	cmd.AddCommand(newHelperInstallCmd(), newHelperRemoveCmd(), newHelperStatusCmd())
+	cmd.AddCommand(newHelperInstallCmd(), newHelperUpgradeCmd(), newHelperRemoveCmd(), newHelperStatusCmd())
 	return cmd
 }
 
@@ -80,6 +80,48 @@ confined: it has the reach of root on the host, and nothing here claims otherwis
 	cmd.Flags().StringVar(&opts.TZ, "timezone", "", "the time zone schedules are evaluated in, e.g. America/Denver (default: $TZ, else UTC)")
 	cmd.Flags().BoolVar(&opts.Reissue, "reissue", false, "enrol the helper again with a fresh key pair, removing its old certificate from the trust store")
 	cmd.Flags().DurationVar(&opts.Wait, "wait", 90*time.Second, "how long to wait for the helper to report in (negative: do not wait)")
+	return cmd
+}
+
+func newHelperUpgradeCmd() *cobra.Command {
+	var socket string
+	var opts helper.UpgradeOptions
+	cmd := &cobra.Command{
+		Use:   "upgrade",
+		Short: "Drain the helper, replace its tink, and bring it back",
+		Long: `upgrade replaces the helper's tink without losing work. It DRAINS the helper first: its scheduler queues nothing new and its executor starts
+nothing, while a job that is already running finishes (jobs that are queued wait, and run after the upgrade). Only then is it replaced, the drain
+lifted, and the upgraded helper waited for.
+
+  --image REF    replace the instance with one made from that image. Its volumes stay, so it keeps its certificate and key: there is no new enrolment.
+                 With no flag at all, a release build upgrades the helper to the image published for its own version.
+  --binary FILE  replace only the tink binary in the instance (the way a development build is tried).
+
+If a job is still running after --drain-timeout (15 minutes), upgrade gives up and lifts the drain, rather than interrupt it; --force goes on
+anyway, and the interrupted job is marked failed and retried by its schedule. If the new helper does not come up, the old image is named so
+that "tink helper upgrade --image <it>" goes back.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if opts.Image == "" && opts.Binary == "" {
+				if opts.Image = helper.ReleaseImage(injectedVersion); opts.Image == "" {
+					return fmt.Errorf("this is not a release build, so there is no published helper image that matches it: give --image or --binary FILE")
+				}
+			}
+			server, err := incusapi.Connect(socket)
+			if err != nil {
+				return fmt.Errorf("connecting to incus: %w", err)
+			}
+			return (&helper.Installer{Server: server, Out: cmd.OutOrStdout()}).Upgrade(opts)
+		},
+	}
+	cmd.Flags().StringVar(&socket, "socket", "", "Incus daemon unix socket path (default: Incus's own resolution)")
+	cmd.Flags().StringVar(&opts.Project, "project", "", "the helper's project (default: wherever the helper is found)")
+	cmd.Flags().StringVar(&opts.Name, "name", "", "the helper instance's name (default: the helper found)")
+	cmd.Flags().StringVar(&opts.Image, "image", "", "replace the instance with one made from this OCI image")
+	cmd.Flags().StringVar(&opts.Binary, "binary", "", "replace only the tink binary in the instance with this linux binary")
+	cmd.Flags().DurationVar(&opts.DrainTimeout, "drain-timeout", 15*time.Minute, "how long to wait for a running job to finish")
+	cmd.Flags().BoolVar(&opts.Force, "force", false, "after the drain timeout, go on and interrupt the running job (it is retried by its schedule)")
+	cmd.Flags().DurationVar(&opts.Wait, "wait", 90*time.Second, "how long to wait for the upgraded helper to report in (negative: do not wait)")
 	return cmd
 }
 

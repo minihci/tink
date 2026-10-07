@@ -102,6 +102,9 @@ func (e *Executor) RunOnce(ctx context.Context) (int, error) {
 		if ctx.Err() != nil {
 			break
 		}
+		if e.Store.Draining() {
+			break // a job that is already running finishes; none is started, and the queue waits for after the drain
+		}
 		e.runJob(ctx, st)
 		ran++
 	}

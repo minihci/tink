@@ -724,3 +724,220 @@ func TestInstallRecordsTheExactImageSoAnUpgradeCanTellWhichItIs(t *testing.T) {
 		t.Errorf("and it is on the instance: %q", got)
 	}
 }
+
+// An upgrade is checked against a helper that is already running, with a status document the test moves on as the clock does.
+
+func upgradeFixture(h *fakeHost) {
+	h.projects["tink-helper"] = true
+	h.instances["helper"] = &api.Instance{Name: "helper", Project: "tink-helper", Status: "Running", InstancePut: api.InstancePut{
+		Config: map[string]string{
+			MarkerKey: "1", MarkerKey + ".image": "ghcr:minihci/tink-helper:v1.0.0", MarkerKey + ".image-fingerprint": "sha256:old", MarkerKey + ".pool": "default",
+			MarkerKey + ".remote": "https://127.0.0.1:8443", "oci.entrypoint": "/usr/local/bin/tink daemon run --remote host --jobs /data/jobs",
+			"boot.autostart": "true", "environment.TZ": "America/Denver", "volatile.base_image": "sha256:old", "volatile.eth0.hwaddr": "00:16:3e:aa:bb:cc",
+		},
+		Devices: map[string]map[string]string{
+			"root":   {"type": "disk", "path": "/", "pool": "default"},
+			"config": {"type": "disk", "pool": "default", "source": "tink-helper-config", "path": "/root/.config/incus"},
+			"data":   {"type": "disk", "pool": "default", "source": "tink-helper-data", "path": "/data"},
+			"api":    {"type": "proxy", "bind": "container", "listen": "tcp:127.0.0.1:8443", "connect": "tcp:127.0.0.1:8443"},
+		},
+	}}
+	h.volumes["default/tink-helper-config"], h.volumes["default/tink-helper-data"] = true, true
+	h.certs = []api.Certificate{cert(TrustName, 3)}
+}
+
+func publish(h *fakeHost, at time.Time, mut func(*Status)) {
+	st := Status{Proto: 1, Tick: at, HeartbeatSeconds: 600}
+	if mut != nil {
+		mut(&st)
+	}
+	text, _ := Encode(st)
+	h.instances["helper"].Config[StatusKey] = text
+}
+
+// clocked gives the installer a clock the test controls, and calls step(n, now) on the nth sleep: where the helper "publishes".
+func clocked(in *Installer, step func(n int, now time.Time)) {
+	clock := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+	n := 0
+	in.Now = func() time.Time { clock = clock.Add(time.Millisecond); return clock } // time passes whenever anyone looks at the clock
+	in.Sleep = func(d time.Duration) {
+		n++
+		clock = clock.Add(d)
+		step(n, clock)
+	}
+}
+
+func indexOf(log []string, s string) int {
+	for i, l := range log {
+		if l == s {
+			return i
+		}
+	}
+	return -1
+}
+
+func TestUpgradeDrainsFirstThenReplacesThenLiftsTheDrain(t *testing.T) {
+	h := newHost()
+	upgradeFixture(h)
+	in, out := installer(h, new([]*run.Spec))
+	clocked(in, func(n int, now time.Time) {
+		switch n {
+		case 1: // the helper has seen the drain: one job is running
+			publish(h, now, func(s *Status) { s.Draining, s.Running, s.Queued = true, 1, 2 })
+		case 3: // it finished
+			publish(h, now, func(s *Status) { s.Draining, s.Running, s.Queued = true, 0, 2 })
+		}
+		if h.instances["helper"].Status == "Running" && indexOf(h.log, "start helper") > 0 { // after the restart it reports again
+			publish(h, now, nil)
+		}
+	})
+	if err := in.Upgrade(UpgradeOptions{Binary: "/tmp/new-tink", Wait: time.Minute}); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	log := strings.Join(h.log, " | ")
+	order := []string{"push /data/jobs/DRAIN", "stop helper", "push /usr/local/bin/tink mode 755", "start helper", "delete file /data/jobs/DRAIN"}
+	last := -1
+	for _, step := range order {
+		i := strings.Index(log, step)
+		if i < 0 || i < last {
+			t.Fatalf("%q must come after the previous step, in:\n%s", step, log)
+		}
+		last = i
+	}
+	if h.files["/usr/local/bin/tink"] != "ELF-/tmp/new-tink" {
+		t.Errorf("the new binary: %q", h.files["/usr/local/bin/tink"])
+	}
+	if h.tokens != 0 || len(h.execs) != 0 || len(h.certs) != 1 {
+		t.Errorf("an upgrade does not enrol again: the key and certificate are on the config volume it never touches (%d tokens, %d execs, %d certs)", h.tokens, len(h.execs), len(h.certs))
+	}
+	if !strings.Contains(out.String(), "waiting for 1 running job(s)") || !strings.Contains(out.String(), "drained: nothing is running (2 queued") {
+		t.Errorf("%s", out.String())
+	}
+	if !strings.Contains(out.String(), "healthy: tink-helper/helper") {
+		t.Errorf("it ends by saying the upgraded helper reported: %s", out.String())
+	}
+}
+
+func TestAnUpgradeThatTimesOutLiftsTheDrainAndReplacesNothingUnlessForced(t *testing.T) {
+	h := newHost()
+	upgradeFixture(h)
+	in, out := installer(h, new([]*run.Spec))
+	clocked(in, func(n int, now time.Time) {
+		publish(h, now, func(s *Status) { s.Draining, s.Running = true, 1 }) // a job that never ends
+	})
+	err := in.Upgrade(UpgradeOptions{Binary: "/tmp/new-tink", DrainTimeout: time.Minute, Wait: -1})
+	if !strings.Contains(out.String(), "waiting for 1 running job(s)") {
+		t.Errorf("it says what it is waiting for: %s", out.String())
+	}
+	if err == nil || !strings.Contains(err.Error(), "still running a job after 1m0s") || !strings.Contains(err.Error(), "--force") {
+		t.Fatalf("err = %v", err)
+	}
+	if contains(h.log, "stop helper") || len(h.files) != 1 && h.files["/usr/local/bin/tink"] != "" {
+		t.Errorf("nothing is stopped or replaced: %v", h.log)
+	}
+	if !contains(h.log, "delete file /data/jobs/DRAIN") {
+		t.Errorf("a drain that gave up is lifted, or the helper is left idle: %v", h.log)
+	}
+
+	// --force goes on, and says what that does
+	h = newHost()
+	upgradeFixture(h)
+	in, out = installer(h, new([]*run.Spec))
+	clocked(in, func(n int, now time.Time) { publish(h, now, func(s *Status) { s.Draining, s.Running = true, 1 }) })
+	if err := in.Upgrade(UpgradeOptions{Binary: "/tmp/new-tink", DrainTimeout: time.Minute, Force: true, Wait: -1}); err != nil {
+		t.Fatal(err)
+	}
+	if !contains(h.log, "stop helper") || !strings.Contains(out.String(), "--force") || !strings.Contains(out.String(), "interrupts the running job") {
+		t.Errorf("%v\n%s", h.log, out.String())
+	}
+}
+
+func TestAnImageUpgradeRecreatesTheInstanceWithTheSameConfigDevicesAndVolumes(t *testing.T) {
+	h := newHost()
+	upgradeFixture(h)
+	var specs []*run.Spec
+	in, out := installer(h, &specs)
+	base := in.Create
+	in.Create = func(s incus.InstanceServer, spec *run.Spec, project string) error {
+		if err := base(s, spec, project); err != nil {
+			return err
+		}
+		h.instances[spec.Name].Config = map[string]string{"volatile.base_image": "sha256:new"}
+		return nil
+	}
+	clocked(in, func(n int, now time.Time) {
+		if n == 1 {
+			publish(h, now, func(s *Status) { s.Draining = true })
+		}
+		if indexOf(h.log, "start helper") > 0 {
+			publish(h, now, nil)
+		}
+	})
+	if err := in.Upgrade(UpgradeOptions{Image: "ghcr:minihci/tink-helper:v1.1.0", Wait: time.Minute}); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if len(specs) != 1 || specs[0].Image != "ghcr:minihci/tink-helper:v1.1.0" {
+		t.Fatalf("one new instance, from the new image: %+v", specs)
+	}
+	got := h.instances["helper"]
+	if got.Config["oci.entrypoint"] != "/usr/local/bin/tink daemon run --remote host --jobs /data/jobs" || got.Config["environment.TZ"] != "America/Denver" || got.Config["boot.autostart"] != "true" {
+		t.Errorf("the entrypoint and settings are what they were: %v", got.Config)
+	}
+	if got.Config[MarkerKey+".image"] != "ghcr:minihci/tink-helper:v1.1.0" || got.Config[MarkerKey+".image-fingerprint"] != "sha256:new" {
+		t.Errorf("the instance says which image it is now, exactly: %v", got.Config)
+	}
+	if _, has := got.Config["volatile.eth0.hwaddr"]; has {
+		t.Errorf("what Incus recorded about the OLD instance is not carried over: %v", got.Config)
+	}
+	if got.Devices["data"]["source"] != "tink-helper-data" || got.Devices["config"]["source"] != "tink-helper-config" || got.Devices["api"]["connect"] != "tcp:127.0.0.1:8443" {
+		t.Errorf("the same volumes, and the same way to the host's API: %v", got.Devices)
+	}
+	if !h.volumes["default/tink-helper-config"] || !h.volumes["default/tink-helper-data"] || contains(h.log, "delete volume tink-helper-config") {
+		t.Errorf("the volumes are never touched: %v", h.log)
+	}
+	if h.tokens != 0 || len(h.certs) != 1 {
+		t.Error("and it stays enrolled")
+	}
+}
+
+func TestUpgradeGoesOnWhenTheHelperIsNotReportingAndStoppedHelpersNeedNoDrain(t *testing.T) {
+	h := newHost()
+	upgradeFixture(h)
+	in, out := installer(h, new([]*run.Spec))
+	clocked(in, func(n int, now time.Time) {}) // it never says anything
+	if err := in.Upgrade(UpgradeOptions{Binary: "/tmp/new-tink", Wait: -1}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "has not reported since the drain began") || !contains(h.log, "stop helper") {
+		t.Errorf("a helper that says nothing cannot be seen to be idle, and the upgrade should not hang for the whole timeout on that:\n%s", out.String())
+	}
+
+	h = newHost()
+	upgradeFixture(h)
+	h.instances["helper"].Status = "Stopped"
+	in, out = installer(h, new([]*run.Spec))
+	if err := in.Upgrade(UpgradeOptions{Binary: "/tmp/new-tink", Wait: -1}); err != nil {
+		t.Fatal(err)
+	}
+	if contains(h.log, "push /data/jobs/DRAIN") || !strings.Contains(out.String(), "nothing to drain") {
+		t.Errorf("%v\n%s", h.log, out.String())
+	}
+}
+
+func TestUpgradeNeedsExactlyOneThingToUpgradeToAndAHelper(t *testing.T) {
+	h := newHost()
+	upgradeFixture(h)
+	in, _ := installer(h, new([]*run.Spec))
+	for name, opts := range map[string]UpgradeOptions{"neither": {}, "both": {Image: "x", Binary: "y"}} {
+		if err := in.Upgrade(opts); err == nil || !strings.Contains(err.Error(), "exactly one of --image") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if len(h.log) != 0 {
+		t.Errorf("nothing is done: %v", h.log)
+	}
+	in, _ = installer(newHost(), new([]*run.Spec))
+	if err := in.Upgrade(UpgradeOptions{Binary: "y"}); err == nil || !strings.Contains(err.Error(), "no helper found") {
+		t.Errorf("%v", err)
+	}
+}

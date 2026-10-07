@@ -221,7 +221,7 @@ func TestTheHelperCommandsAreListed(t *testing.T) {
 	if err := root.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	for _, c := range []string{"install", "remove", "status"} {
+	for _, c := range []string{"install", "upgrade", "remove", "status"} {
 		if !strings.Contains(out.String(), "  "+c+" ") {
 			t.Errorf("helper %s is not listed:\n%s", c, out.String())
 		}
@@ -263,5 +263,15 @@ func TestAReleaseBuildNamesItsOwnVersionAndADevelopmentBuildHasNoImage(t *testin
 	err := runRoot(t, "helper", "install", "--socket", "/nonexistent/incus.sock")
 	if err == nil || !strings.Contains(err.Error(), "not a release build") || !strings.Contains(err.Error(), "--image") {
 		t.Errorf("a development build has no image that matches it, and says what to give instead: %v", err)
+	}
+}
+
+func TestUpgradeNeedsAnImageOrABinaryOnADevelopmentBuild(t *testing.T) {
+	old := injectedVersion
+	t.Cleanup(func() { injectedVersion = old })
+	injectedVersion = ""
+	err := runRoot(t, "helper", "upgrade", "--socket", "/nonexistent/incus.sock")
+	if err == nil || !strings.Contains(err.Error(), "not a release build") || strings.Contains(err.Error(), "connecting to incus") {
+		t.Errorf("said before any connection is tried: %v", err)
 	}
 }

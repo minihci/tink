@@ -55,6 +55,12 @@ type Status struct {
 	Failing []Failing     `json:"failing,omitempty"`
 	LastJob *LastJob      `json:"last_job,omitempty"`
 	Ingress *IngressState `json:"ingress,omitempty"`
+
+	// Running and Queued are the jobs in the job directory right now, and Draining says the helper is not starting any: an upgrade
+	// waits for Running to reach zero.
+	Running  int  `json:"running_jobs,omitempty"`
+	Queued   int  `json:"queued_jobs,omitempty"`
+	Draining bool `json:"draining,omitempty"`
 }
 
 // Skip is a volume the helper leaves alone, and why.
