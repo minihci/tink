@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func runCLI(t *testing.T, args ...string) (string, error) {
@@ -88,5 +89,14 @@ func TestDaemonRunFlagsGoTogether(t *testing.T) {
 	}
 	if _, err := runCLI(t, "daemon", "run", "--stacks", t.TempDir(), "--jobs", t.TempDir(), "--timezone", "Not/AZone"); err == nil || !strings.Contains(err.Error(), "--timezone") {
 		t.Errorf("a bad time zone: %v", err)
+	}
+}
+
+func TestAJobWithAnUnreadableRequestHasNoNonsenseAge(t *testing.T) {
+	if got := jobAge(time.Time{}); got != "-" {
+		t.Errorf("age of an unknown time = %q, want %q", got, "-")
+	}
+	if got := jobAge(time.Now().Add(-90 * time.Second)); !strings.HasPrefix(got, "1m") {
+		t.Errorf("age = %q", got)
 	}
 }

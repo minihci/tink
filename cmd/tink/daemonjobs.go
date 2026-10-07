@@ -132,7 +132,7 @@ func newDaemonJobsCmd() *cobra.Command {
 				if len(msg) > 70 {
 					msg = msg[:70] + "..."
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", st.ID, st.State, st.Kind, st.Origin, time.Since(st.Created).Round(time.Second), msg)
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", st.ID, st.State, st.Kind, st.Origin, jobAge(st.Created), msg)
 			}
 			return w.Flush()
 		},
@@ -161,4 +161,13 @@ func newDaemonCancelCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&jobsDir, "jobs", "", "the jobs directory the daemon runs from")
 	return cmd
+}
+
+// jobAge is how long ago t was, or "-" when it is not known (a job whose request could not be read has no creation time,
+// and time.Since of the zero time overflows into nonsense).
+func jobAge(t time.Time) string {
+	if t.IsZero() {
+		return "-"
+	}
+	return time.Since(t).Round(time.Second).String()
 }
