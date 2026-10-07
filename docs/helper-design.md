@@ -1,7 +1,7 @@
 # The tink helper: design
 
-**Status: design only. Nothing here is built.** Phase 0 (the spike) has run on the lab host and its
-[findings](#phase-0-findings) have changed the design below. This is the second revision: the first was reviewed adversarially against the code and
+**Status: phases 0 to 2 are built and validated on the lab host** (the [phase 0](#phase-0-findings) and [phase 2](#phase-2-findings) findings
+changed the design below); phase 1 is merged. The container itself (phase 3), the laptop trigger (phase 4) and retiring `daemon install` (phase 5) are design only. This is the second revision: the first was reviewed adversarially against the code and
 the Incus 7.4 source by a separate agent, and the design below was changed to answer what that found
 ([what changed](#what-the-review-changed)). Claims are marked **[code]** (read in this repo or in the Incus source; the three that
 most changed the design were re-checked by hand), **[verified]** (tried live), **[docs]** or **[hypothesis]** (to be checked in
@@ -239,11 +239,10 @@ Each phase is useful alone and ends in something checkable on the lab host.
 *Done when:* `plan`, `apply` (an OCI instance), `backup restore` and `backup verify` run from a laptop
    **that has no Incus client config** against Tron, over `--remote` (TLS, a trusted certificate), and a stack with `kind: incus` is refused there with
    the reason.
-2. **The scheduler and the engine changes.** Failure stamps and backoff, the server marker, the per-copy guard, the job directory and
-   executor, the backup scheduler and heartbeat in `daemon run`, `--stacks` and `--jobs` paths. Runs under **any** supervisor (a systemd unit on
-   Tron is enough). *Done when:* copies run on schedule; a missed run is caught up once; a failing copy backs off and shows as failed; a job created
-   by dropping files runs after its creator has exited; a 3-hour copy does not delay ingress reconcile; two servers copying one volume name do not
-   prune each other.
+2. **The scheduler and the engine changes. Built and validated in the lab** (see [Phase 2 findings](#phase-2-findings)): failure stamps and backoff, the
+   server marker, the per-copy guard, the job directory and executor, stack sync with atomic activation, the backup scheduler and heartbeat in `daemon run`
+   (`--stacks`, `--jobs`, `--timezone`, `--no-ingress`), supervised workers, and local `daemon sync|enqueue|jobs|cancel`. It runs under any supervisor (a transient
+   systemd unit on the lab host). Open: a janitor for partial copies (below).
 3. **The helper.** Containerfile and image workflow (version injection, multi-arch, digest), `tink helper install|upgrade|status|sync|remove`,
    the ingress volume device and configurable paths, `deploy` no longer reinstalling the host daemon. *Done when:* killing the process brings it
    back, a crash loop is detected by `status` and `plan`, a host reboot brings it back with the next due copy still running, and `upgrade`
@@ -286,6 +285,32 @@ Run on the lab host (Incus 7.5.1, an alpine OCI app container, the tink binary m
 
 **Not done in phase 0:** a host reboot and an Incus daemon restart (the lab host runs other services), and anything over a real network: the file API's
 latency from a laptop, and the HTTPS `--remote` path. Both belong to phase 1.
+
+## Phase 2 findings
+
+Run on the lab host (Incus 7.5.1) under a transient systemd unit (`Restart=always`), with a real stack: `lib` (150 MB, every minute) copied to a TrueNAS-backed pool, and
+`docs` copied to that pool and to a pool that does not exist, on a `*/10` schedule. Everything was deleted afterwards.
+
+| Question | Result |
+|---|---|
+| Do copies run on their schedule, unattended? | **Yes**: a job per minute for `lib`; each job's log is what `tink backup run` prints. |
+| Does a failing copy back off? | **Yes**: `docs -> broken` failed once, was marked, then every later job logged `backing off after 1 failed attempt(s), next try after 01:29 MDT` and did not retry it; it retried at exactly 5 minutes (07:29:46 after 07:24:46) and no sooner. |
+| Does one failing copy stop the others in its job? | **No**: the job is `failed`, but `lib -> nas` and `docs -> nas` in the same job completed. |
+| `kill -9` in the middle of a copy? | systemd restarted the daemon in 2 s (`NRestarts=1`); the job was marked `failed: interrupted`; the next scheduled run (12 s later) succeeded and made a proper restore point. |
+| What did the kill leave behind? | **A partial volume on the target with no marker** (tink will never use or prune it, as designed) and the source's temporary snapshot (24 h expiry). **The partial volume is a space leak**: nothing ever removes it. |
+| A missed run (daemon down 170 s, schedule every minute)? | **Caught up once**: one job at start-up, then the next regular slot, not one per missed slot. |
+| A job made by dropping plain files (`request.json`, then `READY`), no tink involved? | **Runs.** So does one sent with its own bundle by a command that exits immediately. |
+| A malformed job? | `failed: unreadable request`, and the daemon carried on. |
+| Does a long copy stall the scheduler? | Not in the lab (copies were seconds), so a unit test pins it instead: with a copy blocked, the heartbeat keeps advancing; mutation-checked against a serialised design. |
+| Not tested live | Ingress running beside it (the lab daemon ran `--no-ingress`), a copy to a remote server, the job `cancel` of a copy in flight (cancel takes effect between copies; an operation in flight finishes), and a host reboot. |
+
+**Open: partial copies.** A copy cut off by `kill -9`, a host reboot or a power loss leaves a volume the target's Incus created but tink never marked: it
+is unmarked precisely so it can never be mistaken for a restore point. Nothing removes it, so each interruption leaks the size of a volume. A safe janitor
+needs a way to know tink made it. Proposal: mark a copy **in progress** at the moment it is created, with a *different* marker that is not a restore point's
+(`copy-partial-of`, not `copy-of`), replaced by the real markers when the copy completes; the janitor removes only volumes carrying `copy-partial-of` for a
+volume it manages, older than a day, and never anything unmarked. Whether Incus applies the config given to a copy made from a snapshot must be checked first
+(an earlier version re-applied markers after the copy because it was not sure); if it does not, the in-progress mark has to be a second step with a window
+in which the volume is unmarked, and the janitor has to say so.
 
 ## What the review changed
 
