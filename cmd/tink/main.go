@@ -644,7 +644,7 @@ reach. Anything else is refused rather than act on the wrong machine.`,
 					Remotes: helper.ConfiguredRemotes,
 				}
 				// this process is the helper: a missing remote is fixed from outside it, not with a CLI that is not in the container
-				incusapi.SetRemoteAdvice("this is the tink helper, which has no incus CLI: from a machine that manages the host, run `tink helper remote add %s ADDRESS`")
+				incusapi.SetRemoteAdvice("this is the tink helper, which has no incus CLI: from a machine that manages the host, make a trust token on that server (`incus config trust add helper -q`) and run `tink helper remote add %s --token-file -`")
 				if jobsDir != "" {
 					ro.Status.Store = jobs.Store{Dir: jobsDir}
 				}

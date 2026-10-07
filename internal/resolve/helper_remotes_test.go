@@ -96,14 +96,19 @@ func TestWithHelperRemotes(t *testing.T) {
 	}
 }
 
-// A stack that opts in to saying where its remote is gets the exact command; one that does not gets the same text as ever.
+// A stack that opts in to saying where its remote is gets the exact command as well. One that does not still gets the token route, which needs no
+// address: the token a server makes carries its address and certificate fingerprint.
 
-func TestTheWarningForARemoteWithNoDeclaredAddressIsUnchanged(t *testing.T) {
+func TestTheWarningForARemoteWithNoDeclaredAddressNamesTheTokenRoute(t *testing.T) {
 	env := volumeEnv{targets: policyTargets(), helperLabel: "tink-helper/helper", helperRemotes: map[string]bool{"host": true}}
 	got := env.helperRemoteWarnings(volumeCopyingToVPS())
-	want := `copies to "vps" (remote "vps") will fail: the helper (tink-helper/helper) has no remote of that name. Add it with: tink helper remote add vps ADDRESS --token-file -`
+	want := `copies to "vps" (remote "vps") will fail: the helper (tink-helper/helper) has no remote of that name. Add it with a trust token made on that server (incus config trust add helper -q): tink helper remote add vps --token-file -`
 	if len(got) != 1 || got[0] != want {
-		t.Errorf("the default text must not change:\n  got:  %v\n  want: %s", got, want)
+		t.Errorf("the default text:\n  got:  %v\n  want: %s", got, want)
+	}
+	// the command must be one that works as typed: with a token the address is left out, and a placeholder for it is what misled people
+	if len(got) == 1 && strings.Contains(got[0], "ADDRESS") {
+		t.Errorf("a token carries the server's address, so the hint must not ask for one: %s", got[0])
 	}
 }
 
@@ -115,7 +120,7 @@ func TestTheWarningNamesTheExactCommandWhenTheStackDeclaresTheAddress(t *testing
 	if len(got) != 1 {
 		t.Fatalf("one warning: %v", got)
 	}
-	base := `copies to "vps" (remote "vps") will fail: the helper (tink-helper/helper) has no remote of that name. Add it with: tink helper remote add vps ADDRESS --token-file -`
+	base := `copies to "vps" (remote "vps") will fail: the helper (tink-helper/helper) has no remote of that name. Add it with a trust token made on that server (incus config trust add helper -q): tink helper remote add vps --token-file -`
 	if !strings.HasPrefix(got[0], base) {
 		t.Errorf("the token route stays as it was, and the hint is added after it: %s", got[0])
 	}

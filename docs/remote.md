@@ -62,15 +62,16 @@ A remote the client configuration defines under the same name **always wins** (a
 | Command or resource | Why | What happens |
 |---|---|---|
 | `tink deploy` | It provisions the machine it runs on (instances, registries, the daemon's own configuration). | Refuses, naming the remote. |
-| `tink ingress reconcile`, `ingress status` | They read and write a path inside a storage pool on the host. | Refuse. |
-| `tink daemon run` | Its backup half is a client of the server like any other command; its ingress half reads and writes the same host path. | Refuses, unless `--no-ingress` leaves the ingress half out, or `--routes-dir` names a directory the process can reach. The helper runs it this way, as a client of its own host. |
+| `tink ingress reconcile`, `ingress status` | They read and write a path inside a storage pool on the host. | Refuse, unless `--via-api` sends them through the ingress instance's file API, which is the same from anywhere ([helper.md](helper.md#the-ingress-half)). |
+| `tink daemon run` | Its backup half is a client of the server like any other command; its ingress half reads and writes the same host path. | Refuses, unless `--ingress-via-api` runs the ingress half through the ingress instance's file API, `--no-ingress` leaves it out, or `--routes-dir` names a directory the process can reach. The helper runs it with one of the first two, as a client of its own host. |
 | `kind: incus` resources | They are argv for the **local** `incus` CLI, often with local paths, against that CLI's own default remote, which is not the remote tink was told to manage. | The resource is **BLOCKED** with the reason; the rest of the stack plans and applies. |
 
 ## Data stays on the server where it can
 
 `backup restore`, and `backup run` to a **pool** target, copy inside one server, which Incus does server-side. A copy to **another server**
 (a `remote:` backup target) is relayed through the machine running tink. Run from a laptop that means the volume's data passes through the
-laptop, and `backup run` prints a note saying so. The planned way around this is a long-running "helper" instance that does that work next to the data (designed, not built).
+laptop, and `backup run` prints a note saying so. The way around this for scheduled copies is [the helper](helper.md), a long-running instance that does that work next to the data. A `backup run` you
+start yourself still runs, and relays, on the machine you start it on: handing it to the helper is not built.
 
 ## Not covered yet
 
