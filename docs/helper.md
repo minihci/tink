@@ -10,19 +10,24 @@ document is `docs/helper-design.md` on the `helper-design` branch, not yet on `m
 - Handing a `tink backup run` started on another machine to the helper (and `tink helper jobs|log|cancel` to follow it). A run you start yourself runs
   where you start it, and a copy to another server is relayed through that machine ([remote.md](remote.md)).
 - Retiring `tink daemon install`, which still prints the old ingress-only unit ([daemon-jobs.md](daemon-jobs.md)).
-- A tested release. No release tag has been pushed, so the helper image has never been built and published by its workflow: `install` with no flag, and
-  the image path of `upgrade`, have not been run against a real image. `--binary`, a stock image with a binary pushed in, is what has been run live.
+- The image path on a real server. `v0.1.0` is published (public, `linux/amd64` and `linux/arm64`) and the image runs and reports its version, but
+  `install` and `upgrade` have not yet been run from it against a real server. Until they are, `--binary`, a stock image with a binary pushed in, is what has
+  been run live. No tink command-line binary is published yet either, so "a release build" only exists inside the image: from a build you made yourself, give
+  `--image`.
 
 ## Installing it
 
 ```
 tink helper install                                                       # a release build: the image published for its own version
-tink helper install --image ghcr:minihci/tink-helper:v0.1.0               # a particular image (tink at /usr/local/bin/tink)
-tink helper install --binary ./tink-linux --timezone America/Denver      # a linux tink binary, in a stock alpine image
+tink helper install --image ghcr:minihci/tink-helper:v0.1.0               # a particular image (tink at /usr/local/bin/tink): how any other build installs the published one
+tink helper install --binary ./tink-linux --timezone America/Denver      # the escape hatch: a linux tink binary, in a stock alpine image
 ```
 
+`--binary` is the escape hatch. It runs a binary you built (a development build, or a branch you are trying) in a stock alpine image, so it also works on a
+host that cannot pull the helper image.
+
 With no flag, a **release build** installs `ghcr:minihci/tink-helper:<its own version>`: the same binary, built by the same workflow from the same
-tag. A development build has no image that matches it, and says so: give `--image` or `--binary`. The instance records the image's fingerprint (an OCI
+tag. A development build has no image that matches it, and says so: give `--image` for the published one, or `--binary` to run the build you have. The instance records the image's fingerprint (an OCI
 image's digest) on itself, `user.tink.helper.image-fingerprint`, because a tag can move and a fingerprint cannot.
 
 It creates, in a project of its own (`tink-helper`): an OCI app container named `helper` that runs `tink daemon run --remote host ...`; two volumes,
@@ -242,5 +247,8 @@ On a pull request that touches the image it only builds, so a broken Containerfi
 git tag v0.1.0 && git push origin v0.1.0        # publishes ghcr.io/minihci/tink-helper:v0.1.0, multi-arch
 ```
 
-The first publication creates the package **private**; make it public once in the repository's package settings, so a host can pull it without a login.
+**Check that a host can pull it without a login.** `v0.1.0` was public as soon as it was published: a request for its manifest with no credentials returned both
+architectures (the image carries the `org.opencontainers.image.source` label, which links the package to this repository). A package can start out private,
+though, so after the first publication of anything new, try `podman pull ghcr.io/minihci/tink-helper:TAG` without logging in, and if it is refused change the
+package's visibility in the repository's package settings.
 To try the image locally: build the binaries into `dist/tink-linux-<arch>` as the workflow does, then `podman build -f build/helper/Containerfile .`.
