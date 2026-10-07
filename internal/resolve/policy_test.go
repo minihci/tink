@@ -20,14 +20,14 @@ func policyTargets() map[string]Resource {
 }
 
 func volWithCopies() Resource {
-	return Resource{Kind: KindStorageVolume, Name: "lib", Backup: &VolumeBackup{
-		Snapshots: &SnapshotPolicy{Schedule: "0 3 * * *", Retain: "14d"},
-		Copies: []BackupCopy{
+	return Resource{Kind: KindStorageVolume, Name: "lib", Backup: &backupmeta.VolumeBackup{
+		Snapshots: &backupmeta.SnapshotPolicy{Schedule: "0 3 * * *", Retain: "14d"},
+		Copies: []backupmeta.BackupCopy{
 			{Target: "nas", Schedule: " 0 4 * * * ", Retain: "30d"},
 			{Target: "vps", Schedule: "@daily", Retain: "7d"},
 		},
 		Verify:      "weekly",
-		VerifyCheck: &VerifyCheck{Image: "docker-oci:library/alpine:3", Command: []string{"sh", "-c", "test -s /data/x && true"}},
+		VerifyCheck: &backupmeta.VerifyCheck{Image: "docker-oci:library/alpine:3", Command: []string{"sh", "-c", "test -s /data/x && true"}},
 	}}
 }
 
@@ -75,15 +75,15 @@ func TestBuildPolicyIsDeterministic(t *testing.T) {
 func TestBuildPolicyIsEmptyWhenThereIsNothingToCopyOrVerify(t *testing.T) {
 	for name, r := range map[string]Resource{
 		"no block":       {Kind: KindStorageVolume, Name: "v"},
-		"opt-out":        {Kind: KindStorageVolume, Name: "v", Backup: &VolumeBackup{None: "regenerable"}},
-		"snapshots only": {Kind: KindStorageVolume, Name: "v", Backup: &VolumeBackup{Snapshots: &SnapshotPolicy{Schedule: "@daily", Retain: "7d"}}},
+		"opt-out":        {Kind: KindStorageVolume, Name: "v", Backup: &backupmeta.VolumeBackup{None: "regenerable"}},
+		"snapshots only": {Kind: KindStorageVolume, Name: "v", Backup: &backupmeta.VolumeBackup{Snapshots: &backupmeta.SnapshotPolicy{Schedule: "@daily", Retain: "7d"}}},
 	} {
 		if got, err := BuildPolicy(r, policyTargets()); got != "" || err != nil {
 			t.Errorf("%s: policy = %q, err = %v; want none (snapshots live on Incus's own keys)", name, got, err)
 		}
 	}
 	// a verify cadence on a volume with snapshots only is still worth recording
-	r := Resource{Kind: KindStorageVolume, Name: "v", Backup: &VolumeBackup{Snapshots: &SnapshotPolicy{Schedule: "@daily", Retain: "7d"}, Verify: "daily"}}
+	r := Resource{Kind: KindStorageVolume, Name: "v", Backup: &backupmeta.VolumeBackup{Snapshots: &backupmeta.SnapshotPolicy{Schedule: "@daily", Retain: "7d"}, Verify: "daily"}}
 	if got, _ := BuildPolicy(r, nil); !strings.Contains(got, `"verify"`) || strings.Contains(got, `"copies"`) {
 		t.Errorf("verify-only policy = %q", got)
 	}
@@ -173,8 +173,8 @@ func TestDecideVolumeRemovesAPolicyTheDeclarationNoLongerHas(t *testing.T) {
 	targets := policyTargets()
 	stale := liveVolume(map[string]string{backupmeta.PolicyKey: `{"proto":1}`})
 	for name, r := range map[string]Resource{
-		"copies removed": {Kind: KindStorageVolume, Name: "v", Backup: &VolumeBackup{Snapshots: &SnapshotPolicy{Schedule: "@daily", Retain: "7d"}}},
-		"opted out":      {Kind: KindStorageVolume, Name: "v", Backup: &VolumeBackup{None: "regenerable"}},
+		"copies removed": {Kind: KindStorageVolume, Name: "v", Backup: &backupmeta.VolumeBackup{Snapshots: &backupmeta.SnapshotPolicy{Schedule: "@daily", Retain: "7d"}}},
+		"opted out":      {Kind: KindStorageVolume, Name: "v", Backup: &backupmeta.VolumeBackup{None: "regenerable"}},
 		"block removed":  {Kind: KindStorageVolume, Name: "v"},
 	} {
 		p := decideVolume(r, stale, volumeEnv{targets: targets})
@@ -183,7 +183,7 @@ func TestDecideVolumeRemovesAPolicyTheDeclarationNoLongerHas(t *testing.T) {
 		}
 	}
 	// and nothing to do when it is already gone
-	if p := decideVolume(Resource{Kind: KindStorageVolume, Name: "v", Backup: &VolumeBackup{None: "x"}}, liveVolume(nil), volumeEnv{targets: targets}); p.Action != ActionNone {
+	if p := decideVolume(Resource{Kind: KindStorageVolume, Name: "v", Backup: &backupmeta.VolumeBackup{None: "x"}}, liveVolume(nil), volumeEnv{targets: targets}); p.Action != ActionNone {
 		t.Errorf("no policy wanted and none present is converged, got %v %v", p.Action, p.Changes)
 	}
 }
@@ -210,8 +210,8 @@ func TestVolumeBackupConfigSetAndRemove(t *testing.T) {
 // would stop: so it is not written.
 
 func volumeWithCopies() Resource {
-	return Resource{Kind: KindStorageVolume, Name: "lib", Backup: &VolumeBackup{
-		Copies: []BackupCopy{{Target: "nas", Schedule: "@daily", Retain: "30d"}}}}
+	return Resource{Kind: KindStorageVolume, Name: "lib", Backup: &backupmeta.VolumeBackup{
+		Copies: []backupmeta.BackupCopy{{Target: "nas", Schedule: "@daily", Retain: "30d"}}}}
 }
 
 func planVolume(t *testing.T, current map[string]string, env volumeEnv) PlannedResource {
@@ -264,7 +264,7 @@ func TestAPolicyAlreadyOnTheVolumeIsNotBlockedAndAVolumeWithoutCopiesNeverIs(t *
 	}
 	// a volume that declares no copies writes no policy, whatever the helper reads
 	env.targets = policyTargets()
-	plain := Resource{Kind: KindStorageVolume, Name: "scratch", Backup: &VolumeBackup{None: "regenerable"}}
+	plain := Resource{Kind: KindStorageVolume, Name: "scratch", Backup: &backupmeta.VolumeBackup{None: "regenerable"}}
 	if p, err := planStorageVolume(&volumeServer{}, plain, env); err != nil || p.Action == ActionBlocked {
 		t.Errorf("%v %v", p.Action, err)
 	}

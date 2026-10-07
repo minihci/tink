@@ -11,8 +11,8 @@ import (
 // fails on every attempt, which plan can say before the first one.
 
 func volumeCopyingToVPS() Resource {
-	return Resource{Kind: KindStorageVolume, Name: "lib", Backup: &VolumeBackup{
-		Copies: []BackupCopy{{Target: "nas", Schedule: "@daily", Retain: "30d"}, {Target: "vps", Schedule: "@daily", Retain: "7d"}}}}
+	return Resource{Kind: KindStorageVolume, Name: "lib", Backup: &backupmeta.VolumeBackup{
+		Copies: []backupmeta.BackupCopy{{Target: "nas", Schedule: "@daily", Retain: "30d"}, {Target: "vps", Schedule: "@daily", Retain: "7d"}}}}
 }
 
 func TestACopyToARemoteTheHelperDoesNotHaveIsWarnedAbout(t *testing.T) {
@@ -48,7 +48,7 @@ func TestNothingIsWarnedWhenTheHelperHasTheRemoteOrHasNotSaid(t *testing.T) {
 		}
 	}
 	// a volume that opted out of backup copies nowhere
-	optedOut := Resource{Kind: KindStorageVolume, Name: "scratch", Backup: &VolumeBackup{None: "regenerable"}}
+	optedOut := Resource{Kind: KindStorageVolume, Name: "scratch", Backup: &backupmeta.VolumeBackup{None: "regenerable"}}
 	if got := (volumeEnv{targets: policyTargets(), helperRemotes: map[string]bool{}}).helperRemoteWarnings(optedOut); len(got) != 0 {
 		t.Errorf("opted out: %v", got)
 	}

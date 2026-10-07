@@ -406,7 +406,7 @@ func expired(points []RestorePoint, retain string, now time.Time, keep string) (
 		if i == 0 || p.Volume == keep {
 			continue
 		}
-		cutoff, err := resolve.ExpiryAfter(p.At, retain)
+		cutoff, err := backupmeta.ExpiryAfter(p.At, retain)
 		if err != nil {
 			return nil, err
 		}

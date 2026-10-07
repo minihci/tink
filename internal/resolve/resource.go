@@ -16,7 +16,11 @@
 // "this must exist before that."
 package resolve
 
-import "time"
+import (
+	"time"
+
+	"github.com/minihci/tink/internal/backupmeta"
+)
 
 // Kind identifies which Incus object a Resource describes. Scoped to
 // exactly what this platform uses today; not a general-purpose registry
@@ -99,8 +103,8 @@ type Resource struct {
 	Fingerprint string
 
 	// Backup (storage-volume-only) is the volume's mandatory answer to "how is
-	// this backed up?". Nil means unanswered, which plan BLOCKS. See VolumeBackup.
-	Backup *VolumeBackup
+	// this backed up?". Nil means unanswered, which plan BLOCKS. See backupmeta.VolumeBackup.
+	Backup *backupmeta.VolumeBackup
 
 	// File-only: push Content to Path inside the named Instance.
 	Instance string

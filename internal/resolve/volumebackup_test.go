@@ -7,11 +7,13 @@ import (
 	"testing"
 
 	"github.com/lxc/incus/v7/shared/api"
+
+	"github.com/minihci/tink/internal/backupmeta"
 )
 
 func snapVol(name, schedule, retain string) Resource {
-	return Resource{Kind: KindStorageVolume, Name: name, Backup: &VolumeBackup{
-		Snapshots: &SnapshotPolicy{Schedule: schedule, Retain: retain},
+	return Resource{Kind: KindStorageVolume, Name: name, Backup: &backupmeta.VolumeBackup{
+		Snapshots: &backupmeta.SnapshotPolicy{Schedule: schedule, Retain: retain},
 	}}
 }
 
@@ -34,7 +36,7 @@ func TestValidateBackup(t *testing.T) {
 	ok(snapVol("v", "0 3 * * *", "14d"))
 	ok(snapVol("v", "@daily", "1w 3d"))
 	ok(snapVol("v", "@daily,@weekly", "6m"))
-	ok(Resource{Kind: KindStorageVolume, Name: "v", Backup: &VolumeBackup{None: "regenerable cache"}})
+	ok(Resource{Kind: KindStorageVolume, Name: "v", Backup: &backupmeta.VolumeBackup{None: "regenerable cache"}})
 
 	bad(snapVol("v", "", "14d"), "schedule: required")
 	bad(snapVol("v", "daily", "14d"), "5-field cron")
@@ -45,12 +47,12 @@ func TestValidateBackup(t *testing.T) {
 	bad(snapVol("v", "@daily", "14 d"), "expiry syntax")
 	bad(snapVol("v", "@daily", "0d"), "expiry syntax") // zero means "never expires" to Incus
 	bad(snapVol("v", "@daily", "1d 2d"), "repeats the unit")
-	bad(Resource{Kind: KindStorageVolume, Name: "v", Backup: &VolumeBackup{}}, "snapshots (schedule + retain) and/or copies, or none")
-	bad(Resource{Kind: KindStorageVolume, Name: "v", Backup: &VolumeBackup{None: "  "}}, "needs a reason")
-	bad(Resource{Kind: KindStorageVolume, Name: "v", Backup: &VolumeBackup{
-		None: "x", Snapshots: &SnapshotPolicy{Schedule: "@daily", Retain: "1d"},
+	bad(Resource{Kind: KindStorageVolume, Name: "v", Backup: &backupmeta.VolumeBackup{}}, "snapshots (schedule + retain) and/or copies, or none")
+	bad(Resource{Kind: KindStorageVolume, Name: "v", Backup: &backupmeta.VolumeBackup{None: "  "}}, "needs a reason")
+	bad(Resource{Kind: KindStorageVolume, Name: "v", Backup: &backupmeta.VolumeBackup{
+		None: "x", Snapshots: &backupmeta.SnapshotPolicy{Schedule: "@daily", Retain: "1d"},
 	}}, "mutually exclusive")
-	bad(Resource{Kind: KindInstance, Name: "i", Backup: &VolumeBackup{None: "x"}}, "does not use field")
+	bad(Resource{Kind: KindInstance, Name: "i", Backup: &backupmeta.VolumeBackup{None: "x"}}, "does not use field")
 }
 
 func TestDecideVolume(t *testing.T) {
@@ -60,7 +62,7 @@ func TestDecideVolume(t *testing.T) {
 		return &api.StorageVolume{StorageVolumePut: api.StorageVolumePut{Config: cfg}}
 	}
 	synced := live(map[string]string{"snapshots.schedule": "0 3 * * *", "snapshots.expiry": "14d", "size": "10GiB"})
-	optOut := Resource{Kind: KindStorageVolume, Name: "v", Backup: &VolumeBackup{None: "regenerable"}}
+	optOut := Resource{Kind: KindStorageVolume, Name: "v", Backup: &backupmeta.VolumeBackup{None: "regenerable"}}
 
 	tests := []struct {
 		name       string
@@ -99,16 +101,6 @@ func TestDecideVolume(t *testing.T) {
 				t.Errorf("warnings = %q, want to contain %q", got, tc.wantWarn)
 			}
 		})
-	}
-}
-
-func TestBackupVolumeConfig(t *testing.T) {
-	got := backupVolumeConfig(&VolumeBackup{Snapshots: &SnapshotPolicy{Schedule: " @daily ", Retain: "14d "}})
-	if len(got) != 2 || got["snapshots.schedule"] != "@daily" || got["snapshots.expiry"] != "14d" {
-		t.Errorf("config = %v", got)
-	}
-	if backupVolumeConfig(nil) != nil || backupVolumeConfig(&VolumeBackup{None: "x"}) != nil {
-		t.Error("no block or an opt-out must not set any Incus keys")
 	}
 }
 

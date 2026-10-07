@@ -39,7 +39,7 @@ type PolicyVerify struct {
 	Check *PolicyCheck `json:"check,omitempty"`
 }
 
-// PolicyCheck is a VerifyCheck as the volume stores it.
+// PolicyCheck is a backupmeta.VerifyCheck as the volume stores it.
 type PolicyCheck struct {
 	Image   string   `json:"image"`
 	Command []string `json:"command"`
@@ -106,14 +106,14 @@ func ParsePolicy(s string) (BackupPolicy, error) {
 			return BackupPolicy{}, fmt.Errorf("%s: names target %q twice", backupmeta.PolicyKey, c.Target.Name)
 		}
 		seen[c.Target.Name] = true
-		if err := validateSchedule(c.Schedule); err != nil {
+		if err := backupmeta.ValidateSchedule(c.Schedule); err != nil {
 			return BackupPolicy{}, fmt.Errorf("%s: copies[%d] (%s) schedule: %w", backupmeta.PolicyKey, i, c.Target.Name, err)
 		}
-		if err := validateRetain(c.Retain); err != nil {
+		if err := backupmeta.ValidateRetain(c.Retain); err != nil {
 			return BackupPolicy{}, fmt.Errorf("%s: copies[%d] (%s) retain: %w", backupmeta.PolicyKey, i, c.Target.Name, err)
 		}
 	}
-	if v := p.Verify; v != nil && v.Every != "" && !verifyCadences[v.Every] {
+	if v := p.Verify; v != nil && v.Every != "" && !backupmeta.IsVerifyCadence(v.Every) {
 		return BackupPolicy{}, fmt.Errorf("%s: verify.every must be daily, weekly or monthly, got %q", backupmeta.PolicyKey, v.Every)
 	}
 	return p, nil

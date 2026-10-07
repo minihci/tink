@@ -30,7 +30,7 @@ func policied(project, pool, name, owner string) volbackup.ListedVolume {
 
 func TestThePlanNoteSeparatesCertainOrphansFromGuessesAndIsSilentWithNone(t *testing.T) {
 	vol := func(name string) resolve.Resource {
-		return resolve.Resource{Kind: resolve.KindStorageVolume, Name: name, Backup: &resolve.VolumeBackup{None: "x"}}
+		return resolve.Resource{Kind: resolve.KindStorageVolume, Name: name, Backup: &backupmeta.VolumeBackup{None: "x"}}
 	}
 	eng := listEngine{vols: []volbackup.ListedVolume{
 		policied("default", "default", "kept", "immich"),

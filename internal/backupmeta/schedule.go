@@ -1,4 +1,4 @@
-package resolve
+package backupmeta
 
 import (
 	"fmt"
@@ -6,17 +6,15 @@ import (
 	"time"
 
 	"github.com/robfig/cron/v3"
-
-	"github.com/minihci/tink/internal/backupmeta"
 )
 
 // NextRun returns the first time after `after` at which schedule fires. schedule is anything
-// validateSchedule accepts: a 5-field cron expression, or a comma-separated list of @aliases
+// ValidateSchedule accepts: a 5-field cron expression, or a comma-separated list of @aliases
 // (Incus's own syntax), in which case it is the earliest of them. It is evaluated in the location of
 // `after`, which is how Incus evaluates a snapshot schedule: in the server's local time.
 func NextRun(schedule string, after time.Time) (time.Time, error) {
 	schedule = strings.TrimSpace(schedule)
-	if err := validateSchedule(schedule); err != nil {
+	if err := ValidateSchedule(schedule); err != nil {
 		return time.Time{}, err
 	}
 	specs := []string{schedule}
@@ -39,7 +37,7 @@ func NextRun(schedule string, after time.Time) (time.Time, error) {
 // ExpiryAfter returns the time an Incus expiry expression ("14d", "1w 3d", "6m") reaches counting
 // from `from`, with Incus's own arithmetic (years, months and days by calendar, the rest by duration).
 func ExpiryAfter(from time.Time, expr string) (time.Time, error) {
-	if err := validateRetain(expr); err != nil {
+	if err := ValidateRetain(expr); err != nil {
 		return time.Time{}, err
 	}
 	var y, m, d int
@@ -80,35 +78,35 @@ func scheduleInterval(schedule string, at time.Time) (time.Duration, error) {
 	return second.Sub(first), nil
 }
 
-// copyWarnings says so when a declared copy has never run, is failing, or is overdue by its own schedule. It
+// CopyWarnings says so when a declared copy has never run, is failing, or is overdue by its own schedule. It
 // needs the volume's live config (where the stamps are), so it only speaks about volumes that exist.
-func copyWarnings(r Resource, current map[string]string, now time.Time) []string {
-	if r.Backup == nil || r.Backup.None != "" {
+func CopyWarnings(name string, b *VolumeBackup, current map[string]string, now time.Time) []string {
+	if b == nil || b.None != "" {
 		return nil
 	}
 	var out []string
-	for _, c := range r.Backup.Copies {
-		fail, failing := backupmeta.FailureOf(current, c.Target)
+	for _, c := range b.Copies {
+		fail, failing := FailureOf(current, c.Target)
 		failingNote := ""
 		if failing {
 			failingNote = fmt.Sprintf("%d attempt(s) in a row have failed, the last %s ago", fail.N, humanAge(now.Sub(fail.At)))
 		}
-		stamp := current[backupmeta.CopyStampAt(c.Target)]
+		stamp := current[CopyStampAt(c.Target)]
 		if stamp == "" {
 			if failing {
-				out = append(out, fmt.Sprintf("the copy to %s has never succeeded: %s -- `tink backup run %s` shows why", c.Target, failingNote, r.Name))
+				out = append(out, fmt.Sprintf("the copy to %s has never succeeded: %s -- `tink backup run %s` shows why", c.Target, failingNote, name))
 			} else {
-				out = append(out, fmt.Sprintf("the copy to %s has never run -- `tink backup run %s`", c.Target, r.Name))
+				out = append(out, fmt.Sprintf("the copy to %s has never run -- `tink backup run %s`", c.Target, name))
 			}
 			continue
 		}
 		last, err := time.Parse(time.RFC3339, stamp)
 		if err != nil {
-			out = append(out, fmt.Sprintf("%s=%q is not a timestamp tink wrote -- `tink backup run %s` replaces it", backupmeta.CopyStampAt(c.Target), stamp, r.Name))
+			out = append(out, fmt.Sprintf("%s=%q is not a timestamp tink wrote -- `tink backup run %s` replaces it", CopyStampAt(c.Target), stamp, name))
 			continue
 		}
 		if failing {
-			out = append(out, fmt.Sprintf("the copy to %s is failing: %s -- `tink backup run %s` shows why", c.Target, failingNote, r.Name))
+			out = append(out, fmt.Sprintf("the copy to %s is failing: %s -- `tink backup run %s` shows why", c.Target, failingNote, name))
 		}
 		due, err := NextRun(c.Schedule, last.In(now.Location()))
 		if err != nil {
@@ -127,7 +125,7 @@ func copyWarnings(r Resource, current map[string]string, now time.Time) []string
 		}
 		if now.After(due.Add(grace)) {
 			out = append(out, fmt.Sprintf("the copy to %s is overdue: last ran %s ago, and its schedule %q was due at %s -- `tink backup run %s` (or run `tink backup run --due` from cron)",
-				c.Target, humanAge(now.Sub(last)), c.Schedule, due.Format("2006-01-02 15:04"), r.Name))
+				c.Target, humanAge(now.Sub(last)), c.Schedule, due.Format("2006-01-02 15:04"), name))
 		}
 	}
 	return out
@@ -139,7 +137,7 @@ type CopyDecision struct {
 	// Reason is set when Due is false: "not yet due" or the backoff after failures.
 	Reason string
 	// Failure is the failure state, when the copy is failing.
-	Failure *backupmeta.CopyFailure
+	Failure *CopyFailure
 	// RetryAt is when a failing copy may next be tried (zero if it is not failing).
 	RetryAt time.Time
 }
@@ -149,7 +147,7 @@ type CopyDecision struct {
 // last attempts failed, the backoff after them must have elapsed.
 func CopyDue(schedule string, current map[string]string, target string, now time.Time) (CopyDecision, error) {
 	d := CopyDecision{Due: true}
-	if stamp := current[backupmeta.CopyStampAt(target)]; stamp != "" {
+	if stamp := current[CopyStampAt(target)]; stamp != "" {
 		if last, err := time.Parse(time.RFC3339, stamp); err == nil { // a stamp we cannot read is as good as none
 			due, err := NextRun(schedule, last.In(now.Location()))
 			if err != nil {
@@ -160,12 +158,12 @@ func CopyDue(schedule string, current map[string]string, target string, now time
 			}
 		}
 	}
-	if fail, failing := backupmeta.FailureOf(current, target); failing {
+	if fail, failing := FailureOf(current, target); failing {
 		interval, err := scheduleInterval(schedule, fail.At.In(now.Location()))
 		if err != nil {
 			return CopyDecision{}, err
 		}
-		d.Failure, d.RetryAt = &fail, backupmeta.RetryAfter(fail, interval)
+		d.Failure, d.RetryAt = &fail, RetryAfter(fail, interval)
 		if now.Before(d.RetryAt) {
 			d.Due = false
 			d.Reason = fmt.Sprintf("backing off after %d failed attempt(s), next try after %s", fail.N, clock(d.RetryAt, now))

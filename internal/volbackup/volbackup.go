@@ -29,7 +29,6 @@ import (
 
 	"github.com/minihci/tink/internal/backupmeta"
 	"github.com/minihci/tink/internal/incusapi"
-	"github.com/minihci/tink/internal/resolve"
 	"github.com/minihci/tink/internal/run"
 )
 
@@ -115,7 +114,7 @@ type VerifyOptions struct {
 	Snapshot string
 	// Check is run against the restored data; nil verifies only that the snapshot
 	// can be restored to a volume at all.
-	Check *resolve.VerifyCheck
+	Check *backupmeta.VerifyCheck
 	// From verifies a restore point on this target instead of a local snapshot.
 	From *Target
 	Now  func() time.Time
@@ -209,7 +208,7 @@ func Verify(server incus.InstanceServer, v Volume, opts VerifyOptions) (res Veri
 		instName := instanceName(v.Name, start)
 		mount := opts.Check.Mount
 		if mount == "" {
-			mount = resolve.DefaultVerifyMount
+			mount = backupmeta.DefaultVerifyMount
 		}
 		say("running the check in throwaway instance %s (%s), volume mounted read-only at %s", instName, opts.Check.Image, mount)
 
