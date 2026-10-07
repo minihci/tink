@@ -534,8 +534,14 @@ are evaluated in --timezone (default: this machine's). A failing copy backs off 
 being retried every tick. Look at the work with "tink daemon jobs".
 
 Each worker is isolated: one that crashes is logged and restarted, and does not stop the
-others. --no-ingress runs only the helper's work, beside an ingress daemon that already exists.`,
-		PreRunE: refuseUnderRemote("tink daemon run"),
+others. --no-ingress runs only the helper's work, beside an ingress daemon that already exists.
+
+With --remote (or $TINK_REMOTE) the daemon manages that server over its API, which is how the
+helper runs: a client of its own host. The ingress half reads and writes a directory, and the
+default one is a path inside the host's storage pool, so under a remote it needs either
+--no-ingress, or a --routes-dir that this process can actually reach (the ingress-routes volume
+mounted into the helper, say). Anything else is refused rather than act on the wrong machine.`,
+		PreRunE: daemonRunUnderRemote,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
@@ -620,6 +626,21 @@ fails rather than guessing if detection is inconclusive.`,
 	cmd.Flags().StringVar(&initSystem, "init", "", fmt.Sprintf("init system to generate for (one of: %v; default: auto-detect)", daemon.InitSystems))
 	cmd.Flags().StringVar(&unitOpts.ExecPath, "exec-path", unitOpts.ExecPath, "path to the tink binary on the target host")
 	return cmd
+}
+
+// daemonRunUnderRemote is `daemon run`'s PreRunE. The daemon is a client of whatever server it is pointed at, except for
+// the ingress half, which reads and writes a directory: refused under a remote unless that half is off (--no-ingress) or
+// the directory was named (--routes-dir), because the default is a path inside the host's own storage pool, which is
+// the wrong place, or no place at all, on any machine but the host.
+func daemonRunUnderRemote(cmd *cobra.Command, _ []string) error {
+	if !incusapi.IsRemote() {
+		return nil
+	}
+	if off, _ := cmd.Flags().GetBool("no-ingress"); off || cmd.Flags().Changed("routes-dir") {
+		return nil
+	}
+	return fmt.Errorf("tink daemon run is pointed at the remote %q (--remote or $TINK_REMOTE), and its ingress half reads a path inside the host's storage pool, which is not this machine's: "+
+		"give --no-ingress to run only the backup work, or --routes-dir with a directory this process can reach (the ingress-routes volume mounted into it, say)", incusapi.Remote())
 }
 
 // refuseUnderRemote is the PreRunE of every command that works on the host's own filesystem or processes (it
