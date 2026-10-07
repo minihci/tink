@@ -7,6 +7,12 @@ the Incus 7.4 source by a separate agent, and the design below was changed to an
 most changed the design were re-checked by hand), **[verified]** (tried live), **[docs]** or **[hypothesis]** (to be checked in
 the phase 0 spike). Choices not yet confirmed by the user are marked **proposed**.
 
+**Revision 3 (proposed, not built): the backup policy moves onto the volume, and the helper stops holding stacks.** Phase 2 built a stack store
+(`daemon sync`, `--stacks`) because the scheduler needed the copy policy and that policy lived only in the YAML. That created a second copy of the
+policy that `plan` cannot see and `incus storage volume show` does not mention. The proposal is that `apply` writes the policy to the volume, and the
+scheduler discovers work by listing volumes, as the ingress reconcile already does with `user.ingress.*`. See
+[the policy on the volume](#the-policy-on-the-volume) and [what revision 3 changes](#what-revision-3-changes).
+
 ## What this is
 
 A long-running **tink helper**: an Incus instance, run from an image built from this repository, that does the work tink should do on a
@@ -29,12 +35,16 @@ so the CLI needs only the Incus API and can run from anywhere that can reach it,
 
 1. **A run must outlive whoever started it.** An Incus `exec` is killed when its websocket drops (see [the trigger](#4-triggering-from-a-laptop)).
    Anything long-running therefore cannot be an exec held open by a laptop.
-2. **The helper is disposable, not stateless.** It owns three things: synced copies of stacks, a job directory, and a heartbeat. All are
-   reconstructible (stacks from their repositories, jobs are history, the heartbeat is rewritten every tick). Backup state itself stays on
-   the volumes as stamps and markers, never in the helper.
-3. **A run is isolated from other runs.** One bad stack, one slow copy or one failing target must not stop anything else.
+2. **The helper is disposable, not stateless.** It owns two things: a job directory and a heartbeat. Both are reconstructible (jobs are
+   history, the heartbeat is rewritten every tick). **Proposed (revision 3):** backup state *and the backup policy* stay on the volumes, as the
+   policy, stamps and markers, never in the helper. A helper that is lost is replaced and finds its work by listing volumes; there is nothing to
+   re-sync. (Revision 2 also had synced copies of stacks here.)
+3. **A run is isolated from other runs.** One bad volume, one slow copy or one failing target must not stop anything else.
 4. **Failures leave a mark.** Success stamps alone make a failing job look merely "not yet run", and a scheduler that retries it forever.
-5. **The helper never executes stack-supplied commands itself.** The stack is data it reads, not code it runs (see [security](#security)).
+5. **The helper never executes stack-supplied commands itself.** The stack, and the policy read from a volume, are data it reads, not code it
+   runs (see [security](#security)).
+6. **One place says what should happen, and `plan` can see it.** The YAML is the intent; what is applied is on the volume; the difference is an
+   ordinary `plan` update. A copy of the intent that `plan` cannot compare against (a synced stack) is drift waiting to happen. **Proposed.**
 
 ## tink's host couplings today
 
@@ -48,7 +58,7 @@ Almost every command opens Incus through one function, `incusapi.Connect(socket)
 | `tink daemon install` only **prints** a unit; the crontab code is legacy cleanup of an old `reconcile.sh`. | `main.go:526`, `reconciler_daemon.go:38` | Deprecated, then removed (see phase 5). |
 | Ingress reads and writes a **host path inside a storage pool**: `/var/lib/incus/storage-pools/default/custom/default_ingress-routes/generated`, with the pool name `default` fixed. | `internal/ingress/ingress.go:29` | Fixed in phase 3 by giving the helper the `ingress-routes` volume as a disk device and making the directory and pool configurable. |
 | `skopeo` for image-drift checks (optional), with `/opt/incus/bin` hard-coded. | `internal/resolve/imagedrift.go:434,494-499` | In the helper image if needed; the path becomes a lookup. |
-| Files a stack reads at load: `source_path` and image `Source`, relative to the YAML's directory. | `internal/resolve/yaml.go:230,279` | The sync sends **every file the loader read**, not only the `-f` files. |
+| Files a stack reads at load: `source_path` and image `Source`, relative to the YAML's directory. | `internal/resolve/yaml.go:230,279` | A **trigger's bundle** sends **every file the loader read**, not only the `-f` files. (Revision 2 did the same for `sync`; revision 3 has no sync, see below.) |
 | Image remotes (`docker-oci:`, `ghcr:`, `images:`) are **names defined in the operator's Incus client config**, resolved client-side. **[verified]**: from a Mac with no Incus client config, `apply` of an OCI instance **fails** with `resolving local image "docker-oci:library/alpine:3": Image ... not found`; with a client config that defines `docker-oci`, it works. | `internal/run/run.go:195`, `internal/resolve` (image resolution) | **A phase 1 requirement:** tink falls back to built-in definitions for the registries a stack commonly uses (`docker-oci` to docker.io and `ghcr` to ghcr.io, both OCI; `images` to the linuxcontainers simplestreams server) when the client config lacks them. The client config wins when it defines them. |
 | Secrets identity in `~/.config/tink`. | `internal/secrets/identity.go` | Per operator. `backup` never resolves secrets today **[code]**, so the helper needs no identity yet. |
 | `buildVersion` reads Go's embedded VCS metadata; without `.git` it prints `(devel)` with unknown commit and date, so two such builds compare equal. | `cmd/tink/main.go:84` | The pipeline must inject the version (`-ldflags -X`); nothing else can tell two helper images apart. |
@@ -93,14 +103,15 @@ refuses with the reason, and does not fail obscurely.
   its own instance config. `tink plan` and `tink helper status` warn when the heartbeat is stale or the instance is stopped, even though the
   logs are gone, because the console log is a bounded ring buffer. **[code]**
 - **Volumes**: `tink-helper-config` (the Incus client config, holding certificates for remote backup targets) and `tink-helper-data`
-  (stacks and jobs, below). The config volume is **sensitive**: it holds client keys, possibly admin keys on other servers. It is excluded
+  (jobs, below; revision 2 also kept stacks here). The config volume is **sensitive**: it holds client keys, possibly admin keys on other servers. It is excluded
   from any backup that leaves the host, and re-issuing its contents is a manual trust-token exercise, not a free rebuild.
 
 ### 3. The loop and the job directory
 
 The helper is one process, `tink daemon run`, with **independent workers**, each isolated from the others (principle 3):
 
-- **backup scheduler**: each tick (default 1 minute), for each synced stack, find the copies that are due and queue them.
+- **backup scheduler**: each tick (default 1 minute), for each volume carrying a backup policy (revision 2: for each synced stack), find the
+  copies that are due and queue them.
 - **executor**: runs queued jobs.
 - **ingress**: the existing reconcile, on its own interval, never behind a copy.
 - **heartbeat**.
@@ -137,10 +148,14 @@ key appeared in one), and a volume's config is the wrong place for that. The rea
 24-hour expiry, and a partial restore point has no markers so it can never be used or pruned. **[code]** On start the executor marks
 any job still `running` as `failed (interrupted)` so it is retried by the schedule.
 
-**Stacks** live in `tink-helper-data/stacks/<name>/`, one directory per stack (so two repositories' `tink.yaml` cannot collide).
-They are loaded **one at a time**: a stack that no longer parses, or names a deleted volume, is reported in `status` and skipped, and does
-not stop the others. Activation is atomic: `tink helper sync` writes `stacks/<name>.new/`, then `READY`, and the loop swaps it in. Only
-`tink helper sync` changes what the **scheduler** runs; see the next section for why a trigger does not.
+**What the scheduler reads. Proposed (revision 3):** the policy on each volume, found by listing volumes (see
+[the policy on the volume](#the-policy-on-the-volume)). Each volume is read **one at a time**: a policy that does not parse, that names a target
+that no longer resolves, or that carries a protocol the helper does not speak, is reported in `status` and skipped, and does not stop the others.
+Only `apply` changes what the **scheduler** runs; see the next section for why a trigger does not.
+
+*Revision 2 instead kept **stacks** in `tink-helper-data/stacks/<name>/`, one directory per stack, activated atomically by `tink helper sync`
+writing `stacks/<name>.new/`, then `READY`. That is what phase 2 built (`daemon sync`, `--stacks`); revision 3 replaces it, see
+[what revision 3 changes](#what-revision-3-changes).*
 
 ### 4. Triggering from a laptop
 
@@ -155,8 +170,8 @@ run open:
    `tink helper jobs` lists recent jobs, `tink helper log ID` follows one, `tink helper cancel ID` creates `cancel`.
 
 The job uses its **own bundle**, so a laptop checkout of a feature branch with a shortened `retain` cannot change what the scheduler does or
-prune real restore points on the next tick. Persistent changes are an explicit `tink helper sync`. Whether `tink apply` should offer to
-sync is open (below).
+prune real restore points on the next tick. Persistent changes are an explicit `tink apply`, which writes the policy to the volumes (revision 2:
+an explicit `tink helper sync`; there is no sync in revision 3, and so no open question about whether `apply` should offer one).
 
 No daemon API of its own is added, but the earlier rationale ("tink owns no state") no longer holds in full: the helper owns reconstructible
 state, and its interface is **Incus's file API plus a versioned job-directory protocol**, not an RPC server. Incus is still the transport and
@@ -167,7 +182,7 @@ command runs locally as it does today. `restore` and `verify` copy within one se
 
 ### 5. Lifecycle commands
 
-`tink helper install | upgrade | status | sync | jobs | log | cancel | remove`.
+`tink helper install | upgrade | status | jobs | log | cancel | remove` (revision 2 also had `sync`; revision 3 drops it).
 
 - **install**: creates the project, instance, volumes and devices (idempotent), sets `TZ`, resolves and records the image digest, and refuses
   if a helper already exists on that server in *any* project (it scans, since discovery is by `user.tink.helper`).
@@ -177,8 +192,8 @@ command runs locally as it does today. `restore` and `verify` copy within one se
 - **Version rule (changed):** the CLI and the helper need to agree on the **protocol version**, not the exact tink version. The CLI **refuses
   only on a protocol mismatch** and warns when the versions differ. An exact-version rule would force a helper restart for every laptop
   `go install`, lock two operators with different versions out of each other, and cannot work at all until a version is injected.
-- **status**: the instance state, image digest and version, **heartbeat age**, `TZ`, each stack (synced when, parse errors), the recent jobs, and
-  for every copy its last success and its failure count (from the volume stamps, so it is true even when the log is gone).
+- **status**: the instance state, image digest and version, **heartbeat age**, `TZ`, each volume with a policy (and any whose policy cannot be read, with the reason; revision 2: each stack, synced when,
+  parse errors), the recent jobs, and for every copy its last success and its failure count (from the volume stamps, so it is true even when the log is gone).
 
 ## Time zones
 
@@ -186,6 +201,65 @@ Cron schedules are evaluated in the location of `now`. **[code]** `helper instal
 shows it, and **schedules are evaluated in the Incus server's zone** so they line up with Incus's own snapshot schedules. `plan` evaluates in the
 helper's zone when it finds a helper, else in local time. Due-ness is stamp-based, so a DST change cannot cause a repeat or a skip, only shift
 the next run by an hour. **[hypothesis]** (robfig cron's handling of a non-existent local time is not read.)
+
+## The policy on the volume
+
+**Proposed (revision 3); not built.** Today the copy policy exists in one place, the stack YAML, and the volume carries only what Incus enforces
+(`snapshots.schedule`, `snapshots.expiry`) and tink's stamps and markers (`user.tink.backup.*`). That forced the helper to hold a copy of every stack,
+which can drift from the repository and which `plan` cannot see, and it leaves `incus storage volume show` telling only part of the story.
+
+**The key.** `apply` writes one tink-owned key on each volume that has a `backup:` block with copies or verification:
+
+```
+user.tink.backup.policy = {proto: 1, copies: [...], verify: {...}}     # one document, YAML or JSON, versioned
+```
+
+It is **resolved**: each copy carries its target inline (`location`, `engine`, `remote`, `pool`) rather than naming a `kind: backup-target` the
+scheduler would have to find. The stack's `backup-target` resources remain the way to *write* the intent; the volume holds what was applied. One key,
+not a dozen scalars, so it is applied and compared as a unit, and an older helper can refuse a newer `proto` instead of misreading it. The snapshot
+`schedule` and `retain` stay on Incus's own keys, as today.
+
+**Discovery.** The scheduler lists custom volumes (every project the helper can see, every pool) and reads the key, the way the ingress reconcile
+reads `user.ingress.*` on instances. **[code]** for the pattern (`internal/ingress`); that a helper can list volumes across projects is **[hypothesis]**
+(see [open questions](#open-questions)). A volume with no key has no scheduled copies. The listing skips any volume that carries a restore-point or
+in-progress marker (`copy-of`, `copy-partial-of`), so a backup is never scheduled for a backup.
+
+**Drift becomes a `plan` update.** `plan` compares the key's content with what the YAML would write, exactly as it already does for the two
+snapshot keys, and shows `update` when they differ. There is no second copy of the intent for it to miss. A change to the YAML takes effect when it is
+**applied**, which is stricter than a sync but is how every other tink resource already behaves.
+
+**Removal.** The doc for volume backups says tink never removes keys it no longer sets. This key is the exception: it is owned outright, so removing a
+`backup:` block, switching to `none:`, or removing every copy makes `apply` **delete** it. Otherwise the scheduler would keep copying a volume the
+operator opted out of. A volume deleted from the YAML but left on the server keeps its key, and the scheduler keeps copying it: `plan` should
+report "applied policy with no declaration" for it. **Proposed.**
+
+**Copies carry config; the policy must not travel.** A restore point, a restored volume and a verify scratch volume are made by copying a snapshot,
+and a copy carries the volume's `user.*` config. Today only keys starting `user.tink.backup.copy-` are scrubbed from a restored volume
+(`scrubMarkers`, `internal/volbackup/copy.go`). **[code]** The policy key, and the `verified-*` and per-target `copy.<target>.*` stamps, do not
+match that prefix. The policy must be removed from restore points when they are made and from restored volumes, and the scheduler's marker check
+above is the second line of defence. The existing stamps are a separate, smaller instance of the same problem and should be looked at in the same
+change.
+
+**Size.** **[verified]** on Incus 7.5.1 (the lab host): a 64 KiB `user.*` value on a custom volume is accepted. A policy with several copies and a
+verify check is a few hundred bytes. Whether Incus caps a value above 64 KiB was not established (the larger probes failed in the client's shell
+argument limit, not in Incus).
+
+**What it does not change.** `restore` and `verify` still take their target from the stack (`--from TARGET` names a `kind: backup-target`), because
+restoring is for the case where the source volume, and so its key, is gone. Failure stamps, markers, the server marker and the sweep are unchanged.
+
+## What revision 3 changes
+
+| Piece | Revision 2 (built in phase 2) | Revision 3 (proposed) |
+|---|---|---|
+| Where the scheduler finds work | stacks synced into `--stacks` | volumes carrying `user.tink.backup.policy` |
+| How the policy gets there | `daemon sync` / `helper sync`, an explicit extra step | `apply`, the step operators already run |
+| Drift between the repository and the scheduler | invisible to `plan`; fixed by remembering to sync | a `plan` update |
+| What a helper needs to recover | re-sync every stack | nothing |
+| What the helper owns | stacks, jobs, heartbeat | jobs, heartbeat |
+| Unit of failure | a stack that does not load | a volume whose policy does not read |
+| `incus storage volume show` | snapshot keys and stamps | the whole policy as well |
+| Removed | | `daemon sync`, `--stacks`, `helper sync`, the stack store, symlink activation, "keeps two versions" |
+| Kept | | the job directory, `daemon enqueue` with a bundle, the executor, the heartbeat, supervised workers, backoff, the sweep |
 
 ## Backup engine changes this design needs
 
@@ -214,7 +288,12 @@ it is stated, not hidden. Consequences the design takes seriously:
 - **Supply chain**: the host's incusd pulls the image as root and hands it the socket. The image is **pinned by digest** at `install` and `upgrade`
   (the digest is recorded on the instance), and the doc names the publisher that is trusted.
 - **Secrets**: resolved `${secret:}` values live in instance config, which the helper can read. No backup job resolves secrets today. A job that
-  does gets the identity deliberately and says so.
+  does gets the identity deliberately and says so. **Revision 3:** the policy key is plaintext volume config, so it can never carry a secret. A
+  target that needs one (a restic repository password, say) must name it and have the helper resolve it, which is the design that job needs anyway.
+- **Who can write a policy (revision 3).** The verify check is an image and a command, and the helper would read it from volume config. Anyone who can
+  write a custom volume's config can therefore choose what runs in the verify sandbox, and choose where a volume is copied to. They already hold
+  the Incus API, which is root on the host in this design, so this adds little, but it is stated. The command still runs only in the throwaway
+  instance (no network, volume read-only), never in the helper. A restricted certificate (the hardening phase) should be checked against this.
 - **Failure text can contain credentials** (an Incus error echoed an API key). Stamps never carry it; logs are redacted best-effort.
 
 **Later (hardening).** Replace the socket with a client certificate scoped to the projects the helper manages. Two things to check first: an Incus
@@ -243,7 +322,14 @@ Each phase is useful alone and ends in something checkable on the lab host.
    server marker, the per-copy guard, the job directory and executor, stack sync with atomic activation, the backup scheduler and heartbeat in `daemon run`
    (`--stacks`, `--jobs`, `--timezone`, `--no-ingress`), supervised workers, and local `daemon sync|enqueue|jobs|cancel`. It runs under any supervisor (a transient
    systemd unit on the lab host). **2e** adds the in-progress mark and the sweep of abandoned copies (below).
-3. **The helper.** Containerfile and image workflow (version injection, multi-arch, digest), `tink helper install|upgrade|status|sync|remove`,
+2f. **The policy on the volume. Proposed (revision 3), before phase 3.** `apply` writes `user.tink.backup.policy`, `plan` compares it, the scheduler
+   lists volumes instead of reading `--stacks`, restore points and restored volumes are scrubbed of it, removal clears it. `daemon sync` and
+   `--stacks` are kept for one release, deprecated, so a host running phase 2 is not broken, then removed. *Done when:* on the lab host, a stack
+   applied once is picked up by a scheduler started with no `--stacks`; editing the YAML shows an `update` in `plan` until applied; a restored
+   volume and a restore point carry no policy and are not scheduled; removing the `backup:` block stops the copies; and a policy with an unknown
+   `proto` is reported and skipped while the other volumes still run.
+3. **The helper.** Containerfile and image workflow (version injection, multi-arch, digest), `tink helper install|upgrade|status|remove`
+   (no `sync` in revision 3),
    the ingress volume device and configurable paths, `deploy` no longer reinstalling the host daemon. *Done when:* killing the process brings it
    back, a crash loop is detected by `status` and `plan`, a host reboot brings it back with the next due copy still running, and `upgrade`
    waits for a running copy.
@@ -254,8 +340,16 @@ Each phase is useful alone and ends in something checkable on the lab host.
 
 ## Open questions
 
-- **Should `tink apply` offer to sync the stack to the helper?** Explicit `helper sync` first is the safe default; syncing on apply keeps the scheduler
-  from lagging the repository. Revisit after phase 4.
+- **Should the policy live on the volume (revision 3)?** The case is in [the policy on the volume](#the-policy-on-the-volume). It supersedes the
+  question "should `tink apply` offer to sync the stack to the helper?" of revision 2, because `apply` would be the sync. Confirm before phase 3.
+- **Can the helper list volumes in every project it needs?** The scheduler's discovery depends on it. The socket should allow it; check on the lab host
+  with volumes in two projects before building phase 2f, and decide whether the helper's own project matters.
+- **A volume removed from the YAML but still on the server.** Its key persists and the scheduler keeps copying it. Is "applied policy with no
+  declaration" a `plan` warning, or should `apply` offer to clear it? Warning first is proposed.
+- **Per-volume cost of discovery.** Listing every custom volume every tick is cheap on one server; on a large one it may want a longer interval than
+  the due check, or a cached listing refreshed on `apply`. Not measured.
+- **Does a copy to a remote target apply config at creation?** Unchanged from phase 2e, and now it matters twice: for the in-progress mark and for
+  whether the policy key is already scrubbed on a relayed restore point.
 - **A host with no registry access** has no route to the image (v1 needs one). A non-OCI image published as a release asset is the likely answer.
 - **The helper's own project** (`tink-helper`) is proposed; if the volumes it must reach live in several projects the socket still allows it, but
   that is worth confirming in phase 0.
@@ -323,7 +417,7 @@ The first revision was reviewed against the code and the Incus 7.4 source. What 
 | A failed copy is retried every tick; no failure is recorded anywhere. | **Failure stamps and backoff**, as a phase 2 prerequisite; stamps hold no message. |
 | One lock would stall ingress behind a long copy. | **Independent workers**, a per-copy guard, ingress never behind the executor. |
 | `upgrade` or a restart kills a running copy; "exactly its own version" forces restarts and locks operators out. | **Drain before upgrade**; the rule is the **protocol version**. |
-| The trigger persisted the laptop's stack into the scheduler. | A trigger uses **its own bundle**; only `helper sync` changes the scheduler. |
+| The trigger persisted the laptop's stack into the scheduler. | A trigger uses **its own bundle**; only `helper sync` changes the scheduler. (Revision 3: only `apply` does.) |
 | `kind: incus` and the other shell-outs are not API calls; `deploy` reinstalls the daemon. | `kind: incus` **refused under `--remote`**; `deploy` host-local and no longer reinstalls the daemon once a helper exists. |
 | Time zones differ between laptop and helper. | **`TZ` set explicitly**, schedules evaluated in the server's zone, shown in `status`. |
 | Two servers can prune each other's restore points. | **Server marker**; prune only touches this server's points. |
@@ -335,6 +429,14 @@ The first revision was reviewed against the code and the Incus 7.4 source. What 
 | The helper adds the first state tink owns, which weakened the "no daemon API" rationale. | The doc says so, and gives the real rationale: the interface is Incus's file API plus a versioned job protocol. |
 
 ## Alternatives considered
+
+- **Keep synced stacks (revision 2, built).** Works, and a stack is the whole truth. Rejected as the long-term shape: it is a second copy of the
+  intent that `plan` cannot compare, it can lag the repository silently, a lost helper means re-syncing everything, and `incus storage volume show`
+  does not show the policy. Retained for one release as the deprecated path.
+- **One scalar key per setting** (`user.tink.backup.copy.nas.schedule`, ...). Easy to read one by one, but not applied or compared atomically, awkward
+  for a list of copies, and nothing to version. Rejected for one versioned document.
+- **Name the targets and keep them in the stack.** A volume would carry only `copies: [{target: nas}]`. Then the scheduler still needs the stack to
+  resolve `nas`, which is the thing being removed. Rejected: targets are resolved into the key.
 
 - **Keep `daemon install` (init-system units).** Works, but needs a generator per init system and ties tink to the host.
 - **cron or a timer calling `tink backup run --due`.** Simplest, and `--due` was designed for it; it stays a supported way to run the same command. It
