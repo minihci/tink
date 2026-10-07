@@ -28,27 +28,13 @@ func TestValidID(t *testing.T) {
 	}
 }
 
-func TestCleanBundlePath(t *testing.T) {
-	for in, want := range map[string]string{"tink.yaml": "tink.yaml", "a/b.yaml": "a/b.yaml", "./a//b": "a/b", "a/../b": "b"} {
-		got, err := CleanBundlePath(in)
-		if err != nil || got != filepath.FromSlash(want) {
-			t.Errorf("%q -> %q, %v; want %q", in, got, err, want)
-		}
-	}
-	for _, bad := range []string{"", "/etc/passwd", "../x", "a/../../x", "..", ".", "a\x00b", `\windows`} {
-		if _, err := CleanBundlePath(bad); err == nil {
-			t.Errorf("%q must be refused", bad)
-		}
-	}
-}
-
 func TestEnqueueWritesREADYLastAndTheJobIsQueued(t *testing.T) {
 	s := Store{Dir: t.TempDir()}
-	id, err := s.Enqueue(Request{Kind: "backup-run", Origin: OriginTrigger}, map[string][]byte{"tink.yaml": []byte("x"), "data/f.txt": []byte("y")}, t0)
+	id, err := s.Enqueue(Request{Kind: "backup-run", Origin: OriginTrigger}, t0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, f := range []string{"request.json", "READY", "bundle/tink.yaml", "bundle/data/f.txt"} {
+	for _, f := range []string{"request.json", "READY"} {
 		if _, err := os.Stat(filepath.Join(s.Dir, id, filepath.FromSlash(f))); err != nil {
 			t.Errorf("%s: %v", f, err)
 		}
@@ -64,22 +50,37 @@ func TestEnqueueWritesREADYLastAndTheJobIsQueued(t *testing.T) {
 	}
 }
 
-func TestEnqueueRefusesAnUnsafeBundleAndLeavesNothing(t *testing.T) {
+// The property READY exists for: the Incus file API writes a file in place, so a reader can see a request half-written. READY is the writer
+// saying it is finished, which only holds if it is written after the whole request. Checked at the one moment it matters, not by timing.
+func TestREADYIsWrittenOnlyAfterTheWholeRequest(t *testing.T) {
 	s := Store{Dir: t.TempDir()}
-	for _, files := range []map[string][]byte{{"../escape": []byte("x")}, {"/abs": []byte("x")}, {"ok.yaml": []byte("x"), "a/../../out": []byte("y")}} {
-		if _, err := s.Enqueue(Request{Kind: "k"}, files, t0); err == nil {
-			t.Errorf("bundle %v must be refused", files)
-		}
+	var readyThen, completeThen bool
+	beforeREADY = func(dir string) {
+		_, err := os.Stat(filepath.Join(dir, "READY"))
+		readyThen = err == nil
+		var r Request
+		b, _ := os.ReadFile(filepath.Join(dir, "request.json"))
+		completeThen = json.Unmarshal(b, &r) == nil && r.Kind == "k"
 	}
-	entries, _ := os.ReadDir(s.Dir)
-	if len(entries) != 0 {
-		t.Errorf("a refused job must leave nothing behind: %v", entries)
+	t.Cleanup(func() { beforeREADY = nil })
+	if _, err := s.Enqueue(Request{Kind: "k", Origin: OriginTrigger}, t0); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := s.Enqueue(Request{}, nil, t0); err == nil {
+	if readyThen {
+		t.Error("READY existed before the request was written: a reader could pick up a job with no request")
+	}
+	if !completeThen {
+		t.Error("request.json was not complete when READY was about to be written")
+	}
+}
+
+func TestEnqueueRefusesAJobWithoutAKindAndLeavesNothing(t *testing.T) {
+	s := Store{Dir: t.TempDir()}
+	if _, err := s.Enqueue(Request{}, t0); err == nil {
 		t.Error("a job needs a kind")
 	}
-	if _, err := os.Stat(filepath.Join(filepath.Dir(s.Dir), "escape")); err == nil {
-		t.Error("a bundle file escaped the job directory")
+	if entries, _ := os.ReadDir(s.Dir); len(entries) != 0 {
+		t.Errorf("a refused job must leave nothing behind: %v", entries)
 	}
 }
 
@@ -110,8 +111,8 @@ func TestADirectoryWithoutREADYIsNotAJob(t *testing.T) {
 
 func TestListIsOldestFirstAndIgnoresStrangers(t *testing.T) {
 	s := Store{Dir: t.TempDir()}
-	b, _ := s.Enqueue(Request{Kind: "k", Created: t0.Add(2 * time.Hour)}, nil, t0)
-	a, _ := s.Enqueue(Request{Kind: "k", Created: t0.Add(time.Hour)}, nil, t0)
+	b, _ := s.Enqueue(Request{Kind: "k", Created: t0.Add(2 * time.Hour)}, t0)
+	a, _ := s.Enqueue(Request{Kind: "k", Created: t0.Add(time.Hour)}, t0)
 	os.MkdirAll(filepath.Join(s.Dir, ".hidden"), 0o700)
 	os.WriteFile(filepath.Join(s.Dir, "a-file"), nil, 0o600)
 	list, err := s.List()
@@ -128,7 +129,7 @@ func TestPendingSeesQueuedAndRunningJobsOfTheKind(t *testing.T) {
 	if p, _ := s.Pending("backup-run"); p {
 		t.Error("nothing is pending yet")
 	}
-	id, _ := s.Enqueue(Request{Kind: "backup-run", Origin: OriginTrigger}, nil, t0)
+	id, _ := s.Enqueue(Request{Kind: "backup-run", Origin: OriginTrigger}, t0)
 	if p, _ := s.Pending("backup-run"); !p {
 		t.Error("a queued job is pending, whoever queued it")
 	}

@@ -64,15 +64,6 @@ func (s *stubEngine) copies() []string {
 	return append([]string(nil), s.copied...)
 }
 
-func stackFiles(volumes ...string) map[string][]byte {
-	var b strings.Builder
-	b.WriteString("kind: backup-target\nname: nas\nlocation: other-host\nengine: incus\npool: nas\n")
-	for _, v := range volumes {
-		fmt.Fprintf(&b, "---\nkind: storage-volume\nname: %s\nbackup:\n  copies:\n    - {target: nas, schedule: \"@hourly\", retain: 30d}\n", v)
-	}
-	return map[string][]byte{"tink.yaml": []byte(b.String())}
-}
-
 // policyText is the copy policy `apply` writes for a volume that copies hourly to the pool target "nas".
 func policyText(t *testing.T) string {
 	t.Helper()
@@ -204,7 +195,7 @@ func TestOnlyOneBackupJobWaitsAtATime(t *testing.T) {
 	}
 	r.runJobs(t) // it finishes; the stub does not stamp, so both are due again
 	// an operator's job is waiting: the scheduler does not queue the same work behind it
-	if _, err := r.h.Store.Enqueue(jobs.Request{Kind: KindBackupRun, Origin: jobs.OriginTrigger}, nil, now0); err != nil {
+	if _, err := r.h.Store.Enqueue(jobs.Request{Kind: KindBackupRun, Origin: jobs.OriginTrigger}, now0); err != nil {
 		t.Fatal(err)
 	}
 	if n := r.h.Tick(&st); n != 0 {
@@ -313,7 +304,7 @@ func TestAFailingCopyFailsTheJobButKeepsTheReport(t *testing.T) {
 	r := newRig(t)
 	r.volume(t, "lib", "photos")
 	r.eng.copyErr["lib->nas"] = errors.New("target is full")
-	id, _ := r.h.Store.Enqueue(jobs.Request{Kind: KindBackupRun, Origin: jobs.OriginTrigger}, nil, now0)
+	id, _ := r.h.Store.Enqueue(jobs.Request{Kind: KindBackupRun, Origin: jobs.OriginTrigger}, now0)
 	r.runJobs(t)
 	st, _ := r.h.Store.Status(id)
 	if st.State != jobs.Failed || !strings.Contains(st.Error, "1 copy operation(s) failed") {
@@ -328,10 +319,12 @@ func TestAFailingCopyFailsTheJobButKeepsTheReport(t *testing.T) {
 	}
 }
 
-func TestATriggeredJobCanCarryItsOwnStackInsteadOfThePolicies(t *testing.T) {
-	r := newRig(t) // note: no volume carries a policy; the bundle is all the job has
+func TestAJobCanBeLimitedToNamedVolumes(t *testing.T) {
+	r := newRig(t)
+	r.volume(t, "lib")
+	r.volume(t, "photos")
 	args, _ := json.Marshal(BackupRunArgs{Volumes: []string{"lib"}})
-	id, err := r.h.Store.Enqueue(jobs.Request{Kind: KindBackupRun, Origin: jobs.OriginTrigger, Entries: []string{"tink.yaml"}, Args: args}, stackFiles("lib", "photos"), now0)
+	id, err := r.h.Store.Enqueue(jobs.Request{Kind: KindBackupRun, Origin: jobs.OriginTrigger, Args: args}, now0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -350,7 +343,7 @@ func TestAJobSaysWhichVolumesItSkippedAndStillRunsTheRest(t *testing.T) {
 	r.eng.listed = append(r.eng.listed, volbackup.ListedVolume{
 		Volume: volbackup.Volume{Project: "tenant", Pool: "default", Name: "garbled"},
 		Config: map[string]string{resolve.PolicyKey: "{nope"}})
-	id, _ := r.h.Store.Enqueue(jobs.Request{Kind: KindBackupRun, Origin: jobs.OriginTrigger}, nil, now0)
+	id, _ := r.h.Store.Enqueue(jobs.Request{Kind: KindBackupRun, Origin: jobs.OriginTrigger}, now0)
 	r.runJobs(t)
 	st, _ := r.h.Store.Status(id)
 	if st.State != jobs.Succeeded {
@@ -364,7 +357,7 @@ func TestAJobSaysWhichVolumesItSkippedAndStillRunsTheRest(t *testing.T) {
 
 func TestAJobWithNoVolumesSaysSo(t *testing.T) {
 	r := newRig(t)
-	id, _ := r.h.Store.Enqueue(jobs.Request{Kind: KindBackupRun, Origin: jobs.OriginTrigger}, nil, now0)
+	id, _ := r.h.Store.Enqueue(jobs.Request{Kind: KindBackupRun, Origin: jobs.OriginTrigger}, now0)
 	r.runJobs(t)
 	if log, _ := r.h.Store.Log(id); !strings.Contains(log, "no volume on this server carries a copy policy") {
 		t.Errorf("%q", log)
@@ -374,7 +367,7 @@ func TestAJobWithNoVolumesSaysSo(t *testing.T) {
 func TestAJobFailsClearlyWhenTheVolumesCannotBeListed(t *testing.T) {
 	r := newRig(t)
 	r.eng.listErr = errors.New("incus is busy")
-	id, _ := r.h.Store.Enqueue(jobs.Request{Kind: KindBackupRun}, nil, now0)
+	id, _ := r.h.Store.Enqueue(jobs.Request{Kind: KindBackupRun}, now0)
 	r.runJobs(t)
 	if st, _ := r.h.Store.Status(id); st.State != jobs.Failed || !strings.Contains(st.Error, "listing the volumes: incus is busy") {
 		t.Errorf("%+v", st)
@@ -385,16 +378,13 @@ func TestBadJobsFailWithAReason(t *testing.T) {
 	r := newRig(t)
 	cases := map[string]struct {
 		req     jobs.Request
-		bundle  map[string][]byte
 		wantErr string
 	}{
-		"an entry that leaves the bundle":    {jobs.Request{Kind: KindBackupRun, Entries: []string{"../../etc/x"}}, map[string][]byte{"tink.yaml": nil}, "leaves the directory"},
-		"an entry that is not in the bundle": {jobs.Request{Kind: KindBackupRun, Entries: []string{"missing.yaml"}}, map[string][]byte{"tink.yaml": stackFiles("x")["tink.yaml"]}, "no such file"},
-		"arguments that are not JSON":        {jobs.Request{Kind: KindBackupRun, Args: json.RawMessage(`"oops"`)}, nil, "arguments"},
+		"arguments that are not JSON": {jobs.Request{Kind: KindBackupRun, Args: json.RawMessage(`"oops"`)}, "arguments"},
 	}
 	ids := map[string]string{}
 	for name, c := range cases {
-		id, err := r.h.Store.Enqueue(c.req, c.bundle, now0)
+		id, err := r.h.Store.Enqueue(c.req, now0)
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
@@ -413,7 +403,7 @@ func TestAJobFailsClearlyWhenIncusCannotBeReached(t *testing.T) {
 	r := newRig(t)
 	r.volume(t, "lib")
 	r.h.Connect = func() (backuprun.Engine, error) { return nil, errors.New("connection refused") }
-	id, _ := r.h.Store.Enqueue(jobs.Request{Kind: KindBackupRun}, nil, now0)
+	id, _ := r.h.Store.Enqueue(jobs.Request{Kind: KindBackupRun}, now0)
 	r.runJobs(t)
 	if st, _ := r.h.Store.Status(id); st.State != jobs.Failed || !strings.Contains(st.Error, "connecting to incus: connection refused") {
 		t.Errorf("%+v", st)

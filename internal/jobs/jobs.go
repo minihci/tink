@@ -2,16 +2,14 @@
 // scheduler in the same process, or a client pushing files through the Incus file API) can start work without a
 // listening port or a daemon API of its own.
 //
-//	<dir>/<id>/request.json   what to do
-//	<dir>/<id>/bundle/        optional: a stack, and every file it reads, for this request only (without one, a backup
-//	                          job works from the policies on the volumes)
+//	<dir>/<id>/request.json   what to do (a backup job works from the copy policies on the volumes)
 //	<dir>/<id>/READY          created LAST: nothing in a job directory is read before it exists
 //	<dir>/<id>/status.json    written by the executor, atomically
 //	<dir>/<id>/log            bounded, scrubbed of secrets
 //	<dir>/<id>/cancel         created by a client to ask the job to stop
 //
-// READY exists because the Incus file API writes a file in place: a reader can see a half-written file, or a
-// directory with only some of its files. A job is read only once READY says the writer has finished.
+// READY exists because the Incus file API writes a file in place: a reader can see a half-written file. A job is read
+// only once READY says the writer has finished.
 package jobs
 
 import (
@@ -24,7 +22,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strings"
 	"time"
 )
 
@@ -59,8 +56,6 @@ type Request struct {
 	Kind    string    `json:"kind"`
 	Origin  string    `json:"origin"`
 	Created time.Time `json:"created"`
-	// Entries are the stack files inside bundle/ to load, when the request carries a bundle.
-	Entries []string `json:"entries,omitempty"`
 	// Args are specific to Kind.
 	Args json.RawMessage `json:"args,omitempty"`
 }
@@ -86,8 +81,6 @@ type Job struct {
 	ID      string
 	Dir     string
 	Request Request
-	// BundleDir is the directory of the request's own stack files (it may not exist).
-	BundleDir string
 }
 
 var idPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
@@ -107,46 +100,9 @@ type Store struct{ Dir string }
 
 func (s Store) jobDir(id string) string { return filepath.Join(s.Dir, id) }
 
-// CleanBundlePath validates a path inside a bundle and returns it in its cleaned form: relative, with no
-// way out of the directory, and not one of the protocol's own names.
-func CleanBundlePath(p string) (string, error) {
-	if p == "" {
-		return "", errors.New("an empty path")
-	}
-	if strings.ContainsRune(p, 0) {
-		return "", fmt.Errorf("path %q contains a NUL", p)
-	}
-	if filepath.IsAbs(p) || strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`) {
-		return "", fmt.Errorf("path %q is absolute", p)
-	}
-	c := filepath.Clean(filepath.FromSlash(p))
-	if c == "." || c == ".." || strings.HasPrefix(c, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("path %q leaves the directory it is delivered in", p)
-	}
-	return c, nil
-}
-
-// writeFiles writes files under dir (creating directories), refusing any path that is not confined.
-func writeFiles(dir string, files map[string][]byte) error {
-	for name, data := range files {
-		c, err := CleanBundlePath(name)
-		if err != nil {
-			return err
-		}
-		full := filepath.Join(dir, c)
-		if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
-			return err
-		}
-		if err := os.WriteFile(full, data, 0o600); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// Enqueue creates a job: its bundle files, then request.json, then READY, last. It is how the scheduler starts
-// work; a remote client does the same with the file API. It returns the new job's id.
-func (s Store) Enqueue(req Request, bundle map[string][]byte, now time.Time) (string, error) {
+// Enqueue creates a job: request.json, then READY, last. It is how the scheduler starts work; a remote client does the same
+// with the file API. It returns the new job's id.
+func (s Store) Enqueue(req Request, now time.Time) (string, error) {
 	req.Proto = Proto
 	if req.Created.IsZero() {
 		req.Created = now.UTC()
@@ -159,12 +115,6 @@ func (s Store) Enqueue(req Request, bundle map[string][]byte, now time.Time) (st
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
-	if len(bundle) > 0 {
-		if err := writeFiles(filepath.Join(dir, "bundle"), bundle); err != nil {
-			_ = os.RemoveAll(dir)
-			return "", err
-		}
-	}
 	b, err := json.MarshalIndent(req, "", "  ")
 	if err != nil {
 		_ = os.RemoveAll(dir)
@@ -174,12 +124,19 @@ func (s Store) Enqueue(req Request, bundle map[string][]byte, now time.Time) (st
 		_ = os.RemoveAll(dir)
 		return "", err
 	}
+	if beforeREADY != nil {
+		beforeREADY(dir)
+	}
 	if err := os.WriteFile(filepath.Join(dir, "READY"), nil, 0o600); err != nil {
 		_ = os.RemoveAll(dir)
 		return "", err
 	}
 	return id, nil
 }
+
+// beforeREADY is a test seam: Enqueue calls it with the job's directory after request.json is written and before READY is, which is the
+// moment at which a reader must not be able to see the job, and the request must already be complete.
+var beforeREADY func(dir string)
 
 // Cancel asks a job to stop. It takes effect between the job's steps; an operation already in flight finishes.
 func (s Store) Cancel(id string) error {
@@ -314,6 +271,16 @@ func (s Store) readRequest(id string) (Request, error) {
 	var r Request
 	if err := json.Unmarshal(b, &r); err != nil {
 		return Request{}, err
+	}
+	// A request made by an earlier tink could carry a stack ("entries", with its files in a bundle/ directory) to run for that job only.
+	// That is gone: jobs work from the copy policies on the volumes. Running such a request as an ordinary job would copy something other
+	// than what was asked for, so it is refused.
+	var earlier struct {
+		Entries []string `json:"entries"`
+	}
+	if json.Unmarshal(b, &earlier) == nil && len(earlier.Entries) > 0 {
+		return Request{}, errors.New("it carries a stack (a bundle of stack files), which tink no longer runs: jobs work from the copy policies on the volumes " +
+			"(`tink backup run -f FILE` runs one stack's copies)")
 	}
 	return r, nil
 }

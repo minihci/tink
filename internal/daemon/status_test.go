@@ -86,7 +86,7 @@ func TestBuildStatusSaysWhatTheHelperIsAndWhatItLastDid(t *testing.T) {
 	r := newRig(t)
 	r.volume(t, "lib")
 	r.eng.copyErr["lib->nas"] = errors.New("target is full")
-	id, _ := r.h.Store.Enqueue(jobs.Request{Kind: KindBackupRun, Origin: jobs.OriginTrigger}, nil, now0)
+	id, _ := r.h.Store.Enqueue(jobs.Request{Kind: KindBackupRun, Origin: jobs.OriginTrigger}, now0)
 	r.runJobs(t) // the real executor: the job fails because its copy does
 
 	live := &Live{}
@@ -109,7 +109,7 @@ func TestBuildStatusSaysWhatTheHelperIsAndWhatItLastDid(t *testing.T) {
 		t.Errorf("ingress: %+v", st.Ingress)
 	}
 	// a job that has not finished is not "the last job"
-	r.h.Store.Enqueue(jobs.Request{Kind: KindBackupRun, Origin: jobs.OriginSchedule}, nil, now0.Add(time.Hour))
+	r.h.Store.Enqueue(jobs.Request{Kind: KindBackupRun, Origin: jobs.OriginSchedule}, now0.Add(time.Hour))
 	if st := buildStatus(StatusOptions{Store: r.h.Store}, live, now0, now0); st.LastJob == nil || st.LastJob.ID != id {
 		t.Errorf("a queued job is not a finished one: %+v", st.LastJob)
 	}

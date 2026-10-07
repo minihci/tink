@@ -24,7 +24,7 @@ func newExec(t *testing.T, h map[string]Handler) (*Executor, Store) {
 
 func enqueue(t *testing.T, s Store, kind string, created time.Time) string {
 	t.Helper()
-	id, err := s.Enqueue(Request{Kind: kind, Origin: OriginSchedule, Created: created}, nil, created)
+	id, err := s.Enqueue(Request{Kind: kind, Origin: OriginSchedule, Created: created}, created)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -377,59 +377,32 @@ func TestRunLoopRecoversThenRunsAndStopsWhenAsked(t *testing.T) {
 	}
 }
 
-// The property READY exists for: however fast the executor scans, a job it picks up has every file its writer sent.
-func TestAJobIsNeverRunBeforeItsFilesAreThere(t *testing.T) {
-	const jobs, filesPer = 60, 6
-	var mu sync.Mutex
-	var broken []string
-	ran := 0
-	h := func(ctx context.Context, j Job, log io.Writer) (any, error) {
-		mu.Lock()
-		defer mu.Unlock()
-		ran++
-		for i := 0; i < filesPer; i++ {
-			b, err := os.ReadFile(filepath.Join(j.BundleDir, fmt.Sprintf("f%d", i)))
-			if err != nil || len(b) != 300_000 {
-				broken = append(broken, fmt.Sprintf("%s f%d: %d bytes, %v", j.ID, i, len(b), err))
-			}
-		}
-		return nil, nil
+// A request made by an earlier tink could carry a stack to run for that job only. That is gone, and the request must not be run as an
+// ordinary job, which would copy something other than what was asked for.
+func TestARequestThatCarriesAStackIsRefusedNotRunAsSomethingElse(t *testing.T) {
+	ran := false
+	e, s := newExec(t, map[string]Handler{"k": func(ctx context.Context, j Job, log io.Writer) (any, error) { ran = true; return nil, nil }})
+	id := "20260101T000000Z-earlier"
+	dir := filepath.Join(s.Dir, id)
+	if err := os.MkdirAll(filepath.Join(dir, "bundle"), 0o700); err != nil {
+		t.Fatal(err)
 	}
-	e, s := newExec(t, map[string]Handler{"k": h})
-	e.Now = time.Now
-	e.Poll = time.Millisecond
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() { e.Run(ctx); close(done) }()
-
-	files := map[string][]byte{}
-	for i := 0; i < filesPer; i++ {
-		files[fmt.Sprintf("f%d", i)] = make([]byte, 300_000)
+	req := `{"proto":1,"kind":"k","origin":"trigger","created":"2026-01-01T00:00:00Z","entries":["tink.yaml"]}`
+	if err := os.WriteFile(filepath.Join(dir, "request.json"), []byte(req), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	for i := 0; i < jobs; i++ {
-		if _, err := s.Enqueue(Request{Kind: "k", Origin: OriginTrigger}, files, time.Now()); err != nil {
-			t.Fatal(err)
-		}
+	if err := os.WriteFile(filepath.Join(dir, "READY"), nil, 0o600); err != nil {
+		t.Fatal(err)
 	}
-	deadline := time.Now().Add(20 * time.Second)
-	for time.Now().Before(deadline) {
-		mu.Lock()
-		n := ran
-		mu.Unlock()
-		if n == jobs {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
+	if _, err := e.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
 	}
-	cancel()
-	<-done
-	mu.Lock()
-	defer mu.Unlock()
-	if ran != jobs {
-		t.Fatalf("only %d of %d jobs ran", ran, jobs)
+	st := status(t, s, id)
+	if st.State != Failed || !strings.Contains(st.Error, "carries a stack") || !strings.Contains(st.Error, "no longer runs") {
+		t.Errorf("want a failure that says the stack is no longer run: %+v", st)
 	}
-	if len(broken) > 0 {
-		t.Errorf("%d job(s) were run before their files were complete, e.g. %s", len(broken), broken[0])
+	if ran {
+		t.Error("the handler must not run a request it was refused")
 	}
 }
 

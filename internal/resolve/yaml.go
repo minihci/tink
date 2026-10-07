@@ -181,57 +181,7 @@ func LoadFiles(paths []string) ([]Resource, error) {
 // A file resource's source_path is read now, relative to this YAML
 // file's own directory -- matching Terraform's own ${path.module}
 // convention for the same problem.
-func LoadFile(path string) ([]Resource, error) { return loadFile(path, "", nil) }
-
-// LoadFileConfined is LoadFile for a stack that came from somewhere else (synced to a helper, say): it is data,
-// not code, so it must not be able to make tink read a file outside the directory it was delivered in. Every path
-// the stack names (source_path, an image's source) must stay inside root, after symlinks are resolved, or the load
-// fails. The stack file itself must be inside root too.
-func LoadFileConfined(path, root string) ([]Resource, error) {
-	if root == "" {
-		return nil, errors.New("LoadFileConfined needs a root directory")
-	}
-	return loadFile(path, root, nil)
-}
-
-// Deps is every file a stack's load touched, so a stack can be shipped somewhere with all it needs.
-type Deps struct {
-	// Files are the stack files and every file their source_path fields read, absolute and cleaned.
-	Files []string
-	// ImageSources are the paths kind: image resources point at. They are not read at load time, and a helper has
-	// no use for them, so they are recorded (to be checked) but not shipped.
-	ImageSources []string
-}
-
-// LoadFilesRecording is LoadFiles that also reports every file it read.
-func LoadFilesRecording(paths []string) ([]Resource, Deps, error) {
-	if len(paths) == 0 {
-		paths = []string{DefaultFile}
-	}
-	var resources []Resource
-	var deps Deps
-	for _, p := range paths {
-		abs, err := filepath.Abs(p)
-		if err != nil {
-			return nil, Deps{}, err
-		}
-		rs, err := loadFile(abs, "", &deps)
-		if err != nil {
-			return nil, Deps{}, err
-		}
-		resources = append(resources, rs...)
-		deps.Files = append(deps.Files, filepath.Clean(abs))
-	}
-	return resources, deps, nil
-}
-
-// loadFile loads path; if confine is not empty, every file the stack references must be inside it.
-func loadFile(path, confine string, deps *Deps) ([]Resource, error) {
-	if confine != "" {
-		if err := within(confine, path); err != nil {
-			return nil, fmt.Errorf("%s: %w", path, err)
-		}
-	}
+func LoadFile(path string) ([]Resource, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -259,7 +209,7 @@ func loadFile(path, confine string, deps *Deps) ([]Resource, error) {
 		if doc.Kind == "" {
 			continue // blank document between "---" separators
 		}
-		r, err := doc.toResource(dir, confine, deps)
+		r, err := doc.toResource(dir)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", path, err)
 		}
@@ -271,7 +221,7 @@ func loadFile(path, confine string, deps *Deps) ([]Resource, error) {
 	return resources, nil
 }
 
-func (d yamlResource) toResource(dir, confine string, deps *Deps) (Resource, error) {
+func (d yamlResource) toResource(dir string) (Resource, error) {
 	if d.Name == "" {
 		return Resource{}, fmt.Errorf("kind %q: name is required", d.Kind)
 	}
@@ -286,17 +236,9 @@ func (d yamlResource) toResource(dir, confine string, deps *Deps) (Resource, err
 			return Resource{}, fmt.Errorf("resource %q: content and source_path are mutually exclusive", d.Name)
 		}
 		src := filepath.Join(dir, d.SourcePath)
-		if confine != "" {
-			if err := within(confine, src); err != nil {
-				return Resource{}, fmt.Errorf("resource %q: source_path %q: %w", d.Name, d.SourcePath, err)
-			}
-		}
 		data, err := os.ReadFile(src)
 		if err != nil {
 			return Resource{}, fmt.Errorf("resource %q: reading source_path: %w", d.Name, err)
-		}
-		if deps != nil {
-			deps.Files = append(deps.Files, filepath.Clean(src))
 		}
 		content = string(data)
 	}
@@ -346,14 +288,6 @@ func (d yamlResource) toResource(dir, confine string, deps *Deps) (Resource, err
 			return Resource{}, fmt.Errorf("resource %q: kind image requires both alias and source", d.Name)
 		}
 		source = filepath.Join(dir, d.Source)
-		if deps != nil {
-			deps.ImageSources = append(deps.ImageSources, filepath.Clean(source))
-		}
-		if confine != "" {
-			if err := within(confine, source); err != nil {
-				return Resource{}, fmt.Errorf("resource %q: source %q: %w", d.Name, d.Source, err)
-			}
-		}
 		if architecture == "" {
 			architecture = "x86_64"
 		}
@@ -391,40 +325,4 @@ func (d yamlResource) toResource(dir, confine string, deps *Deps) (Resource, err
 		Architecture:    architecture,
 		Properties:      d.Properties,
 	}, nil
-}
-
-// within reports an error unless path is inside root, resolving symlinks on both so a link inside root that points
-// outside it does not count. A path that does not exist yet is judged by its nearest existing parent.
-func within(root, path string) error {
-	realRoot, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return fmt.Errorf("resolving %s: %w", root, err)
-	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return err
-	}
-	// resolve the longest existing prefix, then re-attach the rest
-	existing, rest := abs, ""
-	for {
-		if _, err := os.Lstat(existing); err == nil {
-			break
-		}
-		parent := filepath.Dir(existing)
-		if parent == existing {
-			break
-		}
-		rest = filepath.Join(filepath.Base(existing), rest)
-		existing = parent
-	}
-	real, err := filepath.EvalSymlinks(existing)
-	if err != nil {
-		return err
-	}
-	full := filepath.Join(real, rest)
-	rel, err := filepath.Rel(realRoot, full)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		return fmt.Errorf("outside the directory it was delivered in (%s)", root)
-	}
-	return nil
 }

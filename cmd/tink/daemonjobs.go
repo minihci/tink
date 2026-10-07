@@ -18,31 +18,22 @@ import (
 
 func newDaemonEnqueueCmd() *cobra.Command {
 	var jobsDir string
-	var files []string
 	var due, dryRun bool
 	cmd := &cobra.Command{
 		Use:   "enqueue [VOLUME...]",
-		Short: "Queue a backup run for the executor, from the volumes' copy policies or from stack files sent with the job",
+		Short: "Queue a backup run for the executor, from the volumes' copy policies",
 		Long: `enqueue creates a backup-run job in --jobs: the same thing "tink backup run" does, done by the daemon's
-executor, which survives this command exiting. By default the job copies the volumes that carry a copy policy
-(written by "tink plan apply"). With -f it instead sends stack files, which are bundled with the job and used for
-this job only, so a checkout of a branch cannot change what the scheduler does. Volume names (or project/name) limit
-the run; --due runs only what is due.`,
+executor, which survives this command exiting. The job copies the volumes that carry a copy policy (written by
+"tink plan apply"): a stack is never sent with it, so what a job does cannot differ from what the volumes say.
+Volume names (or project/name) limit the run; --due runs only what is due. To run one stack's copies, use
+"tink backup run -f FILE".`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if jobsDir == "" {
 				return fmt.Errorf("--jobs is required")
 			}
 			rargs, _ := json.Marshal(daemon.BackupRunArgs{Volumes: args, Due: due, DryRun: dryRun})
 			req := jobs.Request{Kind: daemon.KindBackupRun, Origin: jobs.OriginTrigger, Args: rargs}
-			var bundle map[string][]byte
-			if len(files) > 0 {
-				b, err := jobs.BuildBundle(files)
-				if err != nil {
-					return err
-				}
-				bundle, req.Entries = b.Files, b.Entries
-			}
-			id, err := (jobs.Store{Dir: jobsDir}).Enqueue(req, bundle, time.Now())
+			id, err := (jobs.Store{Dir: jobsDir}).Enqueue(req, time.Now())
 			if err != nil {
 				return err
 			}
@@ -51,7 +42,6 @@ the run; --due runs only what is due.`,
 		},
 	}
 	cmd.Flags().StringVar(&jobsDir, "jobs", "", "the jobs directory the daemon runs from")
-	cmd.Flags().StringArrayVarP(&files, "file", "f", nil, "stack file(s) to send with the job, instead of using the copy policies on the volumes")
 	cmd.Flags().BoolVar(&due, "due", false, "only the copies that are due")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "say what would happen; change nothing")
 	return cmd
