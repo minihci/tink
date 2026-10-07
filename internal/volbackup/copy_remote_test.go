@@ -23,10 +23,14 @@ type fakeIncus struct {
 	vols  map[string]*api.StorageVolume // "pool/name"
 	snaps map[string][]string           // "pool/name" -> snapshot names
 
-	failCopy    error         // the next copy into this server fails part way, leaving a partial volume
-	entered     chan struct{} // if set, a copy signals here when it starts, then waits for release
-	release     chan struct{}
-	failDelete  bool // deleting a volume fails (e.g. the connection died)
+	failCopy   error         // the next copy into this server fails part way, leaving a partial volume
+	entered    chan struct{} // if set, a copy signals here when it starts, then waits for release
+	release    chan struct{}
+	failDelete bool // deleting a volume fails (e.g. the connection died)
+	// inherit makes a copy carry the source volume's own config under the config it was given: the worst case for
+	// what Incus may do with a copy from a snapshot, which tink must not depend on.
+	inherit     bool
+	failPool    map[string]error // listing this pool fails
 	modesSeen   []string
 	copiesFrom  []string
 	deletedVols []string
@@ -84,10 +88,34 @@ func (f *fakeIncus) GetStoragePoolVolume(pool, _, name string) (*api.StorageVolu
 	return &c, "etag", nil
 }
 
+func (f *fakeIncus) GetStoragePoolNames() ([]string, error) {
+	var out []string
+	for p := range f.pools {
+		out = append(out, p)
+	}
+	return out, nil
+}
+
+// GetStoragePoolVolumesAllProjects is every volume of the pool; a volume's Project is whatever the test set on it.
+func (f *fakeIncus) GetStoragePoolVolumesAllProjects(pool string) ([]api.StorageVolume, error) {
+	if f.failPool[pool] != nil {
+		return nil, f.failPool[pool]
+	}
+	return f.GetStoragePoolVolumes(pool)
+}
+
 func (f *fakeIncus) GetStoragePoolVolumes(pool string) ([]api.StorageVolume, error) {
 	var out []api.StorageVolume
 	for _, n := range f.names(pool) {
 		out = append(out, *f.vols[pool+"/"+n])
+	}
+	return out, nil
+}
+
+func (f *fakeIncus) GetStoragePoolVolumeSnapshots(pool, _, name string) ([]api.StorageVolumeSnapshot, error) {
+	var out []api.StorageVolumeSnapshot
+	for _, n := range f.snaps[pool+"/"+name] {
+		out = append(out, api.StorageVolumeSnapshot{Name: name + "/" + n})
 	}
 	return out, nil
 }
@@ -144,7 +172,18 @@ func (f *fakeIncus) DeleteStoragePoolVolumeSnapshot(pool, _, name, snap string) 
 // CopyStoragePoolVolume is called on the DESTINATION, as in the Incus client.
 func (f *fakeIncus) CopyStoragePoolVolume(pool string, src incus.InstanceServer, srcPool string, vol api.StorageVolume, args *incus.StoragePoolVolumeCopyArgs) (incus.RemoteOperation, error) {
 	// like Incus, the new volume exists, with the config it was given, from the moment the copy starts
-	f.add(pool, args.Name, vol.Config)
+	cfg := map[string]string{}
+	if sf, ok := src.(*fakeIncus); ok && f.inherit {
+		if from, ok := sf.vols[srcPool+"/"+strings.SplitN(vol.Name, "/", 2)[0]]; ok {
+			for k, v := range from.Config {
+				cfg[k] = v
+			}
+		}
+	}
+	for k, v := range vol.Config {
+		cfg[k] = v
+	}
+	f.add(pool, args.Name, cfg)
 	if f.entered != nil {
 		// bounded, so a regression fails the test instead of hanging it
 		select {

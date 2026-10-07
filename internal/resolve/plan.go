@@ -167,7 +167,7 @@ func planStorageVolume(server incus.InstanceServer, r Resource, targets map[stri
 	if err != nil {
 		current = nil // not found: decideVolume plans a create (or blocks it)
 	}
-	p := decideVolume(r, current)
+	p := decideVolume(r, current, targets)
 	p.Warnings = append(p.Warnings, backupWarnings(r, targets)...)
 	return p, nil
 }

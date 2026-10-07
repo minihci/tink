@@ -19,7 +19,7 @@ import (
 	"github.com/minihci/tink/internal/run"
 )
 
-func createOne(server incus.InstanceServer, r Resource) error {
+func createOne(server incus.InstanceServer, r Resource, targets map[string]Resource) error {
 	switch r.Kind {
 	case KindProject:
 		return server.CreateProject(api.ProjectsPost{
@@ -36,8 +36,12 @@ func createOne(server incus.InstanceServer, r Resource) error {
 		if pool == "" {
 			pool = "default"
 		}
+		config, _, err := volumeBackupConfig(r, targets)
+		if err != nil {
+			return err
+		}
 		return scopedServer(server, r).CreateStoragePoolVolume(pool, api.StorageVolumesPost{
-			StorageVolumePut: api.StorageVolumePut{Config: backupVolumeConfig(r.Backup)},
+			StorageVolumePut: api.StorageVolumePut{Config: config},
 			Name:             r.Name,
 			Type:             "custom",
 			ContentType:      "filesystem",
@@ -199,7 +203,7 @@ func updateInstance(server incus.InstanceServer, r Resource) error {
 	return run.EnsureRunning(server, r.Name)
 }
 
-func updateOne(server incus.InstanceServer, r Resource) error {
+func updateOne(server incus.InstanceServer, r Resource, targets map[string]Resource) error {
 	s := scopedServer(server, r)
 	switch r.Kind {
 	case KindProfile:
@@ -234,8 +238,15 @@ func updateOne(server incus.InstanceServer, r Resource) error {
 		if put.Config == nil {
 			put.Config = map[string]string{}
 		}
-		for k, v := range backupVolumeConfig(r.Backup) {
+		set, remove, err := volumeBackupConfig(r, targets)
+		if err != nil {
+			return err
+		}
+		for k, v := range set {
 			put.Config[k] = v
+		}
+		for _, k := range remove {
+			delete(put.Config, k)
 		}
 		return s.UpdateStoragePoolVolume(pool, "custom", r.Name, put, etag)
 	case KindInstance:

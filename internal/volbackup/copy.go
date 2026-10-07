@@ -216,7 +216,9 @@ func copyTo(server incus.InstanceServer, v Volume, t Target, opts CopyOptions) (
 		}
 		return res, fmt.Errorf("copying %s/%s@%s to %s/%s: %w%s", v.pool(), v.Name, res.Snapshot, t.where(), res.Volume, cerr, note)
 	}
-	if err := ensureMarkers(dst, t.pool(), res.Volume, markers, []string{resolve.MarkerPartialOf, resolve.MarkerPartialAt}); err != nil {
+	// PolicyKey describes the volume this was copied FROM; a restore point must not carry it, or a scheduler that lists
+	// volumes would copy the copy.
+	if err := ensureMarkers(dst, t.pool(), res.Volume, markers, []string{resolve.MarkerPartialOf, resolve.MarkerPartialAt, resolve.PolicyKey}); err != nil {
 		return res, err
 	}
 
@@ -446,8 +448,21 @@ func copyFromTarget(s incus.InstanceServer, v Volume, t Target, rp RestorePoint,
 	return scrubMarkers(s, v.pool(), newName)
 }
 
-// scrubMarkers removes the copy markers from a volume made from a restore point.
+// scrubMarkers removes the copy markers, and the copy policy, from a volume made from a restore point.
 func scrubMarkers(s incus.InstanceServer, pool, name string) error {
+	return scrubConfig(s, pool, name, func(k string) bool {
+		return strings.HasPrefix(k, "user.tink.backup.copy-") || k == resolve.PolicyKey
+	})
+}
+
+// scrubPolicy removes the copy policy from a volume made by copying another volume, or one of its snapshots: the
+// policy says what is to happen to the volume it was written on, and a copy that inherited it would be scheduled for
+// backup in its turn.
+func scrubPolicy(s incus.InstanceServer, pool, name string) error {
+	return scrubConfig(s, pool, name, func(k string) bool { return k == resolve.PolicyKey })
+}
+
+func scrubConfig(s incus.InstanceServer, pool, name string, drop func(string) bool) error {
 	vol, etag, err := s.GetStoragePoolVolume(pool, "custom", name)
 	if err != nil {
 		return err
@@ -455,7 +470,7 @@ func scrubMarkers(s incus.InstanceServer, pool, name string) error {
 	put := vol.Writable()
 	changed := false
 	for k := range put.Config {
-		if strings.HasPrefix(k, "user.tink.backup.copy-") {
+		if drop(k) {
 			delete(put.Config, k)
 			changed = true
 		}

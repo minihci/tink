@@ -210,6 +210,26 @@ func backupVolumeConfig(b *VolumeBackup) map[string]string {
 	}
 }
 
+// volumeBackupConfig is everything a storage volume's declaration converges its config to: the snapshot keys, and the
+// copy policy (PolicyKey). set is what to write; remove is the keys tink owns outright that must not be there, which
+// today is the policy when the declaration has none. It errors when a copy names a target that is not in targets, which
+// loading a stack already rejects.
+func volumeBackupConfig(r Resource, targets map[string]Resource) (set map[string]string, remove []string, err error) {
+	set = backupVolumeConfig(r.Backup)
+	policy, err := BuildPolicy(r, targets)
+	if err != nil {
+		return nil, nil, err
+	}
+	if policy == "" {
+		return set, []string{PolicyKey}, nil
+	}
+	if set == nil {
+		set = map[string]string{}
+	}
+	set[PolicyKey] = policy
+	return set, nil, nil
+}
+
 // decideVolume is planStorageVolume's decision with the Incus read already
 // done, so the policy is testable without a daemon. current is nil when the
 // volume does not exist yet.
@@ -219,8 +239,11 @@ func backupVolumeConfig(b *VolumeBackup) map[string]string {
 // YAML, and a volume that predates the field is the one that most needs it
 // asked. (This is the line to flip to ActionBlocked when the warning graduates
 // to an error.)
-func decideVolume(r Resource, current *api.StorageVolume) PlannedResource {
-	desired := backupVolumeConfig(r.Backup)
+func decideVolume(r Resource, current *api.StorageVolume, targets map[string]Resource) PlannedResource {
+	desired, remove, err := volumeBackupConfig(r, targets)
+	if err != nil {
+		return PlannedResource{Resource: r, Action: ActionBlocked, Blocked: []string{err.Error()}}
+	}
 	var warnings []string
 	if r.Backup == nil {
 		warnings = append(warnings, "no backup declared -- add `backup: {snapshots: {schedule: ..., retain: ...}}`, "+
@@ -243,7 +266,13 @@ func decideVolume(r Resource, current *api.StorageVolume) PlannedResource {
 	if current == nil {
 		return PlannedResource{Resource: r, Action: ActionCreate, Changes: diffConfig(nil, desired, nil), Warnings: warnings}
 	}
-	if changes := diffConfig(current.Config, desired, nil); len(changes) > 0 {
+	changes := diffConfig(current.Config, desired, nil)
+	for _, k := range remove {
+		if _, there := current.Config[k]; there {
+			changes = append(changes, fmt.Sprintf("config.%s: removed (the declaration no longer has one)", k))
+		}
+	}
+	if len(changes) > 0 {
 		return PlannedResource{Resource: r, Action: ActionUpdate, Changes: changes, Warnings: warnings}
 	}
 	return PlannedResource{Resource: r, Action: ActionNone, Warnings: warnings}
