@@ -1,7 +1,7 @@
 # The tink helper: design
 
-**Status: design only. Nothing here is built.** Phase 0 (the spike) has run for three of its four parts on the lab host and its
-[findings](#phase-0-findings) have changed the design below; the macOS-client part is waiting. This is the second revision: the first was reviewed adversarially against the code and
+**Status: design only. Nothing here is built.** Phase 0 (the spike) has run on the lab host and its
+[findings](#phase-0-findings) have changed the design below. This is the second revision: the first was reviewed adversarially against the code and
 the Incus 7.4 source by a separate agent, and the design below was changed to answer what that found
 ([what changed](#what-the-review-changed)). Claims are marked **[code]** (read in this repo or in the Incus source; the three that
 most changed the design were re-checked by hand), **[verified]** (tried live), **[docs]** or **[hypothesis]** (to be checked in
@@ -49,7 +49,7 @@ Almost every command opens Incus through one function, `incusapi.Connect(socket)
 | Ingress reads and writes a **host path inside a storage pool**: `/var/lib/incus/storage-pools/default/custom/default_ingress-routes/generated`, with the pool name `default` fixed. | `internal/ingress/ingress.go:29` | Fixed in phase 3 by giving the helper the `ingress-routes` volume as a disk device and making the directory and pool configurable. |
 | `skopeo` for image-drift checks (optional), with `/opt/incus/bin` hard-coded. | `internal/resolve/imagedrift.go:434,494-499` | In the helper image if needed; the path becomes a lookup. |
 | Files a stack reads at load: `source_path` and image `Source`, relative to the YAML's directory. | `internal/resolve/yaml.go:230,279` | The sync sends **every file the loader read**, not only the `-f` files. |
-| Image remotes (`docker-oci:`, `ghcr:`) resolve through the operator's Incus client config; the Incus OCI client path runs `skopeo` and reports the *local* CPU architecture. | `internal/run/run.go:195`, Incus `client/oci_images.go:89,506` | From a macOS laptop, OCI pulls may fail or choose the wrong architecture. **[hypothesis]** Part of the phase 0 spike, and it bounds what "works from a laptop" can promise. |
+| Image remotes (`docker-oci:`, `ghcr:`, `images:`) are **names defined in the operator's Incus client config**, resolved client-side. **[verified]**: from a Mac with no Incus client config, `apply` of an OCI instance **fails** with `resolving local image "docker-oci:library/alpine:3": Image ... not found`; with a client config that defines `docker-oci`, it works. | `internal/run/run.go:195`, `internal/resolve` (image resolution) | **A phase 1 requirement:** tink falls back to built-in definitions for the registries a stack commonly uses (`docker-oci` to docker.io and `ghcr` to ghcr.io, both OCI; `images` to the linuxcontainers simplestreams server) when the client config lacks them. The client config wins when it defines them. |
 | Secrets identity in `~/.config/tink`. | `internal/secrets/identity.go` | Per operator. `backup` never resolves secrets today **[code]**, so the helper needs no identity yet. |
 | `buildVersion` reads Go's embedded VCS metadata; without `.git` it prints `(devel)` with unknown commit and date, so two such builds compare equal. | `cmd/tink/main.go:84` | The pipeline must inject the version (`-ldflags -X`); nothing else can tell two helper images apart. |
 | Schedules are evaluated in the location of `now`; `plan` on a laptop evaluates the same stamp in laptop time. | `internal/resolve/schedule.go` | See [time zones](#time-zones). |
@@ -225,14 +225,14 @@ the proxy's `security.uid`/`security.gid` can be set to a host user in the `incu
 
 Each phase is useful alone and ends in something checkable on the lab host.
 
-0. **Spike.** *Status: (a), (b) and (c) done, see [Phase 0 findings](#phase-0-findings); (d) waits for a client on a Mac.* On Tron, with a throwaway
-   container: (a) the proxy-device socket from an unprivileged container, including the entrypoint racing the proxy, a restart, and a host reboot;
-   (b) `boot.autorestart` behaviour in a crash loop; (c) the job-directory protocol over the file API; (d) pulling an OCI image and running
-   `plan`/`apply` against Tron from a **macOS** client (skopeo, architecture). *Done when:* each hypothesis is confirmed or contradicted in this
-   document, and the design is changed where it was wrong.
-1. **Remote-capable tink.** One connect function and `--remote`; `kind: incus` and host-path features refuse under a remote;
-   `tink deploy` stays host-local. *Done when:* `plan`, `apply` (an OCI instance), `backup restore` and `backup verify` run from a laptop
-   against Tron, and a stack with `kind: incus` is refused there with the reason.
+0. **Spike. Done**, see [Phase 0 findings](#phase-0-findings); the one thing it could not do is a host reboot or an Incus daemon restart. On Tron,
+   with a throwaway container: (a) the proxy-device socket from an unprivileged container, including the entrypoint racing the proxy and a
+   restart; (b) `boot.autorestart` behaviour in a crash loop; (c) the job-directory protocol over the file API; (d) `plan`, `apply`, `backup restore`,
+   `backup verify` and `backup run` from a **macOS** client.
+1. **Remote-capable tink.** One connect function and `--remote`; built-in image-remote definitions when the client config lacks them;
+   `kind: incus` and host-path features refuse under a remote; `tink deploy` stays host-local. *Done when:* `plan`, `apply` (an OCI instance), `backup restore` and `backup verify` run from a laptop
+   **that has no Incus client config** against Tron, over `--remote` (TLS, a trusted certificate), and a stack with `kind: incus` is refused there with
+   the reason.
 2. **The scheduler and the engine changes.** Failure stamps and backoff, the server marker, the per-copy guard, the job directory and
    executor, the backup scheduler and heartbeat in `daemon run`, `--stacks` and `--jobs` paths. Runs under **any** supervisor (a systemd unit on
    Tron is enough). *Done when:* copies run on schedule; a missed run is caught up once; a failing copy backs off and shows as failed; a job created
@@ -274,10 +274,12 @@ Run on the lab host (Incus 7.5.1, an alpine OCI app container, the tink binary m
 | `boot.autorestart` limits? | 10 restarts then it stays stopped, whether the exit is 0 or 1. A slow loop (15 s per cycle) is restarted forever. |
 | Is a half-pushed file visible to a reader? | **Yes** (22 sizes seen while pushing 300 MB). A job directory is therefore read only once `READY` exists, which worked 40 of 40 with a concurrent reader; the same reader without `READY` once saw a partial job. |
 | File API cost, over the local socket | 300 MB push 0.5 s; pull of 1, 5, 20 MB: 34, 49, 107 ms; 200 x 1 KB files with `-r`: 0.16 s; one small file push or pull about 30 ms. **Network latency from a laptop was not measured.** |
+| `plan`, `apply` of an OCI instance, `backup restore`, `backup verify` and `backup run` (a pool target) from a **macOS arm64** client | **All work**, through an SSH-forwarded unix socket, after the image-remote problem above. `apply` took 6.7 s. **No `skopeo` on the Mac was needed** (the server pulls the image). The instance came up **`x86_64`**, the server's architecture, not the client's arm64. Restore and `backup run` copy server-side. |
+| How the Mac reached Tron's Incus for the spike | An SSH **unix-socket forward** (`ssh -L /tmp/x.sock:/var/lib/incus/unix.socket user@host`) with `--socket`: no certificate, no new network exposure. It needs the SSH user to be in `incus-admin`, and **a group change only reaches an SSH session opened after it** (a tunnel opened before gave `EOF`). The HTTPS path (`--remote`, a trusted certificate, `:8443`) was **not** tested. |
 | Tron's API exposure | Already listening on `:8443`; the SSH user is **not** in `incus-admin`, so forwarding the unix socket over SSH does not work for it, but a laptop can reach `:8443` if it is trusted. |
 
-**Still to do in phase 0:** (d), the macOS client: whether `plan` and `apply` of an OCI instance work from a Mac (skopeo on the client, the architecture
-the client reports), and how the file API and `status` behave over the network. It needs the Mac's certificate to be trusted by the server.
+**Not done in phase 0:** a host reboot and an Incus daemon restart (the lab host runs other services), and anything over a real network: the file API's
+latency from a laptop, and the HTTPS `--remote` path. Both belong to phase 1.
 
 ## What the review changed
 
