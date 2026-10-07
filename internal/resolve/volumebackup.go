@@ -62,6 +62,7 @@ const (
 	StampVerifiedAt       = "user.tink.backup.verified-at"       // RFC 3339, UTC
 	StampVerifiedSnapshot = "user.tink.backup.verified-snapshot" // which snapshot was restored
 	StampVerifiedWith     = "user.tink.backup.verified-with"     // "check" or "restore"
+	StampVerifiedFrom     = "user.tink.backup.verified-from"     // "local" (a snapshot on the volume's pool) or a backup-target's name
 )
 
 // DefaultVerifyMount is where a verify check sees the restored volume.
@@ -236,6 +237,7 @@ func decideVolume(r Resource, current *api.StorageVolume) PlannedResource {
 		if w := verifyWarning(r, current.Config, timeNow()); w != "" {
 			warnings = append(warnings, w)
 		}
+		warnings = append(warnings, copyWarnings(r, current.Config, timeNow())...)
 	}
 
 	if current == nil {
