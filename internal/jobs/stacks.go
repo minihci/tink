@@ -179,7 +179,9 @@ func (s Stacks) loadOnce(name string) (Stack, error) {
 
 func loadVersion(name, vdir string) (Stack, error) {
 	if _, err := os.Stat(filepath.Join(vdir, "READY")); err != nil {
-		return Stack{}, errors.New("not finished (no READY)")
+		// Wrapped, not replaced: a version that is being removed (a reader resolved it just before a run of syncs pruned
+		// it) loses its READY first, and that is a "not found" the caller tries again on, against the new active version.
+		return Stack{}, fmt.Errorf("not finished (no READY): %w", err)
 	}
 	b, err := os.ReadFile(filepath.Join(vdir, "stack.json"))
 	if err != nil {

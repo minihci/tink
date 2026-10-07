@@ -1,7 +1,9 @@
 package jobs
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -210,5 +212,61 @@ func TestLoadingAStackThatWasNeverSynced(t *testing.T) {
 	}
 	if got, _ := (Stacks{Dir: filepath.Join(s.Dir, "missing")}).Names(); len(got) != 0 {
 		t.Error("a missing directory has no stacks")
+	}
+}
+
+// The failure CI found: a reader resolves the active version, and a run of syncs prunes that version before the reader has
+// finished loading it (its READY goes first). The reader must try again against the NEW active version, not report a
+// stack that is perfectly healthy as broken.
+func TestLoadTriesAgainWhenTheVersionItResolvedIsPrunedUnderIt(t *testing.T) {
+	s := Stacks{Dir: t.TempDir()}
+	if err := s.Sync("home", map[string][]byte{"tink.yaml": stackYAML("v0")}, []string{"tink.yaml"}, t0); err != nil {
+		t.Fatal(err)
+	}
+	// the version a reader has just resolved loses its READY, as it does while it is being removed ...
+	vdir, _ := filepath.EvalSymlinks(filepath.Join(s.Dir, "home", "current"))
+	if err := os.Remove(filepath.Join(vdir, "READY")); err != nil {
+		t.Fatal(err)
+	}
+	// ... and a moment later the next version becomes the active one
+	done := make(chan error, 1)
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		done <- s.Sync("home", map[string][]byte{"tink.yaml": stackYAML("v1")}, []string{"tink.yaml"}, t0.Add(time.Minute))
+	}()
+	st, err := s.Load("home")
+	if err != nil {
+		t.Fatalf("a reader that hits a version being removed must try again, not fail: %v", err)
+	}
+	if got := volumeNames(st); len(got) != 1 || got[0] != "v1" {
+		t.Errorf("it must end up with the new active version: %v", got)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAVersionWithoutREADYReportsItAsAMissingFileSoItIsRetried(t *testing.T) {
+	dir := t.TempDir()
+	_, err := loadVersion("x", dir)
+	if err == nil || !errors.Is(err, fs.ErrNotExist) || !transient(err) || !strings.Contains(err.Error(), "READY") {
+		t.Errorf("a version with no READY must be a transient 'not found' that names READY: %v", err)
+	}
+}
+
+// But a stack that is really broken is still reported, promptly, not retried for ever.
+func TestAStackThatDoesNotParseIsNotRetried(t *testing.T) {
+	s := Stacks{Dir: t.TempDir()}
+	if err := s.Sync("home", map[string][]byte{"tink.yaml": stackYAML("ok")}, []string{"tink.yaml"}, t0); err != nil {
+		t.Fatal(err)
+	}
+	vdir, _ := filepath.EvalSymlinks(filepath.Join(s.Dir, "home", "current"))
+	os.WriteFile(filepath.Join(vdir, "tink.yaml"), []byte("kind: storage-volume\nname: x\nnonsense: 1\n"), 0o600)
+	start := time.Now()
+	if _, err := s.Load("home"); err == nil {
+		t.Fatal("a broken stack must be reported")
+	}
+	if took := time.Since(start); took > 50*time.Millisecond {
+		t.Errorf("a stack that does not parse is not a transient error and must not be retried (took %s)", took)
 	}
 }
