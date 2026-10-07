@@ -73,6 +73,7 @@ made executable instead of just documented.`,
 	root.AddCommand(newPlanCmd())
 	root.AddCommand(newSecretCmd())
 	root.AddCommand(newVolBackupCmd())
+	root.AddCommand(newRemoteCmd())
 	root.AddCommand(newIngressCmd())
 	root.AddCommand(newMongoCmd())
 	root.AddCommand(newDaemonCmd())

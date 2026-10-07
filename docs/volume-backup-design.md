@@ -380,8 +380,10 @@ Ordered so each step is useful alone, and the Incus-supported path comes first.
    - Transfer modes with `incus storage volume copy`: **pull** is refused for a restricted project and could not dial back anyway;
      **push** and **relay** both worked in both directions. Tink always uses **relay**: the only machine known to reach both ends is tink.
    - `incus remote add` itself failed every time with `400 Bad Request {}` on its third request (with a token and with an already-trusted
-     certificate), while `curl` with the same certificate through the same tunnel, and every later `incus` command, worked. The cause is not
-     known; the remote entry was written into the client config by hand, which is all tink needs.
+     certificate), while `curl` with the same certificate through the same tunnel, and every later `incus` command, worked. The remote entry
+     was written into the client config by hand, which is all tink needs. **Probable cause [hypothesis, from reading the Incus CLI's source, not
+     retested]:** that server advertised both `tls` and `oidc`, and `incus remote add` prefers OIDC whenever the server offers it unless given
+     `--auth-type tls`, so it never took the token path at all. `tink remote add` is TLS-only for that reason.
    - The remote server's `authorization.client.tls-restricted: scriptlet` made a *restricted* certificate see every project: scoping a
      certificate to a project is only as good as the server's authorization setting.
 
