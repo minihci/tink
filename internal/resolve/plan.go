@@ -10,6 +10,7 @@ import (
 
 	incus "github.com/lxc/incus/v7/client"
 
+	"github.com/minihci/tink/internal/incusapi"
 	"github.com/minihci/tink/internal/secrets"
 )
 
@@ -199,6 +200,13 @@ func planFile(server incus.InstanceServer, r Resource) (PlannedResource, error) 
 // convergence in terms resolve has no first-class resource for yet (see
 // Resource.Check's own doc comment). A zero exit means already converged.
 func planIncus(r Resource) (PlannedResource, error) {
+	// A kind: incus resource is argv for the local `incus` CLI, against that CLI's own default remote, often
+	// with paths on the machine tink runs on. Under --remote it would act on whatever server the CLI happens
+	// to point at, not the one tink was told to manage, so it is blocked, not guessed at.
+	if incusapi.IsRemote() {
+		return PlannedResource{Resource: r, Action: ActionBlocked, Blocked: []string{fmt.Sprintf(
+			"kind: incus runs the local `incus` CLI (with local paths), which is not the remote %q tink is pointed at (--remote or $TINK_REMOTE): run this stack on the host, without a remote", incusapi.Remote())}}, nil
+	}
 	if err := exec.Command("incus", r.Check...).Run(); err != nil {
 		return PlannedResource{Resource: r, Action: ActionCreate, Changes: []string{fmt.Sprintf("check failed: %v", err)}}, nil
 	}

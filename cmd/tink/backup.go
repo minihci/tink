@@ -269,6 +269,7 @@ Restore from a restore point with: tink backup restore VOLUME --from TARGET`,
 			}
 			out := cmd.OutOrStdout()
 			var tried, failed, skipped int
+			warnedRelay := map[string]bool{}
 			for _, r := range selected {
 				v := volbackup.Volume{Project: r.Project, Pool: r.Pool, Name: r.Name}
 				live, err := volbackup.LiveConfig(server, v)
@@ -292,6 +293,12 @@ Restore from a restore point with: tink backup restore VOLUME --from TARGET`,
 						}
 					}
 					tried++
+					// A copy to ANOTHER server is relayed through the process that runs it. From a machine that
+					// is not next to the data, that means the volume passes through here.
+					if t := targets[c.Target]; incusapi.IsRemote() && t.Remote != "" && !warnedRelay[c.Target] {
+						warnedRelay[c.Target] = true
+						fmt.Fprintf(out, "note: tink is pointed at the remote %q, and the copy to %q (remote %q) is relayed through this machine, so the volume's data passes through it\n", incusapi.Remote(), c.Target, t.Remote)
+					}
 					res, err := volbackup.Copy(server, v, volbackup.TargetFrom(targets[c.Target]),
 						volbackup.CopyOptions{Retain: c.Retain, DryRun: dryRun, Progress: out})
 					if err != nil {

@@ -1,21 +1,85 @@
 // Package incusapi provides a thin wrapper around Incus's own Go client
 // library, shared by every tink capability that needs to talk to an Incus
-// daemon -- over the local unix socket today, and over the network API
-// with a scoped TLS identity once that work (see incus-host's
-// reconciler/DESIGN.md "Open question") is picked up for real.
+// daemon: over the local unix socket by default, or, with UseRemote, over
+// the network API to a remote from the Incus client configuration.
 package incusapi
 
 import (
+	"errors"
+	"fmt"
+
 	incus "github.com/lxc/incus/v7/client"
+
+	"github.com/minihci/tink/internal/incusconf"
 )
 
 // DefaultSocket is the local Incus daemon socket every tink capability
-// talks to until a scoped network identity replaces it.
+// talks to unless a remote is chosen.
 const DefaultSocket = "/var/lib/incus/unix.socket"
 
-// Connect opens a connection to the local Incus daemon over its unix
-// socket. An empty path uses Incus's own default resolution
-// ($INCUS_SOCKET, then $INCUS_DIR/unix.socket, then DefaultSocket).
+// remote is the Incus remote every Connect goes to, set once at startup by the CLI. It is process-wide state on
+// purpose: the choice of server is made once per invocation, by a flag or $TINK_REMOTE, and the alternative is
+// threading a value through every options struct in every package.
+var remote string
+
+// UseRemote makes every later Connect go to the named remote of the Incus client configuration. An empty name,
+// or the client's built-in "local", means the local daemon again.
+func UseRemote(name string) {
+	if name == "local" {
+		name = ""
+	}
+	remote = name
+}
+
+// Remote is the remote in use, or "" for the local daemon.
+func Remote() string { return remote }
+
+// IsRemote reports whether tink is pointed at a server other than the local daemon. Anything that works on
+// the host's own filesystem or processes must refuse when it is true.
+func IsRemote() bool { return remote != "" }
+
+// wantsRemote decides whether a Connect with socketPath goes to the remote. The default socket path is not an
+// explicit choice (some commands fill it in as their flag default); any other path alongside a remote is a
+// contradiction and an error.
+func wantsRemote(socketPath string) (bool, error) {
+	if remote == "" {
+		return false, nil
+	}
+	if socketPath != "" && socketPath != DefaultSocket {
+		return false, fmt.Errorf("--socket %s and --remote %s contradict each other: choose one", socketPath, remote)
+	}
+	return true, nil
+}
+
+// Connect opens a connection to Incus: the remote chosen with UseRemote, or else the local daemon over its unix
+// socket. An empty path uses Incus's own default resolution ($INCUS_SOCKET, then $INCUS_DIR/unix.socket, then
+// DefaultSocket).
 func Connect(socketPath string) (incus.InstanceServer, error) {
+	useRemote, err := wantsRemote(socketPath)
+	if err != nil {
+		return nil, err
+	}
+	if useRemote {
+		return ConnectRemote(remote)
+	}
 	return incus.ConnectIncusUnix(socketPath, nil)
+}
+
+// ConnectRemote opens the named remote from the Incus client configuration of the user running tink (the
+// Incus client's own configuration directory, which $INCUS_CONF overrides; root's under sudo). That is where
+// `incus remote add` keeps the address, the client certificate and the project, so tink stores no credentials
+// of its own.
+func ConnectRemote(name string) (incus.InstanceServer, error) {
+	conf, err := incusconf.Load()
+	if err != nil {
+		return nil, err
+	}
+	r, ok := conf.Remotes[name]
+	if !ok {
+		return nil, fmt.Errorf("no Incus remote %q is configured for the user running tink (add it with `incus remote add`; sudo uses root's configuration, in %s)", name, conf.ConfigPath())
+	}
+	if r.Public || r.Protocol != "incus" {
+		return nil, errors.New("remote " + name + " is an image server, not an Incus server to manage")
+	}
+	return conf.GetInstanceServer(name)
 }
