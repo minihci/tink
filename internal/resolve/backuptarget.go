@@ -170,8 +170,8 @@ func backupWarnings(v Resource, targets map[string]Resource) []string {
 	}
 
 	if len(v.Backup.Copies) > 0 {
-		warnings = append(warnings, "backup.copies run only when `tink backup run` is invoked (run `tink backup run --due` from cron or a timer): "+
-			"tink does not schedule them itself yet, and the 3-2-1 result above is judged on the declaration plus the copy warnings")
+		warnings = append(warnings, "backup.copies run only when something runs them: `tink backup run --due` from cron or a timer, or `tink daemon run --stacks DIR --jobs DIR` "+
+			"(see docs/daemon-jobs.md); the 3-2-1 result above is judged on the declaration plus the copy warnings")
 	}
 	return warnings
 }

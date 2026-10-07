@@ -177,7 +177,7 @@ func LoadFiles(paths []string) ([]Resource, error) {
 // A file resource's source_path is read now, relative to this YAML
 // file's own directory -- matching Terraform's own ${path.module}
 // convention for the same problem.
-func LoadFile(path string) ([]Resource, error) { return loadFile(path, "") }
+func LoadFile(path string) ([]Resource, error) { return loadFile(path, "", nil) }
 
 // LoadFileConfined is LoadFile for a stack that came from somewhere else (synced to a helper, say): it is data,
 // not code, so it must not be able to make tink read a file outside the directory it was delivered in. Every path
@@ -187,11 +187,42 @@ func LoadFileConfined(path, root string) ([]Resource, error) {
 	if root == "" {
 		return nil, errors.New("LoadFileConfined needs a root directory")
 	}
-	return loadFile(path, root)
+	return loadFile(path, root, nil)
+}
+
+// Deps is every file a stack's load touched, so a stack can be shipped somewhere with all it needs.
+type Deps struct {
+	// Files are the stack files and every file their source_path fields read, absolute and cleaned.
+	Files []string
+	// ImageSources are the paths kind: image resources point at. They are not read at load time, and a helper has
+	// no use for them, so they are recorded (to be checked) but not shipped.
+	ImageSources []string
+}
+
+// LoadFilesRecording is LoadFiles that also reports every file it read.
+func LoadFilesRecording(paths []string) ([]Resource, Deps, error) {
+	if len(paths) == 0 {
+		paths = []string{DefaultFile}
+	}
+	var resources []Resource
+	var deps Deps
+	for _, p := range paths {
+		abs, err := filepath.Abs(p)
+		if err != nil {
+			return nil, Deps{}, err
+		}
+		rs, err := loadFile(abs, "", &deps)
+		if err != nil {
+			return nil, Deps{}, err
+		}
+		resources = append(resources, rs...)
+		deps.Files = append(deps.Files, filepath.Clean(abs))
+	}
+	return resources, deps, nil
 }
 
 // loadFile loads path; if confine is not empty, every file the stack references must be inside it.
-func loadFile(path, confine string) ([]Resource, error) {
+func loadFile(path, confine string, deps *Deps) ([]Resource, error) {
 	if confine != "" {
 		if err := within(confine, path); err != nil {
 			return nil, fmt.Errorf("%s: %w", path, err)
@@ -224,7 +255,7 @@ func loadFile(path, confine string) ([]Resource, error) {
 		if doc.Kind == "" {
 			continue // blank document between "---" separators
 		}
-		r, err := doc.toResource(dir, confine)
+		r, err := doc.toResource(dir, confine, deps)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", path, err)
 		}
@@ -236,7 +267,7 @@ func loadFile(path, confine string) ([]Resource, error) {
 	return resources, nil
 }
 
-func (d yamlResource) toResource(dir, confine string) (Resource, error) {
+func (d yamlResource) toResource(dir, confine string, deps *Deps) (Resource, error) {
 	if d.Name == "" {
 		return Resource{}, fmt.Errorf("kind %q: name is required", d.Kind)
 	}
@@ -259,6 +290,9 @@ func (d yamlResource) toResource(dir, confine string) (Resource, error) {
 		data, err := os.ReadFile(src)
 		if err != nil {
 			return Resource{}, fmt.Errorf("resource %q: reading source_path: %w", d.Name, err)
+		}
+		if deps != nil {
+			deps.Files = append(deps.Files, filepath.Clean(src))
 		}
 		content = string(data)
 	}
@@ -308,6 +342,9 @@ func (d yamlResource) toResource(dir, confine string) (Resource, error) {
 			return Resource{}, fmt.Errorf("resource %q: kind image requires both alias and source", d.Name)
 		}
 		source = filepath.Join(dir, d.Source)
+		if deps != nil {
+			deps.ImageSources = append(deps.ImageSources, filepath.Clean(source))
+		}
 		if confine != "" {
 			if err := within(confine, source); err != nil {
 				return Resource{}, fmt.Errorf("resource %q: source %q: %w", d.Name, d.Source, err)

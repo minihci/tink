@@ -243,7 +243,7 @@ no credentials of its own. A remote's data is relayed through tink, so the remot
 reachable from the machine running it (an SSH tunnel is enough).
 
 --due runs only the copies whose schedule has come round since their last success, so cron or a
-timer can call "tink backup run --due" every few minutes. Tink does not schedule them itself yet.
+timer can call "tink backup run --due" every few minutes, or "tink daemon run --stacks DIR --jobs DIR" will (see docs/daemon-jobs.md).
 --dry-run says what would happen and changes nothing.
 
 Restore from a restore point with: tink backup restore VOLUME --from TARGET`,
