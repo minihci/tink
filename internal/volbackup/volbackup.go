@@ -11,8 +11,8 @@
 //     it in a throwaway instance, deletes both, and stamps the result on the source
 //     volume so `tink plan` can tell a tested backup from an untested one.
 //
-// Only local snapshots (tier 1) for now. Restoring from a backup target needs the
-// copy engine (a later slice).
+// Both work from the volume's own snapshots (tier 1) or, with From set, from a restore point on a
+// backup target that `tink backup run` copied there (copy.go).
 package volbackup
 
 import (
@@ -58,23 +58,27 @@ type RestoreOptions struct {
 	// Snapshot to restore; empty means the most recent.
 	Snapshot string
 	// As names the new volume; empty means "<volume>-restore-<UTC time>".
-	As  string
-	Now func() time.Time
+	As string
+	// From restores from this target's restore point instead of a local snapshot; Snapshot then names
+	// the restore point (its volume name, or the UTC stamp in it).
+	From *Target
+	Now  func() time.Time
 }
 
 // RestoreResult says what was created.
 type RestoreResult struct {
-	Snapshot string
+	Snapshot string // the snapshot, or with From the restore point, that was restored
 	Volume   string // the new volume
 }
 
-// Restore copies one of v's snapshots to a new volume. The new volume is an
-// independent copy: restoring never touches v or any existing volume.
+// Restore copies one of v's snapshots (or, with From, a restore point on a target) to a new volume.
+// The new volume is an independent copy: restoring never touches v or any existing volume, and with
+// From it does not need v to exist at all.
 func Restore(server incus.InstanceServer, v Volume, opts RestoreOptions) (RestoreResult, error) {
 	now := nowOr(opts.Now)
 	s := v.scoped(server)
 
-	snap, err := snapshotToUse(s, v, opts.Snapshot)
+	restoreFrom, err := sourceToRestore(s, v, opts.From, opts.Snapshot)
 	if err != nil {
 		return RestoreResult{}, err
 	}
@@ -85,10 +89,10 @@ func Restore(server incus.InstanceServer, v Volume, opts RestoreOptions) (Restor
 	if volumeExists(s, v.pool(), name) {
 		return RestoreResult{}, fmt.Errorf("volume %s/%s already exists: restore only ever creates a new volume (pick another --as)", v.pool(), name)
 	}
-	if err := copySnapshot(s, v, snap, name); err != nil {
+	if err := restoreFrom.run(name); err != nil {
 		return RestoreResult{}, err
 	}
-	return RestoreResult{Snapshot: snap, Volume: name}, nil
+	return RestoreResult{Snapshot: restoreFrom.label, Volume: name}, nil
 }
 
 // VerifyOptions control Verify.
@@ -98,7 +102,9 @@ type VerifyOptions struct {
 	// Check is run against the restored data; nil verifies only that the snapshot
 	// can be restored to a volume at all.
 	Check *resolve.VerifyCheck
-	Now   func() time.Time
+	// From verifies a restore point on this target instead of a local snapshot.
+	From *Target
+	Now  func() time.Time
 	// Progress, if set, gets one line per step.
 	Progress io.Writer
 }
@@ -111,6 +117,9 @@ type VerifyResult struct {
 	With     string
 	Output   string // the check's output, if one ran
 	Duration time.Duration
+	// Recorded says whether the result was stamped on the source volume. It is not when the source no
+	// longer exists (a restore from a target after losing it).
+	Recorded bool
 }
 
 // CheckFailedError means the restore worked but the declared check did not pass.
@@ -138,11 +147,16 @@ func Verify(server incus.InstanceServer, v Volume, opts VerifyOptions) (res Veri
 		}
 	}
 
-	snap, err := snapshotToUse(s, v, opts.Snapshot)
+	restoreFrom, err := sourceToRestore(s, v, opts.From, opts.Snapshot)
 	if err != nil {
 		return res, err
 	}
+	snap := restoreFrom.label
 	res.Snapshot = snap
+	from := "local"
+	if opts.From != nil {
+		from = opts.From.Name
+	}
 
 	var cleanups []func() error
 	defer func() {
@@ -164,8 +178,8 @@ func Verify(server incus.InstanceServer, v Volume, opts VerifyOptions) (res Veri
 	}()
 
 	scratch := scratchName(v.Name, start)
-	say("restoring %s/%s@%s to scratch volume %s", v.pool(), v.Name, snap, scratch)
-	if err := copySnapshot(s, v, snap, scratch); err != nil {
+	say("restoring %s (%s) to scratch volume %s", snap, from, scratch)
+	if err := restoreFrom.run(scratch); err != nil {
 		return res, err
 	}
 	cleanups = append(cleanups, func() error {
@@ -215,14 +229,19 @@ func Verify(server incus.InstanceServer, v Volume, opts VerifyOptions) (res Veri
 		}
 	}
 
-	if err := stamp(s, v, snap, res.With, now()); err != nil {
-		return res, err
+	if volumeExists(s, v.pool(), v.Name) {
+		if err := stamp(s, v, snap, res.With, from, now()); err != nil {
+			return res, err
+		}
+		res.Recorded = true
+	} else {
+		say("the source volume %s/%s does not exist (lost?), so the result is not recorded on it", v.pool(), v.Name)
 	}
 	res.Duration = now().Sub(start)
 	return res, nil
 }
 
-func stamp(s incus.InstanceServer, v Volume, snap, with string, at time.Time) error {
+func stamp(s incus.InstanceServer, v Volume, snap, with, from string, at time.Time) error {
 	vol, etag, err := s.GetStoragePoolVolume(v.pool(), "custom", v.Name)
 	if err != nil {
 		return fmt.Errorf("reading %s/%s to record the verification: %w", v.pool(), v.Name, err)
@@ -234,6 +253,7 @@ func stamp(s incus.InstanceServer, v Volume, snap, with string, at time.Time) er
 	put.Config[resolve.StampVerifiedAt] = at.UTC().Format(time.RFC3339)
 	put.Config[resolve.StampVerifiedSnapshot] = snap
 	put.Config[resolve.StampVerifiedWith] = with
+	put.Config[resolve.StampVerifiedFrom] = from
 	if err := s.UpdateStoragePoolVolume(v.pool(), "custom", v.Name, put, etag); err != nil {
 		return fmt.Errorf("recording the verification on %s/%s: %w", v.pool(), v.Name, err)
 	}
@@ -249,6 +269,38 @@ func snapshotToUse(s incus.InstanceServer, v Volume, wanted string) (string, err
 		return "", fmt.Errorf("listing snapshots of %s/%s: %w", v.pool(), v.Name, err)
 	}
 	return pickSnapshot(snaps, wanted)
+}
+
+// sourceToRestore resolves which backup to restore: a local snapshot, or (with from) a restore point on
+// that target. It checks the backup exists before anything is created.
+func sourceToRestore(s incus.InstanceServer, v Volume, from *Target, wanted string) (restoreFunc, error) {
+	if from == nil {
+		snap, err := snapshotToUse(s, v, wanted)
+		if err != nil {
+			return restoreFunc{}, err
+		}
+		return restoreFunc{label: snap, run: func(newName string) error { return copySnapshot(s, v, snap, newName) }}, nil
+	}
+	if from.Remote != "" {
+		return restoreFunc{}, fmt.Errorf("target %q is a remote Incus server; only pool targets are supported so far", from.Name)
+	}
+	// The source volume is deliberately NOT required to exist here: restoring from a target is for exactly
+	// the case where it is gone. Restore points are found by their marker, which names the volume.
+	points, err := ListRestorePoints(s, v, *from)
+	if err != nil {
+		return restoreFunc{}, err
+	}
+	rp, err := pickRestorePoint(points, wanted)
+	if err != nil {
+		return restoreFunc{}, fmt.Errorf("target %q: %w", from.Name, err)
+	}
+	return restoreFunc{label: rp.Volume, run: func(newName string) error { return copyFromTarget(s, v, *from, rp, newName) }}, nil
+}
+
+// restoreFunc is a backup that can be materialised as a new local volume (run), and a label saying which.
+type restoreFunc struct {
+	label string
+	run   func(newName string) error
 }
 
 func volumeExists(s incus.InstanceServer, pool, name string) bool {

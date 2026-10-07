@@ -349,8 +349,21 @@ Ordered so each step is useful alone, and the Incus-supported path comes first.
    Verified live: restore gives correct point-in-time contents and refuses to overwrite; a passing
    check stamps the volume; a failing check (run against a snapshot with the critical file
    deleted) leaves the stamp unchanged; nothing is left behind on either path.
-3. **`engine: incus` copies.** `copy --refresh` to a remote or a second pool, scheduled
-   by the daemon or `tink backup run`; restore and verify `--from` a target.
+3. **`engine: incus` copies.** **Done for pool targets** (see `volume-backup.md`); remote Incus targets and a scheduler
+   are not. Differences from the design above, and why:
+   - **Not `copy --refresh`.** Two experiments on two TrueNAS-backed pools **[verified]**: (a) refreshing a volume makes the target
+     mirror the source's snapshots, so a snapshot the source pruned is deleted from the target at the next refresh (also with
+     `--refresh-exclude-older`), and target snapshots carry no expiry; (b) refreshing *from a snapshot* copies the right,
+     consistent content but deletes the target's own snapshots. A mirror cannot keep longer history than its source and propagates
+     deletion or damage into the backup. So each run copies a fresh snapshot into a **new, separately named volume** and tink prunes by
+     `retain`. Cost: a full copy per run.
+   - **Markers** on every restore point (`user.tink.backup.copy-of` = `project/pool/volume`, `-at`, `-target`, `-snapshot`) are what pruning
+     and restore trust; a volume without the marker for exactly that volume is never listed, pruned or restored from.
+   - **Restoring from a target does not require the source volume**, because that is the case it exists for; `verify` then cannot record
+     the result and says so.
+   - **No scheduler.** `tink backup run --due` is meant to be called from cron or a timer; the daemon is not wired in. `plan` warns when a
+     copy has never run or is overdue, which is what makes the missing scheduler visible instead of silent.
+   - **Remote targets are refused** with a clear error: without a second Incus host there is nothing real to test a push against.
 4. **Off-site restic job engine**, built on the mechanism from step 2, for hosts with
    no second Incus server.
 
