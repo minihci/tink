@@ -469,3 +469,63 @@ func TestRunStartsTheWorkersAndAJobHappensWithoutAnyoneAsking(t *testing.T) {
 		t.Errorf("the daemon says what it runs and that it stopped:\n%s", out.String())
 	}
 }
+
+// A long copy occupies the executor and nothing else: the scheduler keeps ticking (so the heartbeat advances, and a
+// stack that falls due is still noticed), because each worker runs on its own.
+type blockingEngine struct {
+	*stubEngine
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (b *blockingEngine) Copy(v volbackup.Volume, t volbackup.Target, o volbackup.CopyOptions) (volbackup.CopyResult, error) {
+	select {
+	case b.entered <- struct{}{}:
+	default:
+	}
+	<-b.release
+	return b.stubEngine.Copy(v, t, o)
+}
+
+func TestALongCopyDoesNotStopTheSchedulerOrTheHeartbeat(t *testing.T) {
+	r := newRig(t)
+	r.sync(t, "slow", "lib")
+	r.sync(t, "other", "docs")
+	be := &blockingEngine{stubEngine: r.eng, entered: make(chan struct{}, 1), release: make(chan struct{})}
+	r.h.Connect = func() (backuprun.Engine, error) { return be, nil }
+	r.h.Now = nil
+	r.h.SchedulerInterval = 15 * time.Millisecond
+	r.h.ExecutorPoll = 5 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	var out bytes.Buffer
+	done := make(chan struct{})
+	go func() {
+		Run(ctx, &out, RunOptions{NoIngress: true, Helper: r.h, RestartBackoff: time.Millisecond})
+		close(done)
+	}()
+	defer func() { cancel(); <-done }()
+
+	select {
+	case <-be.entered: // a copy is now in flight and stays there
+	case <-time.After(10 * time.Second):
+		t.Fatal("no copy started")
+	}
+	first, err := r.h.Store.LastBeat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// while it is stuck, the heartbeat keeps advancing: the scheduler is alive
+	deadline := time.Now().Add(5 * time.Second)
+	advanced := false
+	for time.Now().Before(deadline) {
+		if hb, err := r.h.Store.LastBeat(); err == nil && hb.Time.After(first.Time) {
+			advanced = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !advanced {
+		t.Error("the heartbeat stopped while a copy was running: one long job must not stall the scheduler")
+	}
+	close(be.release)
+}
