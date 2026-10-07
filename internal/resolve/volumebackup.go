@@ -245,7 +245,9 @@ type volumeEnv struct {
 	// (0 means PolicyProto: it is a field only so a test can ask what happens when a newer one is written).
 	helperReads int
 	helperLabel string
-	policyProto int
+	// helperRemotes are the remotes the helper can reach (nil: it has not said, so none is checked).
+	helperRemotes map[string]bool
+	policyProto   int
 }
 
 func (e volumeEnv) writes() int {
@@ -263,6 +265,26 @@ func (e volumeEnv) helperCannotRead() string {
 	}
 	return fmt.Sprintf("the helper (%s) reads copy policies up to protocol %d and this tink writes protocol %d, so it would skip this volume's copies, silently: "+
 		"upgrade the helper first (tink helper upgrade), or apply with a tink that writes protocol %d", e.helperLabel, e.helperReads, e.writes(), e.helperReads)
+}
+
+// helperRemoteWarnings names the copies of r that go to an Incus remote the helper does not have. The helper's schedule would try them and
+// fail every time, which shows up as a failing copy, late: this says it while the policy is being written.
+func (e volumeEnv) helperRemoteWarnings(r Resource) []string {
+	if e.helperRemotes == nil || r.Backup == nil || r.Backup.None != "" {
+		return nil
+	}
+	var out []string
+	said := map[string]bool{}
+	for _, c := range r.Backup.Copies {
+		t, ok := e.targets[c.Target]
+		if !ok || t.Remote == "" || e.helperRemotes[t.Remote] || said[t.Remote] {
+			continue
+		}
+		said[t.Remote] = true
+		out = append(out, fmt.Sprintf("copies to %q (remote %q) will fail: the helper (%s) has no remote of that name. Add it with: tink helper remote add %s ADDRESS --token-file -",
+			t.Name, t.Remote, e.helperLabel, t.Remote))
+	}
+	return out
 }
 
 // decideVolume is planStorageVolume's decision with the Incus read already

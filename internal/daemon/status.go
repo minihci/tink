@@ -114,6 +114,9 @@ type StatusOptions struct {
 	Zone     *time.Location
 	// Store is the job directory, for the last finished job; the zero Store means this daemon runs no jobs.
 	Store jobs.Store
+	// Remotes reads the Incus remotes this process can reach, for the status document. Nil leaves them out of it (so a test of something else
+	// does not depend on the machine's own Incus configuration); a read that fails does too, since "none" would be a claim.
+	Remotes func() ([]helper.Remote, error)
 	// WaitForBackup holds the first publication until the scheduler has completed a pass. Before that the document would say "nothing
 	// skipped, nothing failing" about volumes nobody has looked at, which reads as healthy: a helper that cannot reach Incus at all (a
 	// revoked certificate, a proxy not up yet) must publish nothing, not a clean bill.
@@ -144,6 +147,11 @@ func buildStatus(o StatusOptions, live *Live, started, now time.Time) helper.Sta
 		zone = now.Location()
 	}
 	s.TZ = zoneName(zone, now)
+	if o.Remotes != nil {
+		if remotes, err := o.Remotes(); err == nil {
+			s.Remotes = remotes
+		}
+	}
 	if o.Store.Dir != "" {
 		s.LastJob = lastJob(o.Store)
 		s.Draining = o.Store.Draining()

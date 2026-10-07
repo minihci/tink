@@ -24,7 +24,7 @@ func newHelperCmd() *cobra.Command {
 		Long: `The helper is an Incus instance that runs "tink daemon run" next to the data: the backup scheduler and the ingress
 reconcile. It publishes what it is doing on its own instance config, and these commands read that back. See docs/helper.md.`,
 	}
-	cmd.AddCommand(newHelperInstallCmd(), newHelperUpgradeCmd(), newHelperRemoveCmd(), newHelperStatusCmd())
+	cmd.AddCommand(newHelperInstallCmd(), newHelperUpgradeCmd(), newHelperRemoveCmd(), newHelperStatusCmd(), newHelperRemoteCmd())
 	return cmd
 }
 
@@ -260,7 +260,7 @@ func judgeHelpers(server incus.InstanceServer, found []helper.Found, now time.Ti
 }
 
 // helperPolicyOptions tells `plan` and `apply` what the server's helper can read, so that a copy policy it would skip silently is not
-// written. It is silent when there is no helper, or the helper has said nothing about it (an older one): nothing can be held to what it
+// written, and which remotes it can reach, so that a copy to another one is warned about. It is silent when there is no helper, or the helper has said nothing about it (an older one): nothing can be held to what it
 // has not said. A lookup that fails is not an error here either: `plan` does not fail because the helper cannot be found.
 func helperPolicyOptions(server incus.InstanceServer, opts resolve.PlanOptions) resolve.PlanOptions {
 	found, err := helper.Find(server)
@@ -268,23 +268,49 @@ func helperPolicyOptions(server incus.InstanceServer, opts resolve.PlanOptions) 
 		return opts
 	}
 	label, reads := "", 0
+	var remotes map[string]bool // the remotes EVERY helper that has said anything reports: one that has none of them cannot be counted on
+	reported := false
 	for _, r := range judgeHelpers(server, found, time.Now()) {
-		if r.Status != nil && r.Status.PolicyProto > 0 && (reads == 0 || r.Status.PolicyProto < reads) {
+		if r.Status == nil {
+			continue
+		}
+		if r.Status.PolicyProto > 0 && (reads == 0 || r.Status.PolicyProto < reads) {
 			label, reads = r.Found.Label(), r.Status.PolicyProto
 		}
+		if r.Status.Remotes == nil {
+			continue
+		}
+		have := map[string]bool{}
+		for _, rm := range r.Status.Remotes {
+			have[rm.Name] = !reported || remotes[rm.Name]
+		}
+		remotes, reported = have, true
+		if label == "" {
+			label = r.Found.Label()
+		}
 	}
-	return opts.WithHelperPolicy(label, reads)
+	opts = opts.WithHelperPolicy(label, reads)
+	if reported {
+		names := make([]string, 0, len(remotes))
+		for n, ok := range remotes {
+			if ok {
+				names = append(names, n)
+			}
+		}
+		opts = opts.WithHelperRemotes(label, names)
+	}
+	return opts
 }
 
 // noteHelper ends `plan` and `plan apply` with what the helper says about itself, when it is not well: a helper that has stopped, gone
 // quiet, lost its certificate, or is skipping volumes is the thing a plan of backups should not leave you to find out about at a
 // restore. A note, never a failure, and silent when there is no helper or it is healthy.
-func noteHelper(out io.Writer, server incus.InstanceServer) {
+func noteHelper(out io.Writer, server incus.InstanceServer, now time.Time) {
 	found, err := helper.Find(server)
 	if err != nil {
 		return
 	}
-	for _, r := range judgeHelpers(server, found, time.Now()) {
+	for _, r := range judgeHelpers(server, found, now) {
 		if r.Health != helper.Healthy {
 			fmt.Fprintf(out, "note: the helper is %s (see `tink helper status`)\n", r.Summary())
 		}
@@ -342,6 +368,12 @@ func printHelperDetails(out io.Writer, r helper.Report, now time.Time) {
 		fmt.Fprintf(out, "  last job:    %s %s, %s ago\n", j.ID, j.State, roundAge(now.Sub(j.Finished)))
 	} else {
 		fmt.Fprintf(out, "  last job:    none finished\n")
+	}
+	switch {
+	case st.Remotes == nil:
+		fmt.Fprintf(out, "  remotes:     not reported (this helper is older than this tink)\n")
+	default:
+		fmt.Fprintf(out, "  remotes:     %s\n", listOrNone(len(st.Remotes), func(i int) string { return st.Remotes[i].Name }))
 	}
 	switch i := st.Ingress; {
 	case i == nil:

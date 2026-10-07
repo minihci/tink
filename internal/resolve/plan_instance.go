@@ -2,6 +2,7 @@ package resolve
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	incus "github.com/lxc/incus/v7/client"
@@ -29,6 +30,9 @@ type PlanOptions struct {
 	// writing one.
 	helperReads int
 	helperLabel string
+	// helperRemotes are the Incus remotes the helper says it can reach, by name; nil means it has not said (no helper, or an older one),
+	// and nothing is checked. A copy to a remote the helper does not have fails on every attempt.
+	helperRemotes map[string]bool
 	// stack is the name the stack gives itself (kind: stack), stamped on the storage volumes it applies. Set with
 	// targets, from the full stack, for the same reason.
 	stack string
@@ -58,6 +62,36 @@ func (o PlanOptions) withTargets(resources []Resource) PlanOptions {
 func (o PlanOptions) WithHelperPolicy(label string, readsUpTo int) PlanOptions {
 	o.helperLabel, o.helperReads = label, readsUpTo
 	return o
+}
+
+// WithHelperRemotes tells planning which remotes the helper can reach, so that a copy to another one is warned about, not found out at the
+// first scheduled run. A nil list means the helper has not said, and nothing is checked; an empty one means it has none.
+func (o PlanOptions) WithHelperRemotes(label string, remotes []string) PlanOptions {
+	if o.helperLabel == "" {
+		o.helperLabel = label
+	}
+	if remotes == nil {
+		o.helperRemotes = nil
+		return o
+	}
+	o.helperRemotes = map[string]bool{}
+	for _, r := range remotes {
+		o.helperRemotes[r] = true
+	}
+	return o
+}
+
+// HelperRemotes is what planning was told the helper can reach, sorted: nil when it was told nothing, empty when the helper has none.
+func (o PlanOptions) HelperRemotes() []string {
+	if o.helperRemotes == nil {
+		return nil
+	}
+	out := make([]string, 0, len(o.helperRemotes))
+	for r := range o.helperRemotes {
+		out = append(out, r)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // HelperPolicy is what planning was told the helper can read: its name and the newest copy-policy protocol, or 0 for nothing.

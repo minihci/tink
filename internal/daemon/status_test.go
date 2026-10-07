@@ -368,3 +368,21 @@ func TestADrainQueuesNothingAndTheStatusDocumentSaysSo(t *testing.T) {
 		t.Errorf("%+v", doc)
 	}
 }
+
+func TestBuildStatusReportsTheRemotesItCanReachOnlyWhenItCouldRead(t *testing.T) {
+	live := &Live{}
+	rs := []helper.Remote{{Name: "host", Addr: "https://127.0.0.1:8443"}, {Name: "nas2", Addr: "https://nas2.lan:8443"}}
+	if st := buildStatus(StatusOptions{Remotes: func() ([]helper.Remote, error) { return rs, nil }}, live, now0, now0); len(st.Remotes) != 2 || st.Remotes[1].Name != "nas2" {
+		t.Errorf("%+v", st.Remotes)
+	}
+	// none is a statement; not knowing is not one
+	if st := buildStatus(StatusOptions{Remotes: func() ([]helper.Remote, error) { return []helper.Remote{}, nil }}, live, now0, now0); st.Remotes == nil {
+		t.Error("a helper that has no remote says so")
+	}
+	if st := buildStatus(StatusOptions{Remotes: func() ([]helper.Remote, error) { return nil, errors.New("config unreadable") }}, live, now0, now0); st.Remotes != nil {
+		t.Errorf("a configuration that could not be read must not read as 'no remotes': %+v", st.Remotes)
+	}
+	if st := buildStatus(StatusOptions{}, live, now0, now0); st.Remotes != nil {
+		t.Errorf("%+v", st.Remotes)
+	}
+}

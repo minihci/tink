@@ -61,6 +61,18 @@ type Status struct {
 	Running  int  `json:"running_jobs,omitempty"`
 	Queued   int  `json:"queued_jobs,omitempty"`
 	Draining bool `json:"draining,omitempty"`
+
+	// Remotes are the Incus servers the helper can reach by name: its own host, and any added with `tink helper remote add`. A copy
+	// to a remote backup target is made through one of these, so a policy naming a remote that is not here fails on every attempt.
+	// Nil means the helper did not say (an older one, or its configuration could not be read); an empty list says it has none.
+	Remotes []Remote `json:"remotes"`
+}
+
+// Remote is one entry of the helper's Incus client configuration. It holds no credential: those are on the helper's config volume.
+type Remote struct {
+	Name    string `json:"name"`
+	Addr    string `json:"addr,omitempty"`
+	Project string `json:"project,omitempty"`
 }
 
 // Skip is a volume the helper leaves alone, and why.

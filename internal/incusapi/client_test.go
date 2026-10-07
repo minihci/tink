@@ -54,6 +54,20 @@ func TestConnectRemoteWithAnUnknownRemote(t *testing.T) {
 	}
 }
 
+func TestAMissingRemoteInTheHelperIsFixedWithTheHelpersOwnCommand(t *testing.T) {
+	t.Setenv("INCUS_CONF", t.TempDir())
+	t.Cleanup(func() { SetRemoteAdvice("") })
+	_, err := ConnectRemote("nas2")
+	if err == nil || !strings.Contains(err.Error(), "incus remote add") {
+		t.Fatalf("by default the advice is incus's own: %v", err)
+	}
+	SetRemoteAdvice("run `tink helper remote add %s ADDRESS`")
+	_, err = ConnectRemote("nas2")
+	if err == nil || !strings.Contains(err.Error(), "tink helper remote add nas2 ADDRESS") || strings.Contains(err.Error(), "incus remote add") {
+		t.Errorf("the helper has no incus CLI, so it must not be told to use one: %v", err)
+	}
+}
+
 // docker-oci and friends are image servers, not servers to manage.
 func TestConnectRemoteRefusesAnImageServer(t *testing.T) {
 	t.Setenv("INCUS_CONF", t.TempDir())
