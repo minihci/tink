@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/minihci/tink/internal/backuprun"
 	"github.com/minihci/tink/internal/incusapi"
 	"github.com/minihci/tink/internal/resolve"
 	"github.com/minihci/tink/internal/volbackup"
@@ -252,122 +252,23 @@ Restore from a restore point with: tink backup restore VOLUME --from TARGET`,
 			if err != nil {
 				return err
 			}
-			if len(resources) == 0 {
-				return fmt.Errorf("no stack: give one with -f, or run from the directory holding %s", resolve.DefaultFile)
-			}
-			if _, err := resolve.Levels(resources); err != nil { // validates references, e.g. an unknown copy target
+			if err := backuprun.Check(resources); err != nil {
 				return err
 			}
-			targets := map[string]resolve.Resource{}
-			for _, r := range resources {
-				if r.Kind == resolve.KindBackupTarget {
-					targets[r.Name] = r
-				}
-			}
-			selected, unknown := selectCopyVolumes(resources, args)
-
 			server, err := incusapi.Connect(f.socket)
 			if err != nil {
 				return fmt.Errorf("connecting to incus: %w", err)
 			}
-			out := cmd.OutOrStdout()
-			var tried, failed, skipped int
-			warnedRelay := map[string]bool{}
-			for _, r := range selected {
-				v := volbackup.Volume{Project: r.Project, Pool: r.Pool, Name: r.Name}
-				live, err := volbackup.LiveConfig(server, v)
-				if err != nil {
-					fmt.Fprintf(out, "%s: %v\n", r.Name, err)
-					failed++
-					continue
-				}
-				for _, c := range r.Backup.Copies {
-					if due {
-						decision, err := resolve.CopyDue(c.Schedule, live, c.Target, time.Now())
-						if err != nil {
-							fmt.Fprintf(out, "%s -> %s: %v\n", r.Name, c.Target, err)
-							failed++
-							continue
-						}
-						if !decision.Due {
-							fmt.Fprintf(out, "%s -> %s: %s\n", r.Name, c.Target, decision.Reason)
-							skipped++
-							continue
-						}
-					}
-					tried++
-					// A copy to ANOTHER server is relayed through the process that runs it. From a machine that
-					// is not next to the data, that means the volume passes through here.
-					if t := targets[c.Target]; incusapi.IsRemote() && t.Remote != "" && !warnedRelay[c.Target] {
-						warnedRelay[c.Target] = true
-						fmt.Fprintf(out, "note: tink is pointed at the remote %q, and the copy to %q (remote %q) is relayed through this machine, so the volume's data passes through it\n", incusapi.Remote(), c.Target, t.Remote)
-					}
-					res, err := volbackup.Copy(server, v, volbackup.TargetFrom(targets[c.Target]),
-						volbackup.CopyOptions{Retain: c.Retain, DryRun: dryRun, Progress: out})
-					if err != nil {
-						fmt.Fprintf(out, "FAILED %s -> %s: %v\n", r.Name, c.Target, err)
-						failed++
-						continue
-					}
-					if dryRun {
-						for _, p := range res.Planned {
-							fmt.Fprintf(out, "%s -> %s: would %s\n", r.Name, c.Target, p)
-						}
-						continue
-					}
-					if len(res.OtherServers) > 0 {
-						fmt.Fprintf(out, "note: %s -> %s also holds restore points of a volume with this name made by other server(s) (%s); tink leaves them alone\n", r.Name, c.Target, strings.Join(res.OtherServers, ", "))
-					}
-					fmt.Fprintf(out, "copied %s -> %s: restore point %s", r.Name, c.Target, res.Volume)
-					if len(res.Pruned) > 0 {
-						fmt.Fprintf(out, " (pruned %d older: %s)", len(res.Pruned), strings.Join(res.Pruned, ", "))
-					}
-					fmt.Fprintln(out)
-				}
+			rep, err := backuprun.Run(cmd.Context(), backuprun.ServerEngine{Server: server}, resources,
+				backuprun.Options{Volumes: args, Due: due, DryRun: dryRun, Remote: incusapi.Remote()}, cmd.OutOrStdout())
+			if err != nil {
+				return err
 			}
-			for _, name := range unknown {
-				fmt.Fprintf(out, "%s: not a storage-volume with copies in the stack\n", name)
-				failed++
-			}
-			if tried == 0 && skipped == 0 && failed == 0 {
-				fmt.Fprintln(out, "nothing to do: no volume in the stack declares copies")
-			}
-			if failed > 0 {
-				return fmt.Errorf("%d copy operation(s) failed", failed)
-			}
-			return nil
+			return rep.Err()
 		},
 	}
 	f.bind(cmd)
 	cmd.Flags().BoolVar(&due, "due", false, "only the copies whose schedule has come round since their last success")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "say what would happen; change nothing")
 	return cmd
-}
-
-// selectCopyVolumes picks the volumes `tink backup run` acts on: every storage volume that declares
-// copies, or with names, only those. Names that are not such a volume come back in unknown, in the order
-// given, so that asking for a volume that cannot be backed up is an error and not silently nothing.
-func selectCopyVolumes(resources []resolve.Resource, names []string) (selected []resolve.Resource, unknown []string) {
-	asked := map[string]bool{}
-	for _, n := range names {
-		asked[n] = true
-	}
-	found := map[string]bool{}
-	for _, r := range resources {
-		if r.Kind != resolve.KindStorageVolume || r.Backup == nil || len(r.Backup.Copies) == 0 {
-			continue
-		}
-		if len(names) > 0 && !asked[r.Name] {
-			continue
-		}
-		found[r.Name] = true
-		selected = append(selected, r)
-	}
-	for _, n := range names {
-		if !found[n] {
-			unknown = append(unknown, n)
-			found[n] = true // a name given twice is reported once
-		}
-	}
-	return selected, unknown
 }
