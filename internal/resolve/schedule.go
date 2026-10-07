@@ -147,6 +147,10 @@ const (
 	MarkerCopyAt     = "user.tink.backup.copy-at"     // RFC 3339, UTC
 	MarkerCopyTarget = "user.tink.backup.copy-target" // the backup-target's name
 	MarkerCopySnap   = "user.tink.backup.copy-snapshot"
+	// MarkerCopyServer names the Incus server the SOURCE volume lives on (its server_name, the host name by default).
+	// Pruning only ever removes restore points made by the server doing the pruning, so two servers copying a
+	// volume with the same name into one target cannot delete each other's backups. Restore sees every point.
+	MarkerCopyServer = "user.tink.backup.copy-server"
 )
 
 // CopyOf is the value of MarkerCopyOf for a volume.

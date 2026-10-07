@@ -144,6 +144,9 @@ instance, or repoint the instance's disk device at it, when you are ready.`,
 			out := cmd.OutOrStdout()
 			if target != nil {
 				fmt.Fprintf(out, "restored restore point %s (from %s) -> %s/%s\n", res.Snapshot, target.Name, pool, res.Volume)
+				if res.MadeBy != "" {
+					fmt.Fprintf(out, "note: that restore point was made by another server (%s), not this one\n", res.MadeBy)
+				}
 			} else {
 				fmt.Fprintf(out, "restored %s/%s@%s -> %s/%s\n", pool, v.Name, res.Snapshot, pool, res.Volume)
 			}
@@ -311,6 +314,9 @@ Restore from a restore point with: tink backup restore VOLUME --from TARGET`,
 							fmt.Fprintf(out, "%s -> %s: would %s\n", r.Name, c.Target, p)
 						}
 						continue
+					}
+					if len(res.OtherServers) > 0 {
+						fmt.Fprintf(out, "note: %s -> %s also holds restore points of a volume with this name made by other server(s) (%s); tink leaves them alone\n", r.Name, c.Target, strings.Join(res.OtherServers, ", "))
 					}
 					fmt.Fprintf(out, "copied %s -> %s: restore point %s", r.Name, c.Target, res.Volume)
 					if len(res.Pruned) > 0 {

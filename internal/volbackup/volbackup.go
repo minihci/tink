@@ -69,6 +69,9 @@ type RestoreOptions struct {
 type RestoreResult struct {
 	Snapshot string // the snapshot, or with From the restore point, that was restored
 	Volume   string // the new volume
+	// MadeBy is the server that made the restore point, when it was not this one: restoring a backup another server
+	// made is allowed (it is the point of a restore on a rebuilt host) but worth saying.
+	MadeBy string
 }
 
 // Restore copies one of v's snapshots (or, with From, a restore point on a target) to a new volume.
@@ -92,7 +95,13 @@ func Restore(server incus.InstanceServer, v Volume, opts RestoreOptions) (Restor
 	if err := restoreFrom.run(name); err != nil {
 		return RestoreResult{}, err
 	}
-	return RestoreResult{Snapshot: restoreFrom.label, Volume: name}, nil
+	res := RestoreResult{Snapshot: restoreFrom.label, Volume: name}
+	if restoreFrom.server != "" {
+		if me, err := serverName(server); err == nil && me != restoreFrom.server {
+			res.MadeBy = restoreFrom.server
+		}
+	}
+	return res, nil
 }
 
 // VerifyOptions control Verify.
@@ -291,13 +300,14 @@ func sourceToRestore(s incus.InstanceServer, v Volume, from *Target, wanted stri
 	if err != nil {
 		return restoreFunc{}, fmt.Errorf("target %q: %w", from.Name, err)
 	}
-	return restoreFunc{label: rp.Volume, run: func(newName string) error { return copyFromTarget(s, v, *from, rp, newName) }}, nil
+	return restoreFunc{label: rp.Volume, server: rp.Server, run: func(newName string) error { return copyFromTarget(s, v, *from, rp, newName) }}, nil
 }
 
 // restoreFunc is a backup that can be materialised as a new local volume (run), and a label saying which.
 type restoreFunc struct {
-	label string
-	run   func(newName string) error
+	label  string
+	server string // the server that made the restore point, if known
+	run    func(newName string) error
 }
 
 func volumeExists(s incus.InstanceServer, pool, name string) bool {

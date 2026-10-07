@@ -23,8 +23,10 @@ type fakeIncus struct {
 	vols  map[string]*api.StorageVolume // "pool/name"
 	snaps map[string][]string           // "pool/name" -> snapshot names
 
-	failCopy    error // the next copy into this server fails part way, leaving a partial volume
-	failDelete  bool  // deleting a volume fails (e.g. the connection died)
+	failCopy    error         // the next copy into this server fails part way, leaving a partial volume
+	entered     chan struct{} // if set, a copy signals here when it starts, then waits for release
+	release     chan struct{}
+	failDelete  bool // deleting a volume fails (e.g. the connection died)
 	modesSeen   []string
 	copiesFrom  []string
 	deletedVols []string
@@ -57,6 +59,10 @@ func (f *fakeIncus) names(pool string) []string {
 }
 
 func (f *fakeIncus) UseProject(string) incus.InstanceServer { return f }
+
+func (f *fakeIncus) GetServer() (*api.Server, string, error) {
+	return &api.Server{Environment: api.ServerEnvironment{ServerName: f.name}}, "", nil
+}
 
 func (f *fakeIncus) GetStoragePool(name string) (*api.StoragePool, string, error) {
 	if !f.pools[name] {
@@ -137,6 +143,19 @@ func (f *fakeIncus) DeleteStoragePoolVolumeSnapshot(pool, _, name, snap string) 
 
 // CopyStoragePoolVolume is called on the DESTINATION, as in the Incus client.
 func (f *fakeIncus) CopyStoragePoolVolume(pool string, src incus.InstanceServer, srcPool string, vol api.StorageVolume, args *incus.StoragePoolVolumeCopyArgs) (incus.RemoteOperation, error) {
+	if f.entered != nil {
+		// bounded, so a regression fails the test instead of hanging it
+		select {
+		case f.entered <- struct{}{}:
+		case <-time.After(2 * time.Second):
+			return nil, errors.New("test: nobody was waiting for this copy to start")
+		}
+		select {
+		case <-f.release:
+		case <-time.After(10 * time.Second):
+			return nil, errors.New("test: this copy was never released")
+		}
+	}
 	f.modesSeen = append(f.modesSeen, args.Mode)
 	f.copiesFrom = append(f.copiesFrom, srcPool+"/"+vol.Name)
 	f.add(pool, args.Name, vol.Config) // like Incus, a copy takes the config it is given
