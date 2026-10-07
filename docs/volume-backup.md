@@ -196,6 +196,7 @@ whatever runs the copies (the daemon's scheduler) needs no copy of your stack:
 |---|---|---|
 | Snapshot `schedule` and `retain` | Incus's own keys `snapshots.schedule` and `snapshots.expiry` (Incus enforces them) | `apply` |
 | The copy policy: `copies` (each target resolved inline), `verify` | one key, `user.tink.backup.policy`, a one-line JSON document | `apply` |
+| Which stack applied the volume | `user.tink.stack`, the name from the stack's `kind: stack` document (below) | `apply` |
 | What has happened: copies, failures, verifications | `user.tink.backup.copy.<target>.*`, `.verified-*` stamps on the volume | `backup run`, `backup verify` |
 | What a restore point is | `user.tink.backup.copy-*` markers on the restore point | `backup run` |
 
@@ -216,6 +217,27 @@ $ incus storage volume get immich-library user.tink.backup.policy
   config), and the scheduler never schedules a volume that carries a restore point's or an in-progress copy's marker, so a backup is not scheduled for backup.
 - **A policy the scheduler cannot read is skipped, not guessed at.** Another `proto`, an unknown field or a schedule that does not parse is reported (once) and that volume is
   left alone; the others carry on.
+- **A volume points back at its stack.** Give a stack a name with a document of its own, and `apply` stamps every storage volume it applies with it:
+
+  ```yaml
+  kind: stack
+  name: immich
+  ```
+
+  So `incus storage volume show` says whose YAML to edit, and the stack can find its own volumes exactly. The declaration is only a name (lower case letters, digits, `.`, `_`,
+  `-`); it is not a resource, so it may share a name with an instance or volume in the stack, and a stack names itself once. It is optional. An unnamed stack writes no
+  pointer and never removes one; a named stack that applies a volume stamped by another stack takes it over and `plan` warns you first.
+- **A volume taken out of the YAML keeps being copied.** Tink never removes what it is no longer told about, and cannot tell a volume dropped from this stack from one that
+  belongs to another. `plan` and `plan apply` end with a **note** (never a failure) listing the volumes that carry a policy this stack does not declare. A volume stamped with
+  this stack's name is certain: the stack applied it and dropped it, wherever it is. A volume with no stamp can only be guessed at (it sits in a project and pool this stack
+  declares volumes in), and the note says it may be another stack's. A volume stamped by another stack is never listed. To let one go:
+
+  ```
+  tink backup forget [PROJECT/]VOLUME... [--pool POOL]
+  ```
+
+  It clears the policy and nothing else: the volume, its restore points and the record of past copies stay. It tells you which stack applied the volume, because if that stack
+  still declares copies for it the next `apply` writes the policy back.
 - **Not the whole stack.** `tink backup run` still reads the stack you give it (`-f`, or `./tink.yaml`), which is what you want when you are working on one; the
   daemon works from the volumes. `restore` and `verify` still take their targets from the stack, because restoring is for the case where the volume, and its key, is gone.
 

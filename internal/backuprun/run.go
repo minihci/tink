@@ -185,7 +185,7 @@ func Discover(eng Engine) (items []Item, problems map[string]error, err error) {
 		if _, isPartial := lv.Config[resolve.MarkerPartialOf]; isPartial {
 			continue
 		}
-		label := labelOf(lv.Volume)
+		label := Label(lv.Volume)
 		p, perr := resolve.ParsePolicy(text)
 		if perr != nil {
 			problems[label] = perr
@@ -208,7 +208,90 @@ func Discover(eng Engine) (items []Item, problems map[string]error, err error) {
 	return items, problems, nil
 }
 
-func labelOf(v volbackup.Volume) string {
+// Orphan is a volume that carries a copy policy, and so is being copied, but that the stack does not declare.
+type Orphan struct {
+	Volume volbackup.Volume
+	// Owned is true when the volume points back at this stack (its user.tink.stack names it): it is certain to be this
+	// stack's to let go. False means it points at no stack at all and only sits where this stack's volumes sit.
+	Owned bool
+}
+
+// Undeclared lists the volumes that carry a copy policy but that the stack does not declare: a volume taken out of the
+// YAML keeps the policy `apply` wrote, because tink never removes what it is no longer told about, and a policy that is
+// no longer wanted should not go on silently.
+//
+// When the stack names itself (kind: stack), `apply` stamped each volume with that name, so the answer is exact: every
+// volume stamped with it that the stack no longer declares, wherever it is. A volume stamped with ANOTHER stack's name is
+// never listed.
+//
+// A volume with no stamp (applied before stacks were named, or by a stack that is not) can only be guessed at: those in
+// the projects and pools the stack declares volumes in, which on a server with several stacks may belong to another one.
+// They come back with Owned false, and callers present them as a note, not a warning. Restore points and unfinished
+// copies are not volumes in their own right and are never listed. The result is sorted by Label.
+func Undeclared(eng Engine, resources []resolve.Resource) ([]Orphan, error) {
+	stack, err := resolve.StackName(resources)
+	if err != nil {
+		return nil, err
+	}
+	scope, declared := map[string]bool{}, map[string]bool{}
+	for _, r := range resources {
+		if r.Kind != resolve.KindStorageVolume {
+			continue
+		}
+		v := volbackup.Volume{Project: r.Project, Pool: r.Pool, Name: r.Name}
+		scope[placeOf(v)] = true
+		declared[placeOf(v)+"/"+v.Name] = true
+	}
+	if len(scope) == 0 && stack == "" {
+		return nil, nil
+	}
+	vols, _, err := eng.Volumes()
+	if err != nil {
+		return nil, err
+	}
+	var out []Orphan
+	for _, lv := range vols {
+		if _, has := lv.Config[resolve.PolicyKey]; !has {
+			continue
+		}
+		if _, isPoint := lv.Config[resolve.MarkerCopyOf]; isPoint {
+			continue
+		}
+		if _, isPartial := lv.Config[resolve.MarkerPartialOf]; isPartial {
+			continue
+		}
+		if declared[placeOf(lv.Volume)+"/"+lv.Volume.Name] {
+			continue
+		}
+		switch owner := lv.Config[resolve.StackKey]; {
+		case owner != "" && owner == stack:
+			out = append(out, Orphan{Volume: lv.Volume, Owned: true})
+		case owner != "":
+			// another stack's, or this stack's before it was named differently: not ours to say anything about
+		case scope[placeOf(lv.Volume)]:
+			out = append(out, Orphan{Volume: lv.Volume})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return Label(out[i].Volume) < Label(out[j].Volume) })
+	return out, nil
+}
+
+// placeOf is the project and pool a volume is in, with the defaults spelled out so a stack that leaves them out matches
+// a listing that does not.
+func placeOf(v volbackup.Volume) string {
+	project, pool := v.Project, v.Pool
+	if project == "" {
+		project = "default"
+	}
+	if pool == "" {
+		pool = "default"
+	}
+	return project + "/" + pool
+}
+
+// Label names a volume the way reports and `tink backup forget` do: its name, or project/name outside the default
+// project.
+func Label(v volbackup.Volume) string {
 	if v.Project == "" || v.Project == "default" {
 		return v.Name
 	}

@@ -150,3 +150,102 @@ func TestARunOverDiscoveredVolumesUsesTheirOwnMessagesAndNames(t *testing.T) {
 		t.Errorf("%v %q", err, out.String())
 	}
 }
+
+func declared(name, project, pool string) resolve.Resource {
+	r := vol(name, "t")
+	r.Project, r.Pool = project, pool
+	return r
+}
+
+func stackNamed(name string) resolve.Resource {
+	return resolve.Resource{Kind: resolve.KindStack, Name: name}
+}
+
+func orphanLabels(os []Orphan) []string {
+	var o []string
+	for _, x := range os {
+		l := Label(x.Volume)
+		if x.Owned {
+			l += "*"
+		}
+		o = append(o, l)
+	}
+	return o
+}
+
+func TestUndeclaredFindsVolumesStillCopiedThatTheStackNoLongerDeclares(t *testing.T) {
+	pol := map[string]string{resolve.PolicyKey: policyFor(t, "nas")}
+	stack := []resolve.Resource{declared("lib", "", ""), declared("tenant-lib", "tenant", "fast"), target("t", "")}
+	s := &stub{listed: []volbackup.ListedVolume{
+		listed("default", "default", "lib", pol),                                                 // declared: fine
+		listed("default", "default", "dropped", pol),                                             // taken out of the YAML, still copied
+		listed("tenant", "fast", "tenant-lib", pol),                                              // declared, in a project and pool of its own
+		listed("tenant", "fast", "old", pol),                                                     // dropped, in that project and pool
+		listed("tenant", "default", "elsewhere", pol),                                            // a pool the stack does not declare volumes in: not this stack's to speak for
+		listed("other", "default", "theirs", pol),                                                // a project the stack never mentions
+		listed("default", "default", "plain", map[string]string{"snapshots.schedule": "@daily"}), // no policy: nothing is copying it
+		listed("default", "default", "dropped-bk-1", map[string]string{resolve.PolicyKey: pol[resolve.PolicyKey], resolve.MarkerCopyOf: "default/default/dropped"}),
+		listed("default", "default", "dropped-bk-2", map[string]string{resolve.PolicyKey: pol[resolve.PolicyKey], resolve.MarkerPartialOf: "default/default/dropped"}),
+	}}
+	got, err := Undeclared(s, stack)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"dropped", "tenant/old"}; !reflect.DeepEqual(orphanLabels(got), want) {
+		t.Errorf("undeclared = %v, want %v (an unnamed stack can only guess, so none is marked as owned)", orphanLabels(got), want)
+	}
+	if got[1].Volume.Pool != "fast" {
+		t.Errorf("the volume keeps its pool, so it can be forgotten: %+v", got[1])
+	}
+}
+
+func TestANamedStackFindsItsOwnVolumesExactlyAndLeavesOthersAlone(t *testing.T) {
+	policy := policyFor(t, "nas")
+	with := func(owner string) map[string]string {
+		c := map[string]string{resolve.PolicyKey: policy}
+		if owner != "" {
+			c[resolve.StackKey] = owner
+		}
+		return c
+	}
+	stack := []resolve.Resource{stackNamed("immich"), declared("lib", "", ""), target("t", "")}
+	s := &stub{listed: []volbackup.ListedVolume{
+		listed("default", "default", "lib", with("immich")),       // declared
+		listed("default", "default", "old", with("immich")),       // ours, dropped: exact
+		listed("moved", "fast", "far", with("immich")),            // ours, in a project and pool the stack no longer mentions: still found
+		listed("default", "default", "theirs", with("nextcloud")), // another stack's, in a place this stack uses: never mentioned
+		listed("default", "default", "unstamped", with("")),       // no pointer, in this stack's place: a guess
+		listed("elsewhere", "default", "unstamped2", with("")),    // no pointer and not in this stack's places: not mentioned
+	}}
+	got, err := Undeclared(s, stack)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"moved/far*", "old*", "unstamped"}; !reflect.DeepEqual(orphanLabels(got), want) {
+		t.Errorf("undeclared = %v, want %v (* marks the ones that point back at this stack)", orphanLabels(got), want)
+	}
+	// a stack with a name but no volumes of its own left still finds what it applied
+	got, _ = Undeclared(s, []resolve.Resource{stackNamed("immich")})
+	if want := []string{"moved/far*", "old*", "lib*"}; len(got) != 3 {
+		t.Errorf("all three of its volumes are now dropped: %v, want %v", orphanLabels(got), want)
+	}
+}
+
+func TestUndeclaredRejectsTwoStackNamesAndSaysNothingForAnUnnamedStackWithNoVolumes(t *testing.T) {
+	pol := map[string]string{resolve.PolicyKey: policyFor(t, "nas")}
+	s := &stub{listed: []volbackup.ListedVolume{listed("default", "default", "x", pol)}}
+	if got, err := Undeclared(s, []resolve.Resource{target("t", "")}); err != nil || got != nil {
+		t.Errorf("an unnamed stack that declares no volume has no scope to speak for: %v %v", got, err)
+	}
+	if _, err := Undeclared(s, []resolve.Resource{stackNamed("a"), stackNamed("b")}); err == nil {
+		t.Error("a stack is named once")
+	}
+	// a stack that says project: default and pool: default explicitly is the same place as one that says nothing
+	got, _ := Undeclared(s, []resolve.Resource{declared("lib", "default", "default"), target("t", "")})
+	if !reflect.DeepEqual(orphanLabels(got), []string{"x"}) {
+		t.Errorf("explicit defaults must match the listing's: %v", orphanLabels(got))
+	}
+	if _, err := Undeclared(&stub{listErr: errors.New("incus is down")}, []resolve.Resource{declared("lib", "", "")}); err == nil {
+		t.Error("a listing that fails is an error, not 'nothing undeclared'")
+	}
+}

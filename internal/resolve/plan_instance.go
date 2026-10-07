@@ -22,6 +22,9 @@ type PlanOptions struct {
 	// because the targets and the volumes that copy to them land in different
 	// levels. PlanWithOptions/ApplyWithOptions only fill it in when it is unset.
 	targets map[string]Resource
+	// stack is the name the stack gives itself (kind: stack), stamped on the storage volumes it applies. Set with
+	// targets, from the full stack, for the same reason.
+	stack string
 }
 
 // ForResources returns the options carrying the backup targets of the full
@@ -29,6 +32,7 @@ type PlanOptions struct {
 // copies against the targets declared elsewhere in the stack.
 func (o PlanOptions) ForResources(resources []Resource) PlanOptions {
 	o.targets = backupTargets(resources)
+	o.stack, _ = StackName(resources) // more than one is reported by Levels
 	return o
 }
 
@@ -37,6 +41,7 @@ func (o PlanOptions) ForResources(resources []Resource) PlanOptions {
 func (o PlanOptions) withTargets(resources []Resource) PlanOptions {
 	if o.targets == nil {
 		o.targets = backupTargets(resources)
+		o.stack, _ = StackName(resources)
 	}
 	return o
 }

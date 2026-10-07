@@ -4,6 +4,8 @@ import (
 	"errors"
 	"sort"
 	"testing"
+
+	"github.com/minihci/tink/internal/resolve"
 )
 
 func TestListVolumesFindsEveryCustomVolumeInEveryProjectAndPool(t *testing.T) {
@@ -55,5 +57,37 @@ func TestAPoolThatCannotBeListedDoesNotHideTheOthers(t *testing.T) {
 	}
 	if perr["nas"] == nil || len(perr) != 1 {
 		t.Errorf("the broken pool is reported by name: %v", perr)
+	}
+}
+
+func TestForgetClearsOnlyThePolicyAndSaysWhoseItWas(t *testing.T) {
+	f := newFake("tron", "default")
+	f.add("default", "lib", map[string]string{
+		resolve.PolicyKey: somePolicy, resolve.StackKey: "immich",
+		"snapshots.schedule": "@daily", "user.tink.backup.copy.bk.at": "2026-10-07T00:00:00Z", "user.tink.backup.verified-at": "2026-10-01T00:00:00Z"})
+	f.add("default", "plain", map[string]string{resolve.StackKey: "immich"})
+
+	had, owner, err := Forget(f, Volume{Name: "lib"})
+	if err != nil || !had || owner != "immich" {
+		t.Fatalf("had=%v owner=%q err=%v", had, owner, err)
+	}
+	cfg := f.vols["default/lib"].Config
+	if _, has := cfg[resolve.PolicyKey]; has {
+		t.Errorf("the policy is gone: %v", cfg)
+	}
+	for _, keep := range []string{resolve.StackKey, "snapshots.schedule", "user.tink.backup.copy.bk.at", "user.tink.backup.verified-at"} {
+		if cfg[keep] == "" {
+			t.Errorf("forgetting stops the schedule and nothing else, but %s was lost: %v", keep, cfg)
+		}
+	}
+	// forgetting twice, or a volume that never had one, is a no-op that still says who applied it
+	if had, owner, err := Forget(f, Volume{Name: "lib"}); err != nil || had || owner != "immich" {
+		t.Errorf("second time: had=%v owner=%q err=%v", had, owner, err)
+	}
+	if had, _, err := Forget(f, Volume{Name: "plain"}); err != nil || had {
+		t.Errorf("no policy: had=%v err=%v", had, err)
+	}
+	if _, _, err := Forget(f, Volume{Name: "ghost"}); err == nil {
+		t.Error("a volume that does not exist is an error")
 	}
 }

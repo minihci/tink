@@ -214,9 +214,15 @@ func backupVolumeConfig(b *VolumeBackup) map[string]string {
 // copy policy (PolicyKey). set is what to write; remove is the keys tink owns outright that must not be there, which
 // today is the policy when the declaration has none. It errors when a copy names a target that is not in targets, which
 // loading a stack already rejects.
-func volumeBackupConfig(r Resource, targets map[string]Resource) (set map[string]string, remove []string, err error) {
+func volumeBackupConfig(r Resource, env volumeEnv) (set map[string]string, remove []string, err error) {
 	set = backupVolumeConfig(r.Backup)
-	policy, err := BuildPolicy(r, targets)
+	if env.stack != "" { // the pointer back to the stack that applied it; never removed (see StackKey)
+		if set == nil {
+			set = map[string]string{}
+		}
+		set[StackKey] = env.stack
+	}
+	policy, err := BuildPolicy(r, env.targets)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -230,6 +236,13 @@ func volumeBackupConfig(r Resource, targets map[string]Resource) (set map[string
 	return set, nil, nil
 }
 
+// volumeEnv is what deciding a storage volume needs from the rest of the stack, which one dependency level on its own
+// does not have: the backup targets its copies name, and the name the stack gives itself.
+type volumeEnv struct {
+	targets map[string]Resource
+	stack   string
+}
+
 // decideVolume is planStorageVolume's decision with the Incus read already
 // done, so the policy is testable without a daemon. current is nil when the
 // volume does not exist yet.
@@ -239,8 +252,8 @@ func volumeBackupConfig(r Resource, targets map[string]Resource) (set map[string
 // YAML, and a volume that predates the field is the one that most needs it
 // asked. (This is the line to flip to ActionBlocked when the warning graduates
 // to an error.)
-func decideVolume(r Resource, current *api.StorageVolume, targets map[string]Resource) PlannedResource {
-	desired, remove, err := volumeBackupConfig(r, targets)
+func decideVolume(r Resource, current *api.StorageVolume, env volumeEnv) PlannedResource {
+	desired, remove, err := volumeBackupConfig(r, env)
 	if err != nil {
 		return PlannedResource{Resource: r, Action: ActionBlocked, Blocked: []string{err.Error()}}
 	}
@@ -254,6 +267,13 @@ func decideVolume(r Resource, current *api.StorageVolume, targets map[string]Res
 		warnings = append(warnings, fmt.Sprintf(
 			"backup: none, but the volume still has %s=%q set live -- tink does not remove it; clear it with `incus storage volume unset`",
 			volKeySnapshotSchedule, current.Config[volKeySnapshotSchedule]))
+	}
+
+	if current != nil && env.stack != "" {
+		if owner := current.Config[StackKey]; owner != "" && owner != env.stack {
+			warnings = append(warnings, fmt.Sprintf("this volume is stamped as belonging to stack %q, and applying takes it over for %q (%s) -- if two stacks declare it they will keep taking it from each other",
+				owner, env.stack, StackKey))
+		}
 	}
 
 	if current != nil {

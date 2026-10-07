@@ -148,19 +148,19 @@ func TestDecideVolumeConvergesThePolicy(t *testing.T) {
 		return liveVolume(c)
 	}
 
-	if p := decideVolume(r, nil, targets); p.Action != ActionCreate || !strings.Contains(strings.Join(p.Changes, "|"), PolicyKey) {
+	if p := decideVolume(r, nil, volumeEnv{targets: targets}); p.Action != ActionCreate || !strings.Contains(strings.Join(p.Changes, "|"), PolicyKey) {
 		t.Errorf("a new volume is created with the policy: %v %v", p.Action, p.Changes)
 	}
-	if p := decideVolume(r, with(nil), targets); p.Action != ActionUpdate || !strings.Contains(strings.Join(p.Changes, "|"), PolicyKey) {
+	if p := decideVolume(r, with(nil), volumeEnv{targets: targets}); p.Action != ActionUpdate || !strings.Contains(strings.Join(p.Changes, "|"), PolicyKey) {
 		t.Errorf("a volume that lacks the policy is updated: %v %v", p.Action, p.Changes)
 	}
-	if p := decideVolume(r, with(map[string]string{PolicyKey: policy}), targets); p.Action != ActionNone {
+	if p := decideVolume(r, with(map[string]string{PolicyKey: policy}), volumeEnv{targets: targets}); p.Action != ActionNone {
 		t.Errorf("a volume carrying exactly the policy is converged: %v %v", p.Action, p.Changes)
 	}
 	// drift: someone edited the key by hand, or the YAML moved on
 	r2 := volWithCopies()
 	r2.Backup.Copies[0].Retain = "60d"
-	p := decideVolume(r2, with(map[string]string{PolicyKey: policy}), targets)
+	p := decideVolume(r2, with(map[string]string{PolicyKey: policy}), volumeEnv{targets: targets})
 	if p.Action != ActionUpdate || !strings.Contains(strings.Join(p.Changes, "|"), PolicyKey) {
 		t.Errorf("a changed declaration must show as an update, which is the point of keeping the policy on the volume: %v %v", p.Action, p.Changes)
 	}
@@ -174,30 +174,30 @@ func TestDecideVolumeRemovesAPolicyTheDeclarationNoLongerHas(t *testing.T) {
 		"opted out":      {Kind: KindStorageVolume, Name: "v", Backup: &VolumeBackup{None: "regenerable"}},
 		"block removed":  {Kind: KindStorageVolume, Name: "v"},
 	} {
-		p := decideVolume(r, stale, targets)
+		p := decideVolume(r, stale, volumeEnv{targets: targets})
 		if p.Action != ActionUpdate || !strings.Contains(strings.Join(p.Changes, "|"), "removed") {
 			t.Errorf("%s: the stale policy must be removed, or the scheduler keeps copying a volume that opted out: %v %v", name, p.Action, p.Changes)
 		}
 	}
 	// and nothing to do when it is already gone
-	if p := decideVolume(Resource{Kind: KindStorageVolume, Name: "v", Backup: &VolumeBackup{None: "x"}}, liveVolume(nil), targets); p.Action != ActionNone {
+	if p := decideVolume(Resource{Kind: KindStorageVolume, Name: "v", Backup: &VolumeBackup{None: "x"}}, liveVolume(nil), volumeEnv{targets: targets}); p.Action != ActionNone {
 		t.Errorf("no policy wanted and none present is converged, got %v %v", p.Action, p.Changes)
 	}
 }
 
 func TestDecideVolumeBlocksOnAMissingTarget(t *testing.T) {
-	p := decideVolume(volWithCopies(), nil, map[string]Resource{})
+	p := decideVolume(volWithCopies(), nil, volumeEnv{targets: map[string]Resource{}})
 	if p.Action != ActionBlocked || len(p.Blocked) != 1 {
 		t.Errorf("a copy naming a target that is not there must block the volume (it cannot be resolved): %v %v", p.Action, p.Blocked)
 	}
 }
 
 func TestVolumeBackupConfigSetAndRemove(t *testing.T) {
-	set, remove, err := volumeBackupConfig(volWithCopies(), policyTargets())
+	set, remove, err := volumeBackupConfig(volWithCopies(), volumeEnv{targets: policyTargets()})
 	if err != nil || remove != nil || set[PolicyKey] == "" || set["snapshots.schedule"] != "0 3 * * *" {
 		t.Errorf("set = %v remove = %v err = %v", set, remove, err)
 	}
-	set, remove, err = volumeBackupConfig(Resource{Kind: KindStorageVolume, Name: "v"}, nil)
+	set, remove, err = volumeBackupConfig(Resource{Kind: KindStorageVolume, Name: "v"}, volumeEnv{})
 	if err != nil || len(set) != 0 || len(remove) != 1 || remove[0] != PolicyKey {
 		t.Errorf("a bare volume sets nothing and clears the policy: set = %v remove = %v err = %v", set, remove, err)
 	}

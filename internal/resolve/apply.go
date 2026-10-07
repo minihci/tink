@@ -19,7 +19,7 @@ import (
 	"github.com/minihci/tink/internal/run"
 )
 
-func createOne(server incus.InstanceServer, r Resource, targets map[string]Resource) error {
+func createOne(server incus.InstanceServer, r Resource, env volumeEnv) error {
 	switch r.Kind {
 	case KindProject:
 		return server.CreateProject(api.ProjectsPost{
@@ -36,7 +36,7 @@ func createOne(server incus.InstanceServer, r Resource, targets map[string]Resou
 		if pool == "" {
 			pool = "default"
 		}
-		config, _, err := volumeBackupConfig(r, targets)
+		config, _, err := volumeBackupConfig(r, env)
 		if err != nil {
 			return err
 		}
@@ -203,7 +203,7 @@ func updateInstance(server incus.InstanceServer, r Resource) error {
 	return run.EnsureRunning(server, r.Name)
 }
 
-func updateOne(server incus.InstanceServer, r Resource, targets map[string]Resource) error {
+func updateOne(server incus.InstanceServer, r Resource, env volumeEnv) error {
 	s := scopedServer(server, r)
 	switch r.Kind {
 	case KindProfile:
@@ -238,7 +238,7 @@ func updateOne(server incus.InstanceServer, r Resource, targets map[string]Resou
 		if put.Config == nil {
 			put.Config = map[string]string{}
 		}
-		set, remove, err := volumeBackupConfig(r, targets)
+		set, remove, err := volumeBackupConfig(r, env)
 		if err != nil {
 			return err
 		}

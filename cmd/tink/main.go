@@ -295,6 +295,7 @@ See docs/volume-backup.md.`, resolve.DefaultFile),
 					printPlanned(cmd.OutOrStdout(), p)
 				}
 			}
+			noteUndeclaredPolicies(cmd.OutOrStdout(), backuprun.ServerEngine{Server: server}, resources)
 			return nil
 		},
 	}
@@ -343,6 +344,9 @@ says on_image_change: rebuild; see docs/image-updates.md.`, resolve.DefaultFile)
 			actions, err := resolve.ApplyWithOptions(socket, resources, resolve.NewPlanOptions(offline))
 			for _, a := range actions {
 				fmt.Fprintln(cmd.OutOrStdout(), a)
+			}
+			if server, cerr := incusapi.Connect(socket); cerr == nil {
+				noteUndeclaredPolicies(cmd.OutOrStdout(), backuprun.ServerEngine{Server: server}, resources)
 			}
 			return err
 		},

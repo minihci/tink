@@ -5,6 +5,8 @@ import (
 	"sort"
 
 	incus "github.com/lxc/incus/v7/client"
+
+	"github.com/minihci/tink/internal/resolve"
 )
 
 // ListedVolume is a custom volume found by listing the server, with the config it carries now.
@@ -45,4 +47,25 @@ func ListVolumes(s incus.InstanceServer) (vols []ListedVolume, poolErrs map[stri
 		}
 	}
 	return vols, poolErrs, nil
+}
+
+// Forget removes a volume's copy policy, so that nothing copies it any more. It reports whether there was one. The
+// volume's data, its restore points on the targets and the stamps of what has happened are left exactly as they are:
+// forgetting stops the schedule and nothing else. owner is the stack the volume points back at (its user.tink.stack),
+// if any, so the caller can say whose YAML still has to change.
+func Forget(s incus.InstanceServer, v Volume) (had bool, owner string, err error) {
+	vol, etag, err := v.scoped(s).GetStoragePoolVolume(v.pool(), "custom", v.Name)
+	if err != nil {
+		return false, "", fmt.Errorf("volume %s/%s: %w", v.pool(), v.Name, err)
+	}
+	owner = vol.Config[resolve.StackKey]
+	if _, has := vol.Config[resolve.PolicyKey]; !has {
+		return false, owner, nil
+	}
+	put := vol.Writable()
+	delete(put.Config, resolve.PolicyKey)
+	if err := v.scoped(s).UpdateStoragePoolVolume(v.pool(), "custom", v.Name, put, etag); err != nil {
+		return false, owner, fmt.Errorf("clearing the copy policy of %s/%s: %w", v.pool(), v.Name, err)
+	}
+	return true, owner, nil
 }

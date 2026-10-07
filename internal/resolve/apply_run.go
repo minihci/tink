@@ -143,7 +143,7 @@ func applyOne(server incus.InstanceServer, r Resource, opts PlanOptions, note fu
 		note("%s/%s: BLOCKED: %s", r.Kind, r.Name, strings.Join(plan.Blocked, "; "))
 		return outBlocked, nil
 	case ActionCreate:
-		if err := createOne(server, r, opts.targets); err != nil {
+		if err := createOne(server, r, volumeEnv{targets: opts.targets, stack: opts.stack}); err != nil {
 			return outConverged, err
 		}
 		if r.Kind == KindExec {
@@ -153,7 +153,7 @@ func applyOne(server incus.InstanceServer, r Resource, opts PlanOptions, note fu
 		note("%s/%s: created", r.Kind, r.Name)
 		return outChanged, nil
 	case ActionUpdate:
-		if err := updateOne(server, r, opts.targets); err != nil {
+		if err := updateOne(server, r, volumeEnv{targets: opts.targets, stack: opts.stack}); err != nil {
 			return outConverged, err
 		}
 		if r.Kind == KindInstance && r.Restart {
