@@ -153,6 +153,16 @@ const (
 	MarkerCopyServer = "user.tink.backup.copy-server"
 )
 
+// The mark of a copy that is still being made. It is a DIFFERENT key from a restore point's (MarkerCopyOf), so a copy in
+// progress, or one cut off part way, is never listed, restored from, verified or counted as the newest backup. It is
+// there so that tink can recognise, and later remove, a volume it started and never finished (the process was killed,
+// the host lost power): without it such a volume carries no mark at all and nothing may touch it. The finished copy
+// swaps these for the restore point's markers.
+const (
+	MarkerPartialOf = "user.tink.backup.copy-partial-of" // "<project>/<pool>/<volume>", as MarkerCopyOf
+	MarkerPartialAt = "user.tink.backup.copy-partial-at" // RFC 3339, UTC: when the copy was started
+)
+
 // CopyOf is the value of MarkerCopyOf for a volume.
 func CopyOf(project, pool, volume string) string {
 	if project == "" {

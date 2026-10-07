@@ -149,6 +149,16 @@ the marker for the volume in question: a volume tink did not make, a lookalike n
 cannot read is never touched. **Pruning goes further: only points made by the server doing the pruning**, and "never the newest" means the
 newest of that server's own.
 
+**A copy that never finished.** A copy is marked **in progress** (`user.tink.backup.copy-partial-of` and `-at`, a *different* key from a restore
+point's) from the moment its volume is created on the target, and the mark is swapped for the restore point's markers only when the copy has completed. So
+a copy that is cut off, or whose tink was killed, or whose host lost power, is **never** listed, restored from, verified or counted as the newest backup. It
+is not deleted at once either, because tink cannot tell a dead copy from one still running: on a later run, `backup run` removes volumes that carry this tink's
+in-progress mark **for this volume**, started by this server, **more than 7 days ago**, and says so (`removed 1 abandoned partial cop(ies)`). It never removes
+a volume that also carries a restore point's mark, one without the mark (a look-alike name included), another server's, or a younger one. The grace is long
+because a large volume over a slow link takes long, and removing a copy still going would be worse than keeping a dead one a few days. (A copy made *inside*
+one Incus server keeps running even if tink is killed, so what is left is often a complete but unmarked copy; it is removed anyway, since a newer one exists by
+then and an unverified one is not a backup.)
+
 **One copy at a time.** Within a process, the same copy (the same volume to the same target) never runs twice at once: the second is
 refused as "already running" and is not counted as a failed copy. This guard is per process: a `tink backup run` on a laptop and a scheduled
 run on the server are different processes, and nothing yet stops both copying the same volume at the same moment (it is wasteful, not unsafe:

@@ -68,6 +68,7 @@ type CopyReport struct {
 	Detail       string   `json:"detail,omitempty"`
 	RestorePoint string   `json:"restore_point,omitempty"`
 	Pruned       []string `json:"pruned,omitempty"`
+	Swept        []string `json:"swept,omitempty"`
 	OtherServers []string `json:"other_servers,omitempty"`
 }
 
@@ -218,8 +219,11 @@ func Run(ctx context.Context, eng Engine, resources []resolve.Resource, opts Opt
 			if len(res.Pruned) > 0 {
 				fmt.Fprintf(out, " (pruned %d older: %s)", len(res.Pruned), strings.Join(res.Pruned, ", "))
 			}
+			if len(res.Swept) > 0 {
+				fmt.Fprintf(out, " (removed %d abandoned partial cop(ies): %s)", len(res.Swept), strings.Join(res.Swept, ", "))
+			}
 			fmt.Fprintln(out)
-			add(CopyReport{Volume: r.Name, Target: c.Target, Outcome: Copied, RestorePoint: res.Volume, Pruned: res.Pruned, OtherServers: res.OtherServers})
+			add(CopyReport{Volume: r.Name, Target: c.Target, Outcome: Copied, RestorePoint: res.Volume, Pruned: res.Pruned, Swept: res.Swept, OtherServers: res.OtherServers})
 		}
 	}
 	for _, name := range unknown {

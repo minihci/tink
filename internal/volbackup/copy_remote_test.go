@@ -143,6 +143,8 @@ func (f *fakeIncus) DeleteStoragePoolVolumeSnapshot(pool, _, name, snap string) 
 
 // CopyStoragePoolVolume is called on the DESTINATION, as in the Incus client.
 func (f *fakeIncus) CopyStoragePoolVolume(pool string, src incus.InstanceServer, srcPool string, vol api.StorageVolume, args *incus.StoragePoolVolumeCopyArgs) (incus.RemoteOperation, error) {
+	// like Incus, the new volume exists, with the config it was given, from the moment the copy starts
+	f.add(pool, args.Name, vol.Config)
 	if f.entered != nil {
 		// bounded, so a regression fails the test instead of hanging it
 		select {
@@ -158,7 +160,6 @@ func (f *fakeIncus) CopyStoragePoolVolume(pool string, src incus.InstanceServer,
 	}
 	f.modesSeen = append(f.modesSeen, args.Mode)
 	f.copiesFrom = append(f.copiesFrom, srcPool+"/"+vol.Name)
-	f.add(pool, args.Name, vol.Config) // like Incus, a copy takes the config it is given
 	if f.failCopy != nil {
 		err := f.failCopy
 		f.failCopy = nil
