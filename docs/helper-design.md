@@ -251,7 +251,7 @@ This is phase 1's `tink remote add`, unchanged. The helper's entrypoint then run
 | Property | Claimed? | How, and what was checked |
 |---|---|---|
 | **Revocable** | yes | `incus config trust remove` ends its access at once; the container keeps running and its next call fails. No shared secret to rotate. **[verified]** |
-| **Auditable** | yes | Lifecycle events carry a `requestor`: through the certificate it is `tls`, the certificate's fingerprint as the username, and the proxy's address; through the root socket it is `unix` / `root`, indistinguishable from you at a terminal. The trust store names the fingerprint. **[verified]** |
+| **Auditable** | yes, for what it does to data | What the helper does to your data (a volume update such as a copy stamp, a snapshot create and delete, an instance update) reaches Incus as `tls` with the certificate's fingerprint as the username, where the root socket is `unix` / `root`, indistinguishable from you at a terminal; the trust store names the fingerprint. **One exception, measured on 7.5.1:** the lifecycle event for an instance **PATCH**, which is how the status document is written, carries no requestor at all, so the helper's status writes are not attributed. **[verified]** |
 | **Confined** | **no** | The certificate is unrestricted, so it has the reach of the socket: it can add trust, change server config, and exec in any instance. A compromised helper is a compromised host. |
 
 **Re-issue.** `tink helper install --reissue` removes the old trust entry and enrols a fresh key pair. Run it if the config volume might have leaked, or after a revocation
@@ -500,6 +500,24 @@ attributed. Consequences the design takes seriously:
   not a boundary worth promising.
 
 If that changes, the helper's certificate could be restricted without a redesign, because it is already its own. Re-test on each Incus version first.
+
+## Phase 3 as built
+
+Phase 3 is built and merged in seven slices (#25 to #31); `docs/helper.md` describes what exists and is the thing to read for how to use it. What follows is only where the build **differs from, or settles, what this document said**:
+
+| Design said | As built |
+|---|---|
+| The helper reaches the host through a TCP proxy and is enrolled with a token | Same, but the **NIC is required**, not optional: an OCI app container with no network has its loopback down, so the proxy cannot listen. Enrolment is `tink remote add` **run inside the instance with the token on standard input** (never on a command line or disk); install reads the token from the token operation and **never waits on it** (the operation does not end until the token is used: waiting hung for hours) and cancels it afterwards. |
+| A revoked helper goes stale after 2.5 heartbeats | `tink helper status` also checks the **trust store** (when it may read it): a helper whose certificate is gone is **down at once**. |
+| The helper publishes a status document | It publishes **nothing until its scheduler has looked at the volumes once** (a helper that cannot reach Incus must not publish a clean bill), and retries a failed first pass in **5 seconds** (the proxy comes up about a second after the process, and the pass races its own enrolment). The document also carries `running_jobs`, `queued_jobs` and `draining`. |
+| `upgrade` drains first | A **`DRAIN` file on the data volume** (put there through the instance file API): the scheduler queues nothing, the executor starts nothing, a running job finishes. A draining helper shows as degraded. An image upgrade recreates the instance with the **same config and devices and keeps its volumes**, so the certificate stays valid and there is no new enrolment. Verified live with a 2 GB copy in flight. Not verified live: the image path (no published image yet). |
+| The ingress half needs the `ingress-routes` volume as a disk device | **No mount at all.** Volumes are per project and the helper has a project of its own, so the reconcile has an **API mode**: it reads and writes `/etc/caddy/routes/generated/` inside the ingress instance through its file API and reloads Caddy there. Off by default; the host path in production is unchanged. `deploy` does not install the host's `tink-daemon` when a helper has `user.tink.helper.ingress`. |
+| `plan` reads the helper | It ends with a note when the helper is degraded or down, and **`apply` refuses to write a copy policy of a newer protocol than the helper reads**. Latent today (only protocol 1 exists): it is proven by a test writing a protocol 2. |
+| Audit: the helper's requests are attributed | True for what it does to data; **not** for its status writes (a PATCH event has no requestor). See [the credential](#the-credential). |
+
+Found by running it live, every one of them invisible to a test that used a fake which answers instantly: the token operation that never ends; a root disk read as a managed volume named `""`; `remote add` refusing to replace an existing remote on re-enrolment; a restarting helper publishing "healthy" before it had looked at anything.
+
+**Not done:** the image has never been published (no `v*` tag has been pushed), so `install` with no flag and the image path of `upgrade` have never run against a real image; the socket fallback is described and not built; phases 4 and 5.
 
 ## Phasing
 
