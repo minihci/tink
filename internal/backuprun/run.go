@@ -61,23 +61,24 @@ const (
 
 // CopyReport is one volume-to-target copy.
 type CopyReport struct {
-	Volume, Target string
-	Outcome        Outcome
+	Volume  string  `json:"volume"`
+	Target  string  `json:"target,omitempty"`
+	Outcome Outcome `json:"outcome"`
 	// Detail is the reason for a skip, or the error of a failure, as printed.
-	Detail       string
-	RestorePoint string
-	Pruned       []string
-	OtherServers []string
+	Detail       string   `json:"detail,omitempty"`
+	RestorePoint string   `json:"restore_point,omitempty"`
+	Pruned       []string `json:"pruned,omitempty"`
+	OtherServers []string `json:"other_servers,omitempty"`
 }
 
 // Report is everything a run did.
 type Report struct {
-	Copies []CopyReport
+	Copies []CopyReport `json:"copies"`
 	// Unknown are the volumes asked for that are not a storage-volume with copies in the stack.
-	Unknown []string
-	Failed  int
-	Tried   int
-	Skipped int
+	Unknown []string `json:"unknown,omitempty"`
+	Failed  int      `json:"failed"`
+	Tried   int      `json:"tried"`
+	Skipped int      `json:"skipped"`
 }
 
 // Err is the error a run with failures should end with, or nil.
@@ -229,4 +230,37 @@ func Run(ctx context.Context, eng Engine, resources []resolve.Resource, opts Opt
 		fmt.Fprintln(out, "nothing to do: no volume in the stack declares copies")
 	}
 	return rep, nil
+}
+
+// DueCopy is a copy that should run now.
+type DueCopy struct{ Volume, Target string }
+
+// Due lists the copies a `Due` run would make now, without making any: what a scheduler asks before it queues work, so
+// it queues a job only when there is something to do. It applies the same decision as Run (the schedule, and the
+// backoff after failures). A volume whose live configuration cannot be read is reported in problems, not skipped
+// silently, and is not "due" (nothing can be decided about it).
+func Due(eng Engine, resources []resolve.Resource, now time.Time) (due []DueCopy, problems map[string]error, err error) {
+	if err := Check(resources); err != nil {
+		return nil, nil, err
+	}
+	selected, _ := Select(resources, nil)
+	problems = map[string]error{}
+	for _, r := range selected {
+		live, lerr := eng.LiveConfig(volbackup.Volume{Project: r.Project, Pool: r.Pool, Name: r.Name})
+		if lerr != nil {
+			problems[r.Name] = lerr
+			continue
+		}
+		for _, c := range r.Backup.Copies {
+			d, derr := resolve.CopyDue(c.Schedule, live, c.Target, now)
+			if derr != nil {
+				problems[r.Name+" -> "+c.Target] = derr
+				continue
+			}
+			if d.Due {
+				due = append(due, DueCopy{Volume: r.Name, Target: c.Target})
+			}
+		}
+	}
+	return due, problems, nil
 }

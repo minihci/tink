@@ -171,7 +171,8 @@ could not prune older restore points is **not** a failed copy (the restore point
 the copy is not put into backoff.
 
 **`--due`** runs only the copies whose `schedule` has come round since their last success (by the stamp), so cron or a timer can call
-`tink backup run --due` every few minutes. **Tink does not schedule copies itself yet**, so until something calls it, `plan` warns
+`tink backup run --due` every few minutes, or `tink daemon run --stacks DIR --jobs DIR` does it for you ([daemon-jobs.md](daemon-jobs.md)).
+Until something calls it, `plan` warns
 that a copy "has never run" or "is overdue" (the schedule's next time after the last success plus a grace of a quarter of the
 interval, between 10 minutes and 6 hours). **`--dry-run`** says what would happen and changes nothing.
 
@@ -303,6 +304,6 @@ The direction for everything below is in [`volume-backup-design.md`](volume-back
 - **A volume that lives on a TrueNAS pool cannot restore its own snapshots on stock TrueNAS 25.10** (an upstream middleware bug, fixed
   in truenas/middleware#19962 and #19963): the same-pool clone Incus uses fails. Copies to and from TrueNAS pools are not affected.
 - **Each run is a full copy**, over the network for a remote target; there is no incremental transfer yet.
-- **Nothing schedules copies**: call `tink backup run --due` from cron or a timer.
+- **Nothing schedules copies on its own**: call `tink backup run --due` from cron or a timer, or run `tink daemon run --stacks DIR --jobs DIR` ([daemon-jobs.md](daemon-jobs.md)).
 - **A restore point is crash-consistent**, like the snapshot it is copied from.
 - **Verify is only as strong as its check**, and an unchecked verify only proves the snapshot restores.

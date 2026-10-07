@@ -245,3 +245,32 @@ func TestAnInvalidStackStopsTheRun(t *testing.T) {
 		t.Error("a stack that does not validate must stop the run")
 	}
 }
+
+func TestDueListsWhatARunWouldDoAndChangesNothing(t *testing.T) {
+	mid := now.Add(30 * time.Minute)
+	stale := mid.Add(-3 * time.Hour).UTC().Format(time.RFC3339)
+	recent := mid.Add(-10 * time.Minute).UTC().Format(time.RFC3339)
+	s := &stub{live: map[string]map[string]string{
+		"overdue": {resolve.CopyStampAt("t"): stale},
+		"fresh":   {resolve.CopyStampAt("t"): recent},
+		"failing": {resolve.CopyStampAt("t"): stale, resolve.CopyFailAt("t"): mid.Add(-time.Minute).UTC().Format(time.RFC3339), resolve.CopyFailCount("t"): "2"},
+		"never":   {},
+	}, liveErr: map[string]error{"gone": errors.New("volume not found")}}
+	rs := []resolve.Resource{vol("overdue", "t"), vol("fresh", "t"), vol("failing", "t"), vol("never", "t"), vol("gone", "t"), target("t", "")}
+	due, problems, err := Due(s, rs, mid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []DueCopy{{"overdue", "t"}, {"never", "t"}}; !reflect.DeepEqual(due, want) {
+		t.Errorf("due = %v, want %v (a copy backing off, one not yet due and an unreadable volume are not due)", due, want)
+	}
+	if len(problems) != 1 || problems["gone"] == nil {
+		t.Errorf("a volume that cannot be read is a problem, not silence: %v", problems)
+	}
+	if len(s.copied) != 0 {
+		t.Errorf("Due must never copy: %v", s.copied)
+	}
+	if _, _, err := Due(s, nil, mid); err == nil {
+		t.Error("an empty stack is an error")
+	}
+}
