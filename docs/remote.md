@@ -62,7 +62,8 @@ A remote the client configuration defines under the same name **always wins** (a
 | Command or resource | Why | What happens |
 |---|---|---|
 | `tink deploy` | It provisions the machine it runs on (instances, registries, the daemon's own configuration). | Refuses, naming the remote. |
-| `tink ingress reconcile`, `ingress status`, `daemon run` | They read and write a path inside a storage pool on the host. | Refuse. |
+| `tink ingress reconcile`, `ingress status` | They read and write a path inside a storage pool on the host. | Refuse. |
+| `tink daemon run` | Its backup half is a client of the server like any other command; its ingress half reads and writes the same host path. | Refuses, unless `--no-ingress` leaves the ingress half out, or `--routes-dir` names a directory the process can reach. The helper runs it this way, as a client of its own host. |
 | `kind: incus` resources | They are argv for the **local** `incus` CLI, often with local paths, against that CLI's own default remote, which is not the remote tink was told to manage. | The resource is **BLOCKED** with the reason; the rest of the stack plans and applies. |
 
 ## Data stays on the server where it can

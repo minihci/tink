@@ -102,3 +102,23 @@ func TestAJobWithAnUnreadableRequestHasNoNonsenseAge(t *testing.T) {
 		t.Errorf("age = %q", got)
 	}
 }
+
+func TestDaemonRunUnderARemoteRefusesOnlyTheIngressPathItCannotReach(t *testing.T) {
+	// With a remote and nothing said about ingress, it would read a path inside the host's storage pool: refused, saying what to give.
+	err := runRoot(t, "--remote", "helper-host", "daemon", "run", "--jobs", t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), `remote "helper-host"`) || !strings.Contains(err.Error(), "--no-ingress") || !strings.Contains(err.Error(), "--routes-dir") {
+		t.Errorf("err = %v", err)
+	}
+	// --no-ingress or an explicit --routes-dir gets past the refusal. A bad --timezone then stops the command before it
+	// starts anything, which is how this test knows the PreRunE let it through.
+	for _, extra := range [][]string{{"--no-ingress"}, {"--routes-dir", t.TempDir()}} {
+		args := append([]string{"--remote", "helper-host", "daemon", "run", "--jobs", t.TempDir(), "--timezone", "Not/AZone"}, extra...)
+		if err := runRoot(t, args...); err == nil || !strings.Contains(err.Error(), "--timezone") {
+			t.Errorf("%v must pass the remote check and fail on the time zone, got: %v", extra, err)
+		}
+	}
+	// no remote: unchanged
+	if err := runRoot(t, "daemon", "run", "--jobs", t.TempDir(), "--timezone", "Not/AZone"); err == nil || !strings.Contains(err.Error(), "--timezone") {
+		t.Errorf("without a remote nothing is refused: %v", err)
+	}
+}
