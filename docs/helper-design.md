@@ -370,8 +370,12 @@ Each phase is useful alone and ends in something checkable on the lab host.
 
 - **Can the helper list volumes in every project it needs?** **Yes, answered on the lab host**; see
   [what the discovery test found](#what-the-discovery-test-found). What is left open is only whether the same holds for a *restricted* identity (hardening).
-- **A volume removed from the YAML but still on the server.** Its key persists and the scheduler keeps copying it (confirmed by construction: `apply` only visits what is
-  declared). Is "applied policy with no declaration" a `plan` warning, or should `apply` offer to clear it? Warning first is proposed. Not built.
+- **A volume removed from the YAML but still on the server. Answered (built on `policy-on-volume`).** Its key persists and the scheduler keeps copying it, by design: tink
+  never removes what it is no longer told about, and cannot tell a volume dropped from this stack from another stack's. Two additions make that visible and fixable. A stack
+  can name itself (`kind: stack`), and `apply` stamps each volume with `user.tink.stack`, so the volume points back at the stack to edit and the stack can find its own
+  volumes exactly. `plan` and `plan apply` end with a note listing volumes that carry a policy the stack does not declare: certain when they carry this stack's name, a guess
+  (in the stack's projects and pools) when they carry none, never when they carry another's. `tink backup forget` clears the policy and nothing else. Checked on the lab host
+  with two stacks sharing a project.
 - **Per-volume cost of discovery.** Listing every custom volume every tick is cheap on one server; on a large one it may want a longer interval than
   the due check, or a cached listing refreshed on `apply`. Not measured.
 - **Does a copy to a remote target apply config at creation?** Unchanged from phase 2e, and now it matters twice: for the in-progress mark and for
