@@ -10,10 +10,13 @@ document is `docs/helper-design.md` on the `helper-design` branch, not yet on `m
 - Handing a `tink backup run` started on another machine to the helper (and `tink helper jobs|log|cancel` to follow it). A run you start yourself runs
   where you start it, and a copy to another server is relayed through that machine ([remote.md](remote.md)).
 - Retiring `tink daemon install`, which still prints the old ingress-only unit ([daemon-jobs.md](daemon-jobs.md)).
-- The image path on a real server. `v0.1.0` is published (public, `linux/amd64` and `linux/arm64`) and the image runs and reports its version, but
-  `install` and `upgrade` have not yet been run from it against a real server. Until they are, `--binary`, a stock image with a binary pushed in, is what has
-  been run live. No tink command-line binary is published yet either, so "a release build" only exists inside the image: from a build you made yourself, give
-  `--image`.
+- A published tink command-line binary. Only the image is published (`v0.1.0`, `linux/amd64` and `linux/arm64`, public), so "a release build" of tink exists
+  only inside it: from a build you made yourself, give `--image` (below).
+
+**Run live so far**, on one host (the lab server): the `v0.1.0` image installs with no flags; the scheduler queues and makes the copies on its own, and the
+restore point it made verifies; a helper whose process was killed is running again in about six seconds, with a fresh status document and its job history;
+and `upgrade` drains it, replaces the instance and keeps its certificate. **Not yet tried:** a host reboot or an Incus restart; the helper copying to a second
+physical server; and an upgrade to a different image (the one upgrade run replaced the instance with the same image).
 
 ## Installing it
 
@@ -59,6 +62,11 @@ moment after the helper's process does) is retried in 5 seconds, not after the f
 **What it needs:** the host's API listening (`core.https_address`; the loopback address is enough, and `tink deploy` sets one), and a network for the NIC
 (`--network`, else the default profile's, else `incusbr0`). It refuses, before creating anything, if either is missing, or if another helper exists on
 the server.
+
+**If it dies,** Incus restarts it (`boot.autorestart` is set on the instance). On the lab host a helper whose process was killed with `SIGKILL` was running
+again in about six seconds, published a new status document, and still had its job history, which lives on its data volume. An entrypoint that exits over and
+over is restarted a limited number of times and then left stopped (ten quick restarts, measured in the design's spike): a stopped helper is what `tink helper
+status` reports as down.
 
 **Running it again** is safe: what exists is left alone, and an enrolled helper is not enrolled twice. `--reissue` enrols it again with a fresh key pair
 and removes the old certificate. `--binary` puts the binary in the instance, which is also how a helper runs where an image cannot be pulled.
