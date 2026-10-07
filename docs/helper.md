@@ -10,14 +10,11 @@ document is `docs/helper-design.md` on the `helper-design` branch, not yet on `m
 - Handing a `tink backup run` started on another machine to the helper (and `tink helper jobs|log|cancel` to follow it). A run you start yourself runs
   where you start it, and a copy to another server is relayed through that machine ([remote.md](remote.md)).
 - Retiring `tink daemon install`, which still prints the old ingress-only unit ([daemon-jobs.md](daemon-jobs.md)).
-- A *released* tink command-line binary. A workflow now builds them on every tag and attaches them to its GitHub Release ([below](#the-image-and-releasing-it)),
-  but no tag has been cut since it was added, so `v0.1.0` has only the image (`linux/amd64` and `linux/arm64`, public) and "a release build" of tink exists
-  only inside it. Until the first release that carries binaries, from a build you made yourself give `--image` (below).
 
-**Run live so far**, on one host (the lab server): the `v0.1.0` image installs with no flags; the scheduler queues and makes the copies on its own, and the
-restore point it made verifies; a helper whose process was killed is running again in about six seconds, with a fresh status document and its job history;
-and `upgrade` drains it, replaces the instance and keeps its certificate. **Not yet tried:** a host reboot or an Incus restart; the helper copying to a second
-physical server; and an upgrade to a different image (the one upgrade run replaced the instance with the same image).
+**Run live so far**, on one host (the lab server): a release build of tink installed the `v0.1.0` image with no flags; the scheduler queues and makes the copies
+on its own, and the restore point it made verifies; a helper whose process was killed is running again in about six seconds, with a fresh status document and
+its job history; and `upgrade` with no flags, from the `v0.1.1` release binary, drained it, moved it from the `v0.1.0` image to the `v0.1.1` one, and kept its
+certificate and its job history. **Not yet tried:** a host reboot or an Incus restart, and the helper copying to a second physical server.
 
 ## Installing it
 
@@ -268,5 +265,15 @@ publishes it checks that the checksums match, that each archive holds one file, 
 (`v0.2.0-rc.1`) is published as a pre-release and any other (`v0.1.1`, even before 1.0) as an ordinary release, so `releases/latest` always points at the newest
 ordinary one. On a pull request that touches the workflow it only builds and checks. The binaries are not signed: a macOS binary downloaded with a browser is quarantined until `xattr -d
 com.apple.quarantine tink`, and one fetched with `curl` is not. A binary from a release is a "release build", so `tink helper install` with no flag installs the
-image published for the same tag. **Not yet run on a tag:** the first one will tell.
+image published for the same tag.
+
+`v0.1.1` was the first release to carry them: the four archives and `checksums.txt`, published as an ordinary release, so GitHub marks it Latest. The `linux/amd64`
+binary in the archive is byte-for-byte the one inside the image (the two workflows build them separately), and the archive's checksum and `tink version` were
+checked after downloading it with `curl`. The asset names carry the version, so there is no version-less "latest" download URL; fetch the latest release's with
+`gh`, or name the version with `curl`:
+
+```
+gh release download --repo minihci/tink --pattern '*darwin_arm64*'        # the latest release; also linux_amd64, linux_arm64, darwin_amd64
+curl -fsSLO https://github.com/minihci/tink/releases/download/v0.1.1/tink_v0.1.1_darwin_arm64.tar.gz       # a particular version
+```
 

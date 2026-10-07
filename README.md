@@ -35,7 +35,7 @@ comment for the working bash it's replacing.
 | `tink backup run` / `restore` / `verify` / `forget` | verified live on the lab host: pool targets (a TrueNAS-backed pool included) and an Incus remote over a tunnel ([docs](docs/volume-backup.md)) | (new) |
 | `tink secret` | verified live on the Immich stack on the lab host ([docs](docs/secrets.md)) | (new) |
 | `tink remote` / `--remote NAME` | verified live from a laptop against the lab host ([docs](docs/remote.md)) | (new) |
-| `tink helper install` / `upgrade` / `remove` / `remote` / `status` | built, and run live on the lab host: installed from the published image (`v0.1.0`, amd64 and arm64), it made the scheduled copies on its own, restarted after being killed, and upgraded in place; a host reboot has not been tried ([docs](docs/helper.md)) | (new - a way to run the daemon without a unit per init system) |
+| `tink helper install` / `upgrade` / `remove` / `remote` / `status` | built, and run live on the lab host: installed from the published image, it made the scheduled copies on its own, restarted after being killed, and upgraded from `v0.1.0` to `v0.1.1` with the release binary and no flags; a host reboot has not been tried ([docs](docs/helper.md)) | (new - a way to run the daemon without a unit per init system) |
 | `tink mongo snapshot` | not yet designed | (none yet - still under discussion) |
 
 `deploy` converges a host to its declared platform state - storage
@@ -203,5 +203,14 @@ go build -o tink ./cmd/tink
 ```
 
 A tag (`v*`) also builds binaries for macOS and Linux (`amd64` and `arm64`) and attaches them to its GitHub Release, next to the helper image
-([`.github/workflows/release.yml`](.github/workflows/release.yml), [`docs/helper.md`](docs/helper.md#the-image-and-releasing-it)). None has been released yet, so
-for now build from source.
+([`.github/workflows/release.yml`](.github/workflows/release.yml), [`docs/helper.md`](docs/helper.md#the-image-and-releasing-it)). `v0.1.1` is the first release to
+carry them ([Releases](https://github.com/minihci/tink/releases)); you can also build from source, as above.
+
+```
+curl -fsSLO https://github.com/minihci/tink/releases/download/v0.1.1/tink_v0.1.1_darwin_arm64.tar.gz
+curl -fsSLO https://github.com/minihci/tink/releases/download/v0.1.1/checksums.txt
+grep darwin_arm64 checksums.txt | shasum -a 256 -c -        # sha256sum -c - on Linux
+tar -xzf tink_v0.1.1_darwin_arm64.tar.gz                    # a directory holding the one binary, tink
+```
+
+They are not signed: a binary downloaded with a browser is quarantined by macOS until `xattr -d com.apple.quarantine tink`, and one fetched with `curl` is not.
