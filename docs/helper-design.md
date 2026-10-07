@@ -242,7 +242,7 @@ Each phase is useful alone and ends in something checkable on the lab host.
 2. **The scheduler and the engine changes. Built and validated in the lab** (see [Phase 2 findings](#phase-2-findings)): failure stamps and backoff, the
    server marker, the per-copy guard, the job directory and executor, stack sync with atomic activation, the backup scheduler and heartbeat in `daemon run`
    (`--stacks`, `--jobs`, `--timezone`, `--no-ingress`), supervised workers, and local `daemon sync|enqueue|jobs|cancel`. It runs under any supervisor (a transient
-   systemd unit on the lab host). Open: a janitor for partial copies (below).
+   systemd unit on the lab host). **2e** adds the in-progress mark and the sweep of abandoned copies (below).
 3. **The helper.** Containerfile and image workflow (version injection, multi-arch, digest), `tink helper install|upgrade|status|sync|remove`,
    the ingress volume device and configurable paths, `deploy` no longer reinstalling the host daemon. *Done when:* killing the process brings it
    back, a crash loop is detected by `status` and `plan`, a host reboot brings it back with the next due copy still running, and `upgrade`
@@ -304,13 +304,14 @@ Run on the lab host (Incus 7.5.1) under a transient systemd unit (`Restart=alway
 | Does a long copy stall the scheduler? | Not in the lab (copies were seconds), so a unit test pins it instead: with a copy blocked, the heartbeat keeps advancing; mutation-checked against a serialised design. |
 | Not tested live | Ingress running beside it (the lab daemon ran `--no-ingress`), a copy to a remote server, the job `cancel` of a copy in flight (cancel takes effect between copies; an operation in flight finishes), and a host reboot. |
 
-**Open: partial copies.** A copy cut off by `kill -9`, a host reboot or a power loss leaves a volume the target's Incus created but tink never marked: it
-is unmarked precisely so it can never be mistaken for a restore point. Nothing removes it, so each interruption leaks the size of a volume. A safe janitor
-needs a way to know tink made it. Proposal: mark a copy **in progress** at the moment it is created, with a *different* marker that is not a restore point's
-(`copy-partial-of`, not `copy-of`), replaced by the real markers when the copy completes; the janitor removes only volumes carrying `copy-partial-of` for a
-volume it manages, older than a day, and never anything unmarked. Whether Incus applies the config given to a copy made from a snapshot must be checked first
-(an earlier version re-applied markers after the copy because it was not sure); if it does not, the in-progress mark has to be a second step with a window
-in which the volume is unmarked, and the janitor has to say so.
+**Resolved (phase 2e): partial copies.** A copy is marked **in progress** (`copy-partial-of`/`-at`, a different key from a restore point's) from the moment its
+volume is created, and the mark is swapped for the restore point's markers when the copy completes; `backup run` then removes volumes that carry this tink's
+in-progress mark for this volume, started by this server, more than 7 days ago, and never anything else (not a volume that is also a restore point, not an
+unmarked look-alike, not another server's, not a young one). Checked live, which corrected an assumption: Incus **does** apply the config given at creation, for a
+copy from a snapshot into a TrueNAS pool and into a local pool; and a copy made *inside* one Incus server **keeps running when tink is killed**, so what a
+`kill -9` leaves is usually a *complete* copy that was never marked, not a half-written one. It is removed anyway (a newer copy exists by then, and an
+unverified one is not a backup). Still unchecked: whether a *remote* target applies the in-progress mark to a relayed copy (the VPS tunnel was down); if it does
+not, the sweep finds nothing there and a leak from a relayed copy cut off by tink being killed stays until someone removes it.
 
 ## What the review changed
 
