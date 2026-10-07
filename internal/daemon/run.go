@@ -198,10 +198,14 @@ func (s *syncWriter) Write(p []byte) (int, error) {
 // it respect cancellation, does it survive a failed pass, does it run
 // once immediately rather than waiting a full interval first) is
 // testable without a live Incus daemon.
+// ingressRetryAfter is how soon a pass that failed is tried again, instead of waiting out the interval: a helper's first pass races its own
+// enrolment, and the proxy to the host's API that it uses comes up a moment after its process. A variable so a test can shorten it.
+var ingressRetryAfter = 5 * time.Second
+
 func run(ctx context.Context, out io.Writer, interval time.Duration, reconcileOnce func() (*ingress.Result, error)) error {
 	fmt.Fprintf(out, "tink daemon: reconciling ingress every %s\n", interval)
 
-	doOnePass := func() {
+	doOnePass := func() (ok bool) {
 		result, err := reconcileOnce()
 		if err != nil {
 			// A failed pass logs and keeps running rather than exiting --
@@ -209,7 +213,7 @@ func run(ctx context.Context, out io.Writer, interval time.Duration, reconcileOn
 			// bad pass just means cron tries again in 60s; a persistent
 			// loop should retry on its own schedule instead of dying.
 			fmt.Fprintf(out, "tink daemon: reconcile error: %v\n", err)
-			return
+			return false
 		}
 		for _, w := range result.Warnings {
 			fmt.Fprintf(out, "tink daemon: WARN: %s\n", w)
@@ -218,20 +222,22 @@ func run(ctx context.Context, out io.Writer, interval time.Duration, reconcileOn
 			fmt.Fprintf(out, "tink daemon: applied: +%d -%d ~%d\n",
 				len(result.Diff.Added), len(result.Diff.Removed), len(result.Diff.Changed))
 		}
+		return true
 	}
 
-	doOnePass() // immediately, not after waiting a full interval first
-
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
+	timer := time.NewTimer(0) // the first pass is immediate, not after waiting a full interval
+	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			fmt.Fprintln(out, "tink daemon: shutting down")
 			return nil
-		case <-ticker.C:
-			doOnePass()
+		case <-timer.C:
 		}
+		next := interval
+		if !doOnePass() && ingressRetryAfter < interval {
+			next = ingressRetryAfter // a pass that failed is not left for a whole interval
+		}
+		timer.Reset(next)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -79,5 +80,46 @@ func TestRun_TicksAtTheGivenInterval(t *testing.T) {
 
 	if got := atomic.LoadInt32(&calls); got < 3 {
 		t.Fatalf("expected at least 3 reconcile calls (1 immediate + ticks), got %d", got)
+	}
+}
+
+func TestRun_RetriesAFailedPassSoonAndKeepsTheIntervalAfterASuccess(t *testing.T) {
+	old := ingressRetryAfter
+	ingressRetryAfter = 5 * time.Millisecond
+	t.Cleanup(func() { ingressRetryAfter = old })
+
+	var mu sync.Mutex
+	passes := 0
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		_ = run(ctx, &bytes.Buffer{}, time.Hour, func() (*ingress.Result, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			passes++
+			if passes <= 2 { // the proxy to the host's API is not up yet
+				return nil, errors.New("connection refused")
+			}
+			return &ingress.Result{}, nil
+		})
+		close(done)
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := passes
+		mu.Unlock()
+		if n >= 3 {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	time.Sleep(60 * time.Millisecond) // many retry periods: a pass that worked waits the whole (hour-long) interval
+	cancel()
+	<-done
+	mu.Lock()
+	defer mu.Unlock()
+	if passes != 3 {
+		t.Errorf("passes = %d: the two failures were retried within milliseconds, and the success was not followed by another until the interval", passes)
 	}
 }

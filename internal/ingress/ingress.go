@@ -11,6 +11,8 @@ package ingress
 import (
 	"fmt"
 
+	incus "github.com/lxc/incus/v7/client"
+
 	"github.com/minihci/tink/internal/incusapi"
 )
 
@@ -21,7 +23,16 @@ type Options struct {
 	RoutesDir       string
 	IngressInstance string
 	DryRun          bool
+	// ViaAPI reads and writes the route files through the ingress instance's file API instead of on the host's filesystem: RoutesDir is then
+	// a path INSIDE that instance (InstanceRoutesDir), and nothing here touches the machine tink runs on. It is what lets the helper, which
+	// has no access to the host's storage pool, run the reconcile, and what works under --remote. Off by default: the host-path mode is
+	// what runs in production today.
+	ViaAPI bool
 }
+
+// InstanceRoutesDir is where the generated route files are inside the ingress instance: the `ingress-routes` volume is mounted at
+// /etc/caddy/routes there, and the reconciler owns its generated/ subdirectory (configs/ingress/Caddyfile imports both).
+const InstanceRoutesDir = "/etc/caddy/routes/generated"
 
 // DefaultOptions returns the same paths reconcile.sh has always used.
 func DefaultOptions() Options {
@@ -50,7 +61,11 @@ func Reconcile(opts Options) (*Result, error) {
 	if err != nil {
 		return nil, fmt.Errorf("connecting to incus: %w", err)
 	}
+	return reconcileOn(server, opts)
+}
 
+// reconcileOn is Reconcile on a connection already made, so the whole pass can be tested without a daemon.
+func reconcileOn(server incus.InstanceServer, opts Options) (*Result, error) {
 	regs, warnings, err := Discover(server)
 	if err != nil {
 		return nil, err
@@ -61,7 +76,12 @@ func Reconcile(opts Options) (*Result, error) {
 		return nil, err
 	}
 
-	current, err := readCurrent(opts.RoutesDir)
+	var current map[string]string
+	if opts.ViaAPI {
+		current, err = readCurrentVia(server, opts.IngressInstance, opts.RoutesDir)
+	} else {
+		current, err = readCurrent(opts.RoutesDir)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +93,12 @@ func Reconcile(opts Options) (*Result, error) {
 		return result, nil
 	}
 
-	if err := apply(server, opts.RoutesDir, opts.IngressInstance, desired); err != nil {
+	if opts.ViaAPI {
+		err = applyVia(server, opts.RoutesDir, opts.IngressInstance, desired)
+	} else {
+		err = apply(server, opts.RoutesDir, opts.IngressInstance, desired)
+	}
+	if err != nil {
 		return nil, err
 	}
 	result.Applied = true

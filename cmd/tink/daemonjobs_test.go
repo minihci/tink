@@ -122,3 +122,29 @@ func TestDaemonRunUnderARemoteRefusesOnlyTheIngressPathItCannotReach(t *testing.
 		t.Errorf("without a remote nothing is refused: %v", err)
 	}
 }
+
+func TestDaemonRunUnderARemoteAcceptsTheIngressViaTheFileAPI(t *testing.T) {
+	// a bad --timezone stops the command before it starts anything, which is how this knows the refusal let it through
+	args := []string{"--remote", "helper-host", "daemon", "run", "--jobs", t.TempDir(), "--timezone", "Not/AZone", "--ingress-via-api"}
+	if err := runRoot(t, args...); err == nil || !strings.Contains(err.Error(), "--timezone") {
+		t.Errorf("--ingress-via-api needs nothing from this machine, so a remote is fine: %v", err)
+	}
+	err := runRoot(t, "--remote", "helper-host", "daemon", "run", "--jobs", t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "--ingress-via-api") {
+		t.Errorf("and the refusal now names it as the way out: %v", err)
+	}
+}
+
+func TestIngressCommandsWorkUnderARemoteOnlyThroughTheFileAPI(t *testing.T) {
+	for _, sub := range []string{"reconcile", "status"} {
+		err := runRoot(t, "--remote", "helper-host", "ingress", sub)
+		if err == nil || !strings.Contains(err.Error(), "works on the host it runs on") {
+			t.Errorf("ingress %s without --via-api is still host-local: %v", sub, err)
+		}
+		// with --via-api it is not refused for being under a remote: it goes on to look for the remote itself
+		err = runRoot(t, "--remote", "helper-host", "ingress", sub, "--via-api")
+		if err == nil || strings.Contains(err.Error(), "works on the host it runs on") {
+			t.Errorf("ingress %s --via-api must get past the refusal: %v", sub, err)
+		}
+	}
+}
