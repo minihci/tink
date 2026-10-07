@@ -246,3 +246,22 @@ func TestStatusNoticesARevokedCertificateAtOnceButOnlyIfItCanReadTheTrustStore(t
 		t.Errorf("a client that cannot read the trust store is not told, and the rest of the judgement stands: %q %v", out, err)
 	}
 }
+
+func TestAReleaseBuildNamesItsOwnVersionAndADevelopmentBuildHasNoImage(t *testing.T) {
+	old := injectedVersion
+	t.Cleanup(func() { injectedVersion = old })
+
+	injectedVersion = "v1.2.3"
+	if got := buildVersion(); !strings.Contains(got, "tink v1.2.3 ") {
+		t.Errorf("the version compiled in by the release workflow is what the binary reports: %q", got)
+	}
+	if got := helper.ReleaseImage(injectedVersion); got != "ghcr:minihci/tink-helper:v1.2.3" {
+		t.Errorf("and names the image published for it: %q", got)
+	}
+
+	injectedVersion = ""
+	err := runRoot(t, "helper", "install", "--socket", "/nonexistent/incus.sock")
+	if err == nil || !strings.Contains(err.Error(), "not a release build") || !strings.Contains(err.Error(), "--image") {
+		t.Errorf("a development build has no image that matches it, and says what to give instead: %v", err)
+	}
+}

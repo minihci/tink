@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -32,7 +33,23 @@ const (
 	dataMount    = "/data"
 	binaryPath   = "/usr/local/bin/tink"
 	stockImage   = "docker-oci:library/alpine:3"
+	// ImageRepository is where the helper image is published, as an image reference tink resolves (the built-in ghcr remote).
+	ImageRepository = "ghcr:minihci/tink-helper"
 )
+
+// releaseVersion matches a release tag: vMAJOR.MINOR.PATCH with an optional pre-release suffix. It does not match a Go pseudo-version
+// (v0.0.0-20261007111551-abcdef123456) or a build marked dirty, which have no published image.
+var releaseVersion = regexp.MustCompile(`^v\d+\.\d+\.\d+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$`)
+var pseudoVersion = regexp.MustCompile(`[-.]\d{14}-[0-9a-f]{12}$`)
+
+// ReleaseImage is the helper image published for this release of tink, or "" when this is not a release build (a development build has
+// no image that matches it: give --image or --binary). The image carries the same binary, built from the same tag.
+func ReleaseImage(version string) string {
+	if !releaseVersion.MatchString(version) || pseudoVersion.MatchString(version) {
+		return ""
+	}
+	return ImageRepository + ":" + version
+}
 
 // InstallOptions say where and from what to install the helper.
 type InstallOptions struct {
@@ -167,6 +184,12 @@ func (in *Installer) Install(opts InstallOptions) error {
 		in.say("creating the helper instance %s/%s from %s", opts.Project, opts.Name, opts.Image)
 		if err := in.create()(in.Server, spec, opts.Project); err != nil {
 			return err
+		}
+		// Record exactly which image this is: a tag can move, the fingerprint cannot, and `upgrade` compares against it.
+		if inst, _, ok, err := incusapi.LookupInstance(scoped, opts.Name); err == nil && ok {
+			if fp := inst.Config["volatile.base_image"]; fp != "" {
+				spec.Config[MarkerKey+".image-fingerprint"] = fp
+			}
 		}
 		if err := run.ApplyConfig(scoped, spec); err != nil {
 			return err

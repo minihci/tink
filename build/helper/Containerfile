@@ -1,0 +1,17 @@
+# The tink helper image: the static tink binary in a small base that has CA certificates and a shell.
+#
+# The build context is the repository root with dist/tink-linux-<arch> already built for each platform (see
+# .github/workflows/helper-image.yml, which builds them with the release version compiled in), so this file builds no Go itself and the
+# image carries exactly the binary the workflow produced.
+#
+# The helper instance sets its own entrypoint (`tink daemon run ...`, see `tink helper install`); the ENTRYPOINT here is only so that
+# `docker run IMAGE version` and `docker run IMAGE daemon run ...` do the obvious thing.
+# Pinned by digest (the tag is only a note of what it is), so a rebuild of the same tag does not change the base under it.
+FROM docker.io/library/alpine:3.22@sha256:2e1a7aa4cbc4e9e5222bb4c24a839aa1a6170ea5492d644777ce7b178824e44f
+RUN apk add --no-cache ca-certificates
+ARG TARGETARCH
+COPY dist/tink-linux-${TARGETARCH} /usr/local/bin/tink
+LABEL org.opencontainers.image.source="https://github.com/minihci/tink" \
+      org.opencontainers.image.description="tink helper: the backup scheduler, job executor and ingress reconcile, next to the data"
+ENTRYPOINT ["/usr/local/bin/tink"]
+CMD ["version"]
