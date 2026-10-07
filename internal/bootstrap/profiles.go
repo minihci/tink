@@ -46,8 +46,12 @@ func applyOneProfile(r *runner, server incus.InstanceServer, spec profileSpec, o
 		return err
 	}
 
-	_, etag, err := server.GetProfile(spec.name)
-	notFound := err != nil
+	_, etag, found, err := incusapi.LookupProfile(server, spec.name)
+	if err != nil {
+		// Not "does not exist": a failed read would otherwise be answered by trying to create a profile that is there.
+		return fmt.Errorf("checking whether profile %s exists: %w", spec.name, err)
+	}
+	notFound := !found
 
 	if r.dryRun {
 		if notFound {

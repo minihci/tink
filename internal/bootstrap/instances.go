@@ -29,8 +29,11 @@ import (
 // launch, which is a worse trade than one exec call to something already
 // proven correct.
 func recreateInstance(r *runner, server incus.InstanceServer, name, image string, profiles ...string) error {
-	inst, _, err := server.GetInstance(name)
-	exists := err == nil
+	inst, _, exists, err := incusapi.LookupInstance(server, name)
+	if err != nil {
+		// Not "does not exist": carrying on would skip the stop and delete and then launch over a live instance.
+		return fmt.Errorf("checking whether %s already exists: %w", name, err)
+	}
 
 	if exists {
 		if r.dryRun {

@@ -130,7 +130,11 @@ func copyTo(server incus.InstanceServer, v Volume, t Target, opts CopyOptions) (
 	start := now()
 	res.Snapshot = "tink-copy-" + stamped(start)
 	res.Volume = v.Name + "-bk-" + stamped(start)
-	if volumeExists(dst, t.pool(), res.Volume) {
+	exists, err := volumeExists(dst, t.pool(), res.Volume)
+	if err != nil {
+		return res, fmt.Errorf("checking whether %s/%s already exists: %w", t.where(), res.Volume, err)
+	}
+	if exists {
 		return res, fmt.Errorf("%s/%s already exists (a second run in the same second?)", t.where(), res.Volume)
 	}
 	copyOf := resolve.CopyOf(v.Project, v.pool(), v.Name)
@@ -209,7 +213,9 @@ func copyTo(server incus.InstanceServer, v Volume, t Target, opts CopyOptions) (
 	if cerr != nil {
 		// the name is unique to this run, so anything under it is ours: do not leave a half-made restore point
 		note := ""
-		if volumeExists(dst, t.pool(), res.Volume) {
+		if left, lerr := volumeExists(dst, t.pool(), res.Volume); lerr != nil {
+			note = fmt.Sprintf(" (and could not check whether a partial volume %s/%s was left: %v; tink will never use it, and removes it itself once it is %d days old if the target kept its in-progress mark, otherwise delete it by hand)", t.where(), res.Volume, lerr, int(PartialGrace/(24*time.Hour)))
+		} else if left {
 			if derr := dst.DeleteStoragePoolVolume(t.pool(), "custom", res.Volume); derr != nil {
 				note = fmt.Sprintf(" (and the partial volume %s/%s could not be removed: %v; tink will never use it, and removes it itself once it is %d days old if the target kept its in-progress mark, otherwise delete it by hand)", t.where(), res.Volume, derr, int(PartialGrace/(24*time.Hour)))
 			}
@@ -438,7 +444,9 @@ func copyFromTarget(s incus.InstanceServer, v Volume, t Target, rp RestorePoint,
 	}
 	if err != nil {
 		note := ""
-		if volumeExists(s, v.pool(), newName) {
+		if left, lerr := volumeExists(s, v.pool(), newName); lerr != nil {
+			note = fmt.Sprintf(" (and could not check whether a partial volume %s/%s was left: %v; delete it by hand if it exists)", v.pool(), newName, lerr)
+		} else if left {
 			if derr := s.DeleteStoragePoolVolume(v.pool(), "custom", newName); derr != nil {
 				note = fmt.Sprintf(" (and the partial volume %s/%s could not be removed: %v; delete it by hand)", v.pool(), newName, derr)
 			}
