@@ -10,8 +10,9 @@ document is `docs/helper-design.md` on the `helper-design` branch, not yet on `m
 - Handing a `tink backup run` started on another machine to the helper (and `tink helper jobs|log|cancel` to follow it). A run you start yourself runs
   where you start it, and a copy to another server is relayed through that machine ([remote.md](remote.md)).
 - Retiring `tink daemon install`, which still prints the old ingress-only unit ([daemon-jobs.md](daemon-jobs.md)).
-- A published tink command-line binary. Only the image is published (`v0.1.0`, `linux/amd64` and `linux/arm64`, public), so "a release build" of tink exists
-  only inside it: from a build you made yourself, give `--image` (below).
+- A *released* tink command-line binary. A workflow now builds them on every tag and attaches them to its GitHub Release ([below](#the-image-and-releasing-it)),
+  but no tag has been cut since it was added, so `v0.1.0` has only the image (`linux/amd64` and `linux/arm64`, public) and "a release build" of tink exists
+  only inside it. Until the first release that carries binaries, from a build you made yourself give `--image` (below).
 
 **Run live so far**, on one host (the lab server): the `v0.1.0` image installs with no flags; the scheduler queues and makes the copies on its own, and the
 restore point it made verifies; a helper whose process was killed is running again in about six seconds, with a fresh status document and its job history;
@@ -260,3 +261,12 @@ architectures (the image carries the `org.opencontainers.image.source` label, wh
 though, so after the first publication of anything new, try `podman pull ghcr.io/minihci/tink-helper:TAG` without logging in, and if it is refused change the
 package's visibility in the repository's package settings.
 To try the image locally: build the binaries into `dist/tink-linux-<arch>` as the workflow does, then `podman build -f build/helper/Containerfile .`.
+
+**The command-line binaries.** `.github/workflows/release.yml` runs on the same tags. It builds tink for macOS and Linux, `amd64` and `arm64`, with the same version
+compiled in, as `tink_<version>_<os>_<arch>.tar.gz` (the binary alone), and attaches them to the GitHub Release for the tag with a `checksums.txt`. Before it
+publishes it checks that the checksums match, that each archive holds one file, and that the Linux `amd64` binary reports the tag. A tag with a suffix
+(`v0.2.0-rc.1`) is published as a pre-release and any other (`v0.1.1`, even before 1.0) as an ordinary release, so `releases/latest` always points at the newest
+ordinary one. On a pull request that touches the workflow it only builds and checks. The binaries are not signed: a macOS binary downloaded with a browser is quarantined until `xattr -d
+com.apple.quarantine tink`, and one fetched with `curl` is not. A binary from a release is a "release build", so `tink helper install` with no flag installs the
+image published for the same tag. **Not yet run on a tag:** the first one will tell.
+

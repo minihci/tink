@@ -201,3 +201,7 @@ re-deploy can't silently reinstate cron underneath it.
 ```
 go build -o tink ./cmd/tink
 ```
+
+A tag (`v*`) also builds binaries for macOS and Linux (`amd64` and `arm64`) and attaches them to its GitHub Release, next to the helper image
+([`.github/workflows/release.yml`](.github/workflows/release.yml), [`docs/helper.md`](docs/helper.md#the-image-and-releasing-it)). None has been released yet, so
+for now build from source.
