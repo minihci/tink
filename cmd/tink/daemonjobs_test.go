@@ -22,33 +22,32 @@ func runCLI(t *testing.T, args ...string) (string, error) {
 
 const cliStack = "kind: backup-target\nname: nas\nlocation: other-host\nengine: incus\npool: nas\n---\nkind: storage-volume\nname: lib\nbackup:\n  copies:\n    - {target: nas, schedule: \"@daily\", retain: 30d}\n"
 
-func TestSyncEnqueueJobsAndCancel(t *testing.T) {
+func TestEnqueueJobsAndCancel(t *testing.T) {
 	root := t.TempDir()
-	stacks, jobsDir := filepath.Join(root, "stacks"), filepath.Join(root, "jobs")
+	jobsDir := filepath.Join(root, "jobs")
 	stack := filepath.Join(root, "tink.yaml")
 	if err := os.WriteFile(stack, []byte(cliStack), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	out, err := runCLI(t, "daemon", "sync", "home", stack, "--stacks", stacks)
-	if err != nil || !strings.Contains(out, "stack home synced: 1 file(s) (tink.yaml)") {
-		t.Fatalf("sync: %v\n%s", err, out)
-	}
-	// a stack that does not load never replaces the good one
-	bad := filepath.Join(root, "bad.yaml")
-	os.WriteFile(bad, []byte("kind: storage-volume\nname: x\nnonsense: 1\n"), 0o644)
-	if _, err := runCLI(t, "daemon", "sync", "home", bad, "--stacks", stacks); err == nil {
-		t.Error("a stack that does not parse must not be synced")
-	}
-
-	out, err = runCLI(t, "daemon", "enqueue", "--stack", "home", "--due", "--jobs", jobsDir)
+	// by default a job works from the copy policies on the volumes: nothing is sent with it
+	out, err := runCLI(t, "daemon", "enqueue", "--due", "--jobs", jobsDir)
 	if err != nil || !strings.Contains(out, "queued job ") {
 		t.Fatalf("enqueue: %v\n%s", err, out)
 	}
 	id := strings.Fields(strings.Split(out, "\n")[0])[2]
+	if _, err := os.Stat(filepath.Join(jobsDir, id, "bundle")); err == nil {
+		t.Error("a job that uses the volumes' policies carries no bundle")
+	}
 	out, err = runCLI(t, "daemon", "enqueue", "-f", stack, "lib", "--jobs", jobsDir)
 	if err != nil || !strings.Contains(out, "queued job ") {
 		t.Fatalf("enqueue with a bundle: %v\n%s", err, out)
+	}
+	// a stack that does not load is never bundled
+	bad := filepath.Join(root, "bad.yaml")
+	os.WriteFile(bad, []byte("kind: storage-volume\nname: x\nnonsense: 1\n"), 0o644)
+	if _, err := runCLI(t, "daemon", "enqueue", "-f", bad, "--jobs", jobsDir); err == nil {
+		t.Error("a stack that does not parse must not be sent")
 	}
 
 	out, err = runCLI(t, "daemon", "jobs", "--jobs", jobsDir)
@@ -67,27 +66,30 @@ func TestSyncEnqueueJobsAndCancel(t *testing.T) {
 	}
 }
 
-func TestEnqueueNeedsExactlyOneStackSource(t *testing.T) {
-	jobsDir := t.TempDir()
-	if _, err := runCLI(t, "daemon", "enqueue", "--jobs", jobsDir); err == nil || !strings.Contains(err.Error(), "exactly one") {
-		t.Errorf("neither: %v", err)
-	}
-	if _, err := runCLI(t, "daemon", "enqueue", "--stack", "x", "-f", "y.yaml", "--jobs", jobsDir); err == nil || !strings.Contains(err.Error(), "exactly one") {
-		t.Errorf("both: %v", err)
-	}
-	if _, err := runCLI(t, "daemon", "enqueue", "--stack", "x"); err == nil || !strings.Contains(err.Error(), "--jobs") {
+func TestEnqueueNeedsAJobsDirectory(t *testing.T) {
+	if _, err := runCLI(t, "daemon", "enqueue"); err == nil || !strings.Contains(err.Error(), "--jobs") {
 		t.Errorf("no jobs dir: %v", err)
 	}
 }
 
-func TestDaemonRunFlagsGoTogether(t *testing.T) {
-	if _, err := runCLI(t, "daemon", "run", "--stacks", t.TempDir()); err == nil || !strings.Contains(err.Error(), "go together") {
-		t.Errorf("--stacks alone: %v", err)
+func TestTheStackStoreIsGone(t *testing.T) {
+	// the volumes carry the policy now, so there is nothing to sync a stack to
+	if out, err := runCLI(t, "daemon", "--help"); err != nil || strings.Contains(out, "  sync ") {
+		t.Errorf("`daemon sync` no longer exists, but the help lists it: %v\n%s", err, out)
 	}
+	if _, err := runCLI(t, "daemon", "run", "--stacks", t.TempDir()); err == nil || !strings.Contains(err.Error(), "unknown flag") {
+		t.Errorf("--stacks no longer exists: %v", err)
+	}
+	if _, err := runCLI(t, "daemon", "enqueue", "--stack", "x", "--jobs", t.TempDir()); err == nil || !strings.Contains(err.Error(), "unknown flag") {
+		t.Errorf("--stack no longer exists: %v", err)
+	}
+}
+
+func TestDaemonRunFlags(t *testing.T) {
 	if _, err := runCLI(t, "daemon", "run", "--no-ingress"); err == nil || !strings.Contains(err.Error(), "leaves nothing to run") {
 		t.Errorf("--no-ingress alone: %v", err)
 	}
-	if _, err := runCLI(t, "daemon", "run", "--stacks", t.TempDir(), "--jobs", t.TempDir(), "--timezone", "Not/AZone"); err == nil || !strings.Contains(err.Error(), "--timezone") {
+	if _, err := runCLI(t, "daemon", "run", "--jobs", t.TempDir(), "--timezone", "Not/AZone"); err == nil || !strings.Contains(err.Error(), "--timezone") {
 		t.Errorf("a bad time zone: %v", err)
 	}
 }

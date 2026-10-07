@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -14,58 +13,27 @@ import (
 	"github.com/minihci/tink/internal/jobs"
 )
 
-// The local commands that put work into, and look at, the directories `tink daemon run --stacks --jobs` uses. They
-// work on files, so they run on the machine that has the directories.
-
-func newDaemonSyncCmd() *cobra.Command {
-	var stacksDir string
-	cmd := &cobra.Command{
-		Use:   "sync NAME [FILE...]",
-		Short: "Store a stack (and every file it reads) for the scheduler, as the active version of NAME",
-		Long: `sync loads the stack files (default: ./tink.yaml) as an operator would, packs them with every file they read
-(source_path) with their relative layout intact, and makes that the active version of the stack NAME in --stacks.
-It only becomes active if it loads there, so a stack that does not parse never replaces one that does. The scheduler
-picks it up on its next tick.`,
-		Args: cobra.MinimumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if stacksDir == "" {
-				return fmt.Errorf("--stacks is required")
-			}
-			b, err := jobs.BuildBundle(args[1:])
-			if err != nil {
-				return err
-			}
-			if err := (jobs.Stacks{Dir: stacksDir}).Sync(args[0], b.Files, b.Entries, time.Now()); err != nil {
-				return err
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "stack %s synced: %d file(s) (%s)\n", args[0], len(b.Files), strings.Join(b.Names(), ", "))
-			return nil
-		},
-	}
-	cmd.Flags().StringVar(&stacksDir, "stacks", "", "the stacks directory the daemon reads")
-	return cmd
-}
+// The local commands that put work into, and look at, the directory `tink daemon run --jobs` uses. They work on files,
+// so they run on the machine that has the directory.
 
 func newDaemonEnqueueCmd() *cobra.Command {
-	var jobsDir, stack string
+	var jobsDir string
 	var files []string
 	var due, dryRun bool
 	cmd := &cobra.Command{
 		Use:   "enqueue [VOLUME...]",
-		Short: "Queue a backup run for the executor, from a synced stack or from stack files sent with the job",
+		Short: "Queue a backup run for the executor, from the volumes' copy policies or from stack files sent with the job",
 		Long: `enqueue creates a backup-run job in --jobs: the same thing "tink backup run" does, done by the daemon's
-executor, which survives this command exiting. Name the stack to run with --stack (one synced with "tink daemon
-sync"), or send stack files with -f, which are bundled with the job and used for this job only. Volume names limit the
-run; --due runs only what is due.`,
+executor, which survives this command exiting. By default the job copies the volumes that carry a copy policy
+(written by "tink plan apply"). With -f it instead sends stack files, which are bundled with the job and used for
+this job only, so a checkout of a branch cannot change what the scheduler does. Volume names (or project/name) limit
+the run; --due runs only what is due.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if jobsDir == "" {
 				return fmt.Errorf("--jobs is required")
 			}
-			if (stack == "") == (len(files) == 0) {
-				return fmt.Errorf("give exactly one of --stack NAME and -f FILE")
-			}
 			rargs, _ := json.Marshal(daemon.BackupRunArgs{Volumes: args, Due: due, DryRun: dryRun})
-			req := jobs.Request{Kind: daemon.KindBackupRun, Origin: jobs.OriginTrigger, Stack: stack, Args: rargs}
+			req := jobs.Request{Kind: daemon.KindBackupRun, Origin: jobs.OriginTrigger, Args: rargs}
 			var bundle map[string][]byte
 			if len(files) > 0 {
 				b, err := jobs.BuildBundle(files)
@@ -83,8 +51,7 @@ run; --due runs only what is due.`,
 		},
 	}
 	cmd.Flags().StringVar(&jobsDir, "jobs", "", "the jobs directory the daemon runs from")
-	cmd.Flags().StringVar(&stack, "stack", "", "the name of a synced stack")
-	cmd.Flags().StringArrayVarP(&files, "file", "f", nil, "stack file(s) to send with the job")
+	cmd.Flags().StringArrayVarP(&files, "file", "f", nil, "stack file(s) to send with the job, instead of using the copy policies on the volumes")
 	cmd.Flags().BoolVar(&due, "due", false, "only the copies that are due")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "say what would happen; change nothing")
 	return cmd

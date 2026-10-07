@@ -328,6 +328,11 @@ func copySnapshot(s incus.InstanceServer, v Volume, snap, newName string) error 
 	if err := op.Wait(); err != nil {
 		return fmt.Errorf("restoring %s/%s@%s to %s: %w", v.pool(), v.Name, snap, newName, err)
 	}
+	// the snapshot carries the volume's config, including its copy policy: the restored volume is not the volume that
+	// is copied on a schedule (the operator may swap it in, and applies the stack again, which writes the policy back)
+	if err := scrubPolicy(s, v.pool(), newName); err != nil {
+		return fmt.Errorf("restored %s/%s@%s to %s, but could not clear its copy policy: %w", v.pool(), v.Name, snap, newName, err)
+	}
 	return nil
 }
 

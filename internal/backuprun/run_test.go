@@ -34,6 +34,14 @@ type stub struct {
 	results map[string]volbackup.CopyResult // "vol->target"
 	errs    map[string]error
 	copied  []string
+	// what listing the server finds
+	listed   []volbackup.ListedVolume
+	poolErrs map[string]error
+	listErr  error
+}
+
+func (s *stub) Volumes() ([]volbackup.ListedVolume, map[string]error, error) {
+	return s.listed, s.poolErrs, s.listErr
 }
 
 func (s *stub) LiveConfig(v volbackup.Volume) (map[string]string, error) {
@@ -57,20 +65,28 @@ func (s *stub) Copy(v volbackup.Volume, t volbackup.Target, opts volbackup.CopyO
 
 func run(t *testing.T, s *stub, rs []resolve.Resource, o Options) (Report, string, error) {
 	t.Helper()
+	items, err := FromStack(rs)
+	if err != nil {
+		return Report{}, "", err
+	}
 	var out bytes.Buffer
 	if o.Now == nil {
 		o.Now = func() time.Time { return now }
 	}
-	rep, err := Run(context.Background(), s, rs, o, &out)
+	rep, err := Run(context.Background(), s, items, o, &out)
 	return rep, out.String(), err
 }
 
 func TestSelect(t *testing.T) {
 	stack := []resolve.Resource{vol("a", "t"), target("t", ""), vol("b", "t"), vol("no-copies"), {Kind: resolve.KindStorageVolume, Name: "no-backup"}, vol("c", "t", "t")}
-	names := func(rs []resolve.Resource) []string {
+	items, err := FromStack(stack)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := func(its []Item) []string {
 		var o []string
-		for _, r := range rs {
-			o = append(o, r.Name)
+		for _, it := range its {
+			o = append(o, it.Label)
 		}
 		return o
 	}
@@ -90,7 +106,7 @@ func TestSelect(t *testing.T) {
 		"a name given twice is reported once": {[]string{"nope", "nope"}, nil, []string{"nope"}},
 		"a name given twice runs it once":     {[]string{"a", "a"}, []string{"a"}, nil},
 	} {
-		got, unknown := Select(stack, tc.args)
+		got, unknown := Select(items, tc.args)
 		if !reflect.DeepEqual(names(got), tc.want) || !reflect.DeepEqual(unknown, tc.unknown) {
 			t.Errorf("%s: selected %v unknown %v; want %v %v", name, names(got), unknown, tc.want, tc.unknown)
 		}
@@ -222,7 +238,8 @@ func TestCancellationStopsBetweenCopies(t *testing.T) {
 	var out bytes.Buffer
 	s := &stub{}
 	cancel()
-	rep, err := Run(ctx, s, []resolve.Resource{vol("a", "t"), vol("b", "t"), target("t", "")}, Options{Now: func() time.Time { return now }}, &out)
+	items, _ := FromStack([]resolve.Resource{vol("a", "t"), vol("b", "t"), target("t", "")})
+	rep, err := Run(ctx, s, items, Options{Now: func() time.Time { return now }}, &out)
 	if err != nil || len(s.copied) != 0 || rep.Skipped != 2 || rep.Failed != 0 {
 		t.Errorf("a cancelled run copies nothing and does not call it a failure: %v copied=%v %+v", err, s.copied, rep)
 	}
@@ -240,7 +257,7 @@ func TestTheRelayNoteIsPrintedOncePerRemoteTarget(t *testing.T) {
 	}
 }
 
-func TestAnInvalidStackStopsTheRun(t *testing.T) {
+func TestAnInvalidStackCannotBeRun(t *testing.T) {
 	if _, _, err := run(t, &stub{}, []resolve.Resource{vol("a", "missing")}, Options{}); err == nil {
 		t.Error("a stack that does not validate must stop the run")
 	}
@@ -257,10 +274,11 @@ func TestDueListsWhatARunWouldDoAndChangesNothing(t *testing.T) {
 		"never":   {},
 	}, liveErr: map[string]error{"gone": errors.New("volume not found")}}
 	rs := []resolve.Resource{vol("overdue", "t"), vol("fresh", "t"), vol("failing", "t"), vol("never", "t"), vol("gone", "t"), target("t", "")}
-	due, problems, err := Due(s, rs, mid)
+	items, err := FromStack(rs)
 	if err != nil {
 		t.Fatal(err)
 	}
+	due, problems := Due(s, items, mid)
 	if want := []DueCopy{{"overdue", "t"}, {"never", "t"}}; !reflect.DeepEqual(due, want) {
 		t.Errorf("due = %v, want %v (a copy backing off, one not yet due and an unreadable volume are not due)", due, want)
 	}
@@ -269,8 +287,5 @@ func TestDueListsWhatARunWouldDoAndChangesNothing(t *testing.T) {
 	}
 	if len(s.copied) != 0 {
 		t.Errorf("Due must never copy: %v", s.copied)
-	}
-	if _, _, err := Due(s, nil, mid); err == nil {
-		t.Error("an empty stack is an error")
 	}
 }

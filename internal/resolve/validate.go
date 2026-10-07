@@ -74,6 +74,9 @@ func Validate(r Resource) error {
 	if err := validateBackupTarget(r); err != nil {
 		return err
 	}
+	if err := validateStack(r); err != nil {
+		return err
+	}
 	return validateOnImageChange(r)
 }
 

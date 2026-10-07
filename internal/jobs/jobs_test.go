@@ -44,7 +44,7 @@ func TestCleanBundlePath(t *testing.T) {
 
 func TestEnqueueWritesREADYLastAndTheJobIsQueued(t *testing.T) {
 	s := Store{Dir: t.TempDir()}
-	id, err := s.Enqueue(Request{Kind: "backup-run", Origin: OriginTrigger, Stack: "home"}, map[string][]byte{"tink.yaml": []byte("x"), "data/f.txt": []byte("y")}, t0)
+	id, err := s.Enqueue(Request{Kind: "backup-run", Origin: OriginTrigger}, map[string][]byte{"tink.yaml": []byte("x"), "data/f.txt": []byte("y")}, t0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestEnqueueWritesREADYLastAndTheJobIsQueued(t *testing.T) {
 	}
 	var req Request
 	b, _ := os.ReadFile(filepath.Join(s.Dir, id, "request.json"))
-	if err := json.Unmarshal(b, &req); err != nil || req.Proto != Proto || req.Created.IsZero() || req.Stack != "home" {
+	if err := json.Unmarshal(b, &req); err != nil || req.Proto != Proto || req.Created.IsZero() || req.Kind != "backup-run" {
 		t.Errorf("request.json: %v %+v", err, req)
 	}
 }
@@ -123,31 +123,28 @@ func TestListIsOldestFirstAndIgnoresStrangers(t *testing.T) {
 	}
 }
 
-func TestPendingSeesQueuedAndRunningOfTheSameStackOnly(t *testing.T) {
+func TestPendingSeesQueuedAndRunningJobsOfTheKind(t *testing.T) {
 	s := Store{Dir: t.TempDir()}
-	if p, _ := s.Pending("backup-run", "home"); p {
+	if p, _ := s.Pending("backup-run"); p {
 		t.Error("nothing is pending yet")
 	}
-	id, _ := s.Enqueue(Request{Kind: "backup-run", Stack: "home"}, nil, t0)
-	if p, _ := s.Pending("backup-run", "home"); !p {
-		t.Error("a queued job is pending")
+	id, _ := s.Enqueue(Request{Kind: "backup-run", Origin: OriginTrigger}, nil, t0)
+	if p, _ := s.Pending("backup-run"); !p {
+		t.Error("a queued job is pending, whoever queued it")
 	}
-	if p, _ := s.Pending("backup-run", "other"); p {
-		t.Error("another stack's work is not pending")
-	}
-	if p, _ := s.Pending("other-kind", "home"); p {
+	if p, _ := s.Pending("other-kind"); p {
 		t.Error("another kind is not pending")
 	}
 	if err := s.writeStatus(Status{ID: id, Kind: "backup-run", State: Running}); err != nil {
 		t.Fatal(err)
 	}
-	if p, _ := s.Pending("backup-run", "home"); !p {
+	if p, _ := s.Pending("backup-run"); !p {
 		t.Error("a running job is pending")
 	}
 	if err := s.writeStatus(Status{ID: id, Kind: "backup-run", State: Succeeded}); err != nil {
 		t.Fatal(err)
 	}
-	if p, _ := s.Pending("backup-run", "home"); p {
+	if p, _ := s.Pending("backup-run"); p {
 		t.Error("a finished job is not pending")
 	}
 }

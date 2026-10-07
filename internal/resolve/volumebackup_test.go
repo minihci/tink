@@ -83,7 +83,7 @@ func TestDecideVolume(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			p := decideVolume(tc.r, tc.current)
+			p := decideVolume(tc.r, tc.current, volumeEnv{})
 			if p.Action != tc.want {
 				t.Fatalf("action = %d, want %d (changes=%v)", p.Action, tc.want, p.Changes)
 			}

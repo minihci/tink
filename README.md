@@ -59,6 +59,8 @@ daemon, so tink can run from another machine; see [`docs/remote.md`](docs/remote
 `tink backup run` copies volumes to the backup targets a stack declares, and `tink backup restore` / `tink backup verify` restore a
 volume's snapshot (or a restore point on a target) to a new volume and prove the backup is usable - see
 [`docs/volume-backup.md`](docs/volume-backup.md).
+`plan apply` also writes each volume's copy policy onto the volume, so `tink daemon run --jobs DIR` schedules the copies from the volumes
+themselves, with no stack for it to hold - see [`docs/daemon-jobs.md`](docs/daemon-jobs.md).
 `plan` also asks every storage volume to declare how it is backed up
 (scheduled snapshots, or an explicit opt-out with a reason), warning about any
 that does not - see [`docs/volume-backup.md`](docs/volume-backup.md).

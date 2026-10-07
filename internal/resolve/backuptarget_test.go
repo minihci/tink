@@ -283,11 +283,11 @@ func TestVerifyWarning(t *testing.T) {
 func TestDecideVolumeWarnsAboutStaleVerificationOnlyForExistingVolumes(t *testing.T) {
 	r := Resource{Kind: KindStorageVolume, Name: "lib", Backup: &VolumeBackup{
 		Snapshots: &SnapshotPolicy{Schedule: "@daily", Retain: "7d"}, Verify: "weekly"}}
-	if w := strings.Join(decideVolume(r, nil).Warnings, "|"); strings.Contains(w, "verified") {
+	if w := strings.Join(decideVolume(r, nil, volumeEnv{}).Warnings, "|"); strings.Contains(w, "verified") {
 		t.Errorf("a volume that does not exist yet has nothing to verify, got %q", w)
 	}
 	existing := &api.StorageVolume{StorageVolumePut: api.StorageVolumePut{Config: map[string]string{}}}
-	if w := strings.Join(decideVolume(r, existing).Warnings, "|"); !strings.Contains(w, "never been verified") {
+	if w := strings.Join(decideVolume(r, existing, volumeEnv{}).Warnings, "|"); !strings.Contains(w, "never been verified") {
 		t.Errorf("an existing, never-verified volume must be warned about, got %q", w)
 	}
 }

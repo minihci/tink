@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/minihci/tink/internal/resolve"
 )
 
 func put(t *testing.T, path, content string) {
@@ -39,15 +41,22 @@ func TestBuildBundleShipsTheStackAndEverythingItReads(t *testing.T) {
 		t.Error("a referenced file must carry its content")
 	}
 	// and the bundle delivers: the stack loads from where it lands, with its relative reference intact
-	s := Stacks{Dir: t.TempDir()}
-	if err := s.Sync("app", b.Files, b.Entries, t0); err != nil {
-		t.Fatalf("a bundle must load where it is delivered: %v", err)
+	dir := t.TempDir()
+	if err := writeFiles(dir, b.Files); err != nil {
+		t.Fatalf("a bundle must be writable where it is delivered: %v", err)
 	}
-	st, err := s.Load("app")
-	if err != nil || len(st.Resources) != 3 {
-		t.Fatalf("%v %d resources", err, len(st.Resources))
+	var loaded []resolve.Resource
+	for _, e := range b.Entries {
+		rs, err := resolve.LoadFileConfined(filepath.Join(dir, e), dir)
+		if err != nil {
+			t.Fatalf("a bundle must load where it is delivered: %v", err)
+		}
+		loaded = append(loaded, rs...)
 	}
-	for _, r := range st.Resources {
+	if len(loaded) != 3 {
+		t.Fatalf("%d resources", len(loaded))
+	}
+	for _, r := range loaded {
 		if r.Name == "f" && r.Content != "shared content" {
 			t.Errorf("the referenced file's content must arrive: %q", r.Content)
 		}

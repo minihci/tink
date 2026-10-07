@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -28,8 +29,7 @@ type BackupRunArgs struct {
 // Helper is the part of the daemon that runs queued work and decides what to queue: the helper design's "scheduler
 // and executor", with nothing about containers in it, so any supervisor can run it.
 type Helper struct {
-	Stacks jobs.Stacks
-	Store  jobs.Store
+	Store jobs.Store
 	// Connect opens the Incus engine the work is done through. It is called per job and per scheduler tick, so a
 	// connection that died is not kept.
 	Connect func() (backuprun.Engine, error)
@@ -75,8 +75,10 @@ func (h *Helper) Executor() *jobs.Executor {
 	}
 }
 
-// backupRun is the backup-run job: load the stack the request names (a synced stack, or the bundle it carries) and
-// make the copies, through the same code `tink backup run` uses.
+// backupRun is the backup-run job: make the copies, through the same code `tink backup run` uses. A job that carries
+// stack files (an operator's `daemon enqueue -f`) runs the copies that stack declares, for this job only. Any other job
+// runs the copies the volumes' own policies call for, found by listing the server: there is no stack held anywhere to
+// disagree with them.
 func (h *Helper) backupRun(ctx context.Context, j jobs.Job, log io.Writer) (any, error) {
 	var args BackupRunArgs
 	if len(j.Request.Args) > 0 {
@@ -84,15 +86,11 @@ func (h *Helper) backupRun(ctx context.Context, j jobs.Job, log io.Writer) (any,
 			return nil, fmt.Errorf("the job's arguments: %w", err)
 		}
 	}
-	var resources []resolve.Resource
-	switch {
-	case j.Request.Stack != "":
-		st, err := h.Stacks.Load(j.Request.Stack)
-		if err != nil {
-			return nil, err
-		}
-		resources = st.Resources
-	case len(j.Request.Entries) > 0:
+	opts := backuprun.Options{Volumes: args.Volumes, Due: args.Due, DryRun: args.DryRun, Now: h.now}
+	var items []backuprun.Item
+	var eng backuprun.Engine
+	if len(j.Request.Entries) > 0 {
+		var resources []resolve.Resource
 		for _, e := range j.Request.Entries {
 			c, err := jobs.CleanBundlePath(e)
 			if err != nil {
@@ -104,26 +102,49 @@ func (h *Helper) backupRun(ctx context.Context, j jobs.Job, log io.Writer) (any,
 			}
 			resources = append(resources, rs...)
 		}
-	default:
-		return nil, fmt.Errorf("the job names no stack and carries none")
+		var err error
+		if items, err = backuprun.FromStack(resources); err != nil {
+			return nil, err
+		}
+		if eng, err = h.Connect(); err != nil {
+			return nil, fmt.Errorf("connecting to incus: %w", err)
+		}
+	} else {
+		var err error
+		if eng, err = h.Connect(); err != nil {
+			return nil, fmt.Errorf("connecting to incus: %w", err)
+		}
+		var problems map[string]error
+		if items, problems, err = backuprun.Discover(eng); err != nil {
+			return nil, fmt.Errorf("listing the volumes: %w", err)
+		}
+		for _, what := range sortedKeys(problems) {
+			fmt.Fprintf(log, "skipped %s: %v\n", what, problems[what])
+		}
+		opts.UnknownMsg = "not a volume with a copy policy on this server"
+		opts.EmptyMsg = "nothing to do: no volume on this server carries a copy policy"
 	}
-	if err := backuprun.Check(resources); err != nil {
-		return nil, err
-	}
-	eng, err := h.Connect()
-	if err != nil {
-		return nil, fmt.Errorf("connecting to incus: %w", err)
-	}
-	rep, err := backuprun.Run(ctx, eng, resources, backuprun.Options{Volumes: args.Volumes, Due: args.Due, DryRun: args.DryRun, Now: h.now}, log)
+	rep, err := backuprun.Run(ctx, eng, items, opts, log)
 	if err != nil {
 		return nil, err
 	}
 	return rep, rep.Err()
 }
 
-// Tick is one pass of the scheduler: for every stack synced to the helper, queue a backup-run job if at least one of
-// its copies is due and none is already queued or running for that stack. It returns how many it queued. Problems
-// (a stack that does not load, a volume that cannot be read) are logged once each, not every tick.
+func sortedKeys(m map[string]error) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// Tick is one pass of the scheduler: list the volumes that carry a copy policy and, if at least one of their copies is
+// due, queue a backup-run job (unless one is already queued or running). It returns how many it queued, 0 or 1. The
+// job finds what is due again when it runs, so what it does is never older than the volumes. Problems (a policy that
+// cannot be understood, a pool or a volume that cannot be read, Incus unreachable) are logged once each, not every
+// tick.
 func (h *Helper) Tick(state *SchedulerState) int {
 	now := h.now()
 	if err := h.Store.Beat(jobs.Heartbeat{Time: now.UTC(), PID: pid(), Version: h.Version, Zone: now.Location().String()}); err != nil {
@@ -131,50 +152,44 @@ func (h *Helper) Tick(state *SchedulerState) int {
 	}
 	state.begin()
 	defer state.end(h.logf)
-	stacks, bad := h.Stacks.LoadAll()
-	for name, err := range bad {
-		state.note("stack "+name, fmt.Sprintf("stack %q does not load, and is skipped: %v", name, err), h.logf)
+	eng, err := h.Connect()
+	if err != nil {
+		state.note("incus", fmt.Sprintf("connecting to incus: %v", err), h.logf)
+		state.abort()
+		return 0
 	}
-	var eng backuprun.Engine
-	queued := 0
-	for _, st := range stacks {
-		pending, err := h.Store.Pending(KindBackupRun, st.Name)
-		if err != nil {
-			h.logf("looking for pending jobs: %v", err)
-			continue
-		}
-		if pending {
-			continue
-		}
-		if eng == nil {
-			var err error
-			if eng, err = h.Connect(); err != nil {
-				state.note("incus", fmt.Sprintf("connecting to incus: %v", err), h.logf)
-				state.abort()
-				return queued
-			}
-		}
-		due, problems, err := backuprun.Due(eng, st.Resources, now)
-		if err != nil {
-			state.note("stack "+st.Name+" due", fmt.Sprintf("stack %q: %v", st.Name, err), h.logf)
-			continue
-		}
-		for what, perr := range problems {
-			state.note("problem "+st.Name+" "+what, fmt.Sprintf("stack %q: %s: %v", st.Name, what, perr), h.logf)
-		}
-		if len(due) == 0 {
-			continue
-		}
-		args, _ := json.Marshal(BackupRunArgs{Due: true})
-		id, err := h.Store.Enqueue(jobs.Request{Kind: KindBackupRun, Origin: jobs.OriginSchedule, Stack: st.Name, Args: args}, nil, now)
-		if err != nil {
-			h.logf("queueing a backup for stack %q: %v", st.Name, err)
-			continue
-		}
-		h.logf("stack %q: %d cop(ies) due: queued job %s", st.Name, len(due), id)
-		queued++
+	items, problems, err := backuprun.Discover(eng)
+	if err != nil {
+		state.note("incus", fmt.Sprintf("listing the volumes: %v", err), h.logf)
+		state.abort()
+		return 0
 	}
-	return queued
+	for _, what := range sortedKeys(problems) {
+		state.note("problem "+what, fmt.Sprintf("%s: %v", what, problems[what]), h.logf)
+	}
+	due, dueProblems := backuprun.Due(eng, items, now)
+	for _, what := range sortedKeys(dueProblems) {
+		state.note("problem "+what, fmt.Sprintf("%s: %v", what, dueProblems[what]), h.logf)
+	}
+	if len(due) == 0 {
+		return 0
+	}
+	pending, err := h.Store.Pending(KindBackupRun)
+	if err != nil {
+		h.logf("looking for pending jobs: %v", err)
+		return 0
+	}
+	if pending {
+		return 0
+	}
+	args, _ := json.Marshal(BackupRunArgs{Due: true})
+	id, err := h.Store.Enqueue(jobs.Request{Kind: KindBackupRun, Origin: jobs.OriginSchedule, Args: args}, nil, now)
+	if err != nil {
+		h.logf("queueing a backup: %v", err)
+		return 0
+	}
+	h.logf("%d cop(ies) due: queued job %s", len(due), id)
+	return 1
 }
 
 // SchedulerState remembers which problems have been reported, so a stack that stays broken is logged when it breaks

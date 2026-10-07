@@ -3,7 +3,8 @@
 // listening port or a daemon API of its own.
 //
 //	<dir>/<id>/request.json   what to do
-//	<dir>/<id>/bundle/        optional: a stack, and every file it reads, for this request only
+//	<dir>/<id>/bundle/        optional: a stack, and every file it reads, for this request only (without one, a backup
+//	                          job works from the policies on the volumes)
 //	<dir>/<id>/READY          created LAST: nothing in a job directory is read before it exists
 //	<dir>/<id>/status.json    written by the executor, atomically
 //	<dir>/<id>/log            bounded, scrubbed of secrets
@@ -58,8 +59,6 @@ type Request struct {
 	Kind    string    `json:"kind"`
 	Origin  string    `json:"origin"`
 	Created time.Time `json:"created"`
-	// Stack names a stack synced to the helper (see Stacks). Empty when the request carries its own in bundle/.
-	Stack string `json:"stack,omitempty"`
 	// Entries are the stack files inside bundle/ to load, when the request carries a bundle.
 	Entries []string `json:"entries,omitempty"`
 	// Args are specific to Kind.
@@ -108,7 +107,7 @@ type Store struct{ Dir string }
 
 func (s Store) jobDir(id string) string { return filepath.Join(s.Dir, id) }
 
-// CleanBundlePath validates a path inside a bundle (or a stack) and returns it in its cleaned form: relative, with no
+// CleanBundlePath validates a path inside a bundle and returns it in its cleaned form: relative, with no
 // way out of the directory, and not one of the protocol's own names.
 func CleanBundlePath(p string) (string, error) {
 	if p == "" {
@@ -264,22 +263,17 @@ func (s Store) List() ([]Status, error) {
 	return out, nil
 }
 
-// Pending reports whether a job of this kind and stack is already queued or running: a scheduler uses it so it never
-// queues the same work twice.
-func (s Store) Pending(kind, stack string) (bool, error) {
+// Pending reports whether a job of this kind is already queued or running, whoever queued it: a scheduler uses it so
+// it never queues the same work twice, and work an operator has just queued is not queued again behind it.
+func (s Store) Pending(kind string) (bool, error) {
 	jobs, err := s.List()
 	if err != nil {
 		return false, err
 	}
 	for _, st := range jobs {
-		if st.State.Finished() || st.Kind != kind {
-			continue
+		if !st.State.Finished() && st.Kind == kind {
+			return true, nil
 		}
-		req, err := s.readRequest(st.ID)
-		if err != nil || req.Stack != stack {
-			continue
-		}
-		return true, nil
 	}
 	return false, nil
 }

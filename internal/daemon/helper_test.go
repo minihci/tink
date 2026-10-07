@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -24,6 +23,8 @@ var now0 = time.Date(2026, 10, 7, 10, 30, 0, 0, time.UTC)
 // stubEngine answers LiveConfig from a table and records copies.
 type stubEngine struct {
 	mu      sync.Mutex
+	listed  []volbackup.ListedVolume
+	listErr error
 	live    map[string]map[string]string
 	liveErr map[string]error
 	copyErr map[string]error
@@ -37,6 +38,12 @@ func (s *stubEngine) LiveConfig(v volbackup.Volume) (map[string]string, error) {
 		return nil, err
 	}
 	return s.live[v.Name], nil
+}
+
+func (s *stubEngine) Volumes() ([]volbackup.ListedVolume, map[string]error, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]volbackup.ListedVolume(nil), s.listed...), nil, s.listErr
 }
 
 func (s *stubEngine) Copy(v volbackup.Volume, t volbackup.Target, o volbackup.CopyOptions) (volbackup.CopyResult, error) {
@@ -65,6 +72,18 @@ func stackFiles(volumes ...string) map[string][]byte {
 	return map[string][]byte{"tink.yaml": []byte(b.String())}
 }
 
+// policyText is the copy policy `apply` writes for a volume that copies hourly to the pool target "nas".
+func policyText(t *testing.T) string {
+	t.Helper()
+	r := resolve.Resource{Kind: resolve.KindStorageVolume, Name: "v", Backup: &resolve.VolumeBackup{
+		Copies: []resolve.BackupCopy{{Target: "nas", Schedule: "@hourly", Retain: "30d"}}}}
+	text, err := resolve.BuildPolicy(r, map[string]resolve.Resource{"nas": {Kind: resolve.KindBackupTarget, Name: "nas", Location: "other-host", Engine: "incus", Pool: "nas"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return text
+}
+
 type rig struct {
 	h    *Helper
 	eng  *stubEngine
@@ -89,7 +108,6 @@ func newRig(t *testing.T) *rig {
 	eng := &stubEngine{live: map[string]map[string]string{}, liveErr: map[string]error{}, copyErr: map[string]error{}}
 	logs := &logBuf{}
 	h := &Helper{
-		Stacks:  jobs.Stacks{Dir: filepath.Join(root, "stacks")},
 		Store:   jobs.Store{Dir: filepath.Join(root, "jobs")},
 		Connect: func() (backuprun.Engine, error) { return eng, nil },
 		Version: "test",
@@ -99,10 +117,14 @@ func newRig(t *testing.T) *rig {
 	return &rig{h: h, eng: eng, logs: logs}
 }
 
-func (r *rig) sync(t *testing.T, name string, volumes ...string) {
+// volume puts volumes on the server that carry the copy policy, as `apply` leaves them.
+func (r *rig) volume(t *testing.T, names ...string) {
 	t.Helper()
-	if err := r.h.Stacks.Sync(name, stackFiles(volumes...), []string{"tink.yaml"}, now0); err != nil {
-		t.Fatal(err)
+	for _, n := range names {
+		r.eng.listed = append(r.eng.listed, volbackup.ListedVolume{
+			Volume: volbackup.Volume{Project: "default", Pool: "default", Name: n},
+			Config: map[string]string{resolve.PolicyKey: policyText(t)},
+		})
 	}
 }
 
@@ -117,7 +139,7 @@ func (r *rig) runJobs(t *testing.T) int {
 
 func TestTickQueuesAJobOnlyWhenACopyIsDue(t *testing.T) {
 	r := newRig(t)
-	r.sync(t, "home", "lib")
+	r.volume(t, "lib")
 	recent := now0.Add(-10 * time.Minute).UTC().Format(time.RFC3339) // 10:20: an hourly copy is not due until 11:00
 	r.eng.live["lib"] = map[string]string{resolve.CopyStampAt("nas"): recent}
 	var st SchedulerState
@@ -142,7 +164,7 @@ func TestTickQueuesAJobOnlyWhenACopyIsDue(t *testing.T) {
 
 func TestTickRespectsBackoffSoAFailingCopyIsNotQueuedEveryMinute(t *testing.T) {
 	r := newRig(t)
-	r.sync(t, "home", "lib")
+	r.volume(t, "lib")
 	r.eng.live["lib"] = map[string]string{
 		resolve.CopyStampAt("nas"):   now0.Add(-3 * time.Hour).UTC().Format(time.RFC3339),
 		resolve.CopyFailAt("nas"):    now0.Add(-time.Minute).UTC().Format(time.RFC3339),
@@ -169,45 +191,33 @@ func TestTickBeatsTheHeartbeatEvenWhenThereIsNothingToDo(t *testing.T) {
 	}
 }
 
-func TestStacksAreIndependent(t *testing.T) {
+func TestOnlyOneBackupJobWaitsAtATime(t *testing.T) {
 	r := newRig(t)
-	r.sync(t, "alpha", "a")
-	r.sync(t, "bravo", "b")
+	r.volume(t, "a", "b")
 	old := now0.Add(-3 * time.Hour).UTC().Format(time.RFC3339)
 	r.eng.live["a"] = map[string]string{resolve.CopyStampAt("nas"): old}
 	r.eng.live["b"] = map[string]string{resolve.CopyStampAt("nas"): old}
 	var st SchedulerState
-	if n := r.h.Tick(&st); n != 2 {
-		t.Fatalf("both stacks are due: %d", n)
+	if n := r.h.Tick(&st); n != 1 {
+		t.Fatalf("two due volumes are one job (the job finds both when it runs): %d", n)
 	}
-	r.runJobs(t) // both finish; the stub does not stamp, so both are due again
-	// now only bravo has a job waiting
-	if _, err := r.h.Store.Enqueue(jobs.Request{Kind: KindBackupRun, Origin: jobs.OriginTrigger, Stack: "bravo"}, nil, now0); err != nil {
+	r.runJobs(t) // it finishes; the stub does not stamp, so both are due again
+	// an operator's job is waiting: the scheduler does not queue the same work behind it
+	if _, err := r.h.Store.Enqueue(jobs.Request{Kind: KindBackupRun, Origin: jobs.OriginTrigger}, nil, now0); err != nil {
 		t.Fatal(err)
 	}
+	if n := r.h.Tick(&st); n != 0 {
+		t.Fatalf("work an operator has queued is not queued again: %d", n)
+	}
+	r.runJobs(t)
 	if n := r.h.Tick(&st); n != 1 {
-		t.Fatalf("only the stack with no pending job is queued: %d", n)
-	}
-	list, _ := r.h.Store.List()
-	queuedFor := map[string]int{}
-	for _, j := range list {
-		if j.State == jobs.Queued {
-			req, _ := os.ReadFile(filepath.Join(r.h.Store.Dir, j.ID, "request.json"))
-			for _, name := range []string{"alpha", "bravo"} {
-				if strings.Contains(string(req), `"`+name+`"`) {
-					queuedFor[name]++
-				}
-			}
-		}
-	}
-	if queuedFor["alpha"] != 1 || queuedFor["bravo"] != 1 {
-		t.Errorf("each stack has exactly one waiting job (bravo's is the triggered one): %v", queuedFor)
+		t.Errorf("once nothing is waiting, the next due copy is queued: %d", n)
 	}
 }
 
 func TestProblemsAreLoggedOnceAndRecoveriesAreNoted(t *testing.T) {
 	r := newRig(t)
-	r.sync(t, "home", "lib")
+	r.volume(t, "lib")
 	r.eng.liveErr["lib"] = errors.New("volume not found")
 	var st SchedulerState
 	for i := 0; i < 5; i++ {
@@ -230,29 +240,32 @@ func TestProblemsAreLoggedOnceAndRecoveriesAreNoted(t *testing.T) {
 	}
 }
 
-func TestABrokenStackDoesNotStopTheOthersAndIsReportedOnce(t *testing.T) {
+func TestAVolumeWhosePolicyCannotBeReadDoesNotStopTheOthersAndIsReportedOnce(t *testing.T) {
 	r := newRig(t)
-	r.sync(t, "good", "lib")
-	r.sync(t, "broken", "x")
+	r.volume(t, "lib")
+	r.eng.listed = append(r.eng.listed, volbackup.ListedVolume{
+		Volume: volbackup.Volume{Project: "tenant", Pool: "default", Name: "broken"},
+		Config: map[string]string{resolve.PolicyKey: `{"proto":2}`}})
 	r.eng.live["lib"] = map[string]string{resolve.CopyStampAt("nas"): now0.Add(-3 * time.Hour).UTC().Format(time.RFC3339)}
-	vdir, _ := filepath.EvalSymlinks(filepath.Join(r.h.Stacks.Dir, "broken", "current"))
-	os.WriteFile(filepath.Join(vdir, "tink.yaml"), []byte("kind: nonsense\nname: x\n"), 0o600)
 	var st SchedulerState
 	for i := 0; i < 3; i++ {
 		r.h.Tick(&st)
 	}
 	list, _ := r.h.Store.List()
 	if len(list) != 1 {
-		t.Errorf("the good stack's job is queued once: %v", list)
+		t.Errorf("the good volume's job is queued once: %v", list)
 	}
-	if got := strings.Count(r.logs.String(), `stack "broken" does not load`); got != 1 {
-		t.Errorf("a broken stack is reported once: %d\n%s", got, r.logs.String())
+	if got := strings.Count(r.logs.String(), "tenant/broken:"); got != 1 {
+		t.Errorf("a policy that cannot be read is reported once, by project and name: %d\n%s", got, r.logs.String())
+	}
+	if !strings.Contains(r.logs.String(), "protocol 2") {
+		t.Errorf("and says why:\n%s", r.logs.String())
 	}
 }
 
 func TestIncusBeingDownIsLoggedAndIsNotMistakenForRecovery(t *testing.T) {
 	r := newRig(t)
-	r.sync(t, "home", "lib")
+	r.volume(t, "lib")
 	r.eng.liveErr["lib"] = errors.New("volume not found")
 	var st SchedulerState
 	r.h.Tick(&st) // logs the volume problem
@@ -271,7 +284,7 @@ func TestIncusBeingDownIsLoggedAndIsNotMistakenForRecovery(t *testing.T) {
 // The handler, end to end through the real executor.
 func TestABackupJobRunsAndRecordsWhatItDid(t *testing.T) {
 	r := newRig(t)
-	r.sync(t, "home", "lib", "photos")
+	r.volume(t, "lib", "photos")
 	var st SchedulerState
 	r.eng.live["lib"] = map[string]string{resolve.CopyStampAt("nas"): now0.Add(-3 * time.Hour).UTC().Format(time.RFC3339)}
 	r.eng.live["photos"] = map[string]string{resolve.CopyStampAt("nas"): now0.Add(-5 * time.Minute).UTC().Format(time.RFC3339)} // not due
@@ -297,9 +310,9 @@ func TestABackupJobRunsAndRecordsWhatItDid(t *testing.T) {
 
 func TestAFailingCopyFailsTheJobButKeepsTheReport(t *testing.T) {
 	r := newRig(t)
-	r.sync(t, "home", "lib", "photos")
+	r.volume(t, "lib", "photos")
 	r.eng.copyErr["lib->nas"] = errors.New("target is full")
-	id, _ := r.h.Store.Enqueue(jobs.Request{Kind: KindBackupRun, Origin: jobs.OriginTrigger, Stack: "home"}, nil, now0)
+	id, _ := r.h.Store.Enqueue(jobs.Request{Kind: KindBackupRun, Origin: jobs.OriginTrigger}, nil, now0)
 	r.runJobs(t)
 	st, _ := r.h.Store.Status(id)
 	if st.State != jobs.Failed || !strings.Contains(st.Error, "1 copy operation(s) failed") {
@@ -314,8 +327,8 @@ func TestAFailingCopyFailsTheJobButKeepsTheReport(t *testing.T) {
 	}
 }
 
-func TestATriggeredJobCanCarryItsOwnStack(t *testing.T) {
-	r := newRig(t) // note: no stack is synced
+func TestATriggeredJobCanCarryItsOwnStackInsteadOfThePolicies(t *testing.T) {
+	r := newRig(t) // note: no volume carries a policy; the bundle is all the job has
 	args, _ := json.Marshal(BackupRunArgs{Volumes: []string{"lib"}})
 	id, err := r.h.Store.Enqueue(jobs.Request{Kind: KindBackupRun, Origin: jobs.OriginTrigger, Entries: []string{"tink.yaml"}, Args: args}, stackFiles("lib", "photos"), now0)
 	if err != nil {
@@ -330,6 +343,43 @@ func TestATriggeredJobCanCarryItsOwnStack(t *testing.T) {
 	}
 }
 
+func TestAJobSaysWhichVolumesItSkippedAndStillRunsTheRest(t *testing.T) {
+	r := newRig(t)
+	r.volume(t, "lib")
+	r.eng.listed = append(r.eng.listed, volbackup.ListedVolume{
+		Volume: volbackup.Volume{Project: "tenant", Pool: "default", Name: "garbled"},
+		Config: map[string]string{resolve.PolicyKey: "{nope"}})
+	id, _ := r.h.Store.Enqueue(jobs.Request{Kind: KindBackupRun, Origin: jobs.OriginTrigger}, nil, now0)
+	r.runJobs(t)
+	st, _ := r.h.Store.Status(id)
+	if st.State != jobs.Succeeded {
+		t.Errorf("a volume that cannot be understood is the scheduler's to report, not a failed copy: %+v", st)
+	}
+	log, _ := r.h.Store.Log(id)
+	if !strings.Contains(log, "skipped tenant/garbled:") || !strings.Contains(log, "copied lib -> nas") {
+		t.Errorf("the job's log says what it skipped, and the rest ran:\n%s", log)
+	}
+}
+
+func TestAJobWithNoVolumesSaysSo(t *testing.T) {
+	r := newRig(t)
+	id, _ := r.h.Store.Enqueue(jobs.Request{Kind: KindBackupRun, Origin: jobs.OriginTrigger}, nil, now0)
+	r.runJobs(t)
+	if log, _ := r.h.Store.Log(id); !strings.Contains(log, "no volume on this server carries a copy policy") {
+		t.Errorf("%q", log)
+	}
+}
+
+func TestAJobFailsClearlyWhenTheVolumesCannotBeListed(t *testing.T) {
+	r := newRig(t)
+	r.eng.listErr = errors.New("incus is busy")
+	id, _ := r.h.Store.Enqueue(jobs.Request{Kind: KindBackupRun}, nil, now0)
+	r.runJobs(t)
+	if st, _ := r.h.Store.Status(id); st.State != jobs.Failed || !strings.Contains(st.Error, "listing the volumes: incus is busy") {
+		t.Errorf("%+v", st)
+	}
+}
+
 func TestBadJobsFailWithAReason(t *testing.T) {
 	r := newRig(t)
 	cases := map[string]struct {
@@ -337,11 +387,9 @@ func TestBadJobsFailWithAReason(t *testing.T) {
 		bundle  map[string][]byte
 		wantErr string
 	}{
-		"a stack that was never synced":      {jobs.Request{Kind: KindBackupRun, Stack: "ghost"}, nil, "no active version"},
-		"neither a stack nor a bundle":       {jobs.Request{Kind: KindBackupRun}, nil, "names no stack and carries none"},
 		"an entry that leaves the bundle":    {jobs.Request{Kind: KindBackupRun, Entries: []string{"../../etc/x"}}, map[string][]byte{"tink.yaml": nil}, "leaves the directory"},
 		"an entry that is not in the bundle": {jobs.Request{Kind: KindBackupRun, Entries: []string{"missing.yaml"}}, map[string][]byte{"tink.yaml": stackFiles("x")["tink.yaml"]}, "no such file"},
-		"arguments that are not JSON":        {jobs.Request{Kind: KindBackupRun, Stack: "ghost", Args: json.RawMessage(`"oops"`)}, nil, "arguments"},
+		"arguments that are not JSON":        {jobs.Request{Kind: KindBackupRun, Args: json.RawMessage(`"oops"`)}, nil, "arguments"},
 	}
 	ids := map[string]string{}
 	for name, c := range cases {
@@ -362,9 +410,9 @@ func TestBadJobsFailWithAReason(t *testing.T) {
 
 func TestAJobFailsClearlyWhenIncusCannotBeReached(t *testing.T) {
 	r := newRig(t)
-	r.sync(t, "home", "lib")
+	r.volume(t, "lib")
 	r.h.Connect = func() (backuprun.Engine, error) { return nil, errors.New("connection refused") }
-	id, _ := r.h.Store.Enqueue(jobs.Request{Kind: KindBackupRun, Stack: "home"}, nil, now0)
+	id, _ := r.h.Store.Enqueue(jobs.Request{Kind: KindBackupRun}, nil, now0)
 	r.runJobs(t)
 	if st, _ := r.h.Store.Status(id); st.State != jobs.Failed || !strings.Contains(st.Error, "connecting to incus: connection refused") {
 		t.Errorf("%+v", st)
@@ -423,10 +471,10 @@ func TestSuperviseRestartsACrashedWorkerAndStopsWhenAsked(t *testing.T) {
 	}
 }
 
-// The whole thing, as `tink daemon run` runs it: a synced stack with a due copy turns, unattended, into a finished job.
+// The whole thing, as `tink daemon run` runs it: a volume with a due copy and a policy turns, unattended, into a finished job.
 func TestRunStartsTheWorkersAndAJobHappensWithoutAnyoneAsking(t *testing.T) {
 	r := newRig(t)
-	r.sync(t, "home", "lib")
+	r.volume(t, "lib")
 	r.eng.live["lib"] = map[string]string{} // never copied: due
 	r.h.Now = nil
 	r.h.SchedulerInterval = 20 * time.Millisecond
@@ -489,8 +537,7 @@ func (b *blockingEngine) Copy(v volbackup.Volume, t volbackup.Target, o volbacku
 
 func TestALongCopyDoesNotStopTheSchedulerOrTheHeartbeat(t *testing.T) {
 	r := newRig(t)
-	r.sync(t, "slow", "lib")
-	r.sync(t, "other", "docs")
+	r.volume(t, "lib", "docs")
 	be := &blockingEngine{stubEngine: r.eng, entered: make(chan struct{}, 1), release: make(chan struct{})}
 	r.h.Connect = func() (backuprun.Engine, error) { return be, nil }
 	r.h.Now = nil

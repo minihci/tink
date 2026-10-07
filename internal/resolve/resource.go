@@ -33,6 +33,7 @@ const (
 	KindImage         Kind = "image"
 	KindExec          Kind = "exec"
 	KindBackupTarget  Kind = "backup-target"
+	KindStack         Kind = "stack" // the stack's own name; metadata, not a resource (see StackName)
 )
 
 // kindPriority orders resource creation by type, matching the same
@@ -51,6 +52,7 @@ const (
 var kindPriority = map[Kind]int{
 	KindProject:       0,
 	KindBackupTarget:  0, // pure declaration: nothing to create, but volumes refer to it
+	KindStack:         0, // metadata: kept out of the graph, only here so the kind is known
 	KindProfile:       1,
 	KindStorageVolume: 1,
 	KindIncus:         1,

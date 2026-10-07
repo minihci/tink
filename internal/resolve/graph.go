@@ -11,8 +11,16 @@ import (
 // resources with no dependency relationship to each other, matching the
 // same coarse "containers before contents" ordering incus-apply uses.
 func Levels(resources []Resource) ([][]Resource, error) {
+	if _, err := StackName(resources); err != nil {
+		return nil, err
+	}
+	// The stack's name is metadata, not something to plan: it is skipped below, in place, because the passes after this
+	// one update the caller's resources (project inheritance, image aliases) and callers rely on that.
 	all := make(map[string]*Resource, len(resources))
 	for i := range resources {
+		if resources[i].Kind == KindStack {
+			continue
+		}
 		if _, dup := all[resources[i].Name]; dup {
 			return nil, fmt.Errorf("duplicate resource name %q", resources[i].Name)
 		}
@@ -25,6 +33,9 @@ func Levels(resources []Resource) ([][]Resource, error) {
 
 	deps := make(map[string][]string, len(resources))
 	for _, r := range resources {
+		if r.Kind == KindStack {
+			continue
+		}
 		deps[r.Name] = r.dependencies(all)
 	}
 
