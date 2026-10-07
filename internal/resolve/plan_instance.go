@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	incus "github.com/lxc/incus/v7/client"
+
+	"github.com/minihci/tink/internal/incusapi"
 )
 
 // PlanOptions are the read-only knobs shared by plan and plan apply, so the
@@ -62,11 +64,11 @@ func (r Resource) onImageChangePolicy() string {
 // planInstance reports config/device drift and image drift, and decides what
 // apply may do about each according to the instance's on_image_change policy.
 func planInstance(server incus.InstanceServer, r Resource, opts PlanOptions) (PlannedResource, error) {
-	current, _, err := server.GetInstance(r.Name)
+	current, _, found, err := incusapi.LookupInstance(server, r.Name)
 	if err != nil {
-		if !isNotFound(err) {
-			return PlannedResource{}, fmt.Errorf("reading the live instance: %w", err)
-		}
+		return PlannedResource{}, fmt.Errorf("reading the live instance: %w", err)
+	}
+	if !found {
 		return PlannedResource{Resource: r, Action: ActionCreate}, nil
 	}
 	changes := diffConfig(current.Config, r.Config, r.SecretKeys)

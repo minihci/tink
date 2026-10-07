@@ -101,28 +101,6 @@ var lookupResources = []Resource{
 	{Kind: KindExec, Name: "init", Instance: "app", Command: []string{"true"}},
 }
 
-func TestIsNotFound(t *testing.T) {
-	for name, tc := range map[string]struct {
-		err  error
-		want bool
-	}{
-		"nil":                       {nil, false},
-		"404":                       {errNotFound, true},
-		"a wrapped 404":             {fmt.Errorf("reading the live profile: %w", errNotFound), true},
-		"403":                       {errForbidden, false},
-		"500":                       {errServer, false},
-		"a dropped connection":      {errDropped, false},
-		"text that says not found":  {errors.New("Image not found"), false},
-		"an unparsable 404 reply":   {errors.New("Failed to fetch https://tron:8443/1.0/profiles/web: 404 Not Found"), false},
-		"a wrapped non-404 status":  {fmt.Errorf("x: %w", errServer), false},
-		"a 404 joined with another": {errors.Join(errors.New("x"), errNotFound), true},
-	} {
-		if got := isNotFound(tc.err); got != tc.want {
-			t.Errorf("%s: isNotFound(%v) = %v, want %v", name, tc.err, got, tc.want)
-		}
-	}
-}
-
 // A real not-found keeps planning a create, for every kind.
 func TestPlanNotFoundPlansACreate(t *testing.T) {
 	for _, r := range lookupResources {

@@ -100,11 +100,11 @@ func triggerHashConfigKey(name string) string {
 // instead of the "would create" every other kind already reports
 // correctly in exactly this situation.
 func execConverged(server incus.InstanceServer, r Resource, attempts int, delay time.Duration) (bool, error) {
-	inst, _, err := server.GetInstance(r.Instance)
+	inst, _, found, err := incusapi.LookupInstance(server, r.Instance)
 	if err != nil {
-		if !isNotFound(err) {
-			return false, fmt.Errorf("reading %s: %w", r.Instance, err)
-		}
+		return false, fmt.Errorf("reading %s: %w", r.Instance, err)
+	}
+	if !found {
 		return false, nil
 	}
 

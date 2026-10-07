@@ -3,14 +3,12 @@ package resolve
 import (
 	"fmt"
 	"io"
-	"net/http"
 	"os/exec"
 	"reflect"
 	"sort"
 	"sync"
 
 	incus "github.com/lxc/incus/v7/client"
-	"github.com/lxc/incus/v7/shared/api"
 
 	"github.com/minihci/tink/internal/incusapi"
 	"github.com/minihci/tink/internal/secrets"
@@ -100,14 +98,6 @@ func scopedServer(server incus.InstanceServer, r Resource) incus.InstanceServer 
 	return server
 }
 
-// isNotFound reports whether err is Incus saying the object does not exist (an HTTP 404). It is the
-// only error a planner may read as "absent, plan a create": a 403 (a revoked or restricted client), a
-// 5xx or a dropped connection says nothing about whether the object exists, and must stop the plan
-// rather than turn into a create that apply would then try to run over a live object.
-func isNotFound(err error) bool {
-	return api.StatusErrorCheck(err, http.StatusNotFound)
-}
-
 func planOne(server incus.InstanceServer, r Resource, opts PlanOptions) (PlannedResource, error) {
 	// A secret that cannot be resolved blocks the WHOLE resource, never part of it.
 	if len(r.SecretProblems) > 0 {
@@ -149,21 +139,22 @@ func planOne(server incus.InstanceServer, r Resource, opts PlanOptions) (Planned
 // story to diff toward, and none of this platform's real usage has ever
 // needed one.
 func planProject(server incus.InstanceServer, r Resource) (PlannedResource, error) {
-	if _, _, err := server.GetProject(r.Name); err != nil {
-		if !isNotFound(err) {
-			return PlannedResource{}, fmt.Errorf("reading the live project: %w", err)
-		}
+	_, _, found, err := incusapi.LookupProject(server, r.Name)
+	if err != nil {
+		return PlannedResource{}, fmt.Errorf("reading the live project: %w", err)
+	}
+	if !found {
 		return PlannedResource{Resource: r, Action: ActionCreate}, nil
 	}
 	return PlannedResource{Resource: r, Action: ActionNone}, nil
 }
 
 func planProfile(server incus.InstanceServer, r Resource) (PlannedResource, error) {
-	current, _, err := server.GetProfile(r.Name)
+	current, _, found, err := incusapi.LookupProfile(server, r.Name)
 	if err != nil {
-		if !isNotFound(err) {
-			return PlannedResource{}, fmt.Errorf("reading the live profile: %w", err)
-		}
+		return PlannedResource{}, fmt.Errorf("reading the live profile: %w", err)
+	}
+	if !found {
 		return PlannedResource{Resource: r, Action: ActionCreate}, nil
 	}
 	changes := diffConfig(current.Config, r.Config, nil)
@@ -179,13 +170,11 @@ func planStorageVolume(server incus.InstanceServer, r Resource, env volumeEnv) (
 	if pool == "" {
 		pool = "default"
 	}
-	current, _, err := server.GetStoragePoolVolume(pool, "custom", r.Name)
+	current, _, _, err := incusapi.LookupVolume(server, pool, "custom", r.Name)
 	if err != nil {
-		if !isNotFound(err) {
-			return PlannedResource{}, fmt.Errorf("reading the live volume in pool %q: %w", pool, err)
-		}
-		current = nil // not found: decideVolume plans a create (or blocks it)
+		return PlannedResource{}, fmt.Errorf("reading the live volume in pool %q: %w", pool, err)
 	}
+	// not found leaves current nil: decideVolume plans a create (or blocks it)
 	p := decideVolume(r, current, env)
 	p.Warnings = append(p.Warnings, backupWarnings(r, env.targets)...)
 	return p, nil
@@ -196,13 +185,13 @@ func planStorageVolume(server incus.InstanceServer, r Resource, env volumeEnv) (
 // principle as every other kind here, just against instance-file
 // content instead of instance/profile config.
 func planFile(server incus.InstanceServer, r Resource) (PlannedResource, error) {
-	rc, _, err := server.GetInstanceFile(r.Instance, r.Path)
+	rc, _, found, err := incusapi.LookupInstanceFile(server, r.Instance, r.Path)
 	if err != nil {
-		if !isNotFound(err) {
-			// Not "absent": planning a create here would have apply overwrite a file it merely failed to read
-			// (and, with restart: true, restart the instance).
-			return PlannedResource{}, fmt.Errorf("reading current content of %s on %s: %w", r.Path, r.Instance, err)
-		}
+		// Not "absent": planning a create here would have apply overwrite a file it merely failed to read
+		// (and, with restart: true, restart the instance).
+		return PlannedResource{}, fmt.Errorf("reading current content of %s on %s: %w", r.Path, r.Instance, err)
+	}
+	if !found {
 		return PlannedResource{Resource: r, Action: ActionCreate}, nil
 	}
 	defer rc.Close()
@@ -243,10 +232,11 @@ func planIncus(r Resource) (PlannedResource, error) {
 // "does it exist," the same reasoning project and storage-volume already
 // use to stay create-only.
 func planImage(server incus.InstanceServer, r Resource) (PlannedResource, error) {
-	if _, _, err := server.GetImageAlias(r.Alias); err != nil {
-		if !isNotFound(err) {
-			return PlannedResource{}, fmt.Errorf("reading the live image alias %q: %w", r.Alias, err)
-		}
+	_, _, found, err := incusapi.LookupImageAlias(server, r.Alias)
+	if err != nil {
+		return PlannedResource{}, fmt.Errorf("reading the live image alias %q: %w", r.Alias, err)
+	}
+	if !found {
 		return PlannedResource{Resource: r, Action: ActionCreate}, nil
 	}
 	return PlannedResource{Resource: r, Action: ActionNone}, nil

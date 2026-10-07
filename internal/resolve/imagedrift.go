@@ -17,6 +17,7 @@ import (
 	"github.com/lxc/incus/v7/shared/api"
 	"github.com/lxc/incus/v7/shared/cliconfig"
 
+	"github.com/minihci/tink/internal/incusapi"
 	"github.com/minihci/tink/internal/incusconf"
 
 	"github.com/minihci/tink/internal/secrets"
@@ -479,14 +480,9 @@ func (e *imageEnv) checkInstance(server incus.InstanceServer, current *api.Insta
 	return checkImage(current.Config, r.Image, imageProbe{
 		remotes: e.remotes(),
 		aliasTarget: func(alias string) (string, bool, error) {
-			a, _, err := server.GetImageAlias(alias)
-			switch {
-			case isNotFound(err):
-				return "", false, nil
-			case err != nil:
+			a, _, found, err := incusapi.LookupImageAlias(server, alias)
+			if err != nil || !found {
 				return "", false, err
-			case a == nil:
-				return "", false, nil
 			}
 			return a.Target, true, nil
 		},
