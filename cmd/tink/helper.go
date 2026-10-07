@@ -14,6 +14,7 @@ import (
 
 	"github.com/minihci/tink/internal/helper"
 	"github.com/minihci/tink/internal/incusapi"
+	"github.com/minihci/tink/internal/resolve"
 )
 
 func newHelperCmd() *cobra.Command {
@@ -211,17 +212,11 @@ func runHelperStatus(out io.Writer, server incus.InstanceServer, instance, proje
 		return errors.New(what)
 	}
 
-	// Reading the trust store takes admin access; a client that cannot is simply not told, and the rest still holds.
-	certs, certErr := server.GetCertificates()
-	reports := make([]helper.Report, len(found))
+	reports := judgeHelpers(server, found, now)
 	worst := helper.Healthy
-	for i, f := range found {
-		reports[i] = helper.Evaluate(f, now)
-		if certErr == nil {
-			reports[i].CheckTrust(certs)
-		}
-		if reports[i].Health > worst {
-			worst = reports[i].Health
+	for _, r := range reports {
+		if r.Health > worst {
+			worst = r.Health
 		}
 	}
 
@@ -246,6 +241,52 @@ func runHelperStatus(out io.Writer, server incus.InstanceServer, instance, proje
 		return &exitCodeError{code: int(worst), silent: true}
 	}
 	return nil
+}
+
+// judgeHelpers evaluates each helper from what it published and the state of its instance, and checks its certificate against the
+// host's trust store. Reading the trust store takes admin access; a client that cannot is simply not told, and the rest still holds.
+func judgeHelpers(server incus.InstanceServer, found []helper.Found, now time.Time) []helper.Report {
+	certs, certErr := server.GetCertificates()
+	reports := make([]helper.Report, len(found))
+	for i, f := range found {
+		reports[i] = helper.Evaluate(f, now)
+		if certErr == nil {
+			reports[i].CheckTrust(certs)
+		}
+	}
+	return reports
+}
+
+// helperPolicyOptions tells `plan` and `apply` what the server's helper can read, so that a copy policy it would skip silently is not
+// written. It is silent when there is no helper, or the helper has said nothing about it (an older one): nothing can be held to what it
+// has not said. A lookup that fails is not an error here either: `plan` does not fail because the helper cannot be found.
+func helperPolicyOptions(server incus.InstanceServer, opts resolve.PlanOptions) resolve.PlanOptions {
+	found, err := helper.Find(server)
+	if err != nil || len(found) == 0 {
+		return opts
+	}
+	label, reads := "", 0
+	for _, r := range judgeHelpers(server, found, time.Now()) {
+		if r.Status != nil && r.Status.PolicyProto > 0 && (reads == 0 || r.Status.PolicyProto < reads) {
+			label, reads = r.Found.Label(), r.Status.PolicyProto
+		}
+	}
+	return opts.WithHelperPolicy(label, reads)
+}
+
+// noteHelper ends `plan` and `plan apply` with what the helper says about itself, when it is not well: a helper that has stopped, gone
+// quiet, lost its certificate, or is skipping volumes is the thing a plan of backups should not leave you to find out about at a
+// restore. A note, never a failure, and silent when there is no helper or it is healthy.
+func noteHelper(out io.Writer, server incus.InstanceServer) {
+	found, err := helper.Find(server)
+	if err != nil {
+		return
+	}
+	for _, r := range judgeHelpers(server, found, time.Now()) {
+		if r.Health != helper.Healthy {
+			fmt.Fprintf(out, "note: the helper is %s (see `tink helper status`)\n", r.Summary())
+		}
+	}
 }
 
 type helperJSON struct {

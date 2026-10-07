@@ -313,7 +313,7 @@ See docs/volume-backup.md.`, resolve.DefaultFile),
 			}
 			// Planned one dependency level at a time, but a volume's 3-2-1 check needs the
 			// backup targets from an earlier level, so hand the options the whole stack.
-			opts := resolve.NewPlanOptions(offline).ForResources(resources)
+			opts := helperPolicyOptions(server, resolve.NewPlanOptions(offline).ForResources(resources))
 			for i, level := range levels {
 				fmt.Fprintf(cmd.OutOrStdout(), "level %d:\n", i)
 				plans, err := resolve.PlanWithOptions(server, level, opts)
@@ -325,6 +325,7 @@ See docs/volume-backup.md.`, resolve.DefaultFile),
 				}
 			}
 			noteUndeclaredPolicies(cmd.OutOrStdout(), backuprun.ServerEngine{Server: server}, resources)
+			noteHelper(cmd.OutOrStdout(), server)
 			return nil
 		},
 	}
@@ -370,12 +371,19 @@ says on_image_change: rebuild; see docs/image-updates.md.`, resolve.DefaultFile)
 			if resources, err = secretFlags.expand(resources, args); err != nil {
 				return err
 			}
-			actions, err := resolve.ApplyWithOptions(socket, resources, resolve.NewPlanOptions(offline))
+			// what the helper can read is asked once, before anything is written: a policy it would skip is refused, not applied
+			opts := resolve.NewPlanOptions(offline)
+			server, cerr := incusapi.Connect(socket)
+			if cerr == nil {
+				opts = helperPolicyOptions(server, opts)
+			}
+			actions, err := resolve.ApplyWithOptions(socket, resources, opts)
 			for _, a := range actions {
 				fmt.Fprintln(cmd.OutOrStdout(), a)
 			}
-			if server, cerr := incusapi.Connect(socket); cerr == nil {
+			if cerr == nil {
 				noteUndeclaredPolicies(cmd.OutOrStdout(), backuprun.ServerEngine{Server: server}, resources)
+				noteHelper(cmd.OutOrStdout(), server)
 			}
 			return err
 		},

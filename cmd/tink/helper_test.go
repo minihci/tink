@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/minihci/tink/internal/helper"
+	"github.com/minihci/tink/internal/resolve"
 )
 
 var helperNow = time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
@@ -273,5 +274,65 @@ func TestUpgradeNeedsAnImageOrABinaryOnADevelopmentBuild(t *testing.T) {
 	err := runRoot(t, "helper", "upgrade", "--socket", "/nonexistent/incus.sock")
 	if err == nil || !strings.Contains(err.Error(), "not a release build") || strings.Contains(err.Error(), "connecting to incus") {
 		t.Errorf("said before any connection is tried: %v", err)
+	}
+}
+
+func TestPlanIsToldWhatTheHelperCanReadAndOnlyWhenItHasSaidSo(t *testing.T) {
+	read := func(srv instancesServer) (string, int) {
+		return helperPolicyOptions(srv, resolve.PlanOptions{}).HelperPolicy()
+	}
+	withProto := goodStatus(func(s *helper.Status) { s.PolicyProto = 3 })
+	label, reads := read(instancesServer{all: []api.Instance{helperInstance("tink-helper", "helper", "Running", withProto)}})
+	if label != "tink-helper/helper" || reads != 3 {
+		t.Errorf("%q %d: what the helper said it reads, and who said it", label, reads)
+	}
+	// a helper that has said nothing about it (no document, or an older one without the field) cannot be held to it
+	if _, reads := read(instancesServer{all: []api.Instance{helperInstance("p", "h", "Running", nil)}}); reads != 0 {
+		t.Errorf("no document: %d", reads)
+	}
+	if _, reads := read(instancesServer{all: []api.Instance{helperInstance("p", "h", "Running", goodStatus(func(s *helper.Status) { s.PolicyProto = 0 }))}}); reads != 0 {
+		t.Errorf("an older helper that does not say: %d", reads)
+	}
+	// no helper at all, and a server that cannot even be asked: plan goes on unchecked, it does not fail
+	if _, reads := read(instancesServer{}); reads != 0 {
+		t.Errorf("no helper: %d", reads)
+	}
+	if _, reads := read(instancesServer{err: errors.New("denied")}); reads != 0 {
+		t.Errorf("a failed lookup is not an error for plan: %d", reads)
+	}
+	// two helpers cannot happen through install; if they did, the one that reads the least decides
+	two := instancesServer{all: []api.Instance{
+		helperInstance("a", "one", "Running", goodStatus(func(s *helper.Status) { s.PolicyProto = 5 })),
+		helperInstance("b", "two", "Running", goodStatus(func(s *helper.Status) { s.PolicyProto = 2 })),
+	}}
+	if label, reads := read(two); label != "b/two" || reads != 2 {
+		t.Errorf("%q %d", label, reads)
+	}
+}
+
+func TestPlanEndsWithANoteAboutAHelperThatIsNotWellAndSaysNothingOtherwise(t *testing.T) {
+	note := func(srv instancesServer) string {
+		var out bytes.Buffer
+		noteHelper(&out, srv)
+		return out.String()
+	}
+	if got := note(instancesServer{}); got != "" {
+		t.Errorf("no helper, nothing to say: %q", got)
+	}
+	if got := note(instancesServer{all: []api.Instance{helperInstance("p", "h", "Running", goodStatus(nil))}}); got != "" {
+		t.Errorf("a healthy helper, nothing to say: %q", got)
+	}
+	skipped := goodStatus(func(s *helper.Status) { s.Skipped = []helper.Skip{{Volume: "lib", Reason: "policy of protocol 2"}} })
+	got := note(instancesServer{all: []api.Instance{helperInstance("p", "h", "Running", skipped)}})
+	for _, want := range []string{"note: the helper is degraded: p/h", "lib (policy of protocol 2)", "tink helper status"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("%q not in %q", want, got)
+		}
+	}
+	if got := note(instancesServer{all: []api.Instance{helperInstance("p", "h", "Stopped", goodStatus(nil))}}); !strings.Contains(got, "down: p/h") {
+		t.Errorf("a stopped helper: %q", got)
+	}
+	if got := note(instancesServer{err: errors.New("denied")}); got != "" {
+		t.Errorf("if it cannot be looked for, plan does not complain about that: %q", got)
 	}
 }
