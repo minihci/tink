@@ -44,6 +44,8 @@ type RunOptions struct {
 	Helper *Helper
 	// RestartBackoff is the first wait before a crashed worker is restarted (default 5s; it doubles up to a minute).
 	RestartBackoff time.Duration
+	// Status, if set, publishes the status document about this daemon (see StatusOptions).
+	Status *StatusOptions
 }
 
 // Run starts the daemon's workers and runs them until ctx is cancelled (SIGTERM/SIGINT, wired up by the caller) -- a
@@ -59,9 +61,26 @@ func Run(ctx context.Context, out io.Writer, opts RunOptions) error {
 			supervise(ctx, out, name, opts.RestartBackoff, fn)
 		}()
 	}
+	var live *Live
+	if opts.Status != nil {
+		live = &Live{}
+		if opts.Helper != nil {
+			opts.Helper.Live = live
+		}
+	}
 	if !opts.NoIngress {
 		start("ingress", func(ctx context.Context) error {
-			return run(ctx, out, opts.Interval, func() (*ingress.Result, error) { return ingress.Reconcile(opts.IngressOptions) })
+			return run(ctx, out, opts.Interval, func() (*ingress.Result, error) {
+				res, err := ingress.Reconcile(opts.IngressOptions)
+				if live != nil {
+					warnings := 0
+					if res != nil {
+						warnings = len(res.Warnings)
+					}
+					live.setIngress(err == nil, warnings, time.Now())
+				}
+				return res, err
+			})
 		})
 	}
 	if h := opts.Helper; h != nil {
@@ -71,6 +90,11 @@ func Run(ctx context.Context, out io.Writer, opts RunOptions) error {
 		fmt.Fprintf(out, "tink daemon: backup scheduler every %s, job executor on %s, schedules in %s\n", orInterval(h.SchedulerInterval), h.Store.Dir, h.now().Location())
 		start("executor", func(ctx context.Context) error { return h.Executor().Run(ctx) })
 		start("scheduler", func(ctx context.Context) error { return h.runScheduler(ctx) })
+	}
+	if opts.Status != nil {
+		started := time.Now()
+		so := *opts.Status
+		start("status", func(ctx context.Context) error { return runStatus(ctx, out, so, live, started) })
 	}
 	wg.Wait()
 	if opts.NoIngress {

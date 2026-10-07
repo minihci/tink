@@ -289,3 +289,43 @@ func TestDueListsWhatARunWouldDoAndChangesNothing(t *testing.T) {
 		t.Errorf("Due must never copy: %v", s.copied)
 	}
 }
+
+func TestAssessReportsWhatIsDueWhatIsFailingAndWhatCouldNotBeDecided(t *testing.T) {
+	mid := now.Add(30 * time.Minute)
+	stale := mid.Add(-3 * time.Hour).UTC().Format(time.RFC3339)
+	failedAt := mid.Add(-time.Minute).UTC().Format(time.RFC3339)
+	s := &stub{live: map[string]map[string]string{
+		"fresh":   {resolve.CopyStampAt("t"): mid.Add(-10 * time.Minute).UTC().Format(time.RFC3339)},
+		"failing": {resolve.CopyStampAt("t"): stale, resolve.CopyFailAt("t"): failedAt, resolve.CopyFailCount("t"): "3"},
+		"never":   {},
+	}, liveErr: map[string]error{"gone": errors.New("volume not found")}}
+	items, err := FromStack([]resolve.Resource{vol("fresh", "t"), vol("failing", "t"), vol("never", "t"), vol("gone", "t"), target("t", "")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := Assess(s, items, mid)
+
+	if want := []DueCopy{{"never", "t"}}; !reflect.DeepEqual(a.Due, want) {
+		t.Errorf("due = %v, want %v (the failing one is backing off, the fresh one is not due, the unreadable one cannot be decided)", a.Due, want)
+	}
+	if len(a.Failing) != 1 || a.Failing[0].Volume != "failing" || a.Failing[0].Target != "t" || a.Failing[0].Count != 3 || a.Failing[0].Since.IsZero() {
+		t.Errorf("failing = %+v: a copy that failed since its last success, with how many times and since when", a.Failing)
+	}
+	if len(a.Problems) != 1 || a.Problems["gone"] == nil {
+		t.Errorf("a volume that cannot be read is a problem, not silence: %v", a.Problems)
+	}
+	if len(s.copied) != 0 {
+		t.Errorf("looking never copies: %v", s.copied)
+	}
+}
+
+func TestAFailureThatALaterSuccessSupersededIsNotFailing(t *testing.T) {
+	// the stamp of the last success is newer than the last failure: the copy is healthy again
+	s := &stub{live: map[string]map[string]string{"v": {
+		resolve.CopyFailAt("t"): now.Add(-2 * time.Hour).UTC().Format(time.RFC3339), resolve.CopyFailCount("t"): "2",
+		resolve.CopyStampAt("t"): now.Add(-time.Hour).UTC().Format(time.RFC3339)}}}
+	items, _ := FromStack([]resolve.Resource{vol("v", "t"), target("t", "")})
+	if a := Assess(s, items, now); len(a.Failing) != 0 {
+		t.Errorf("%+v", a.Failing)
+	}
+}

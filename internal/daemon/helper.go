@@ -30,6 +30,8 @@ type BackupRunArgs struct {
 // and executor", with nothing about containers in it, so any supervisor can run it.
 type Helper struct {
 	Store jobs.Store
+	// Live, if set, is told what each tick found (volumes skipped, copies failing) for the status document.
+	Live *Live
 	// Connect opens the Incus engine the work is done through. It is called per job and per scheduler tick, so a
 	// connection that died is not kept.
 	Connect func() (backuprun.Engine, error)
@@ -167,9 +169,13 @@ func (h *Helper) Tick(state *SchedulerState) int {
 	for _, what := range sortedKeys(problems) {
 		state.note("problem "+what, fmt.Sprintf("%s: %v", what, problems[what]), h.logf)
 	}
-	due, dueProblems := backuprun.Due(eng, items, now)
+	assessed := backuprun.Assess(eng, items, now)
+	due, dueProblems := assessed.Due, assessed.Problems
 	for _, what := range sortedKeys(dueProblems) {
 		state.note("problem "+what, fmt.Sprintf("%s: %v", what, dueProblems[what]), h.logf)
+	}
+	if h.Live != nil {
+		h.Live.setBackup(skipsFrom(problems, dueProblems), failingFrom(assessed.Failing))
 	}
 	if len(due) == 0 {
 		return 0
