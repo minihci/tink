@@ -39,7 +39,7 @@ backup:
 a schedule with no expiry fills the pool forever, and Incus reads a zero expiry
 as "never expires", so `0d` is rejected too. Malformed blocks fail at load time.
 
-## Copies and 3-2-1 (declared, not yet run)
+## Copies and 3-2-1
 
 Snapshots on the live pool are a rollback aid, not a backup: they die with the disk. A real backup
 is **3-2-1**: three copies of the data (the live volume plus two), in at least two distinct failure
@@ -84,12 +84,58 @@ pool. A copy on the live volume's own pool is flagged and not counted. Two copie
 pool count as one domain. A reference to a `target` that does not exist is a **hard error** at load time,
 because a typo would otherwise silently drop a backup leg.
 
-**What is not real yet.** This is the declaration and the check only. **Nothing executes `copies`**: tink
-has no copy engine yet, so `plan` adds a warning to every volume with copies saying so, and a passing
-3-2-1 check means "the declaration is sound", not "the data is there". `verify` is likewise only parsed.
-The runner, restore and verify are the next slices (see `volume-backup-design.md`).
+The 3-2-1 check judges the *declaration*. Whether copies are actually happening is a separate signal: see
+[Running the copies](#running-the-copies) below, and the "has never run" / "is overdue" warnings.
 
 Like the missing-`backup:` warning, the 3-2-1 warning is meant to become an error later.
+
+## Running the copies
+
+```
+tink backup run [VOLUME...] [--due] [--dry-run] [-f FILE]
+```
+
+For each volume that declares `copies` (or only the named ones), and each of its targets, `run`:
+
+1. takes a **snapshot** of the volume: a consistent point in time (`tink-copy-<UTC time>`, with a 24h expiry as a safety
+   net, and removed again when the copy is done);
+2. copies **that snapshot** into a **new volume** on the target pool, `VOLUME-bk-<UTC time>`: a *restore point*;
+3. stamps the source volume (`user.tink.backup.copy.<target>.at` and `.volume`);
+4. **prunes** that volume's restore points older than the copy's `retain`, always keeping the newest.
+
+Only **pool targets** work so far (a second storage pool on this server: another disk, or the Incus `truenas` driver). A target
+that names a `remote:` is reported as an error for that copy and the others still run (the exit status is non-zero).
+
+**Why a new volume each time, and not one target volume refreshed with `incus storage volume copy --refresh`?** Because a refresh
+makes the target *mirror* the source's snapshots. Tested on two TrueNAS-backed pools: when the source pruned a snapshot, the next
+refresh deleted it from the target as well (even with `--refresh-exclude-older`), and refreshing from a snapshot deleted the target's
+own snapshots. A mirror cannot keep a longer history than its source, and, worse, it **propagates a deletion or damage on the source into
+the backup**. With one independent volume per run, nothing that happens to the source can reach an existing restore point. The price
+is a **full copy per run** (space and time proportional to the volume); incremental transfer is future work.
+
+**What tink will and won't delete.** Restore points carry markers (`user.tink.backup.copy-of`, `-at`, `-target`) naming exactly the
+volume (project, pool and name) they back up. Pruning and restoring consider **only** volumes with the marker for the volume in
+question: a volume tink did not make, a lookalike name, another volume's restore point, or one whose marker it cannot read is never
+touched.
+
+**`--due`** runs only the copies whose `schedule` has come round since their last success (by the stamp), so cron or a timer can call
+`tink backup run --due` every few minutes. **Tink does not schedule copies itself yet**, so until something calls it, `plan` warns
+that a copy "has never run" or "is overdue" (the schedule's next time after the last success plus a grace of a quarter of the
+interval, between 10 minutes and 6 hours). **`--dry-run`** says what would happen and changes nothing.
+
+## Restoring from a target
+
+```
+tink backup restore VOLUME --from TARGET [--snapshot STAMP]
+tink backup verify  VOLUME --from TARGET [--snapshot STAMP]
+```
+
+`--from` names a `kind: backup-target` in the stack; `--snapshot` picks a restore point (its volume name, or the timestamp in it),
+default the newest. Restore makes a new local volume (scrubbed of the copy markers, so it can never be mistaken for a restore point);
+verify restores to a scratch volume and runs the declared check as before, and stamps `verified-from` with the target's name.
+
+**The source volume does not have to exist.** Restoring from a target is for the case where it is gone, so neither command looks for
+it. If it is gone, `verify` still runs the check but cannot record the result, and says "NOT recorded".
 
 ## Restore and verify
 
@@ -202,6 +248,8 @@ The direction for everything below is in [`volume-backup-design.md`](volume-back
   power was cut -- fine for Postgres (it replays WAL), not a substitute for a
   logical dump. Nothing coordinates *two* volumes: a volume pair snapshotted on
   the same schedule is not captured at the same instant.
-- **Restore and verify cover local snapshots only.** Restoring or verifying from a backup target needs the
-  copy engine (`--from` is rejected for now).
+- **Copies go to pool targets only**; a remote Incus server target needs a second host to test against and is reported as an error.
+  Each run is a **full copy**; there is no incremental transfer yet.
+- **Nothing schedules copies**: call `tink backup run --due` from cron or a timer.
+- **A restore point is crash-consistent**, like the snapshot it is copied from.
 - **Verify is only as strong as its check**, and an unchecked verify only proves the snapshot restores.
