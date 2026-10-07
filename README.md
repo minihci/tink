@@ -203,14 +203,15 @@ go build -o tink ./cmd/tink
 ```
 
 A tag (`v*`) also builds binaries for macOS and Linux (`amd64` and `arm64`) and attaches them to its GitHub Release, next to the helper image
-([`.github/workflows/release.yml`](.github/workflows/release.yml), [`docs/helper.md`](docs/helper.md#the-image-and-releasing-it)). `v0.1.1` is the first release to
-carry them ([Releases](https://github.com/minihci/tink/releases)); you can also build from source, as above.
+([`.github/workflows/release.yml`](.github/workflows/release.yml), [`docs/helper.md`](docs/helper.md#the-image-and-releasing-it)). `v0.1.1` was the first release to
+carry them and `v0.1.2` the first to name them without the version, which makes the URLs below stable ([Releases](https://github.com/minihci/tink/releases)); you can
+also build from source, as above.
 
 ```
-curl -fsSLO https://github.com/minihci/tink/releases/download/v0.1.1/tink_v0.1.1_darwin_arm64.tar.gz
-curl -fsSLO https://github.com/minihci/tink/releases/download/v0.1.1/checksums.txt
-grep darwin_arm64 checksums.txt | shasum -a 256 -c -        # sha256sum -c - on Linux
-tar -xzf tink_v0.1.1_darwin_arm64.tar.gz                    # a directory holding the one binary, tink
+curl -fsSLO https://github.com/minihci/tink/releases/latest/download/tink_darwin_arm64.tar.gz      # also darwin_amd64, linux_amd64, linux_arm64
+curl -fsSLO https://github.com/minihci/tink/releases/latest/download/checksums.txt
+grep ' ./tink_darwin_arm64.tar.gz$' checksums.txt | shasum -a 256 -c -                              # sha256sum -c - on Linux
+tar -xzf tink_darwin_arm64.tar.gz                                                                    # a directory holding the one binary, tink
 ```
 
 They are not signed: a binary downloaded with a browser is quarantined by macOS until `xattr -d com.apple.quarantine tink`, and one fetched with `curl` is not.

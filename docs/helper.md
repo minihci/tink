@@ -269,18 +269,17 @@ ordinary one. On a pull request that touches the workflow it only builds and che
 com.apple.quarantine tink`, and one fetched with `curl` is not. A binary from a release is a "release build", so `tink helper install` with no flag installs the
 image published for the same tag.
 
-`v0.1.1` was the first release to carry them: the four archives and `checksums.txt`, published as an ordinary release, so GitHub marks it Latest. The `linux/amd64`
-binary in the archive is byte-for-byte the one inside the image (the two workflows build them separately), and the archive's checksum and `tink version` were
-checked after downloading it with `curl`. Its asset names carry the version, so it has no version-less "latest" download URL (a request for
-`releases/latest/download/tink_darwin_arm64.tar.gz` returned 404); fetch the latest release's with `gh`, or name the version with `curl`:
+`v0.1.1` was the first release to carry them, and `v0.1.2` the first to carry each archive under a version-less name as well. Observed: the `linux/amd64` binary
+in an archive is byte-for-byte the one inside the image (the two workflows build them separately). For `v0.1.2`, `releases/latest/download/tink_darwin_arm64.tar.gz`
+returns the archive (it returned 404 for `v0.1.1`, which has only the versioned names), byte-identical to its versioned twin, and each has its own verifying line in
+the eight-line `checksums.txt`; the downloaded binary reports `tink v0.1.2`. The URL points at the newest *ordinary* release: a pre-release (a tag with a suffix) is
+never "latest".
 
 ```
-gh release download --repo minihci/tink --pattern '*darwin_arm64*'        # the latest release; also linux_amd64, linux_arm64, darwin_amd64
-curl -fsSLO https://github.com/minihci/tink/releases/download/v0.1.1/tink_v0.1.1_darwin_arm64.tar.gz       # a particular version
+curl -fsSLO https://github.com/minihci/tink/releases/latest/download/tink_darwin_arm64.tar.gz        # the latest release; also darwin_amd64, linux_amd64, linux_arm64
+curl -fsSLO https://github.com/minihci/tink/releases/latest/download/checksums.txt
+grep ' ./tink_darwin_arm64.tar.gz$' checksums.txt | shasum -a 256 -c -                                # sha256sum -c - on Linux
+gh release download --repo minihci/tink --pattern 'tink_darwin_arm64.tar.gz'                          # the same archive with gh (the exact name: '*darwin_arm64*' also fetches the versioned one)
+curl -fsSLO https://github.com/minihci/tink/releases/download/v0.1.2/tink_v0.1.2_darwin_arm64.tar.gz   # a particular version
 ```
-
-**The version-less names are for the release after `v0.1.1`**, which will be the first to have them: a stable URL for the latest release, such as
-`https://github.com/minihci/tink/releases/latest/download/tink_darwin_arm64.tar.gz`, with its line in `checksums.txt` (`grep ' ./tink_darwin_arm64.tar.gz$'
-checksums.txt | shasum -a 256 -c -`). The URL points at the newest *ordinary* release: a pre-release (a tag with a suffix) is never "latest". **Not yet run on a tag:**
-the next release will tell, and this paragraph should be changed to say what it showed.
 
