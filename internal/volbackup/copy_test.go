@@ -7,7 +7,7 @@ import (
 
 	"github.com/lxc/incus/v7/shared/api"
 
-	"github.com/minihci/tink/internal/resolve"
+	"github.com/minihci/tink/internal/backupmeta"
 )
 
 func tm(s string) time.Time {
@@ -21,25 +21,25 @@ func tm(s string) time.Time {
 func bkVol(name, copyOf, at string) api.StorageVolume {
 	cfg := map[string]string{}
 	if copyOf != "" {
-		cfg[resolve.MarkerCopyOf] = copyOf
+		cfg[backupmeta.MarkerCopyOf] = copyOf
 	}
 	if at != "" {
-		cfg[resolve.MarkerCopyAt] = at
+		cfg[backupmeta.MarkerCopyAt] = at
 	}
 	return api.StorageVolume{Name: name, Type: "custom", StorageVolumePut: api.StorageVolumePut{Config: cfg}}
 }
 
 func TestRestorePointsOnlyCountVolumesMarkedForThisVolume(t *testing.T) {
-	mine := resolve.CopyOf("", "default", "lib")
+	mine := backupmeta.CopyOf("", "default", "lib")
 	vols := []api.StorageVolume{
 		bkVol("lib-bk-1", mine, tm("2026-10-01 04:00").Format(time.RFC3339)),
 		bkVol("lib-bk-3", mine, tm("2026-10-03 04:00").Format(time.RFC3339)),
 		bkVol("lib-bk-2", mine, tm("2026-10-02 04:00").Format(time.RFC3339)),
-		bkVol("other-bk-9", resolve.CopyOf("", "default", "other"), tm("2026-10-09 04:00").Format(time.RFC3339)), // another volume's
-		bkVol("lib-bk-wrong-project", resolve.CopyOf("p", "default", "lib"), tm("2026-10-09 04:00").Format(time.RFC3339)),
+		bkVol("other-bk-9", backupmeta.CopyOf("", "default", "other"), tm("2026-10-09 04:00").Format(time.RFC3339)), // another volume's
+		bkVol("lib-bk-wrong-project", backupmeta.CopyOf("p", "default", "lib"), tm("2026-10-09 04:00").Format(time.RFC3339)),
 		bkVol("unrelated", "", ""),                     // not made by tink: must never be listed
 		bkVol("lib-bk-badstamp", mine, "last tuesday"), // marker present, age unreadable: leave alone
-		{Name: "lib-bk-image", Type: "image", StorageVolumePut: api.StorageVolumePut{Config: map[string]string{resolve.MarkerCopyOf: mine, resolve.MarkerCopyAt: tm("2026-10-09 04:00").Format(time.RFC3339)}}},
+		{Name: "lib-bk-image", Type: "image", StorageVolumePut: api.StorageVolumePut{Config: map[string]string{backupmeta.MarkerCopyOf: mine, backupmeta.MarkerCopyAt: tm("2026-10-09 04:00").Format(time.RFC3339)}}},
 	}
 	got := restorePointsOf(vols, mine)
 	var names []string

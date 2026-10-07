@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/minihci/tink/internal/backupmeta"
 	"github.com/minihci/tink/internal/backuprun"
 	"github.com/minihci/tink/internal/helper"
 	"github.com/minihci/tink/internal/jobs"
-	"github.com/minihci/tink/internal/resolve"
 	"github.com/minihci/tink/internal/volbackup"
 )
 
@@ -24,13 +24,13 @@ func TestATickTellsTheStatusDocumentWhatItCouldNotDoAndWhatIsFailing(t *testing.
 	r.volume(t, "lib", "docs")
 	r.eng.listed = append(r.eng.listed, volbackup.ListedVolume{
 		Volume: volbackup.Volume{Project: "tenant", Pool: "default", Name: "newer"},
-		Config: map[string]string{resolve.PolicyKey: `{"proto":2}`}})
+		Config: map[string]string{backupmeta.PolicyKey: `{"proto":2}`}})
 	r.eng.poolErrs = map[string]error{"nas": errors.New("TrueNAS refused: api key tk-SECRET-123 is not valid")}
 	r.eng.liveErr["docs"] = errors.New("incus said: token tk-SECRET-456 expired")
 	r.eng.live["lib"] = map[string]string{
-		resolve.CopyStampAt("nas"):   now0.Add(-3 * time.Hour).UTC().Format(time.RFC3339),
-		resolve.CopyFailAt("nas"):    now0.Add(-time.Minute).UTC().Format(time.RFC3339),
-		resolve.CopyFailCount("nas"): "3",
+		backupmeta.CopyStampAt("nas"):   now0.Add(-3 * time.Hour).UTC().Format(time.RFC3339),
+		backupmeta.CopyFailAt("nas"):    now0.Add(-time.Minute).UTC().Format(time.RFC3339),
+		backupmeta.CopyFailCount("nas"): "3",
 	}
 
 	var st SchedulerState
@@ -64,7 +64,7 @@ func TestATickWithNothingWrongLeavesTheDocumentClean(t *testing.T) {
 	r := newRig(t)
 	r.h.Live = &Live{}
 	r.volume(t, "lib")
-	r.eng.live["lib"] = map[string]string{resolve.CopyStampAt("nas"): now0.Add(-5 * time.Minute).UTC().Format(time.RFC3339)}
+	r.eng.live["lib"] = map[string]string{backupmeta.CopyStampAt("nas"): now0.Add(-5 * time.Minute).UTC().Format(time.RFC3339)}
 	r.h.Tick(&SchedulerState{})
 	if skipped, failing, _ := r.h.Live.snapshot(); len(skipped) != 0 || len(failing) != 0 {
 		t.Errorf("%+v %+v", skipped, failing)
@@ -93,7 +93,7 @@ func TestBuildStatusSaysWhatTheHelperIsAndWhatItLastDid(t *testing.T) {
 	live.setIngress(true, 2, now0)
 	st := buildStatus(StatusOptions{Version: "v1.2.3", Zone: time.UTC, Store: r.h.Store}, live, now0.Add(-time.Hour), now0)
 
-	if st.Version != "v1.2.3" || st.TZ != "UTC" || st.JobProto != jobs.Proto || st.PolicyProto != resolve.PolicyProto {
+	if st.Version != "v1.2.3" || st.TZ != "UTC" || st.JobProto != jobs.Proto || st.PolicyProto != backupmeta.PolicyProto {
 		t.Errorf("who it is, and what it speaks (so an apply can tell whether it reads a policy): %+v", st)
 	}
 	if !st.Started.Equal(now0.Add(-time.Hour)) {
@@ -210,9 +210,9 @@ func TestRunStartsTheStatusWorkerBesideTheOthersAndTheHelperFeedsIt(t *testing.T
 	r := newRig(t)
 	r.volume(t, "lib")
 	r.eng.live["lib"] = map[string]string{
-		resolve.CopyStampAt("nas"):   now0.Add(-3 * time.Hour).UTC().Format(time.RFC3339),
-		resolve.CopyFailAt("nas"):    now0.Add(-time.Minute).UTC().Format(time.RFC3339),
-		resolve.CopyFailCount("nas"): "2",
+		backupmeta.CopyStampAt("nas"):   now0.Add(-3 * time.Hour).UTC().Format(time.RFC3339),
+		backupmeta.CopyFailAt("nas"):    now0.Add(-time.Minute).UTC().Format(time.RFC3339),
+		backupmeta.CopyFailCount("nas"): "2",
 	}
 	r.h.Now = nil
 	r.h.SchedulerInterval = 10 * time.Millisecond
@@ -298,7 +298,7 @@ func TestNothingIsPublishedUntilTheSchedulerHasLooked(t *testing.T) {
 func TestTheSchedulerLooksAgainSoonAfterAPassThatCouldNotLookAndWaitsAfterOneThatCould(t *testing.T) {
 	r := newRig(t)
 	r.volume(t, "lib")
-	r.eng.live["lib"] = map[string]string{resolve.CopyStampAt("nas"): now0.Add(-5 * time.Minute).UTC().Format(time.RFC3339)}
+	r.eng.live["lib"] = map[string]string{backupmeta.CopyStampAt("nas"): now0.Add(-5 * time.Minute).UTC().Format(time.RFC3339)}
 	var mu sync.Mutex
 	connects := 0
 	r.h.Connect = func() (backuprun.Engine, error) {
@@ -342,7 +342,7 @@ func TestADrainQueuesNothingAndTheStatusDocumentSaysSo(t *testing.T) {
 	r := newRig(t)
 	r.h.Live = &Live{}
 	r.volume(t, "lib")
-	r.eng.live["lib"] = map[string]string{resolve.CopyStampAt("nas"): now0.Add(-3 * time.Hour).UTC().Format(time.RFC3339)} // due
+	r.eng.live["lib"] = map[string]string{backupmeta.CopyStampAt("nas"): now0.Add(-3 * time.Hour).UTC().Format(time.RFC3339)} // due
 	if err := os.MkdirAll(r.h.Store.Dir, 0o700); err != nil {
 		t.Fatal(err)
 	}

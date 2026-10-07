@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/minihci/tink/internal/backupmeta"
 	"github.com/minihci/tink/internal/resolve"
 	"github.com/minihci/tink/internal/volbackup"
 )
@@ -43,9 +44,9 @@ func labels(items []Item) []string {
 func TestDiscoverFindsVolumesByTheirPolicyInEveryProject(t *testing.T) {
 	pol := policyFor(t, "nas")
 	s := &stub{listed: []volbackup.ListedVolume{
-		listed("tenant-b", "default", "lib", map[string]string{resolve.PolicyKey: pol}),
-		listed("default", "default", "docs", map[string]string{resolve.PolicyKey: pol}),
-		listed("tenant-a", "default", "lib", map[string]string{resolve.PolicyKey: pol}), // the same name in two projects
+		listed("tenant-b", "default", "lib", map[string]string{backupmeta.PolicyKey: pol}),
+		listed("default", "default", "docs", map[string]string{backupmeta.PolicyKey: pol}),
+		listed("tenant-a", "default", "lib", map[string]string{backupmeta.PolicyKey: pol}), // the same name in two projects
 		listed("default", "default", "plain", map[string]string{"snapshots.schedule": "@daily"}),
 	}}
 	items, problems, err := Discover(s)
@@ -67,9 +68,9 @@ func TestDiscoverFindsVolumesByTheirPolicyInEveryProject(t *testing.T) {
 func TestDiscoverNeverSchedulesABackupForABackup(t *testing.T) {
 	pol := policyFor(t, "nas")
 	s := &stub{listed: []volbackup.ListedVolume{
-		listed("", "nas", "lib-bk-1", map[string]string{resolve.PolicyKey: pol, resolve.MarkerCopyOf: "default/default/lib"}),
-		listed("", "nas", "lib-bk-2", map[string]string{resolve.PolicyKey: pol, resolve.MarkerPartialOf: "default/default/lib"}),
-		listed("", "default", "lib", map[string]string{resolve.PolicyKey: pol}),
+		listed("", "nas", "lib-bk-1", map[string]string{backupmeta.PolicyKey: pol, backupmeta.MarkerCopyOf: "default/default/lib"}),
+		listed("", "nas", "lib-bk-2", map[string]string{backupmeta.PolicyKey: pol, backupmeta.MarkerPartialOf: "default/default/lib"}),
+		listed("", "default", "lib", map[string]string{backupmeta.PolicyKey: pol}),
 	}}
 	items, problems, _ := Discover(s)
 	if !reflect.DeepEqual(labels(items), []string{"lib"}) || len(problems) != 0 {
@@ -80,10 +81,10 @@ func TestDiscoverNeverSchedulesABackupForABackup(t *testing.T) {
 func TestDiscoverSkipsAPolicyItCannotUnderstandAndReportsIt(t *testing.T) {
 	good := policyFor(t, "nas")
 	s := &stub{listed: []volbackup.ListedVolume{
-		listed("", "default", "good", map[string]string{resolve.PolicyKey: good}),
-		listed("", "default", "garbled", map[string]string{resolve.PolicyKey: "{nope"}),
-		listed("t", "default", "newer", map[string]string{resolve.PolicyKey: `{"proto":2}`}),
-		listed("", "default", "verify-only", map[string]string{resolve.PolicyKey: `{"proto":1,"verify":{"every":"weekly"}}`}),
+		listed("", "default", "good", map[string]string{backupmeta.PolicyKey: good}),
+		listed("", "default", "garbled", map[string]string{backupmeta.PolicyKey: "{nope"}),
+		listed("t", "default", "newer", map[string]string{backupmeta.PolicyKey: `{"proto":2}`}),
+		listed("", "default", "verify-only", map[string]string{backupmeta.PolicyKey: `{"proto":1,"verify":{"every":"weekly"}}`}),
 	}}
 	items, problems, err := Discover(s)
 	if err != nil {
@@ -102,7 +103,7 @@ func TestDiscoverSkipsAPolicyItCannotUnderstandAndReportsIt(t *testing.T) {
 
 func TestDiscoverReportsAPoolThatCannotBeListedAndKeepsTheRest(t *testing.T) {
 	s := &stub{
-		listed:   []volbackup.ListedVolume{listed("", "default", "lib", map[string]string{resolve.PolicyKey: policyFor(t, "nas")})},
+		listed:   []volbackup.ListedVolume{listed("", "default", "lib", map[string]string{backupmeta.PolicyKey: policyFor(t, "nas")})},
 		poolErrs: map[string]error{"nas": errors.New("unreachable")},
 	}
 	items, problems, err := Discover(s)
@@ -117,8 +118,8 @@ func TestDiscoverReportsAPoolThatCannotBeListedAndKeepsTheRest(t *testing.T) {
 func TestARunOverDiscoveredVolumesUsesTheirOwnMessagesAndNames(t *testing.T) {
 	pol := policyFor(t, "nas")
 	s := &stub{listed: []volbackup.ListedVolume{
-		listed("tenant-a", "default", "lib", map[string]string{resolve.PolicyKey: pol}),
-		listed("tenant-b", "default", "lib", map[string]string{resolve.PolicyKey: pol}),
+		listed("tenant-a", "default", "lib", map[string]string{backupmeta.PolicyKey: pol}),
+		listed("tenant-b", "default", "lib", map[string]string{backupmeta.PolicyKey: pol}),
 	}}
 	items, _, _ := Discover(s)
 	var out bytes.Buffer
@@ -174,7 +175,7 @@ func orphanLabels(os []Orphan) []string {
 }
 
 func TestUndeclaredFindsVolumesStillCopiedThatTheStackNoLongerDeclares(t *testing.T) {
-	pol := map[string]string{resolve.PolicyKey: policyFor(t, "nas")}
+	pol := map[string]string{backupmeta.PolicyKey: policyFor(t, "nas")}
 	stack := []resolve.Resource{declared("lib", "", ""), declared("tenant-lib", "tenant", "fast"), target("t", "")}
 	s := &stub{listed: []volbackup.ListedVolume{
 		listed("default", "default", "lib", pol),                                                 // declared: fine
@@ -184,8 +185,8 @@ func TestUndeclaredFindsVolumesStillCopiedThatTheStackNoLongerDeclares(t *testin
 		listed("tenant", "default", "elsewhere", pol),                                            // a pool the stack does not declare volumes in: not this stack's to speak for
 		listed("other", "default", "theirs", pol),                                                // a project the stack never mentions
 		listed("default", "default", "plain", map[string]string{"snapshots.schedule": "@daily"}), // no policy: nothing is copying it
-		listed("default", "default", "dropped-bk-1", map[string]string{resolve.PolicyKey: pol[resolve.PolicyKey], resolve.MarkerCopyOf: "default/default/dropped"}),
-		listed("default", "default", "dropped-bk-2", map[string]string{resolve.PolicyKey: pol[resolve.PolicyKey], resolve.MarkerPartialOf: "default/default/dropped"}),
+		listed("default", "default", "dropped-bk-1", map[string]string{backupmeta.PolicyKey: pol[backupmeta.PolicyKey], backupmeta.MarkerCopyOf: "default/default/dropped"}),
+		listed("default", "default", "dropped-bk-2", map[string]string{backupmeta.PolicyKey: pol[backupmeta.PolicyKey], backupmeta.MarkerPartialOf: "default/default/dropped"}),
 	}}
 	got, err := Undeclared(s, stack)
 	if err != nil {
@@ -202,9 +203,9 @@ func TestUndeclaredFindsVolumesStillCopiedThatTheStackNoLongerDeclares(t *testin
 func TestANamedStackFindsItsOwnVolumesExactlyAndLeavesOthersAlone(t *testing.T) {
 	policy := policyFor(t, "nas")
 	with := func(owner string) map[string]string {
-		c := map[string]string{resolve.PolicyKey: policy}
+		c := map[string]string{backupmeta.PolicyKey: policy}
 		if owner != "" {
-			c[resolve.StackKey] = owner
+			c[backupmeta.StackKey] = owner
 		}
 		return c
 	}
@@ -232,7 +233,7 @@ func TestANamedStackFindsItsOwnVolumesExactlyAndLeavesOthersAlone(t *testing.T) 
 }
 
 func TestUndeclaredRejectsTwoStackNamesAndSaysNothingForAnUnnamedStackWithNoVolumes(t *testing.T) {
-	pol := map[string]string{resolve.PolicyKey: policyFor(t, "nas")}
+	pol := map[string]string{backupmeta.PolicyKey: policyFor(t, "nas")}
 	s := &stub{listed: []volbackup.ListedVolume{listed("default", "default", "x", pol)}}
 	if got, err := Undeclared(s, []resolve.Resource{target("t", "")}); err != nil || got != nil {
 		t.Errorf("an unnamed stack that declares no volume has no scope to speak for: %v %v", got, err)

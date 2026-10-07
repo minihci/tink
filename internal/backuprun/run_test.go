@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/minihci/tink/internal/backupmeta"
 	"github.com/minihci/tink/internal/resolve"
 	"github.com/minihci/tink/internal/volbackup"
 )
@@ -151,9 +152,9 @@ func TestDueSkipsWhatIsNotDueAndSaysWhy(t *testing.T) {
 	recent := mid.Add(-10 * time.Minute).UTC().Format(time.RFC3339)
 	stale := mid.Add(-3 * time.Hour).UTC().Format(time.RFC3339)
 	s := &stub{live: map[string]map[string]string{
-		"fresh":   {resolve.CopyStampAt("t"): recent},
-		"overdue": {resolve.CopyStampAt("t"): stale},
-		"failing": {resolve.CopyStampAt("t"): stale, resolve.CopyFailAt("t"): mid.Add(-time.Minute).UTC().Format(time.RFC3339), resolve.CopyFailCount("t"): "2"},
+		"fresh":   {backupmeta.CopyStampAt("t"): recent},
+		"overdue": {backupmeta.CopyStampAt("t"): stale},
+		"failing": {backupmeta.CopyStampAt("t"): stale, backupmeta.CopyFailAt("t"): mid.Add(-time.Minute).UTC().Format(time.RFC3339), backupmeta.CopyFailCount("t"): "2"},
 		"never":   {},
 	}}
 	rep, out, err := run(t, s, []resolve.Resource{vol("fresh", "t"), vol("overdue", "t"), vol("failing", "t"), vol("never", "t"), target("t", "")},
@@ -268,9 +269,9 @@ func TestDueListsWhatARunWouldDoAndChangesNothing(t *testing.T) {
 	stale := mid.Add(-3 * time.Hour).UTC().Format(time.RFC3339)
 	recent := mid.Add(-10 * time.Minute).UTC().Format(time.RFC3339)
 	s := &stub{live: map[string]map[string]string{
-		"overdue": {resolve.CopyStampAt("t"): stale},
-		"fresh":   {resolve.CopyStampAt("t"): recent},
-		"failing": {resolve.CopyStampAt("t"): stale, resolve.CopyFailAt("t"): mid.Add(-time.Minute).UTC().Format(time.RFC3339), resolve.CopyFailCount("t"): "2"},
+		"overdue": {backupmeta.CopyStampAt("t"): stale},
+		"fresh":   {backupmeta.CopyStampAt("t"): recent},
+		"failing": {backupmeta.CopyStampAt("t"): stale, backupmeta.CopyFailAt("t"): mid.Add(-time.Minute).UTC().Format(time.RFC3339), backupmeta.CopyFailCount("t"): "2"},
 		"never":   {},
 	}, liveErr: map[string]error{"gone": errors.New("volume not found")}}
 	rs := []resolve.Resource{vol("overdue", "t"), vol("fresh", "t"), vol("failing", "t"), vol("never", "t"), vol("gone", "t"), target("t", "")}
@@ -295,8 +296,8 @@ func TestAssessReportsWhatIsDueWhatIsFailingAndWhatCouldNotBeDecided(t *testing.
 	stale := mid.Add(-3 * time.Hour).UTC().Format(time.RFC3339)
 	failedAt := mid.Add(-time.Minute).UTC().Format(time.RFC3339)
 	s := &stub{live: map[string]map[string]string{
-		"fresh":   {resolve.CopyStampAt("t"): mid.Add(-10 * time.Minute).UTC().Format(time.RFC3339)},
-		"failing": {resolve.CopyStampAt("t"): stale, resolve.CopyFailAt("t"): failedAt, resolve.CopyFailCount("t"): "3"},
+		"fresh":   {backupmeta.CopyStampAt("t"): mid.Add(-10 * time.Minute).UTC().Format(time.RFC3339)},
+		"failing": {backupmeta.CopyStampAt("t"): stale, backupmeta.CopyFailAt("t"): failedAt, backupmeta.CopyFailCount("t"): "3"},
 		"never":   {},
 	}, liveErr: map[string]error{"gone": errors.New("volume not found")}}
 	items, err := FromStack([]resolve.Resource{vol("fresh", "t"), vol("failing", "t"), vol("never", "t"), vol("gone", "t"), target("t", "")})
@@ -322,8 +323,8 @@ func TestAssessReportsWhatIsDueWhatIsFailingAndWhatCouldNotBeDecided(t *testing.
 func TestAFailureThatALaterSuccessSupersededIsNotFailing(t *testing.T) {
 	// the stamp of the last success is newer than the last failure: the copy is healthy again
 	s := &stub{live: map[string]map[string]string{"v": {
-		resolve.CopyFailAt("t"): now.Add(-2 * time.Hour).UTC().Format(time.RFC3339), resolve.CopyFailCount("t"): "2",
-		resolve.CopyStampAt("t"): now.Add(-time.Hour).UTC().Format(time.RFC3339)}}}
+		backupmeta.CopyFailAt("t"): now.Add(-2 * time.Hour).UTC().Format(time.RFC3339), backupmeta.CopyFailCount("t"): "2",
+		backupmeta.CopyStampAt("t"): now.Add(-time.Hour).UTC().Format(time.RFC3339)}}}
 	items, _ := FromStack([]resolve.Resource{vol("v", "t"), target("t", "")})
 	if a := Assess(s, items, now); len(a.Failing) != 0 {
 		t.Errorf("%+v", a.Failing)

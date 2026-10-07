@@ -3,6 +3,8 @@ package resolve
 import (
 	"strings"
 	"testing"
+
+	"github.com/minihci/tink/internal/backupmeta"
 )
 
 func policyText(t *testing.T, r Resource) string {
@@ -121,7 +123,7 @@ func TestNoChangeIsNoLines(t *testing.T) {
 func TestAPlanOfAVolumeDoesNotShowTheRawPolicy(t *testing.T) {
 	p := planVolume(t, nil, volumeEnv{})
 	joined := strings.Join(p.Changes, "\n")
-	if strings.Contains(joined, PolicyKey) || strings.Contains(joined, `\"`) {
+	if strings.Contains(joined, backupmeta.PolicyKey) || strings.Contains(joined, `\"`) {
 		t.Errorf("the key and its escaped JSON are not for a reader:\n%s", joined)
 	}
 	if !strings.Contains(joined, "backup policy: + copy to nas") {

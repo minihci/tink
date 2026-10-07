@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/lxc/incus/v7/shared/api"
+
+	"github.com/minihci/tink/internal/backupmeta"
 )
 
 func target(name, location, remote, pool string) Resource {
@@ -227,7 +229,7 @@ func TestBackupWarningsSaysSoWhenATargetIsUnknown(t *testing.T) {
 func TestVerifyWarning(t *testing.T) {
 	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
 	stampAt := func(age time.Duration) map[string]string {
-		return map[string]string{StampVerifiedAt: now.Add(-age).Format(time.RFC3339)}
+		return map[string]string{backupmeta.StampVerifiedAt: now.Add(-age).Format(time.RFC3339)}
 	}
 	vol := func(cadence string) Resource {
 		return Resource{Kind: KindStorageVolume, Name: "lib", Backup: &VolumeBackup{
@@ -244,7 +246,7 @@ func TestVerifyWarning(t *testing.T) {
 		{"stale by days", vol("weekly"), stampAt(12 * 24 * time.Hour), "last verified 12d ago, older than the declared verify: weekly"},
 		{"stale by hours (daily cadence)", vol("daily"), stampAt(30 * time.Hour), "last verified 30h ago"},
 		{"monthly allows 31 days", vol("monthly"), stampAt(30 * 24 * time.Hour), ""},
-		{"a stamp tink did not write is replaced, not trusted", vol("weekly"), map[string]string{StampVerifiedAt: "last tuesday"}, "not a timestamp tink wrote"},
+		{"a stamp tink did not write is replaced, not trusted", vol("weekly"), map[string]string{backupmeta.StampVerifiedAt: "last tuesday"}, "not a timestamp tink wrote"},
 		{"no cadence declared: no nagging", vol(""), nil, ""},
 		{"fresh restore-only stamp does not satisfy a declared check",
 			func() Resource {
@@ -252,7 +254,7 @@ func TestVerifyWarning(t *testing.T) {
 				r.Backup.VerifyCheck = &VerifyCheck{Image: "i", Command: []string{"true"}}
 				return r
 			}(),
-			map[string]string{StampVerifiedAt: now.Add(-time.Hour).Format(time.RFC3339), StampVerifiedWith: "restore"},
+			map[string]string{backupmeta.StampVerifiedAt: now.Add(-time.Hour).Format(time.RFC3339), backupmeta.StampVerifiedWith: "restore"},
 			"only proved the snapshot restores"},
 		{"fresh check stamp satisfies a declared check",
 			func() Resource {
@@ -260,10 +262,10 @@ func TestVerifyWarning(t *testing.T) {
 				r.Backup.VerifyCheck = &VerifyCheck{Image: "i", Command: []string{"true"}}
 				return r
 			}(),
-			map[string]string{StampVerifiedAt: now.Add(-time.Hour).Format(time.RFC3339), StampVerifiedWith: "check"},
+			map[string]string{backupmeta.StampVerifiedAt: now.Add(-time.Hour).Format(time.RFC3339), backupmeta.StampVerifiedWith: "check"},
 			""},
 		{"restore-only is fine when no check is declared", vol("weekly"),
-			map[string]string{StampVerifiedAt: now.Add(-time.Hour).Format(time.RFC3339), StampVerifiedWith: "restore"}, ""},
+			map[string]string{backupmeta.StampVerifiedAt: now.Add(-time.Hour).Format(time.RFC3339), backupmeta.StampVerifiedWith: "restore"}, ""},
 		{"opt-out: nothing to verify", Resource{Kind: KindStorageVolume, Name: "lib", Backup: &VolumeBackup{None: "x"}}, nil, ""},
 		{"no backup block", Resource{Kind: KindStorageVolume, Name: "lib"}, nil, ""},
 	}

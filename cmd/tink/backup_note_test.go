@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minihci/tink/internal/backupmeta"
 	"github.com/minihci/tink/internal/resolve"
 	"github.com/minihci/tink/internal/volbackup"
 )
@@ -20,9 +21,9 @@ func (e listEngine) Copy(volbackup.Volume, volbackup.Target, volbackup.CopyOptio
 }
 
 func policied(project, pool, name, owner string) volbackup.ListedVolume {
-	cfg := map[string]string{resolve.PolicyKey: `{"proto":1}`}
+	cfg := map[string]string{backupmeta.PolicyKey: `{"proto":1}`}
 	if owner != "" {
-		cfg[resolve.StackKey] = owner
+		cfg[backupmeta.StackKey] = owner
 	}
 	return volbackup.ListedVolume{Volume: volbackup.Volume{Project: project, Pool: pool, Name: name}, Config: cfg}
 }

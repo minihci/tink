@@ -3,6 +3,8 @@ package resolve
 import (
 	"strings"
 	"testing"
+
+	"github.com/minihci/tink/internal/backupmeta"
 )
 
 // A copy to an Incus remote is made through the remote of that name in the helper's own client configuration. One the helper does not have
@@ -66,7 +68,7 @@ func TestThePlanOfAVolumeCarriesTheWarningEvenWhenNothingChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := &volumeServer{vol: map[string]string{PolicyKey: want}}
+	srv := &volumeServer{vol: map[string]string{backupmeta.PolicyKey: want}}
 	p, err := planStorageVolume(srv, volumeCopyingToVPS(), volumeEnv{targets: targets, helperLabel: "tink-helper/helper", helperRemotes: map[string]bool{"host": true}})
 	if err != nil {
 		t.Fatal(err)

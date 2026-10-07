@@ -15,6 +15,7 @@ import (
 
 	incus "github.com/lxc/incus/v7/client"
 
+	"github.com/minihci/tink/internal/backupmeta"
 	"github.com/minihci/tink/internal/resolve"
 	"github.com/minihci/tink/internal/volbackup"
 )
@@ -175,14 +176,14 @@ func Discover(eng Engine) (items []Item, problems map[string]error, err error) {
 		problems["pool "+pool] = perr
 	}
 	for _, lv := range vols {
-		text, has := lv.Config[resolve.PolicyKey]
+		text, has := lv.Config[backupmeta.PolicyKey]
 		if !has {
 			continue
 		}
-		if _, isPoint := lv.Config[resolve.MarkerCopyOf]; isPoint {
+		if _, isPoint := lv.Config[backupmeta.MarkerCopyOf]; isPoint {
 			continue
 		}
-		if _, isPartial := lv.Config[resolve.MarkerPartialOf]; isPartial {
+		if _, isPartial := lv.Config[backupmeta.MarkerPartialOf]; isPartial {
 			continue
 		}
 		label := Label(lv.Volume)
@@ -251,19 +252,19 @@ func Undeclared(eng Engine, resources []resolve.Resource) ([]Orphan, error) {
 	}
 	var out []Orphan
 	for _, lv := range vols {
-		if _, has := lv.Config[resolve.PolicyKey]; !has {
+		if _, has := lv.Config[backupmeta.PolicyKey]; !has {
 			continue
 		}
-		if _, isPoint := lv.Config[resolve.MarkerCopyOf]; isPoint {
+		if _, isPoint := lv.Config[backupmeta.MarkerCopyOf]; isPoint {
 			continue
 		}
-		if _, isPartial := lv.Config[resolve.MarkerPartialOf]; isPartial {
+		if _, isPartial := lv.Config[backupmeta.MarkerPartialOf]; isPartial {
 			continue
 		}
 		if declared[placeOf(lv.Volume)+"/"+lv.Volume.Name] {
 			continue
 		}
-		switch owner := lv.Config[resolve.StackKey]; {
+		switch owner := lv.Config[backupmeta.StackKey]; {
 		case owner != "" && owner == stack:
 			out = append(out, Orphan{Volume: lv.Volume, Owned: true})
 		case owner != "":
@@ -457,7 +458,7 @@ func Assess(eng Engine, items []Item, now time.Time) Assessment {
 			continue
 		}
 		for _, c := range it.Copies {
-			if f, ok := resolve.FailureOf(live, c.Target.Name); ok {
+			if f, ok := backupmeta.FailureOf(live, c.Target.Name); ok {
 				a.Failing = append(a.Failing, FailingCopy{Volume: it.Label, Target: c.Target.Name, Count: f.N, Since: f.At})
 			}
 			d, derr := resolve.CopyDue(c.Schedule, live, c.Target.Name, now)

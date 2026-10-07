@@ -27,6 +27,7 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
 
+	"github.com/minihci/tink/internal/backupmeta"
 	"github.com/minihci/tink/internal/incusapi"
 	"github.com/minihci/tink/internal/resolve"
 	"github.com/minihci/tink/internal/run"
@@ -267,10 +268,10 @@ func stamp(s incus.InstanceServer, v Volume, snap, with, from string, at time.Ti
 	if put.Config == nil {
 		put.Config = map[string]string{}
 	}
-	put.Config[resolve.StampVerifiedAt] = at.UTC().Format(time.RFC3339)
-	put.Config[resolve.StampVerifiedSnapshot] = snap
-	put.Config[resolve.StampVerifiedWith] = with
-	put.Config[resolve.StampVerifiedFrom] = from
+	put.Config[backupmeta.StampVerifiedAt] = at.UTC().Format(time.RFC3339)
+	put.Config[backupmeta.StampVerifiedSnapshot] = snap
+	put.Config[backupmeta.StampVerifiedWith] = with
+	put.Config[backupmeta.StampVerifiedFrom] = from
 	if err := s.UpdateStoragePoolVolume(v.pool(), "custom", v.Name, put, etag); err != nil {
 		return fmt.Errorf("recording the verification on %s/%s: %w", v.pool(), v.Name, err)
 	}

@@ -11,6 +11,7 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
 
+	"github.com/minihci/tink/internal/backupmeta"
 	"github.com/minihci/tink/internal/resolve"
 )
 
@@ -146,13 +147,13 @@ func copyTo(server incus.InstanceServer, v Volume, t Target, opts CopyOptions) (
 	if exists {
 		return res, fmt.Errorf("%s/%s already exists (a second run in the same second?)", t.where(), res.Volume)
 	}
-	copyOf := resolve.CopyOf(v.Project, v.pool(), v.Name)
+	copyOf := backupmeta.CopyOf(v.Project, v.pool(), v.Name)
 
 	if opts.DryRun {
 		res.Planned = []string{
 			fmt.Sprintf("snapshot %s/%s@%s", v.pool(), v.Name, res.Snapshot),
 			fmt.Sprintf("copy it to %s/%s", t.where(), res.Volume),
-			fmt.Sprintf("remove the temporary snapshot, and stamp %s", resolve.CopyStampAt(t.Name)),
+			fmt.Sprintf("remove the temporary snapshot, and stamp %s", backupmeta.CopyStampAt(t.Name)),
 		}
 		if opts.Retain != "" {
 			pruned, others, perr := prune(dst, v, t, opts.Retain, start, "", true, me)
@@ -201,17 +202,17 @@ func copyTo(server incus.InstanceServer, v Volume, t Target, opts CopyOptions) (
 	// disk, tink killed) is never listed as a restore point, so it can never be restored from, verified, or counted
 	// as the newest backup, and yet tink can recognise it later and remove it (sweepPartials).
 	inProgress := map[string]string{
-		resolve.MarkerPartialOf:  copyOf,
-		resolve.MarkerPartialAt:  start.UTC().Format(time.RFC3339),
-		resolve.MarkerCopyTarget: t.Name,
-		resolve.MarkerCopyServer: me,
+		backupmeta.MarkerPartialOf:  copyOf,
+		backupmeta.MarkerPartialAt:  start.UTC().Format(time.RFC3339),
+		backupmeta.MarkerCopyTarget: t.Name,
+		backupmeta.MarkerCopyServer: me,
 	}
 	markers := map[string]string{
-		resolve.MarkerCopyOf:     copyOf,
-		resolve.MarkerCopyAt:     start.UTC().Format(time.RFC3339),
-		resolve.MarkerCopyTarget: t.Name,
-		resolve.MarkerCopySnap:   res.Snapshot,
-		resolve.MarkerCopyServer: me,
+		backupmeta.MarkerCopyOf:     copyOf,
+		backupmeta.MarkerCopyAt:     start.UTC().Format(time.RFC3339),
+		backupmeta.MarkerCopyTarget: t.Name,
+		backupmeta.MarkerCopySnap:   res.Snapshot,
+		backupmeta.MarkerCopyServer: me,
 	}
 	from := api.StorageVolume{Name: v.Name + "/" + res.Snapshot, Type: "custom", ContentType: src.ContentType,
 		StorageVolumePut: api.StorageVolumePut{Config: inProgress}}
@@ -233,7 +234,7 @@ func copyTo(server incus.InstanceServer, v Volume, t Target, opts CopyOptions) (
 	}
 	// PolicyKey describes the volume this was copied FROM; a restore point must not carry it, or a scheduler that lists
 	// volumes would copy the copy.
-	if err := ensureMarkers(dst, t.pool(), res.Volume, markers, []string{resolve.MarkerPartialOf, resolve.MarkerPartialAt, resolve.PolicyKey}); err != nil {
+	if err := ensureMarkers(dst, t.pool(), res.Volume, markers, []string{backupmeta.MarkerPartialOf, backupmeta.MarkerPartialAt, backupmeta.PolicyKey}); err != nil {
 		return res, err
 	}
 
@@ -293,11 +294,11 @@ func stampCopy(s incus.InstanceServer, v Volume, target, restorePoint string, at
 	if put.Config == nil {
 		put.Config = map[string]string{}
 	}
-	put.Config[resolve.CopyStampAt(target)] = at.UTC().Format(time.RFC3339)
-	put.Config[resolve.CopyStampVolume(target)] = restorePoint
+	put.Config[backupmeta.CopyStampAt(target)] = at.UTC().Format(time.RFC3339)
+	put.Config[backupmeta.CopyStampVolume(target)] = restorePoint
 	// a success ends any run of failures
-	delete(put.Config, resolve.CopyFailAt(target))
-	delete(put.Config, resolve.CopyFailCount(target))
+	delete(put.Config, backupmeta.CopyFailAt(target))
+	delete(put.Config, backupmeta.CopyFailCount(target))
 	if err := s.UpdateStoragePoolVolume(v.pool(), "custom", v.Name, put, etag); err != nil {
 		return fmt.Errorf("recording the copy on %s/%s: %w", v.pool(), v.Name, err)
 	}
@@ -313,15 +314,15 @@ func recordFailure(server incus.InstanceServer, v Volume, target string, at time
 		return fmt.Errorf("reading %s/%s: %w", v.pool(), v.Name, err)
 	}
 	n := 1
-	if prior, failing := resolve.FailureOf(vol.Config, target); failing {
+	if prior, failing := backupmeta.FailureOf(vol.Config, target); failing {
 		n = prior.N + 1
 	}
 	put := vol.Writable()
 	if put.Config == nil {
 		put.Config = map[string]string{}
 	}
-	put.Config[resolve.CopyFailAt(target)] = at.UTC().Format(time.RFC3339)
-	put.Config[resolve.CopyFailCount(target)] = fmt.Sprintf("%d", n)
+	put.Config[backupmeta.CopyFailAt(target)] = at.UTC().Format(time.RFC3339)
+	put.Config[backupmeta.CopyFailCount(target)] = fmt.Sprintf("%d", n)
 	if err := s.UpdateStoragePoolVolume(v.pool(), "custom", v.Name, put, etag); err != nil {
 		return fmt.Errorf("recording the failure on %s/%s: %w", v.pool(), v.Name, err)
 	}
@@ -353,20 +354,20 @@ func listPoints(dst incus.InstanceServer, v Volume, t Target) ([]RestorePoint, e
 	if err != nil {
 		return nil, fmt.Errorf("listing volumes in pool %q: %w", t.where(), err)
 	}
-	return restorePointsOf(vols, resolve.CopyOf(v.Project, v.pool(), v.Name)), nil
+	return restorePointsOf(vols, backupmeta.CopyOf(v.Project, v.pool(), v.Name)), nil
 }
 
 func restorePointsOf(vols []api.StorageVolume, copyOf string) []RestorePoint {
 	var out []RestorePoint
 	for _, vol := range vols {
-		if vol.Type != "custom" || vol.Config[resolve.MarkerCopyOf] != copyOf {
+		if vol.Type != "custom" || vol.Config[backupmeta.MarkerCopyOf] != copyOf {
 			continue
 		}
-		at, err := time.Parse(time.RFC3339, vol.Config[resolve.MarkerCopyAt])
+		at, err := time.Parse(time.RFC3339, vol.Config[backupmeta.MarkerCopyAt])
 		if err != nil {
 			continue // a marker we cannot read: leave the volume alone rather than guess its age
 		}
-		out = append(out, RestorePoint{Volume: vol.Name, At: at, Snapshot: vol.Config[resolve.MarkerCopySnap], Server: vol.Config[resolve.MarkerCopyServer]})
+		out = append(out, RestorePoint{Volume: vol.Name, At: at, Snapshot: vol.Config[backupmeta.MarkerCopySnap], Server: vol.Config[backupmeta.MarkerCopyServer]})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].At.After(out[j].At) })
 	return out
@@ -468,7 +469,7 @@ func copyFromTarget(s incus.InstanceServer, v Volume, t Target, rp RestorePoint,
 // scrubMarkers removes the copy markers, and the copy policy, from a volume made from a restore point.
 func scrubMarkers(s incus.InstanceServer, pool, name string) error {
 	return scrubConfig(s, pool, name, func(k string) bool {
-		return strings.HasPrefix(k, "user.tink.backup.copy-") || k == resolve.PolicyKey
+		return strings.HasPrefix(k, "user.tink.backup.copy-") || k == backupmeta.PolicyKey
 	})
 }
 
@@ -476,7 +477,7 @@ func scrubMarkers(s incus.InstanceServer, pool, name string) error {
 // policy says what is to happen to the volume it was written on, and a copy that inherited it would be scheduled for
 // backup in its turn.
 func scrubPolicy(s incus.InstanceServer, pool, name string) error {
-	return scrubConfig(s, pool, name, func(k string) bool { return k == resolve.PolicyKey })
+	return scrubConfig(s, pool, name, func(k string) bool { return k == backupmeta.PolicyKey })
 }
 
 func scrubConfig(s incus.InstanceServer, pool, name string, drop func(string) bool) error {
@@ -526,19 +527,19 @@ func sweepPartials(dst incus.InstanceServer, v Volume, t Target, now time.Time, 
 	if err != nil {
 		return nil, fmt.Errorf("listing volumes in pool %q: %w", t.where(), err)
 	}
-	copyOf := resolve.CopyOf(v.Project, v.pool(), v.Name)
+	copyOf := backupmeta.CopyOf(v.Project, v.pool(), v.Name)
 	var victims []string
 	for _, vol := range vols {
-		if vol.Type != "custom" || vol.Name == keep || vol.Config[resolve.MarkerPartialOf] != copyOf {
+		if vol.Type != "custom" || vol.Name == keep || vol.Config[backupmeta.MarkerPartialOf] != copyOf {
 			continue
 		}
-		if _, isRestorePoint := vol.Config[resolve.MarkerCopyOf]; isRestorePoint {
+		if _, isRestorePoint := vol.Config[backupmeta.MarkerCopyOf]; isRestorePoint {
 			continue
 		}
-		if srv := vol.Config[resolve.MarkerCopyServer]; srv != "" && srv != me {
+		if srv := vol.Config[backupmeta.MarkerCopyServer]; srv != "" && srv != me {
 			continue
 		}
-		started, err := time.Parse(time.RFC3339, vol.Config[resolve.MarkerPartialAt])
+		started, err := time.Parse(time.RFC3339, vol.Config[backupmeta.MarkerPartialAt])
 		if err != nil || now.Sub(started) < PartialGrace {
 			continue
 		}
