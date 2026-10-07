@@ -243,7 +243,7 @@ no credentials of its own. A remote's data is relayed through tink, so the remot
 reachable from the machine running it (an SSH tunnel is enough).
 
 --due runs only the copies whose schedule has come round since their last success, so cron or a
-timer can call "tink backup run --due" every few minutes, or "tink daemon run --stacks DIR --jobs DIR" will (see docs/daemon-jobs.md).
+timer can call "tink backup run --due" every few minutes, or "tink daemon run --jobs DIR" will, from the copy policies "tink plan apply" puts on the volumes (see docs/daemon-jobs.md).
 --dry-run says what would happen and changes nothing.
 
 Restore from a restore point with: tink backup restore VOLUME --from TARGET`,
@@ -252,14 +252,15 @@ Restore from a restore point with: tink backup restore VOLUME --from TARGET`,
 			if err != nil {
 				return err
 			}
-			if err := backuprun.Check(resources); err != nil {
+			items, err := backuprun.FromStack(resources)
+			if err != nil {
 				return err
 			}
 			server, err := incusapi.Connect(f.socket)
 			if err != nil {
 				return fmt.Errorf("connecting to incus: %w", err)
 			}
-			rep, err := backuprun.Run(cmd.Context(), backuprun.ServerEngine{Server: server}, resources,
+			rep, err := backuprun.Run(cmd.Context(), backuprun.ServerEngine{Server: server}, items,
 				backuprun.Options{Volumes: args, Due: due, DryRun: dryRun, Remote: incusapi.Remote()}, cmd.OutOrStdout())
 			if err != nil {
 				return err

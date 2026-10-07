@@ -504,14 +504,14 @@ func newDaemonCmd() *cobra.Command {
 
 	daemonCmd.AddCommand(newDaemonRunCmd())
 	daemonCmd.AddCommand(newDaemonInstallCmd())
-	daemonCmd.AddCommand(newDaemonSyncCmd(), newDaemonEnqueueCmd(), newDaemonJobsCmd(), newDaemonCancelCmd())
+	daemonCmd.AddCommand(newDaemonEnqueueCmd(), newDaemonJobsCmd(), newDaemonCancelCmd())
 	return daemonCmd
 }
 
 func newDaemonRunCmd() *cobra.Command {
 	opts := ingress.DefaultOptions()
 	var interval, schedulerInterval time.Duration
-	var stacksDir, jobsDir, timezone string
+	var jobsDir, timezone string
 	var noIngress bool
 
 	cmd := &cobra.Command{
@@ -521,13 +521,13 @@ func newDaemonRunCmd() *cobra.Command {
 --interval, until it receives SIGTERM or SIGINT -- the mode an init
 system's unit file (see "tink daemon install") actually invokes.
 
-With --stacks and --jobs it also runs the helper's work: a scheduler that, every
---scheduler-interval, looks at each stack synced to --stacks and queues a backup job in
---jobs when one of its copies is due (and none is already queued or running for that
-stack), and an executor that runs the queued jobs one at a time, oldest first. Schedules
+With --jobs it also runs the helper's work: a scheduler that, every --scheduler-interval,
+lists the volumes that carry a copy policy (written by "tink plan apply" from the stack's
+backup: block) and queues a backup job in --jobs when one of their copies is due (and none
+is already queued or running), and an executor that runs the queued jobs one at a time,
+oldest first. There is no stack to keep in step: the volumes say what to copy. Schedules
 are evaluated in --timezone (default: this machine's). A failing copy backs off instead of
-being retried every tick. Put a stack there with "tink daemon sync"; look at the work with
-"tink daemon jobs".
+being retried every tick. Look at the work with "tink daemon jobs".
 
 Each worker is isolated: one that crashes is logged and restarted, and does not stop the
 others. --no-ingress runs only the helper's work, beside an ingress daemon that already exists.`,
@@ -536,10 +536,7 @@ others. --no-ingress runs only the helper's work, beside an ingress daemon that 
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 			ro := daemon.RunOptions{Interval: interval, IngressOptions: opts, NoIngress: noIngress}
-			if stacksDir != "" || jobsDir != "" {
-				if stacksDir == "" || jobsDir == "" {
-					return fmt.Errorf("--stacks and --jobs go together: the scheduler reads stacks from one and queues work in the other")
-				}
+			if jobsDir != "" {
 				zone := time.Local
 				if timezone != "" {
 					var err error
@@ -549,8 +546,7 @@ others. --no-ingress runs only the helper's work, beside an ingress daemon that 
 				}
 				socket := opts.Socket
 				ro.Helper = &daemon.Helper{
-					Stacks: jobs.Stacks{Dir: stacksDir},
-					Store:  jobs.Store{Dir: jobsDir},
+					Store: jobs.Store{Dir: jobsDir},
 					Connect: func() (backuprun.Engine, error) {
 						server, err := incusapi.Connect(socket)
 						if err != nil {
@@ -564,7 +560,7 @@ others. --no-ingress runs only the helper's work, beside an ingress daemon that 
 					Redactor:          redactor,
 				}
 			} else if noIngress {
-				return fmt.Errorf("--no-ingress leaves nothing to run without --stacks and --jobs")
+				return fmt.Errorf("--no-ingress leaves nothing to run without --jobs")
 			}
 			return daemon.Run(ctx, cmd.OutOrStdout(), ro)
 		},
@@ -574,11 +570,10 @@ others. --no-ingress runs only the helper's work, beside an ingress daemon that 
 	cmd.Flags().StringVar(&opts.RoutesDir, "routes-dir", opts.RoutesDir, "generated ingress routes directory")
 	cmd.Flags().StringVar(&opts.IngressInstance, "ingress-instance", opts.IngressInstance, "name of the ingress instance to reload")
 	cmd.Flags().DurationVar(&interval, "interval", time.Minute, "how often to reconcile ingress")
-	cmd.Flags().StringVar(&stacksDir, "stacks", "", "directory of stacks synced for the backup scheduler (with --jobs)")
-	cmd.Flags().StringVar(&jobsDir, "jobs", "", "directory the scheduler queues jobs in and the executor runs them from (with --stacks)")
+	cmd.Flags().StringVar(&jobsDir, "jobs", "", "directory the backup scheduler queues jobs in and the executor runs them from; giving it turns the backup scheduler on")
 	cmd.Flags().StringVar(&timezone, "timezone", "", "time zone schedules are evaluated in, e.g. America/Denver (default: this machine's)")
 	cmd.Flags().DurationVar(&schedulerInterval, "scheduler-interval", time.Minute, "how often the scheduler looks for due copies")
-	cmd.Flags().BoolVar(&noIngress, "no-ingress", false, "do not run the ingress reconcile loop (only the --stacks/--jobs work)")
+	cmd.Flags().BoolVar(&noIngress, "no-ingress", false, "do not run the ingress reconcile loop (only the --jobs work)")
 	return cmd
 }
 

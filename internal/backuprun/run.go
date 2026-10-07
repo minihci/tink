@@ -1,6 +1,7 @@
-// Package backuprun performs `tink backup run`: for the volumes of a stack that declare copies, decide which copies
-// to make, make them, and report what happened. The CLI and the helper's job executor both call it, so a copy made
-// from either behaves identically.
+// Package backuprun performs `tink backup run`: for the volumes that declare copies, decide which copies to make,
+// make them, and report what happened. The volumes come from a stack file (the CLI, or a job that carries one) or from
+// the copy policies the volumes themselves carry (the helper's scheduler and its jobs); the work is the same either
+// way, so a copy made from any of them behaves identically.
 package backuprun
 
 import (
@@ -8,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"time"
 
@@ -17,10 +19,12 @@ import (
 	"github.com/minihci/tink/internal/volbackup"
 )
 
-// Engine is what Run needs from Incus: a volume's live configuration (where the stamps are) and a copy. A seam, so
-// the decisions here are tested without a server.
+// Engine is what Run needs from Incus: a volume's live configuration (where the stamps are), a copy, and a listing of
+// the volumes (where the policies are). A seam, so the decisions here are tested without a server.
 type Engine interface {
 	LiveConfig(v volbackup.Volume) (map[string]string, error)
+	// Volumes lists every custom volume with its config; a pool that could not be listed is in the map, by name.
+	Volumes() ([]volbackup.ListedVolume, map[string]error, error)
 	Copy(v volbackup.Volume, t volbackup.Target, opts volbackup.CopyOptions) (volbackup.CopyResult, error)
 }
 
@@ -31,13 +35,17 @@ func (e ServerEngine) LiveConfig(v volbackup.Volume) (map[string]string, error) 
 	return volbackup.LiveConfig(e.Server, v)
 }
 
+func (e ServerEngine) Volumes() ([]volbackup.ListedVolume, map[string]error, error) {
+	return volbackup.ListVolumes(e.Server)
+}
+
 func (e ServerEngine) Copy(v volbackup.Volume, t volbackup.Target, opts volbackup.CopyOptions) (volbackup.CopyResult, error) {
 	return volbackup.Copy(e.Server, v, t, opts)
 }
 
 // Options say what to run.
 type Options struct {
-	// Volumes limits the run to these volumes; empty means every volume that declares copies.
+	// Volumes limits the run to these volumes (by name, or project/name); empty means every volume that declares copies.
 	Volumes []string
 	// Due runs only the copies whose schedule has come round since their last success, and that are not backing off
 	// after failures.
@@ -47,7 +55,15 @@ type Options struct {
 	// Remote is the Incus remote tink is pointed at, if any: a copy to ANOTHER server is relayed through the
 	// machine running tink, which from a remote context may not be near the data, and Run says so.
 	Remote string
+	// UnknownMsg and EmptyMsg say what a name that is not a volume with copies, and a run with nothing to do, mean in the
+	// place the volumes came from. The defaults are for a stack.
+	UnknownMsg, EmptyMsg string
 }
+
+const (
+	stackUnknownMsg = "not a storage-volume with copies in the stack"
+	stackEmptyMsg   = "nothing to do: no volume in the stack declares copies"
+)
 
 // Outcome is what happened to one copy.
 type Outcome string
@@ -90,6 +106,21 @@ func (r Report) Err() error {
 	return nil
 }
 
+// Item is one volume with copies to make: where it is, what to call it in messages, and what it is copied to.
+type Item struct {
+	Volume volbackup.Volume
+	// Label names the volume in output and reports: its name, or project/name when it is not in the default project.
+	Label  string
+	Copies []Copy
+}
+
+// Copy is one copy of an Item: where to, how often, and how long restore points are kept there.
+type Copy struct {
+	Target   volbackup.Target
+	Schedule string
+	Retain   string
+}
+
 // Check says whether a stack can be run at all: it is not empty and its references (a copy's target) resolve. Callers
 // run it before connecting to anything, so a bad stack is reported as a bad stack.
 func Check(resources []resolve.Resource) error {
@@ -102,24 +133,103 @@ func Check(resources []resolve.Resource) error {
 	return nil
 }
 
-// Select picks the volumes a run acts on: every storage volume that declares copies, or with names, only those.
-// Names that are not such a volume come back in unknown, once each, in the order given, so asking for a volume
-// that cannot be backed up is an error and not silently nothing.
-func Select(resources []resolve.Resource, names []string) (selected []resolve.Resource, unknown []string) {
+// FromStack is the volumes of a stack that declare copies, in stack order, after Check.
+func FromStack(resources []resolve.Resource) ([]Item, error) {
+	if err := Check(resources); err != nil {
+		return nil, err
+	}
+	targets := map[string]resolve.Resource{}
+	for _, r := range resources {
+		if r.Kind == resolve.KindBackupTarget {
+			targets[r.Name] = r
+		}
+	}
+	var items []Item
+	for _, r := range resources {
+		if r.Kind != resolve.KindStorageVolume || r.Backup == nil || len(r.Backup.Copies) == 0 {
+			continue
+		}
+		it := Item{Volume: volbackup.Volume{Project: r.Project, Pool: r.Pool, Name: r.Name}, Label: r.Name}
+		for _, c := range r.Backup.Copies {
+			it.Copies = append(it.Copies, Copy{Target: volbackup.TargetFrom(targets[c.Target]), Schedule: c.Schedule, Retain: c.Retain})
+		}
+		items = append(items, it)
+	}
+	return items, nil
+}
+
+// Discover is the volumes that carry a copy policy, found by listing the server: what the helper's scheduler and its
+// jobs work from, so there is no stack to keep in step with the volumes.
+//
+// A volume is skipped, and reported in problems under "project/name", when its policy cannot be understood (another
+// protocol, a field that is not known, a schedule that cannot be read): acting on half of a policy is worse than not
+// acting. A pool that could not be listed is a problem under "pool NAME", and the others are still listed. A restore
+// point or an unfinished copy is never an item, whatever config it carries, so a backup is not scheduled for backup.
+func Discover(eng Engine) (items []Item, problems map[string]error, err error) {
+	vols, poolErrs, err := eng.Volumes()
+	if err != nil {
+		return nil, nil, err
+	}
+	problems = map[string]error{}
+	for pool, perr := range poolErrs {
+		problems["pool "+pool] = perr
+	}
+	for _, lv := range vols {
+		text, has := lv.Config[resolve.PolicyKey]
+		if !has {
+			continue
+		}
+		if _, isPoint := lv.Config[resolve.MarkerCopyOf]; isPoint {
+			continue
+		}
+		if _, isPartial := lv.Config[resolve.MarkerPartialOf]; isPartial {
+			continue
+		}
+		label := labelOf(lv.Volume)
+		p, perr := resolve.ParsePolicy(text)
+		if perr != nil {
+			problems[label] = perr
+			continue
+		}
+		if len(p.Copies) == 0 {
+			continue // a policy that only says how to verify has nothing to copy
+		}
+		it := Item{Volume: lv.Volume, Label: label}
+		for _, c := range p.Copies {
+			it.Copies = append(it.Copies, Copy{
+				Target:   volbackup.Target{Name: c.Target.Name, Pool: c.Target.Pool, Remote: c.Target.Remote},
+				Schedule: c.Schedule,
+				Retain:   c.Retain,
+			})
+		}
+		items = append(items, it)
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].Label < items[j].Label })
+	return items, problems, nil
+}
+
+func labelOf(v volbackup.Volume) string {
+	if v.Project == "" || v.Project == "default" {
+		return v.Name
+	}
+	return v.Project + "/" + v.Name
+}
+
+// Select picks the items a run acts on: every one, or with names, only those. A name matches an item's label or its
+// bare volume name. Names that match nothing come back in unknown, once each, in the order given, so asking for a
+// volume that cannot be backed up is an error and not silently nothing.
+func Select(items []Item, names []string) (selected []Item, unknown []string) {
 	asked := map[string]bool{}
 	for _, n := range names {
 		asked[n] = true
 	}
 	found := map[string]bool{}
-	for _, r := range resources {
-		if r.Kind != resolve.KindStorageVolume || r.Backup == nil || len(r.Backup.Copies) == 0 {
+	for _, it := range items {
+		if len(names) > 0 && !asked[it.Label] && !asked[it.Volume.Name] {
 			continue
 		}
-		if len(names) > 0 && !asked[r.Name] {
-			continue
-		}
-		found[r.Name] = true
-		selected = append(selected, r)
+		found[it.Label], found[it.Volume.Name] = true, true
+		selected = append(selected, it)
 	}
 	for _, n := range names {
 		if !found[n] {
@@ -132,90 +242,87 @@ func Select(resources []resolve.Resource, names []string) (selected []resolve.Re
 
 // Run makes the copies. Everything it would print goes to out as it happens. A copy that fails does not stop the
 // others; ctx cancels between copies (a copy already in flight finishes). The error is for what stops the run
-// altogether (a stack that does not validate); failed copies are in the Report.
-func Run(ctx context.Context, eng Engine, resources []resolve.Resource, opts Options, out io.Writer) (Report, error) {
-	if err := Check(resources); err != nil {
-		return Report{}, err
+// altogether; failed copies are in the Report.
+func Run(ctx context.Context, eng Engine, items []Item, opts Options, out io.Writer) (Report, error) {
+	if opts.UnknownMsg == "" {
+		opts.UnknownMsg = stackUnknownMsg
 	}
-	targets := map[string]resolve.Resource{}
-	for _, r := range resources {
-		if r.Kind == resolve.KindBackupTarget {
-			targets[r.Name] = r
-		}
+	if opts.EmptyMsg == "" {
+		opts.EmptyMsg = stackEmptyMsg
 	}
 	now := opts.Now
 	if now == nil {
 		now = time.Now
 	}
-	selected, unknown := Select(resources, opts.Volumes)
+	selected, unknown := Select(items, opts.Volumes)
 
 	var rep Report
 	rep.Unknown = unknown
 	warnedRelay := map[string]bool{}
 	add := func(c CopyReport) { rep.Copies = append(rep.Copies, c) }
 
-	for _, r := range selected {
-		v := volbackup.Volume{Project: r.Project, Pool: r.Pool, Name: r.Name}
-		live, err := eng.LiveConfig(v)
+	for _, it := range selected {
+		live, err := eng.LiveConfig(it.Volume)
 		if err != nil {
-			fmt.Fprintf(out, "%s: %v\n", r.Name, err)
+			fmt.Fprintf(out, "%s: %v\n", it.Label, err)
 			rep.Failed++
-			add(CopyReport{Volume: r.Name, Outcome: Failed, Detail: err.Error()})
+			add(CopyReport{Volume: it.Label, Outcome: Failed, Detail: err.Error()})
 			continue
 		}
-		for _, c := range r.Backup.Copies {
+		for _, c := range it.Copies {
+			name := c.Target.Name
 			if err := ctx.Err(); err != nil {
-				fmt.Fprintf(out, "%s -> %s: stopped (%v)\n", r.Name, c.Target, err)
+				fmt.Fprintf(out, "%s -> %s: stopped (%v)\n", it.Label, name, err)
 				rep.Skipped++
-				add(CopyReport{Volume: r.Name, Target: c.Target, Outcome: Skipped, Detail: "stopped: " + err.Error()})
+				add(CopyReport{Volume: it.Label, Target: name, Outcome: Skipped, Detail: "stopped: " + err.Error()})
 				continue
 			}
 			if opts.Due {
-				decision, err := resolve.CopyDue(c.Schedule, live, c.Target, now())
+				decision, err := resolve.CopyDue(c.Schedule, live, name, now())
 				if err != nil {
-					fmt.Fprintf(out, "%s -> %s: %v\n", r.Name, c.Target, err)
+					fmt.Fprintf(out, "%s -> %s: %v\n", it.Label, name, err)
 					rep.Failed++
-					add(CopyReport{Volume: r.Name, Target: c.Target, Outcome: Failed, Detail: err.Error()})
+					add(CopyReport{Volume: it.Label, Target: name, Outcome: Failed, Detail: err.Error()})
 					continue
 				}
 				if !decision.Due {
-					fmt.Fprintf(out, "%s -> %s: %s\n", r.Name, c.Target, decision.Reason)
+					fmt.Fprintf(out, "%s -> %s: %s\n", it.Label, name, decision.Reason)
 					rep.Skipped++
-					add(CopyReport{Volume: r.Name, Target: c.Target, Outcome: Skipped, Detail: decision.Reason})
+					add(CopyReport{Volume: it.Label, Target: name, Outcome: Skipped, Detail: decision.Reason})
 					continue
 				}
 			}
 			rep.Tried++
 			// A copy to ANOTHER server is relayed through the process that runs it.
-			if t := targets[c.Target]; opts.Remote != "" && t.Remote != "" && !warnedRelay[c.Target] {
-				warnedRelay[c.Target] = true
-				fmt.Fprintf(out, "note: tink is pointed at the remote %q, and the copy to %q (remote %q) is relayed through this machine, so the volume's data passes through it\n", opts.Remote, c.Target, t.Remote)
+			if opts.Remote != "" && c.Target.Remote != "" && !warnedRelay[name] {
+				warnedRelay[name] = true
+				fmt.Fprintf(out, "note: tink is pointed at the remote %q, and the copy to %q (remote %q) is relayed through this machine, so the volume's data passes through it\n", opts.Remote, name, c.Target.Remote)
 			}
-			res, err := eng.Copy(v, volbackup.TargetFrom(targets[c.Target]), volbackup.CopyOptions{Retain: c.Retain, DryRun: opts.DryRun, Now: now, Progress: out})
+			res, err := eng.Copy(it.Volume, c.Target, volbackup.CopyOptions{Retain: c.Retain, DryRun: opts.DryRun, Now: now, Progress: out})
 			if errors.Is(err, volbackup.ErrBusy) {
 				rep.Tried--
 				rep.Skipped++
-				fmt.Fprintf(out, "%s -> %s: already running\n", r.Name, c.Target)
-				add(CopyReport{Volume: r.Name, Target: c.Target, Outcome: Skipped, Detail: "already running"})
+				fmt.Fprintf(out, "%s -> %s: already running\n", it.Label, name)
+				add(CopyReport{Volume: it.Label, Target: name, Outcome: Skipped, Detail: "already running"})
 				continue
 			}
 			if err != nil {
-				fmt.Fprintf(out, "FAILED %s -> %s: %v\n", r.Name, c.Target, err)
+				fmt.Fprintf(out, "FAILED %s -> %s: %v\n", it.Label, name, err)
 				rep.Failed++
-				add(CopyReport{Volume: r.Name, Target: c.Target, Outcome: Failed, Detail: err.Error()})
+				add(CopyReport{Volume: it.Label, Target: name, Outcome: Failed, Detail: err.Error()})
 				continue
 			}
 			if opts.DryRun {
 				for _, p := range res.Planned {
-					fmt.Fprintf(out, "%s -> %s: would %s\n", r.Name, c.Target, p)
+					fmt.Fprintf(out, "%s -> %s: would %s\n", it.Label, name, p)
 				}
-				add(CopyReport{Volume: r.Name, Target: c.Target, Outcome: Planned})
+				add(CopyReport{Volume: it.Label, Target: name, Outcome: Planned})
 				continue
 			}
 			if len(res.OtherServers) > 0 {
-				fmt.Fprintf(out, "note: %s -> %s also holds restore points of a volume with this name made by other server(s) (%s); tink leaves them alone\n", r.Name, c.Target, strings.Join(res.OtherServers, ", "))
+				fmt.Fprintf(out, "note: %s -> %s also holds restore points of a volume with this name made by other server(s) (%s); tink leaves them alone\n", it.Label, name, strings.Join(res.OtherServers, ", "))
 			}
-			fmt.Fprintf(out, "copied %s -> %s: restore point %s", r.Name, c.Target, res.Volume)
+			fmt.Fprintf(out, "copied %s -> %s: restore point %s", it.Label, name, res.Volume)
 			if len(res.Pruned) > 0 {
 				fmt.Fprintf(out, " (pruned %d older: %s)", len(res.Pruned), strings.Join(res.Pruned, ", "))
 			}
@@ -223,15 +330,15 @@ func Run(ctx context.Context, eng Engine, resources []resolve.Resource, opts Opt
 				fmt.Fprintf(out, " (removed %d abandoned partial cop(ies): %s)", len(res.Swept), strings.Join(res.Swept, ", "))
 			}
 			fmt.Fprintln(out)
-			add(CopyReport{Volume: r.Name, Target: c.Target, Outcome: Copied, RestorePoint: res.Volume, Pruned: res.Pruned, Swept: res.Swept, OtherServers: res.OtherServers})
+			add(CopyReport{Volume: it.Label, Target: name, Outcome: Copied, RestorePoint: res.Volume, Pruned: res.Pruned, Swept: res.Swept, OtherServers: res.OtherServers})
 		}
 	}
 	for _, name := range unknown {
-		fmt.Fprintf(out, "%s: not a storage-volume with copies in the stack\n", name)
+		fmt.Fprintf(out, "%s: %s\n", name, opts.UnknownMsg)
 		rep.Failed++
 	}
 	if rep.Tried == 0 && rep.Skipped == 0 && rep.Failed == 0 {
-		fmt.Fprintln(out, "nothing to do: no volume in the stack declares copies")
+		fmt.Fprintln(out, opts.EmptyMsg)
 	}
 	return rep, nil
 }
@@ -243,28 +350,24 @@ type DueCopy struct{ Volume, Target string }
 // it queues a job only when there is something to do. It applies the same decision as Run (the schedule, and the
 // backoff after failures). A volume whose live configuration cannot be read is reported in problems, not skipped
 // silently, and is not "due" (nothing can be decided about it).
-func Due(eng Engine, resources []resolve.Resource, now time.Time) (due []DueCopy, problems map[string]error, err error) {
-	if err := Check(resources); err != nil {
-		return nil, nil, err
-	}
-	selected, _ := Select(resources, nil)
+func Due(eng Engine, items []Item, now time.Time) (due []DueCopy, problems map[string]error) {
 	problems = map[string]error{}
-	for _, r := range selected {
-		live, lerr := eng.LiveConfig(volbackup.Volume{Project: r.Project, Pool: r.Pool, Name: r.Name})
+	for _, it := range items {
+		live, lerr := eng.LiveConfig(it.Volume)
 		if lerr != nil {
-			problems[r.Name] = lerr
+			problems[it.Label] = lerr
 			continue
 		}
-		for _, c := range r.Backup.Copies {
-			d, derr := resolve.CopyDue(c.Schedule, live, c.Target, now)
+		for _, c := range it.Copies {
+			d, derr := resolve.CopyDue(c.Schedule, live, c.Target.Name, now)
 			if derr != nil {
-				problems[r.Name+" -> "+c.Target] = derr
+				problems[it.Label+" -> "+c.Target.Name] = derr
 				continue
 			}
 			if d.Due {
-				due = append(due, DueCopy{Volume: r.Name, Target: c.Target})
+				due = append(due, DueCopy{Volume: it.Label, Target: c.Target.Name})
 			}
 		}
 	}
-	return due, problems, nil
+	return due, problems
 }
