@@ -233,8 +233,11 @@ the target mirror the source's snapshots, so a snapshot deleted (or damaged) on 
 deleted from the backup at the next refresh, and the backup could never keep longer history than the
 source. The price is the space and time of a full copy per run; incremental transfer is future work.
 
-Only pool targets (another storage pool on this server, e.g. the Incus truenas driver) can be copied
-to so far; a remote Incus server target is reported as an error for that copy.
+A target is another storage pool on this server (e.g. the Incus truenas driver) or an Incus remote:
+another server, by the name "incus remote add" gave it, in the project that remote is configured
+with. Tink reads the Incus client configuration of the user running it (root's, under sudo) and keeps
+no credentials of its own. A remote's data is relayed through tink, so the remote only has to be
+reachable from the machine running it (an SSH tunnel is enough).
 
 --due runs only the copies whose schedule has come round since their last success, so cron or a
 timer can call "tink backup run --due" every few minutes. Tink does not schedule them itself yet.
