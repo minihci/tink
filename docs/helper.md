@@ -260,8 +260,10 @@ package's visibility in the repository's package settings.
 To try the image locally: build the binaries into `dist/tink-linux-<arch>` as the workflow does, then `podman build -f build/helper/Containerfile .`.
 
 **The command-line binaries.** `.github/workflows/release.yml` runs on the same tags. It builds tink for macOS and Linux, `amd64` and `arm64`, with the same version
-compiled in, as `tink_<version>_<os>_<arch>.tar.gz` (the binary alone), and attaches them to the GitHub Release for the tag with a `checksums.txt`. Before it
-publishes it checks that the checksums match, that each archive holds one file, and that the Linux `amd64` binary reports the tag. A tag with a suffix
+compiled in, as `tink_<version>_<os>_<arch>.tar.gz` (the binary alone), plus a byte-identical copy of each named `tink_<os>_<arch>.tar.gz`, and attaches them to the
+GitHub Release for the tag with a `checksums.txt` that lists all eight. Before it
+publishes it checks that the checksums match, that there are eight archives and each holds one file, that each version-less archive is identical to its
+versioned one, and that the Linux `amd64` binary reports the tag. A tag with a suffix
 (`v0.2.0-rc.1`) is published as a pre-release and any other (`v0.1.1`, even before 1.0) as an ordinary release, so `releases/latest` always points at the newest
 ordinary one. On a pull request that touches the workflow it only builds and checks. The binaries are not signed: a macOS binary downloaded with a browser is quarantined until `xattr -d
 com.apple.quarantine tink`, and one fetched with `curl` is not. A binary from a release is a "release build", so `tink helper install` with no flag installs the
@@ -269,11 +271,16 @@ image published for the same tag.
 
 `v0.1.1` was the first release to carry them: the four archives and `checksums.txt`, published as an ordinary release, so GitHub marks it Latest. The `linux/amd64`
 binary in the archive is byte-for-byte the one inside the image (the two workflows build them separately), and the archive's checksum and `tink version` were
-checked after downloading it with `curl`. The asset names carry the version, so there is no version-less "latest" download URL; fetch the latest release's with
-`gh`, or name the version with `curl`:
+checked after downloading it with `curl`. Its asset names carry the version, so it has no version-less "latest" download URL (a request for
+`releases/latest/download/tink_darwin_arm64.tar.gz` returned 404); fetch the latest release's with `gh`, or name the version with `curl`:
 
 ```
 gh release download --repo minihci/tink --pattern '*darwin_arm64*'        # the latest release; also linux_amd64, linux_arm64, darwin_amd64
 curl -fsSLO https://github.com/minihci/tink/releases/download/v0.1.1/tink_v0.1.1_darwin_arm64.tar.gz       # a particular version
 ```
+
+**The version-less names are for the release after `v0.1.1`**, which will be the first to have them: a stable URL for the latest release, such as
+`https://github.com/minihci/tink/releases/latest/download/tink_darwin_arm64.tar.gz`, with its line in `checksums.txt` (`grep ' ./tink_darwin_arm64.tar.gz$'
+checksums.txt | shasum -a 256 -c -`). The URL points at the newest *ordinary* release: a pre-release (a tag with a suffix) is never "latest". **Not yet run on a tag:**
+the next release will tell, and this paragraph should be changed to say what it showed.
 
