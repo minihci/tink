@@ -7,9 +7,9 @@ the Incus 7.4 source by a separate agent, and the design below was changed to an
 most changed the design were re-checked by hand), **[verified]** (tried live), **[docs]** or **[hypothesis]** (to be checked in
 the phase 0 spike). Choices not yet confirmed by the user are marked **proposed**.
 
-**Revision 3 (proposed, not built): the backup policy moves onto the volume, and the helper stops holding stacks.** Phase 2 built a stack store
+**Revision 3 (built and validated on the lab host, on the `policy-on-volume` branch, not yet merged): the backup policy moves onto the volume, and the helper stops holding stacks.** Phase 2 built a stack store
 (`daemon sync`, `--stacks`) because the scheduler needed the copy policy and that policy lived only in the YAML. That created a second copy of the
-policy that `plan` cannot see and `incus storage volume show` does not mention. The proposal is that `apply` writes the policy to the volume, and the
+policy that `plan` cannot see and `incus storage volume show` does not mention. `apply` now writes the policy to the volume, and the
 scheduler discovers work by listing volumes, as the ingress reconcile already does with `user.ingress.*`. See
 [the policy on the volume](#the-policy-on-the-volume) and [what revision 3 changes](#what-revision-3-changes).
 
@@ -347,12 +347,15 @@ Each phase is useful alone and ends in something checkable on the lab host.
    server marker, the per-copy guard, the job directory and executor, stack sync with atomic activation, the backup scheduler and heartbeat in `daemon run`
    (`--stacks`, `--jobs`, `--timezone`, `--no-ingress`), supervised workers, and local `daemon sync|enqueue|jobs|cancel`. It runs under any supervisor (a transient
    systemd unit on the lab host). **2e** adds the in-progress mark and the sweep of abandoned copies (below).
-2f. **The policy on the volume. Proposed (revision 3), before phase 3.** `apply` writes `user.tink.backup.policy`, `plan` compares it, the scheduler
-   lists volumes instead of reading `--stacks`, restore points and restored volumes are scrubbed of it, removal clears it. `daemon sync` and
-   `--stacks` are kept for one release, deprecated, so a host running phase 2 is not broken, then removed. *Done when:* on the lab host, a stack
-   applied once is picked up by a scheduler started with no `--stacks`; editing the YAML shows an `update` in `plan` until applied; a restored
-   volume and a restore point carry no policy and are not scheduled; removing the `backup:` block stops the copies; and a policy with an unknown
-   `proto` is reported and skipped while the other volumes still run.
+2f. **The policy on the volume. Built and validated in the lab (revision 3), before phase 3.** `apply` writes `user.tink.backup.policy`, `plan` compares it, the
+   scheduler lists volumes instead of reading stacks, restore points and restored volumes are scrubbed of it, removal clears it. The stack store is **removed
+   outright, with no deprecation period**, since nothing deploys it (it had only been exercised while building the feature): `daemon sync`, `daemon run --stacks`,
+   `daemon enqueue --stack`, `jobs.Stacks` and the request's `stack` field are gone, and a job with no bundle works from the volumes. *Checked on the lab host
+   (Incus 7.5.1, a throwaway project and a throwaway `dir` pool):* a stack applied once is picked up by a daemon started with only `--jobs`, which queued one job
+   and made both copies; editing the YAML, or the key by hand, shows an `update` in `plan` until applied; the restore points, a volume restored from a
+   snapshot and one restored from a target carry no policy and are not scheduled; opting a volume out, or removing its block, removes the key (and the daemon logs
+   the recovery); a policy of another `proto`, or one that does not parse, is logged once by `project/name` and skipped while the other volumes still run; later
+   ticks queue nothing while no copy is due.
 3. **The helper.** Containerfile and image workflow (version injection, multi-arch, digest), `tink helper install|upgrade|status|remove`
    (no `sync` in revision 3),
    the ingress volume device and configurable paths, `deploy` no longer reinstalling the host daemon. *Done when:* killing the process brings it
@@ -365,12 +368,10 @@ Each phase is useful alone and ends in something checkable on the lab host.
 
 ## Open questions
 
-- **Should the policy live on the volume (revision 3)?** The case is in [the policy on the volume](#the-policy-on-the-volume). It supersedes the
-  question "should `tink apply` offer to sync the stack to the helper?" of revision 2, because `apply` would be the sync. Confirm before phase 3.
 - **Can the helper list volumes in every project it needs?** **Yes, answered on the lab host**; see
   [what the discovery test found](#what-the-discovery-test-found). What is left open is only whether the same holds for a *restricted* identity (hardening).
-- **A volume removed from the YAML but still on the server.** Its key persists and the scheduler keeps copying it. Is "applied policy with no
-  declaration" a `plan` warning, or should `apply` offer to clear it? Warning first is proposed.
+- **A volume removed from the YAML but still on the server.** Its key persists and the scheduler keeps copying it (confirmed by construction: `apply` only visits what is
+  declared). Is "applied policy with no declaration" a `plan` warning, or should `apply` offer to clear it? Warning first is proposed. Not built.
 - **Per-volume cost of discovery.** Listing every custom volume every tick is cheap on one server; on a large one it may want a longer interval than
   the due check, or a cached listing refreshed on `apply`. Not measured.
 - **Does a copy to a remote target apply config at creation?** Unchanged from phase 2e, and now it matters twice: for the in-progress mark and for
@@ -457,7 +458,7 @@ The first revision was reviewed against the code and the Incus 7.4 source. What 
 
 - **Keep synced stacks (revision 2, built).** Works, and a stack is the whole truth. Rejected as the long-term shape: it is a second copy of the
   intent that `plan` cannot compare, it can lag the repository silently, a lost helper means re-syncing everything, and `incus storage volume show`
-  does not show the policy. Retained for one release as the deprecated path.
+  does not show the policy. Removed outright, not deprecated: nothing deploys it.
 - **One scalar key per setting** (`user.tink.backup.copy.nas.schedule`, ...). Easy to read one by one, but not applied or compared atomically, awkward
   for a list of copies, and nothing to version. Rejected for one versioned document.
 - **Name the targets and keep them in the stack.** A volume would carry only `copies: [{target: nas}]`. Then the scheduler still needs the stack to
