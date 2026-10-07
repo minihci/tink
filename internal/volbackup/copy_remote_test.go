@@ -272,8 +272,15 @@ func TestUnreachableRemoteFailsBeforeTouchingTheSource(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `remote "vps"`) {
 		t.Fatalf("the error must name the remote: %v", err)
 	}
-	if len(local.snaps["default/lib"]) != 0 || len(local.vols["default/lib"].Config) != 0 {
-		t.Error("an unreachable target must not leave a snapshot or stamp on the source")
+	if len(local.snaps["default/lib"]) != 0 {
+		t.Error("an unreachable target must not leave a snapshot on the source")
+	}
+	cfg := local.vols["default/lib"].Config
+	if cfg[resolve.CopyStampAt("vps")] != "" {
+		t.Error("an unreachable target must not stamp the copy as done")
+	}
+	if cfg[resolve.CopyFailCount("vps")] != "1" {
+		t.Errorf("it must record exactly one failed attempt, and nothing else: %v", cfg)
 	}
 }
 

@@ -114,14 +114,16 @@ func TestPickRestorePoint(t *testing.T) {
 }
 
 func TestCopyRefusesWhatCannotBeABackup(t *testing.T) {
+	srv := newFake("tron", "default", "fast")
+	srv.add("default", "lib", nil)
 	v := Volume{Name: "lib"}
-	if _, err := Copy(nil, v, Target{Name: "x"}, CopyOptions{}); err == nil || !strings.Contains(err.Error(), "no pool") {
+	if _, err := Copy(srv, v, Target{Name: "x"}, CopyOptions{}); err == nil || !strings.Contains(err.Error(), "no pool") {
 		t.Errorf("a target without a pool: %v", err)
 	}
-	if _, err := Copy(nil, v, Target{Name: "same", Pool: "default"}, CopyOptions{}); err == nil || !strings.Contains(err.Error(), "same failure domain") {
+	if _, err := Copy(srv, v, Target{Name: "same", Pool: "default"}, CopyOptions{}); err == nil || !strings.Contains(err.Error(), "same failure domain") {
 		t.Errorf("a copy to the volume's own pool is not a backup: %v", err)
 	}
-	if _, err := Copy(nil, Volume{Name: "lib", Pool: "fast"}, Target{Name: "same", Pool: "fast"}, CopyOptions{}); err == nil {
+	if _, err := Copy(srv, Volume{Name: "lib", Pool: "fast"}, Target{Name: "same", Pool: "fast"}, CopyOptions{}); err == nil {
 		t.Error("the volume's own pool is whatever the volume's pool is, not just 'default'")
 	}
 }
