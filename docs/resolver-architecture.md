@@ -1,9 +1,15 @@
 # Resolving a stack: translators and resolvers
 
-Named idea, not built. This is a synthesis of a real day's worth of
-experimentation (2026-09-18), not a whiteboard guess — every claim below
-was verified live against a real 5-instance stack, not assumed. See
-`internal/run/DESIGN.md` for `tink run`'s own design, which this
+**Status: the convergence half is built** (`internal/resolve`, `tink plan` and
+`tink plan apply`). Translators other than `tink run`'s Docker-flag one are not.
+This was written on 2026-09-18 as a named idea, before the resolver existed, and is
+kept in the order it was reasoned: the sections before "Update, 2026-09-18" are the
+idea as it stood, and the updates at the end say how it turned out (the diagram was
+wrong; the YAML is the primary interface).
+
+It is a synthesis of a real day's worth of experimentation, not a whiteboard
+guess — every claim below was verified live against a real 5-instance stack, not
+assumed. See `internal/run/DESIGN.md` for `tink run`'s own design, which this
 document builds on directly.
 
 ## Where this comes from
@@ -209,7 +215,7 @@ permanent preference. Whether `tink-init`'s Pod-shaped pattern is ever
 actually wanted remains a genuinely open question, independent of what
 necessity has produced so far.
 
-## Status
+## Status when this was written (the updates below say what was built)
 
 Not built. Named, and now grounded in real, verified evidence rather
 than a hypothesis — but still gated on the same standing principle as

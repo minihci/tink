@@ -1,8 +1,17 @@
 # The helper
 
-The helper is an Incus instance that runs `tink daemon run` next to the data: the backup scheduler, the job executor and (later) the ingress
-reconcile. The design is in `docs/helper-design.md` (PR #16); this page covers what exists: **`tink helper install` and `remove`, the status
-document, and the commands that read it.** The published image, `upgrade`, the ingress half and `plan` reading the status are later slices.
+The helper is an Incus instance that runs `tink daemon run` next to the data: the backup scheduler, the job executor and, if you ask for it, the
+ingress reconcile. It is where tink does work that needs nothing from the host's own filesystem or processes, so it behaves the same under `--remote`.
+The design, with its reasoning and the findings behind it, is in [the helper design](https://github.com/minihci/tink/pull/16) (an open pull request: the
+document is `docs/helper-design.md` on the `helper-design` branch, not yet on `main`). This page covers what exists: **`tink helper install`, `upgrade` and
+`remove`, `remote add|list|remove`, `status`, the status document, the ingress half, the image and its release, and what `plan` and `apply` do with the helper.**
+
+**Not built yet:**
+- Handing a `tink backup run` started on another machine to the helper (and `tink helper jobs|log|cancel` to follow it). A run you start yourself runs
+  where you start it, and a copy to another server is relayed through that machine ([remote.md](remote.md)).
+- Retiring `tink daemon install`, which still prints the old ingress-only unit ([daemon-jobs.md](daemon-jobs.md)).
+- A tested release. No release tag has been pushed, so the helper image has never been built and published by its workflow: `install` with no flag, and
+  the image path of `upgrade`, have not been run against a real image. `--binary`, a stock image with a binary pushed in, is what has been run live.
 
 ## Installing it
 
@@ -32,7 +41,7 @@ The host verifies nothing secret until the helper has verified the host, by the 
   status write is an instance PATCH, and the lifecycle event for a PATCH carries no requestor at all, so those writes (one on change and one
   per heartbeat) are not attributed. They are bookkeeping on the helper's own instance; the operations that move data are attributed.
 - **Not confined.** The certificate is unrestricted: it has the reach of root on the host. A restricted certificate is not a boundary on current Incus
-  (see `docs/helper-design.md`, "Security"), and nothing here claims one.
+  (see "Security" in [the helper design](https://github.com/minihci/tink/pull/16)), and nothing here claims one.
 
 **When it is "down", and how fast you hear it.** `tink helper status` also checks the host's trust store (if it may read it): a helper whose
 certificate has been revoked is reported **down at once**, not after its last document has aged. Without that check the helper would look healthy for

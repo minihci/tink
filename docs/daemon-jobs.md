@@ -6,8 +6,8 @@
   `--jobs` if at least one of their copies is **due**, and no backup job is already queued or running;
 - an **executor**: it runs the queued jobs one at a time, oldest first, through the same code as `tink backup run`.
 
-It runs under any supervisor: a systemd unit, OpenRC, or by hand. (The planned [helper](https://github.com/minihci/tink/pull/16) is a container that
-runs exactly this, and replaces `daemon install`.)
+It runs under any supervisor: a systemd unit, OpenRC, or by hand. [The helper](helper.md) is an Incus instance that runs exactly this, which is the way to
+run it without writing a unit; `daemon install` is not retired yet.
 
 ```
 tink plan apply tink.yaml                                         # puts each volume's copy policy on the volume
@@ -74,9 +74,12 @@ points on the next tick. A stack that arrives this way is **data, not code**: it
 
 Each worker is **isolated and supervised**: one that crashes or panics is logged and restarted (after 5 seconds, doubling to a minute), and does not stop the
 others. The scheduler writes a **heartbeat** (`<jobs>/heartbeat`: time, pid, tink version, time zone) every tick, which `daemon jobs` shows, so a daemon that
-stopped can be told from one with nothing to do even when its logs are gone.
+stopped can be told from one with nothing to do even when its logs are gone. A helper also publishes a **status document** on its own instance, which is
+what `tink plan` and `tink helper status` read ([helper.md](helper.md#the-status-document)); the heartbeat file is the daemon's own liveness, on the machine
+that has the directory.
 
 ## Not here yet
 
-The container that runs this (`tink helper`), triggering a run from another machine, and `plan` reading the heartbeat. `daemon install` still prints a unit for
-the old ingress-only invocation; for this, write the unit's `ExecStart` with the flags above.
+Starting a run from another machine and following it: `daemon enqueue`, `jobs` and `cancel` work where the jobs directory is, which for the helper is inside its
+instance ([helper.md](helper.md)). `daemon install` still prints a unit for the old ingress-only invocation; for this, write the unit's `ExecStart` with the
+flags above, or use the helper.

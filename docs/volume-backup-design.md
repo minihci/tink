@@ -1,9 +1,10 @@
 # Volume backup: design
 
-**Status: design, not implemented.** [`volume-backup.md`](volume-backup.md) describes
-what exists today (tier 1: scheduled local snapshots, and a warning when a volume
-declares nothing). This document is where that goes next: a real 3-2-1 story, with
-restore as a first-class half of it.
+**Status: the Incus-native path is built; the off-site engine is design only.** Steps 1 to 3b of [Phasing](#phasing) are done: `kind: backup-target`,
+the 3-2-1 check, `backup restore` and `verify`, copies to pool and remote targets, and a scheduler (the daemon's, which [the helper](helper.md) runs).
+[`volume-backup.md`](volume-backup.md) is how to use what exists. Step 4, the restic job engine, is not built (nothing in the code refers to it). This
+document keeps the reasoning and the live findings behind those steps; where it was written before something was built, the notes under
+[Phasing](#phasing) say how the build differed.
 
 Throughout, claims are marked **[verified]** (tried live on a real host while writing
 this), **[docs]** (read in upstream documentation, not tried), or **[hypothesis]**
@@ -189,6 +190,10 @@ way tink stays stateless: it reads each target's live state to decide what is du
 records outcomes as `user.tink.backup.*` volume config keys, the same precedent as
 `user.ingress.*` (see [Verify](#verify)).
 
+*Built both ways:* `tink backup run --due` for cron or a timer, and `tink daemon run --jobs DIR` as a scheduler ([daemon-jobs.md](daemon-jobs.md)). The
+helper ([helper.md](helper.md)) is an Incus instance that runs that daemon, so no init system is involved. Nothing schedules `verify` yet; `plan` only
+warns when one is overdue.
+
 ### Consistency
 
 Everything here is **crash-consistent**: an atomic snapshot knows nothing about the
@@ -334,22 +339,23 @@ Ordered so each step is useful alone, and the Incus-supported path comes first.
    above) and fixes the YAML shape. **Done** (see `volume-backup.md`): `kind: backup-target`
    (`location`, `engine: incus`, `remote`/`pool`), `copies:` and `verify:` on volumes, a hard error for
    an unknown copy target, and the 3-2-1 warning. Differences from the sketch above: `engine` is limited to
-   `incus` and `location` is required; `verify` is parsed but not acted on; a volume with copies also gets a
-   "declared only, nothing runs them" warning. Found while testing it live: the CLI plans one dependency
+   `incus` and `location` is required; `verify` was only parsed at this step (step 2 acts on it); a volume with copies also got a
+   "declared only, nothing runs them" warning, which has since been replaced by a note that names those volumes when the server has no
+   helper ([helper.md](helper.md#what-plan-and-apply-do-about-the-helper)). Found while testing it live: the CLI plans one dependency
    level at a time, so the planner has to be handed the whole stack's targets, not the level it is on.
 2. **Local restore and verify.** `tink backup restore` from tier-1 snapshots into a new
    volume, and `verify` with a scratch volume plus the user's check, with the stamp and
    the stale-verification warning. This exercises the disposable-instance mechanism
    with no new engine, and covers the restore half early. **Done** (see `volume-backup.md`).
-   Differences from the design above: `--from <target>` is accepted but rejected until the copy
-   engine exists; the check runs in an OCI instance whose entrypoint is replaced by `sleep`, with
+   Differences from the design above: `--from <target>` was rejected until the copy
+   engine existed (step 3 added it); the check runs in an OCI instance whose entrypoint is replaced by `sleep`, with
    no network, and the restored volume mounted read-only; and the stale-verification warning also
    fires when a check is declared but the last verification was restore-only, because otherwise
    running `verify` without the stack file would refresh the stamp without running the check.
    Verified live: restore gives correct point-in-time contents and refuses to overwrite; a passing
    check stamps the volume; a failing check (run against a snapshot with the critical file
    deleted) leaves the stamp unchanged; nothing is left behind on either path.
-3. **`engine: incus` copies.** **Done for pool targets and Incus remotes** (see `volume-backup.md`); a scheduler is not. Differences from the design above, and why:
+3. **`engine: incus` copies.** **Done for pool targets and Incus remotes** (see `volume-backup.md`); the scheduler came after (see "No scheduler at this step" below). Differences from the design above, and why:
    - **Not `copy --refresh`.** Two experiments on two TrueNAS-backed pools **[verified]**: (a) refreshing a volume makes the target
      mirror the source's snapshots, so a snapshot the source pruned is deleted from the target at the next refresh (also with
      `--refresh-exclude-older`), and target snapshots carry no expiry; (b) refreshing *from a snapshot* copies the right,
@@ -360,8 +366,9 @@ Ordered so each step is useful alone, and the Incus-supported path comes first.
      and restore trust; a volume without the marker for exactly that volume is never listed, pruned or restored from.
    - **Restoring from a target does not require the source volume**, because that is the case it exists for; `verify` then cannot record
      the result and says so.
-   - **No scheduler.** `tink backup run --due` is meant to be called from cron or a timer; the daemon is not wired in. `plan` warns when a
-     copy has never run or is overdue, which is what makes the missing scheduler visible instead of silent.
+   - **No scheduler at this step.** `tink backup run --due` was meant to be called from cron or a timer, and `plan` warned when a copy had never run or
+     was overdue, which made the missing scheduler visible instead of silent. A scheduler was built afterwards: the daemon's ([daemon-jobs.md](daemon-jobs.md)),
+     which [the helper](helper.md) runs. The `--due` route and the warnings are still there.
    **TrueNAS pools, stock 25.10.7 [verified]** (a pristine install, none of the middleware fix applied; a control confirmed it still
    fails Incus's same-pool snapshot clone with `properties.managedby: Property does not exist and cannot be inherited`, which a patched
    25.10.7 does not):
@@ -399,7 +406,10 @@ Ordered so each step is useful alone, and the Incus-supported path comes first.
   query (or Incus work around it); and how does Incus behave at boot or mid-copy when the
   NAS is unreachable (not tested).
 - **Remote targets:** *resolved*: tink holds no credentials; it opens the remote from the Incus client configuration of the user
-  running it (`incus remote add` did the trust). Still open: where that configuration lives for a daemon, and a way to keep a tunnel up.
+  running it (`incus remote add` did the trust). For the helper that configuration is its own, on its config volume, filled by `tink helper remote add`
+  ([helper.md](helper.md#copying-to-another-incus-server)). Still open: a way to keep a tunnel up, and declaring remotes in the stack instead of by hand on
+  each runner (a stack may now describe a server's address and fingerprint as an opt-in, which only changes the commands tink prints;
+  see [volume-backup.md](volume-backup.md#saying-where-the-server-is-optional)).
 - **Retention on a target:** do refreshed copies carry the source's snapshot expiry, or
   need their own `snapshots.expiry` on the target volume?
 - **Same-pool clones and quotas/space:** a clone is cheap on btrfs/ZFS, but a `dir`
