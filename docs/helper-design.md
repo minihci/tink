@@ -231,8 +231,9 @@ Each phase is useful alone and ends in something checkable on the lab host.
    restart; (b) `boot.autorestart` behaviour in a crash loop; (c) the job-directory protocol over the file API; (d) `plan`, `apply`, `backup restore`,
    `backup verify` and `backup run` from a **macOS** client.
 1. **Remote-capable tink.** *Status: built as branch `remote-flag` (flag, `$TINK_REMOTE`, built-in image remotes, refusals, `kind: incus` blocked, relay
-   note); validated locally and on the lab host. **Not yet validated:** the real TLS path from a laptop (a trusted certificate over `:8443`), and setting up
-   a remote with tink alone (`tink remote add`), which is not built.* One connect function and `--remote`; built-in image-remote definitions when the client config lacks them;
+   note) and **validated from a Mac over TLS**: with no tunnel and no `INCUS_CONF`, `plan` (0.36 s), `apply` of a project, volume and OCI instance
+   (6.6 s, `kind: incus` BLOCKED with its reason), `backup restore`, `verify`, `backup run` to a pool target and `restore --from` it all work, and `deploy`
+   refuses. **Not built:** setting up a remote with tink alone (`tink remote add`): the Mac's certificate and remote entry were created by hand.* One connect function and `--remote`; built-in image-remote definitions when the client config lacks them;
    `kind: incus` and host-path features refuse under a remote; `tink deploy` stays host-local. *Done when:* `plan`, `apply` (an OCI instance), `backup restore` and `backup verify` run from a laptop
    **that has no Incus client config** against Tron, over `--remote` (TLS, a trusted certificate), and a stack with `kind: incus` is refused there with
    the reason.
