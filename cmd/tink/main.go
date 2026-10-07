@@ -14,6 +14,7 @@ import (
 	"runtime/debug"
 	"syscall"
 	"time"
+	_ "time/tzdata" // the helper runs in images with no zoneinfo of their own, and its schedules are evaluated in a named zone
 
 	"github.com/spf13/cobra"
 
@@ -598,6 +599,10 @@ mounted into the helper, say). Anything else is refused rather than act on the w
 				}
 			}
 			if jobsDir != "" {
+				// a fresh data volume has no jobs directory yet
+				if err := os.MkdirAll(jobsDir, 0o700); err != nil {
+					return fmt.Errorf("--jobs: %w", err)
+				}
 				socket := opts.Socket
 				ro.Helper = &daemon.Helper{
 					Store: jobs.Store{Dir: jobsDir},

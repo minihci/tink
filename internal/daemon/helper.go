@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/minihci/tink/internal/backuprun"
@@ -32,6 +33,10 @@ type Helper struct {
 	Store jobs.Store
 	// Live, if set, is told what each tick found (volumes skipped, copies failing) for the status document.
 	Live *Live
+	// RetryAfter is how soon the scheduler tries again after a pass that could not look at the volumes (default 5 seconds).
+	RetryAfter time.Duration
+	// tickLooked is whether the last pass got as far as looking at the volumes.
+	tickLooked atomic.Bool
 	// Connect opens the Incus engine the work is done through. It is called per job and per scheduler tick, so a
 	// connection that died is not kept.
 	Connect func() (backuprun.Engine, error)
@@ -148,6 +153,7 @@ func sortedKeys(m map[string]error) []string {
 // cannot be understood, a pool or a volume that cannot be read, Incus unreachable) are logged once each, not every
 // tick.
 func (h *Helper) Tick(state *SchedulerState) int {
+	h.tickLooked.Store(false)
 	now := h.now()
 	if err := h.Store.Beat(jobs.Heartbeat{Time: now.UTC(), PID: pid(), Version: h.Version, Zone: now.Location().String()}); err != nil {
 		h.logf("writing the heartbeat: %v", err)
@@ -174,6 +180,7 @@ func (h *Helper) Tick(state *SchedulerState) int {
 	for _, what := range sortedKeys(dueProblems) {
 		state.note("problem "+what, fmt.Sprintf("%s: %v", what, dueProblems[what]), h.logf)
 	}
+	h.tickLooked.Store(true)
 	if h.Live != nil {
 		h.Live.setBackup(skipsFrom(problems, dueProblems), failingFrom(assessed.Failing))
 	}

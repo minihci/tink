@@ -111,6 +111,11 @@ func TestAFailedWriteIsNotRememberedAsDone(t *testing.T) {
 	if wrote, err := r.p.Publish(Status{JobProto: 1}); !wrote || err != nil {
 		t.Errorf("the next call must try again at once, not wait for a heartbeat: %v %v", wrote, err)
 	}
+	// and once it has got through, it is quiet again
+	r.now = r.now.Add(time.Minute)
+	if wrote, _ := r.p.Publish(Status{JobProto: 1}); wrote {
+		t.Error("after a successful write nothing is due until something changes or the heartbeat")
+	}
 	if r.writes[0][MarkerKey] != "1" {
 		t.Error("and the marker still goes with the first write that succeeded")
 	}

@@ -21,6 +21,9 @@ type Publisher struct {
 	lastKey   string
 	lastWrite time.Time
 	marked    bool
+	// failed is set when a write that was due did not get through: the instance does not have what the helper last meant to say, so the
+	// next call writes whether or not anything changed, instead of waiting for the next heartbeat.
+	failed bool
 }
 
 func (p *Publisher) heartbeat() time.Duration {
@@ -49,7 +52,7 @@ func (p *Publisher) Publish(s Status) (wrote bool, err error) {
 	s.HeartbeatSeconds = int(p.heartbeat() / time.Second)
 
 	key := changeKey(s)
-	if p.lastKey == key && now.Sub(p.lastWrite) < p.heartbeat() {
+	if !p.failed && p.lastKey == key && now.Sub(p.lastWrite) < p.heartbeat() {
 		return false, nil
 	}
 	text, err := Encode(s)
@@ -61,8 +64,9 @@ func (p *Publisher) Publish(s Status) (wrote bool, err error) {
 		cfg[MarkerKey] = fmt.Sprint(s.JobProto)
 	}
 	if err := p.Patch(cfg); err != nil {
+		p.failed = true
 		return false, err
 	}
-	p.lastKey, p.lastWrite, p.marked = key, now, true
+	p.lastKey, p.lastWrite, p.marked, p.failed = key, now, true, false
 	return true, nil
 }

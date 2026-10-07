@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/minihci/tink/internal/backuprun"
 	"github.com/minihci/tink/internal/helper"
 	"github.com/minihci/tink/internal/jobs"
 	"github.com/minihci/tink/internal/resolve"
@@ -266,5 +267,71 @@ func TestTheTimeZoneIsNamedSoAPersonCanReadIt(t *testing.T) {
 	t.Setenv("TZ", "")
 	if got := zoneName(time.Local, now0); !strings.HasPrefix(got, "Local (") {
 		t.Errorf("and by its abbreviation when not, never a bare \"Local\": %q", got)
+	}
+}
+
+func TestNothingIsPublishedUntilTheSchedulerHasLooked(t *testing.T) {
+	rec := &patchRecorder{}
+	live := &Live{}
+	o := StatusOptions{Publisher: &helper.Publisher{Patch: rec.patch, Heartbeat: time.Hour}, Interval: 10 * time.Millisecond, WaitForBackup: true}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { runStatus(ctx, &syncWriter{w: &bytes.Buffer{}}, o, live, time.Now()); close(done) }()
+	time.Sleep(100 * time.Millisecond)
+	if rec.n() != 0 {
+		t.Fatalf("a helper that has not looked at its volumes must not publish a document that says nothing is wrong: %d writes", rec.n())
+	}
+	live.setBackup(nil, nil) // the scheduler has completed a pass, and found nothing amiss
+	deadline := time.Now().Add(5 * time.Second)
+	for rec.n() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	if rec.n() != 1 {
+		t.Errorf("once it has looked it publishes: %d", rec.n())
+	}
+}
+
+func TestTheSchedulerLooksAgainSoonAfterAPassThatCouldNotLookAndWaitsAfterOneThatCould(t *testing.T) {
+	r := newRig(t)
+	r.volume(t, "lib")
+	r.eng.live["lib"] = map[string]string{resolve.CopyStampAt("nas"): now0.Add(-5 * time.Minute).UTC().Format(time.RFC3339)}
+	var mu sync.Mutex
+	connects := 0
+	r.h.Connect = func() (backuprun.Engine, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		connects++
+		if connects <= 2 { // the proxy to the host's API is not up yet
+			return nil, errors.New("connection refused")
+		}
+		return r.eng, nil
+	}
+	r.h.Live = &Live{}
+	r.h.Now = nil
+	r.h.SchedulerInterval = time.Hour // so only the quick retry can explain a second pass
+	r.h.RetryAfter = 5 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { r.h.runScheduler(ctx); close(done) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for !r.h.Live.backupKnown() && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !r.h.Live.backupKnown() {
+		t.Fatal("it never looked: a failed pass must be retried in seconds, not after the whole interval")
+	}
+	// now that it has looked, it waits the full (hour-long) interval: no further connects
+	mu.Lock()
+	before := connects
+	mu.Unlock()
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	<-done
+	mu.Lock()
+	defer mu.Unlock()
+	if before != 3 || connects != before {
+		t.Errorf("connects: %d at the first success, %d later; want 3 and no more", before, connects)
 	}
 }

@@ -19,9 +19,13 @@ var helperNow = time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
 
 type instancesServer struct {
 	incus.InstanceServer
-	all []api.Instance
-	err error
+	all     []api.Instance
+	err     error
+	certs   []api.Certificate
+	certErr error
 }
+
+func (s instancesServer) GetCertificates() ([]api.Certificate, error) { return s.certs, s.certErr }
 
 func (s instancesServer) GetInstancesAllProjects(api.InstanceType) ([]api.Instance, error) {
 	return s.all, s.err
@@ -196,5 +200,49 @@ func TestExecutePrintsAnErrorOnceAndAnExitCodeErrorNotAtAll(t *testing.T) {
 	}
 	if _, stderr, _ := run(errors.New("plain")); strings.Count(stderr, "plain") != 1 {
 		t.Errorf("an ordinary error is printed once: %q", stderr)
+	}
+}
+
+func TestInstallNeedsAnImageOrABinaryAndSaysSoBeforeConnectingAnywhere(t *testing.T) {
+	err := runRoot(t, "helper", "install", "--socket", "/nonexistent/incus.sock")
+	if err == nil || !strings.Contains(err.Error(), "--image") || !strings.Contains(err.Error(), "--binary") {
+		t.Errorf("err = %v", err)
+	}
+	if err != nil && strings.Contains(err.Error(), "connecting to incus") {
+		t.Errorf("a missing option is reported before any connection is tried: %v", err)
+	}
+}
+
+func TestTheHelperCommandsAreListed(t *testing.T) {
+	var out bytes.Buffer
+	root := newRootCmd()
+	root.SetArgs([]string{"helper", "--help"})
+	root.SetOut(&out)
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []string{"install", "remove", "status"} {
+		if !strings.Contains(out.String(), "  "+c+" ") {
+			t.Errorf("helper %s is not listed:\n%s", c, out.String())
+		}
+	}
+}
+
+func TestStatusNoticesARevokedCertificateAtOnceButOnlyIfItCanReadTheTrustStore(t *testing.T) {
+	inst := helperInstance("tink-helper", "helper", "Running", goodStatus(nil))
+	inst.Config[helper.MarkerKey+".remote"] = "https://127.0.0.1:8443"
+	trusted := api.Certificate{CertificatePut: api.CertificatePut{Name: helper.TrustName, Type: "client"}}
+
+	out, err := statusRun(t, instancesServer{all: []api.Instance{inst}, certs: []api.Certificate{trusted}}, "", "", true, false)
+	if err != nil || !strings.HasPrefix(out, "healthy:") {
+		t.Errorf("trusted: %q %v", out, err)
+	}
+	out, err = statusRun(t, instancesServer{all: []api.Instance{inst}}, "", "", true, false)
+	if exitCode(t, err) != 2 || !strings.Contains(out, "not in the host's trust store") {
+		t.Errorf("revoked, though its last document is fresh: %q %v", out, err)
+	}
+	out, err = statusRun(t, instancesServer{all: []api.Instance{inst}, certErr: errors.New("not authorized")}, "", "", true, false)
+	if err != nil || !strings.HasPrefix(out, "healthy:") {
+		t.Errorf("a client that cannot read the trust store is not told, and the rest of the judgement stands: %q %v", out, err)
 	}
 }
