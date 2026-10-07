@@ -1,155 +1,279 @@
 # The tink helper: design
 
-**Status: design only. Nothing here is built.** It records the direction agreed so far, the reasoning, and what is still open, so
-the work can be phased and challenged before code is written. Claims are marked **[code]** (read in this repo), **[verified]**
-(tried live), **[docs]** (upstream documentation) or **[hypothesis]** (believed, to be checked in a spike).
+**Status: design only. Nothing here is built.** This is the second revision: the first was reviewed adversarially against the code and
+the Incus 7.4 source by a separate agent, and the design below was changed to answer what that found
+([what changed](#what-the-review-changed)). Claims are marked **[code]** (read in this repo or in the Incus source; the three that
+most changed the design were re-checked by hand), **[verified]** (tried live), **[docs]** or **[hypothesis]** (to be checked in
+the phase 0 spike). Choices not yet confirmed by the user are marked **proposed**.
 
 ## What this is
 
-A long-running **tink helper container**: an Incus instance, run from an image built from this repository, that does the work tink
-should do on a schedule or near the data. It replaces `tink daemon install`. The first jobs are the backup scheduler
-(`tink backup run --due`) and the ingress reconcile loop that `tink daemon run` already runs. It is a generic home for jobs defined
-now or discovered later, not a backup feature.
+A long-running **tink helper**: an Incus instance, run from an image built from this repository, that does the work tink should do on a
+schedule or near the data. It replaces `tink daemon install`. The first jobs are backup copies on their schedule and the ingress
+reconcile loop that `tink daemon run` already runs. It is a generic home for jobs defined now or discovered later.
 
-The same direction makes tink independent of the host it manages: with the helper doing the host-local, scheduled work, the `tink`
-CLI only needs the Incus API, so it can run from anywhere that can reach it, for example a laptop against the Incus server on Tron.
+The same direction makes the `tink` CLI independent of the host it manages: the host-local, scheduled work moves into the helper,
+so the CLI needs only the Incus API and can run from anywhere that can reach it, such as a laptop against the server on Tron.
 
-## Decisions already made
+## Decisions already made (by the user)
 
 | Decision | Reason |
 |---|---|
-| The helper replaces `tink daemon install`. | One supervision mechanism (Incus starts instances) instead of a unit generator per init system plus cron. |
-| The helper's image, Containerfile and build pipeline live **in this repository**. | It is tightly bound to tink by design; keeping them together keeps the version in step. It is a small amount of code and should not pull the repo off its direction. |
-| A laptop `tink backup run` **triggers the helper**; it does not run the copy itself. | Backup data is relayed through whichever process runs the copy. From a laptop that would route a volume through the laptop. Heavy work belongs next to the data. |
-| Credentials are **kept simple first**: the helper has full admin access to the Incus it manages. Hardening comes after the mechanism works. | One thing at a time. The hardening path is noted below. |
+| The helper replaces `tink daemon install`. | One supervision mechanism (Incus starts instances) instead of a unit generator per init system. |
+| The helper's image, Containerfile and pipeline live **in this repository**. | Tightly bound to tink; keeps the version in step; small enough not to pull the repo off its direction. |
+| A laptop `tink backup run` **triggers the helper** and does not run the copy itself. | Relayed backup data passes through whichever process runs the copy. Heavy work belongs next to the data. |
+| Credentials are **simple first**: the helper has full admin access to the Incus it manages. Hardening comes after the mechanism works. | One thing at a time. |
 
-## Why: tink's host couplings today
+## Principles the review made explicit
 
-Almost every command opens Incus through one function, `incusapi.Connect(socket)`, with the default socket
-`/var/lib/incus/unix.socket` (about a dozen call sites). **[code]** Beyond that, the places tink still depends on the machine it runs on:
+1. **A run must outlive whoever started it.** An Incus `exec` is killed when its websocket drops (see [the trigger](#4-triggering-from-a-laptop)).
+   Anything long-running therefore cannot be an exec held open by a laptop.
+2. **The helper is disposable, not stateless.** It owns three things: synced copies of stacks, a job directory, and a heartbeat. All are
+   reconstructible (stacks from their repositories, jobs are history, the heartbeat is rewritten every tick). Backup state itself stays on
+   the volumes as stamps and markers, never in the helper.
+3. **A run is isolated from other runs.** One bad stack, one slow copy or one failing target must not stop anything else.
+4. **Failures leave a mark.** Success stamps alone make a failing job look merely "not yet run", and a scheduler that retries it forever.
+5. **The helper never executes stack-supplied commands itself.** The stack is data it reads, not code it runs (see [security](#security)).
+
+## tink's host couplings today
+
+Almost every command opens Incus through one function, `incusapi.Connect(socket)`, 12 call sites, default socket
+`/var/lib/incus/unix.socket`; `Connect("")` honours `$INCUS_SOCKET` and `$INCUS_DIR`. **[code]** What else ties tink to the machine:
 
 | Coupling | Where | Fate |
 |---|---|---|
-| `crontab` edits; writing `/etc/systemd/system/tink-daemon.service` and `/etc/init.d/tink-daemon` | `internal/bootstrap/reconciler_daemon.go`, `internal/daemon/units.go` (systemd and OpenRC only) | Goes away with the helper. |
-| Shells out to the `incus` CLI | `internal/bootstrap/instances.go`, `internal/resolve/plan.go` (`r.Check`), `internal/resolve/apply.go` (`r.Command`) | Replace with the API; `incusapi.ExecInGuest` already exists. |
-| `skopeo` for image-drift checks (optional, falls back when absent) | `internal/resolve/imagedrift.go` | Could be in the helper image; not required. |
-| Ingress reads and writes a **path inside a storage pool on the host**: `/var/lib/incus/storage-pools/default/custom/default_ingress-routes/generated` | `internal/ingress/ingress.go` | The hard one. A remote tink or a containerised loop cannot reach that path; it must go through an instance that mounts the volume. Must be solved before the ingress job moves. |
-| `tink deploy` provisioning (registries, profiles, instances, the ingress, the reconciler cron) | `internal/bootstrap/*` | Host provisioning. Stays host-local, or becomes its own thing; out of scope here. |
-| Secrets identity in the user's `~/.config/tink` | `internal/secrets` | Per operator. The helper only needs it for a job that resolves `${secret:}`; backups do not today. |
-| `buildVersion` reads Go's embedded VCS metadata, with a comment that a release script does not exist yet | `cmd/tink/main.go` | An image built without `.git` reports no version, so the pipeline must inject one. |
+| `kind: incus` resources run **user-written argv for the `incus` CLI** (`check:` and `command:`, for example `incus image import /path/to.qcow2`), against the operator's default remote. Not replaceable by an API call: it is an escape hatch with local paths. | `internal/resolve/resource.go`, `plan.go:202`, `apply.go:64` | Refused (BLOCKED, with the reason) when tink is pointed at a remote with `--remote`; unchanged locally. |
+| `tink deploy`: launches instances and pushes files and edits daemon config through `incus`, adds registries with `incus remote add`, **and installs the host daemon** (the "reconciler daemon" step writes the systemd unit and enables it). | `internal/bootstrap/*` (`instances.go:63,78,101`, `daemon.go:16`, `registries.go`, `reconciler_daemon.go:94`) | Host provisioning: stays host-local by design. Once the helper exists, `deploy` must **not** reinstall the host daemon (it would bring back a second ingress reconciler). |
+| `tink daemon install` only **prints** a unit; the crontab code is legacy cleanup of an old `reconcile.sh`. | `main.go:526`, `reconciler_daemon.go:38` | Deprecated, then removed (see phase 5). |
+| Ingress reads and writes a **host path inside a storage pool**: `/var/lib/incus/storage-pools/default/custom/default_ingress-routes/generated`, with the pool name `default` fixed. | `internal/ingress/ingress.go:29` | Fixed in phase 3 by giving the helper the `ingress-routes` volume as a disk device and making the directory and pool configurable. |
+| `skopeo` for image-drift checks (optional), with `/opt/incus/bin` hard-coded. | `internal/resolve/imagedrift.go:434,494-499` | In the helper image if needed; the path becomes a lookup. |
+| Files a stack reads at load: `source_path` and image `Source`, relative to the YAML's directory. | `internal/resolve/yaml.go:230,279` | The sync sends **every file the loader read**, not only the `-f` files. |
+| Image remotes (`docker-oci:`, `ghcr:`) resolve through the operator's Incus client config; the Incus OCI client path runs `skopeo` and reports the *local* CPU architecture. | `internal/run/run.go:195`, Incus `client/oci_images.go:89,506` | From a macOS laptop, OCI pulls may fail or choose the wrong architecture. **[hypothesis]** Part of the phase 0 spike, and it bounds what "works from a laptop" can promise. |
+| Secrets identity in `~/.config/tink`. | `internal/secrets/identity.go` | Per operator. `backup` never resolves secrets today **[code]**, so the helper needs no identity yet. |
+| `buildVersion` reads Go's embedded VCS metadata; without `.git` it prints `(devel)` with unknown commit and date, so two such builds compare equal. | `cmd/tink/main.go:84` | The pipeline must inject the version (`-ldflags -X`); nothing else can tell two helper images apart. |
+| Schedules are evaluated in the location of `now`; `plan` on a laptop evaluates the same stamp in laptop time. | `internal/resolve/schedule.go` | See [time zones](#time-zones). |
 
 ## The pieces
 
-### 1. Connecting by remote (`--remote`)
+### 1. Connecting by remote
 
-One connect function, used by every command, that takes a remote name from the Incus client configuration (the file the `incus`
-CLI uses, via `cliconfig`, as remote backup targets already do **[code]**) and falls back to the local socket. `--remote` /
-`TINK_REMOTE`, defaulting to the Incus client's own default remote. Replacing the `incus` CLI shell-outs with API calls is part of this:
-a laptop has no `incus` binary pointed at the right server.
-
-Not everything can work from a laptop (anything that touches a host path), and the commands that cannot should say so, not fail
-obscurely.
+One connect function used by every command: a remote name from the Incus client configuration (the file the `incus` CLI uses, via
+`cliconfig`, as remote backup targets already do **[code]**), else the local socket. `--remote` / `TINK_REMOTE`, defaulting to the Incus
+client's own default remote. A command that cannot work against a remote (anything that touches a host path, `tink deploy`, `kind: incus`)
+refuses with the reason, and does not fail obscurely.
 
 ### 2. The helper instance
 
-- **Image**: built from a `Containerfile` in this repository: the static tink binary (`CGO_ENABLED=0`), CA certificates and
-  tzdata (schedules are evaluated in the instance's time zone), nothing else at first. Published to `ghcr.io` by a workflow in
-  `.github/workflows/`, multi-arch, tagged with the tink version. Incus runs OCI images as app containers; this repository's own
-  `verify` runs `docker-oci:` images that way. **[verified]**
-- **Entry point**: `tink daemon run`, extended with the jobs below.
-- **Reaching Incus**: a **proxy device** with `bind=container` that connects the container to the host's
-  `/var/lib/incus/unix.socket`. **[hypothesis]** A plain bind of the socket file would be root-owned and unreadable from an
-  unprivileged container; the proxy device runs on the host and creates the socket inside the container. Verify in a spike,
-  including a restart. This is the "simple first" credential: it is host-root-equivalent, which is stated in the docs, not hidden.
-- **Config**: a small volume holding the Incus client configuration (needed for remote backup targets: their certificates), mounted at the
-  path the Incus client library reads. A second volume holds the synced stacks. Neither holds anything irreplaceable except the
-  remote certificates, which can be re-issued.
-- **Supervision**: `boot.autostart=true`, and `boot.autorestart` (present in Incus 7.4's instance driver **[code]**; exact semantics to confirm).
-- **Identity**: found by a config key, `user.tink.helper=<version>`, not by name, so the CLI can discover it in a project.
+- **Image**: a `Containerfile` in this repository: the static tink binary (`CGO_ENABLED=0` builds all of `cmd/tink` **[code]**), CA
+  certificates, tzdata. Published to `ghcr.io` by a workflow in `.github/workflows/`, multi-arch, tagged with the tink version and **pinned by
+  digest** when installed. v1 needs a registry the host can reach: the Incus OCI path pulls from a registry, and I found no way to import
+  an OCI image from a local file. **[code]** A local-build route for a host with no registry access (a non-OCI image) is deferred.
+- **Instance**: lives in its **own project** (`tink-helper`), so who can reach it is a project-level question; `boot.autostart=true`,
+  `boot.autorestart=true`, `oci.entrypoint=tink daemon run ...`, discovered by `user.tink.helper=<protocol version>`.
+- **Reaching Incus**: a **proxy device** with `bind=container`, `connect=unix:/var/lib/incus/unix.socket`. **[code]** It is supported
+  (unix to unix, with the AppArmor profile allowing both paths). The forkproxy dials the host socket as host root for every client, so any
+  process in the container has full admin. The socket it creates defaults to mode `0644`, so a non-root entrypoint cannot connect; run the
+  entrypoint as root, or set `uid`/`gid`/`mode`. The proxy starts in a post-start hook, so **the entrypoint can run before the socket
+  exists**: the loop retries with backoff and **never exits on a connect failure** (see supervision).
+- **Supervision**: `boot.autorestart` allows **10 restarts per rolling minute**, tracked in incusd's memory, and only for exits the
+  instance itself initiated. **[code]** A crash loop beyond that leaves the helper down until a human acts. So the entrypoint must never
+  exit on a transient failure, and the helper writes a **heartbeat**: each tick it sets `user.tink.helper.tick` (an RFC3339 time) on its own
+  instance config. `tink plan` and `tink helper status` warn when the heartbeat is stale or the instance is stopped, even though the logs
+  are gone, because the console log is a bounded ring buffer. **[code]**
+- **Volumes**: `tink-helper-config` (the Incus client config, holding certificates for remote backup targets) and `tink-helper-data`
+  (stacks and jobs, below). The config volume is **sensitive**: it holds client keys, possibly admin keys on other servers. It is excluded
+  from any backup that leaves the host, and re-issuing its contents is a manual trust-token exercise, not a free rebuild.
 
-### 3. The loop
+### 3. The loop and the job directory
 
-`tink daemon run` gains jobs, each on its own interval, none able to stop the loop (the existing rule: a failed pass logs and keeps
-going **[code]**):
+The helper is one process, `tink daemon run`, with **independent workers**, each isolated from the others (principle 3):
 
-- **backup**: every tick (default 1 minute), for each stack in the stacks volume, run what `tink backup run --due` would. The
-  due logic already exists and catches up a missed run **once** (it is "next run after the last success has passed", not a count of
-  missed runs). **[code]**
-- **ingress**: the existing reconcile, once the host-path coupling is solved.
+- **backup scheduler**: each tick (default 1 minute), for each synced stack, find the copies that are due and queue them.
+- **executor**: runs queued jobs.
+- **ingress**: the existing reconcile, on its own interval, never behind a copy.
+- **heartbeat**.
 
-**Only one thing runs at a time inside the helper**, enforced with a file lock in the container, taken by the loop and by a triggered run.
-This is what makes a manual trigger and the scheduler safe together, and why a stamp-based claim is not needed. There must be only one
-helper per Incus server; `install` refuses a second.
+Every unit of work is a **job**, whether the schedule or a laptop created it, in `tink-helper-data/jobs/<id>/`:
 
-Stacks are re-read every tick, so syncing a stack takes effect without a restart. Logs go to stdout (`incus console --show-log`).
+```
+request.json    what to do: {proto, kind, args, origin: schedule|trigger, stack: <name or bundled>}
+bundle/         (optional) a stack, and every file it reads, sent with this request only
+READY           written last; the executor ignores the directory until it exists
+status.json     {proto, state: queued|running|succeeded|failed|cancelled, started, finished, per-copy results}
+log             bounded, redacted best-effort
+cancel          created by a client to ask the job to stop
+```
 
-### 4. The laptop trigger
+Because the file API **truncates in place** (not atomic, **[code]**), nothing reads a directory until `READY` exists, and stack activation
+works the same way (below). `proto` is a small integer, the protocol version: it is what the CLI and the helper must agree on.
 
-`tink backup run [VOLUME...]` from a machine that is not the helper:
+**Locks**: there is one executor, so jobs run in order, and a **per-(volume, target) guard** means the same copy never runs twice at once.
+The scheduler skips anything queued or running. A triggered job for something already running is queued behind it, or refused with
+"already running since T", chosen by the trigger's flag (default: refuse). Ingress and the heartbeat are never behind the executor.
+A file lock in the container guards only against a second helper process by mistake.
 
-1. find the helper (by `user.tink.helper`) on the connected server;
-2. **sync** the stack files given with `-f` into the helper's stacks volume through the instance file API;
-3. **exec** `tink backup run ...` in the helper through the Incus API, streaming its output and exit code back.
+**Failure and retry.** A copy that fails today leaves nothing, so the due check retries every tick forever (a full target means snapshot,
+copy, delete, every minute). **[code]** The fix is a prerequisite for the scheduler: a failed copy stamps `user.tink.backup.copy.<target>.fail.at`
+and `.fail.n` on the source volume (time and consecutive count, cleared by a success). A copy is retried after
+`min(5 min x 2^(n-1), the copy's own interval)`. **The stamp holds no message**: Incus errors can echo credentials (the TrueNAS API
+key appeared in one), and a volume's config is the wrong place for that. The reason lives in the job's `log` and `status.json`. `plan` and
+`helper status` show failures; a run with a failed copy exits non-zero.
 
-No daemon API of its own is added: tink has deliberately had none, because the daemon owns no state a one-shot invocation cannot see **[code]**
-(`internal/daemon` package doc), and Incus is already the transport and the access control. `--local` runs it in-process instead, with a
-warning when a relayed remote copy would pass through the machine. With no helper installed, the command runs locally as it does today.
+**A run that is cut off** (the helper restarts, a host reboots) leaves the same traces as any failed copy: the temporary snapshot has a
+24-hour expiry, and a partial restore point has no markers so it can never be used or pruned. **[code]** On start the executor marks
+any job still `running` as `failed (interrupted)` so it is retried by the schedule.
 
-`restore` and `verify` do not need the helper: they copy within one server, which Incus does server-side.
+**Stacks** live in `tink-helper-data/stacks/<name>/`, one directory per stack (so two repositories' `tink.yaml` cannot collide).
+They are loaded **one at a time**: a stack that no longer parses, or names a deleted volume, is reported in `status` and skipped, and does
+not stop the others. Activation is atomic: `tink helper sync` writes `stacks/<name>.new/`, then `READY`, and the loop swaps it in. Only
+`tink helper sync` changes what the **scheduler** runs; see the next section for why a trigger does not.
+
+### 4. Triggering from a laptop
+
+An Incus `exec` is **killed when its control or output websocket drops**, and tink's exec helper uses exactly that mode and buffers all output
+until the end. **[code]** A laptop that sleeps or loses a tunnel would kill a multi-hour copy mid-flight. So the trigger does not hold a
+run open:
+
+1. **bundle**: load the stack and record every file the loader read (the YAML, `source_path`, image sources), with paths confined to a
+   per-job directory (no absolute paths, no `..`; the helper re-validates when it reads);
+2. **enqueue**: write the job directory with the file API and create `READY` last;
+3. **follow** (optional): poll `status.json` and the bounded `log` and print them. `Ctrl-C` **detaches**; the job carries on.
+   `tink helper jobs` lists recent jobs, `tink helper log ID` follows one, `tink helper cancel ID` creates `cancel`.
+
+The job uses its **own bundle**, so a laptop checkout of a feature branch with a shortened `retain` cannot change what the scheduler does or
+prune real restore points on the next tick. Persistent changes are an explicit `tink helper sync`. Whether `tink apply` should offer to
+sync is open (below).
+
+No daemon API of its own is added, but the earlier rationale ("tink owns no state") no longer holds in full: the helper owns reconstructible
+state, and its interface is **Incus's file API plus a versioned job-directory protocol**, not an RPC server. Incus is still the transport and
+the access control. Only the file API and (for `status`) reads of instance config are needed, **no exec**.
+
+`--local` runs the command in-process, with a warning when a relayed remote copy would pass through this machine. With no helper installed, the
+command runs locally as it does today. `restore` and `verify` copy within one server, which Incus does server-side, so they never need the helper.
 
 ### 5. Lifecycle commands
 
-`tink helper install | upgrade | status | remove`. `install` creates the instance and volumes (idempotently, converging); `upgrade` moves the
-helper to the CLI's own version; `status` shows the version, uptime, last tick and the last result per copy (from the volume stamps,
-so it is truthful even when the log is gone). **Version rule:** the CLI manages a helper of exactly its own version and says so when they differ, instead
-of silently driving an older helper. Whether the helper should also be declarable as a resource in the stack is open (below).
+`tink helper install | upgrade | status | sync | jobs | log | cancel | remove`.
 
-## Replacing `tink daemon install`
+- **install**: creates the project, instance, volumes and devices (idempotent), sets `TZ`, resolves and records the image digest, and refuses
+  if a helper already exists on that server in *any* project (it scans, since discovery is by `user.tink.helper`).
+- **upgrade**: **drains first**: the scheduler stops queuing, the executor finishes the running job (a timeout, then it asks), then the helper is
+  replaced. `--force` skips the wait and interrupts the job (which then retries by schedule). Incus's own `rebuild` is non-atomic, needs a stopped
+  instance, and does not refresh `oci.*` keys **[code]**, so upgrade recreates the instance and keeps the volumes. It shows old and new digests.
+- **Version rule (changed):** the CLI and the helper need to agree on the **protocol version**, not the exact tink version. The CLI **refuses
+  only on a protocol mismatch** and warns when the versions differ. An exact-version rule would force a helper restart for every laptop
+  `go install`, lock two operators with different versions out of each other, and cannot work at all until a version is injected.
+- **status**: the instance state, image digest and version, **heartbeat age**, `TZ`, each stack (synced when, parse errors), the recent jobs, and
+  for every copy its last success and its failure count (from the volume stamps, so it is true even when the log is gone).
 
-`tink daemon run` stays: it is the helper's entry point. `daemon install` is deprecated once the helper can do the ingress job, kept for
-one release with a notice, and then removed. Existing hosts migrate by `tink helper install`, then removing the unit and the cron entry.
+## Time zones
 
-## Security: now and later
+Cron schedules are evaluated in the location of `now`. **[code]** `helper install` sets `environment.TZ` explicitly (default: the host's), `status`
+shows it, and **schedules are evaluated in the Incus server's zone** so they line up with Incus's own snapshot schedules. `plan` evaluates in the
+helper's zone when it finds a helper, else in local time. Due-ness is stamp-based, so a DST change cannot cause a repeat or a skip, only shift
+the next run by an hour. **[hypothesis]** (robfig cron's handling of a non-existent local time is not read.)
 
-**Now:** the helper holds the host's Incus admin socket, so a compromise of the helper is a compromise of the host. That is no worse than
-`tink daemon` running as root on the host today, and it is stated plainly. The client-config volume holds the certificates for remote targets.
+## Backup engine changes this design needs
 
-**Later:** replace the socket with a client certificate over the Incus API, scoped to the projects the helper manages. Caveat found while
-building remote backups: an Incus *restricted* certificate is only bounded if the server's authorization lets Incus's own check run. A
-server that routes `authorization.client.tls-restricted` through a scriptlet returning `True` gives it everything. **[verified]**
-The hardening step therefore includes checking what the certificate can actually see.
+Small, separate from the helper, and prerequisites for phase 2:
+
+1. **Failure stamps and backoff** (above).
+2. **Per-(volume, target) guard** inside the process.
+3. **Server identity in the restore-point marker. Proposed.** `copy-of` is `<project>/<pool>/<volume>`, so two servers copying a same-named
+   volume into one remote pool are treated as one volume, and the newest wins, which can **prune the other server's restore points**.
+   Add `user.tink.backup.copy-server=<server_name>`: **prune only touches points from this server**; restore considers all, shows the
+   server, and defaults to the newest overall unless told otherwise. A rebuilt host with the same name continues its history; one with a
+   new name still **finds** every point (only pruning is scoped), so the earlier "a rebuilt host must still find its backups" goal holds.
+   Existing restore points without the marker are treated as this server's.
+
+## Security
+
+**Now.** The helper holds the host's Incus admin socket, so the helper is root on the host. That is no worse than `tink daemon` as root today, and
+it is stated, not hidden. Consequences the design takes seriously:
+
+- **Who can reach the helper is who holds host root**: anyone who can push files into it or exec in it, including a restricted or OIDC user
+  granted access. It is in its own project for that reason; the docs say so.
+- **The stack is data, never code.** The helper never runs stack-supplied commands itself: no `kind: incus`, no `apply`, no shell from a stack.
+  `backup verify`'s check command runs only inside its throwaway sandbox instance (no network, volume mounted read-only), never in the helper
+  or on the host. A future job that would run stack commands in the helper needs its own design.
+- **Bundle paths are confined** (no absolute, no `..`, per-job directory), on the laptop when writing and in the helper when reading.
+- **Supply chain**: the host's incusd pulls the image as root and hands it the socket. The image is **pinned by digest** at `install` and `upgrade`
+  (the digest is recorded on the instance), and the doc names the publisher that is trusted.
+- **Secrets**: resolved `${secret:}` values live in instance config, which the helper can read. No backup job resolves secrets today. A job that
+  does gets the identity deliberately and says so.
+- **Failure text can contain credentials** (an Incus error echoed an API key). Stamps never carry it; logs are redacted best-effort.
+
+**Later (hardening).** Replace the socket with a client certificate scoped to the projects the helper manages. Two things to check first: an Incus
+*restricted* certificate is bounded only if the server's authorization lets Incus's own check run (a server routing
+`authorization.client.tls-restricted` through a scriptlet that returns `True` gives it everything, **[verified]** on a lab VPS); and whether
+the proxy's `security.uid`/`security.gid` can be set to a host user in the `incus` group for a restricted socket **[hypothesis, untested]**.
 
 ## Phasing
 
-Each phase is useful on its own and ends in something checkable on the lab host.
+Each phase is useful alone and ends in something checkable on the lab host.
 
-1. **`--remote` and no shell-outs.** One connect function; the three `incus` CLI shell-outs become API calls. *Done when:* `plan`,
-   `apply` and `backup restore` work from a laptop against Tron, and the code has no `exec.Command("incus", ...)`.
-2. **The backup job in the loop.** `daemon run` takes a stacks path and runs the due backup copies with a lock. *Done when:* a loop
-   run under any supervisor copies a volume on its schedule, catches up once after being down, and two runs never overlap.
-3. **The helper.** Containerfile, the image workflow, `tink helper install|upgrade|status|remove`. *Done when:* killing the helper's
-   process, and rebooting the host, both bring it back and the next due copy still runs.
-4. **The laptop trigger.** Sync, then exec in the helper. *Done when:* `tink backup run` from a laptop runs the copy inside the helper
-   and no volume data passes through the laptop.
-5. **Ingress path, then retire `daemon install`.** The ingress job stops reading a host path; `daemon install` is deprecated.
+0. **Spike.** On Tron, with a throwaway container: (a) the proxy-device socket from an unprivileged container, including the entrypoint
+   racing the proxy, a restart, and a host reboot; (b) `boot.autorestart` behaviour in a crash loop and what `status` can still say;
+   (c) the job-directory protocol over the file API: `READY` last, a concurrent reader, a large bundle, a large `log`; (d) pulling an OCI
+   image and running `plan`/`apply` against Tron from a **macOS** client (skopeo, architecture). *Done when:* each hypothesis above is
+   confirmed or contradicted in this document, and the design is changed where it was wrong.
+1. **Remote-capable tink.** One connect function and `--remote`; `kind: incus` and host-path features refuse under a remote;
+   `tink deploy` stays host-local. *Done when:* `plan`, `apply` (an OCI instance), `backup restore` and `backup verify` run from a laptop
+   against Tron, and a stack with `kind: incus` is refused there with the reason.
+2. **The scheduler and the engine changes.** Failure stamps and backoff, the server marker, the per-copy guard, the job directory and
+   executor, the backup scheduler and heartbeat in `daemon run`, `--stacks` and `--jobs` paths. Runs under **any** supervisor (a systemd unit on
+   Tron is enough). *Done when:* copies run on schedule; a missed run is caught up once; a failing copy backs off and shows as failed; a job created
+   by dropping files runs after its creator has exited; a 3-hour copy does not delay ingress reconcile; two servers copying one volume name do not
+   prune each other.
+3. **The helper.** Containerfile and image workflow (version injection, multi-arch, digest), `tink helper install|upgrade|status|sync|remove`,
+   the ingress volume device and configurable paths, `deploy` no longer reinstalling the host daemon. *Done when:* killing the process brings it
+   back, a crash loop is detected by `status` and `plan`, a host reboot brings it back with the next due copy still running, and `upgrade`
+   waits for a running copy.
+4. **The laptop trigger.** Bundle, enqueue, follow, detach, `jobs`, `log`, `cancel`, `--local`. *Done when:* a laptop that sleeps mid-copy
+   does not interrupt it, and no volume data passes through the laptop.
+5. **Retire `daemon install`.** Deprecated with a notice, kept for a release, then removed; migration is `tink helper install` plus removing the
+   unit; `deploy` is updated. *Done when:* a host runs only the helper.
 
 ## Open questions
 
-- **Declarative or imperative?** `tink helper install` is imperative. A `kind: helper` resource would let the stack declare it, but the
-  stack would need the helper to exist before it can be applied from anywhere else. Recommendation: start imperative; revisit.
-- **Which stacks does the helper schedule?** Every stack synced to it? Syncing happens on a trigger today; should `apply` sync too, so the
-  scheduler never lags the repository?
-- **Where does the image come from before it is published?** A local build and `incus image import`, for the lab.
-- **Unprivileged socket access** (the proxy device above) and **`boot.autorestart` semantics** are hypotheses for the first spike.
-- **Alerting.** A failed scheduled copy only shows up in the log and as an "overdue" plan warning. A notification hook is not designed.
-- **The ingress host path** (see above): the shape of the fix is not chosen.
-- **Time zones.** Cron schedules use the container's time zone; the helper should be explicit about it and `status` should show it.
+- **Should `tink apply` offer to sync the stack to the helper?** Explicit `helper sync` first is the safe default; syncing on apply keeps the scheduler
+  from lagging the repository. Revisit after phase 4.
+- **A host with no registry access** has no route to the image (v1 needs one). A non-OCI image published as a release asset is the likely answer.
+- **The helper's own project** (`tink-helper`) is proposed; if the volumes it must reach live in several projects the socket still allows it, but
+  that is worth confirming in phase 0.
+- **Alerting.** A failed copy is visible in `status`, `plan` and the exit code, and a stale heartbeat is visible; nothing *sends* anything. A
+  notification hook is not designed.
+- **Server name as identity.** `server_name` is the host name by default; hosts that share a name would collide. Whether the Incus server UUID is
+  available and stable enough is to be checked in phase 2.
+- **Several helpers or a cluster.** One helper per Incus server is enforced at `install`. Incus clustering is not considered.
+
+## What the review changed
+
+The first revision was reviewed against the code and the Incus 7.4 source. What changed in this one:
+
+| Finding | Change |
+|---|---|
+| A laptop exec is killed when its websocket drops (and tink's exec buffers everything). | The trigger became **detached**: bundle, enqueue by file API, follow, detach. No exec. |
+| A failed copy is retried every tick; no failure is recorded anywhere. | **Failure stamps and backoff**, as a phase 2 prerequisite; stamps hold no message. |
+| One lock would stall ingress behind a long copy. | **Independent workers**, a per-copy guard, ingress never behind the executor. |
+| `upgrade` or a restart kills a running copy; "exactly its own version" forces restarts and locks operators out. | **Drain before upgrade**; the rule is the **protocol version**. |
+| The trigger persisted the laptop's stack into the scheduler. | A trigger uses **its own bundle**; only `helper sync` changes the scheduler. |
+| `kind: incus` and the other shell-outs are not API calls; `deploy` reinstalls the daemon. | `kind: incus` **refused under `--remote`**; `deploy` host-local and no longer reinstalls the daemon once a helper exists. |
+| Time zones differ between laptop and helper. | **`TZ` set explicitly**, schedules evaluated in the server's zone, shown in `status`. |
+| Two servers can prune each other's restore points. | **Server marker**; prune only touches this server's points. |
+| Failure visibility was weaker than described; autorestart gives up after 10 per minute. | **Heartbeat** on instance config, shown by `plan` and `status`; an entrypoint that never exits on a connect failure. |
+| Stacks: a bad stack, filename collisions, files outside the `-f` files, non-atomic file push. | **One directory per stack, loaded one at a time**, the sync sends every file the loader read, and activation by `READY` last. |
+| Ingress path was a long pole in phase 5. | Solved with a **disk device** for the `ingress-routes` volume, moved into phase 3. |
+| Phase 0 gated phase 3 but did not exist; phase 1's done-when passed by grep; phase 5 hid the real work. | A **phase 0 spike**; done-whens that run commands from a laptop; the ingress and `deploy` work moved up. |
+| Security items the doc did not state (stack is code, who can reach the helper, traversal, supply chain, secrets, the config volume). | Stated under [Security](#security), with cheap mitigations built in (own project, confined paths, digest pin, never run stack commands). |
+| The helper adds the first state tink owns, which weakened the "no daemon API" rationale. | The doc says so, and gives the real rationale: the interface is Incus's file API plus a versioned job protocol. |
 
 ## Alternatives considered
 
-- **Keep `daemon install` (init-system units).** Works, but needs a generator per init system, and ties tink to the host it runs on.
-- **cron or a timer calling `tink backup run --due`.** Simplest, and `--due` was designed for it; it remains a supported way to run the same
-  command. It does not give the helper's other benefits.
-- **A tink daemon with its own API** (a Docker-style client and server). Rejected, as before: tink owns no state, and Incus already provides
-  the transport and the access control.
-- **The helper in its own repository.** Rejected: it is tightly bound to tink, and a separate repository would mean keeping two versions in step.
+- **Keep `daemon install` (init-system units).** Works, but needs a generator per init system and ties tink to the host.
+- **cron or a timer calling `tink backup run --due`.** Simplest, and `--due` was designed for it; it stays a supported way to run the same command. It
+  lacks the failure backoff, the heartbeat and the helper's other benefits unless phase 2's engine changes are in.
+- **A trigger by `exec`.** The first revision. Rejected: the server kills the command when the connection drops.
+- **A tink daemon with its own API** (a Docker-style client and server). Rejected: Incus's file API plus a versioned job directory already provides
+  transport and access control, with nothing new to authenticate or listen on.
+- **The helper in its own repository.** Rejected: tightly bound to tink; two versions to keep in step.
