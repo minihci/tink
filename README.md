@@ -35,7 +35,7 @@ comment for the working bash it's replacing.
 | `tink backup run` / `restore` / `verify` / `forget` | verified live on the lab host: pool targets (a TrueNAS-backed pool included) and an Incus remote over a tunnel ([docs](docs/volume-backup.md)) | (new) |
 | `tink secret` | verified live on the Immich stack on the lab host ([docs](docs/secrets.md)) | (new) |
 | `tink remote` / `--remote NAME` | verified live from a laptop against the lab host ([docs](docs/remote.md)) | (new) |
-| `tink helper install` / `upgrade` / `remove` / `remote` / `status` | built, and run live on the lab host with `--binary`; the published image has not been released yet ([docs](docs/helper.md)) | (new - a way to run the daemon without a unit per init system) |
+| `tink helper install` / `upgrade` / `remove` / `remote` / `status` | built, and run live on the lab host with `--binary`; the image is published (`v0.1.0`, amd64 and arm64) but `install` and `upgrade` have not yet been run from it ([docs](docs/helper.md)) | (new - a way to run the daemon without a unit per init system) |
 | `tink mongo snapshot` | not yet designed | (none yet - still under discussion) |
 
 `deploy` converges a host to its declared platform state - storage
