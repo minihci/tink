@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -178,11 +179,15 @@ func refSuffix(id string) string {
 	return ""
 }
 
+// remoteHost is the registry host of an OCI remote, without its scheme, its path and any user:password written into its URL.
 func remoteHost(remote cliconfig.Remote) string {
 	if len(remote.Addrs) == 0 {
 		return ""
 	}
 	h := remote.Addrs[0]
+	if u, err := url.Parse(h); err == nil && u.Host != "" {
+		return u.Host
+	}
 	h = strings.TrimPrefix(strings.TrimPrefix(h, "https://"), "http://")
 	return strings.TrimSuffix(h, "/")
 }
