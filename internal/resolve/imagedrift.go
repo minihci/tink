@@ -41,12 +41,36 @@ import (
 // errOffline marks a lookup that was skipped because --offline was given.
 var errOffline = errors.New("registry lookups disabled (--offline)")
 
+// errNoSkopeo marks a lookup that was not tried because the OCI client Incus uses to ask a registry runs skopeo, and this machine has none.
+// It is the one cause of "could not verify" that is the same for every image, so it is said once for a whole run (see
+// PlanOptions.ImageCheckNote) instead of on every instance.
+var errNoSkopeo = errors.New("skopeo was not found on this machine (see docs/remote.md, or pass --offline to skip the registry checks)")
+
+// skopeoAvailable reports whether skopeo can be run from here, looking in the Incus package's own directory as well. A variable so that
+// a test can say it is missing.
+var skopeoAvailable = func() bool {
+	ensureSkopeoOnPath()
+	_, err := exec.LookPath("skopeo")
+	return err == nil
+}
+
 // imageCheck is what comparing an instance with its desired image found.
 type imageCheck struct {
 	// Drift: confirmed, the instance was built from different content.
 	Drift []string
 	// Unverified: the comparison could not be made (lookup failed, offline, ...).
 	Unverified []string
+	// NoSkopeo: Unverified because skopeo is missing here. Rebuild still blocks on it, with the reason; but a warning that reads the
+	// same on every instance is said once, at the end, instead.
+	NoSkopeo bool
+}
+
+// unverifiedWarnings are the unverified findings to warn about on this instance.
+func (c imageCheck) unverifiedWarnings() []string {
+	if c.NoSkopeo {
+		return nil
+	}
+	return c.Unverified
 }
 
 // imageProbe holds the outside lookups so the logic can be tested without a
@@ -110,7 +134,10 @@ func checkOCI(cfg map[string]string, remoteName string, remote cliconfig.Remote,
 	}
 	fp, err := p.registryFP(remoteName, ref)
 	if err != nil {
-		return imageCheck{Unverified: []string{fmt.Sprintf("image: could not verify %q against the registry: %v", display, err)}}
+		return imageCheck{
+			Unverified: []string{fmt.Sprintf("image: could not verify %q against the registry: %v", display, err)},
+			NoSkopeo:   errors.Is(err, errNoSkopeo),
+		}
 	}
 	if fp == base {
 		return imageCheck{}
@@ -355,6 +382,25 @@ type imageEnv struct {
 	mu      sync.Mutex
 	images  map[string]registryResult
 	runtime map[string]runtimeResult
+	// noSkopeo are the images a lookup was wanted for while skopeo was missing, so the run can say so once.
+	noSkopeo map[string]bool
+}
+
+// skippedWithoutSkopeo remembers that a lookup for image was not made because skopeo is missing. Instances are planned concurrently.
+func (e *imageEnv) skippedWithoutSkopeo(image string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.noSkopeo == nil {
+		e.noSkopeo = map[string]bool{}
+	}
+	e.noSkopeo[image] = true
+}
+
+// skippedCount is how many different images were not looked up for want of skopeo.
+func (e *imageEnv) skippedCount() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return len(e.noSkopeo)
 }
 
 type registryResult struct {
@@ -386,6 +432,10 @@ func (e *imageEnv) remotes() map[string]cliconfig.Remote {
 func (e *imageEnv) registryImage(remote, ref string) (registryImage, error) {
 	if e == nil || e.offline {
 		return registryImage{}, errOffline
+	}
+	if !skopeoAvailable() {
+		e.skippedWithoutSkopeo(remote + ":" + ref)
+		return registryImage{}, errNoSkopeo
 	}
 	if e.conf == nil {
 		return registryImage{}, errors.New("incus client config unavailable")
@@ -429,6 +479,10 @@ func (e *imageEnv) runtimeConfig(remote cliconfig.Remote, ref string) (ociRuntim
 		repo = r + ref[i:] // Incus drops :TAG when a digest is present
 	}
 	key := remoteHost(remote) + "/" + repo
+	if !skopeoAvailable() {
+		e.skippedWithoutSkopeo(key)
+		return ociRuntime{}, errNoSkopeo
+	}
 
 	e.mu.Lock()
 	if hit, ok := e.runtime[key]; ok {

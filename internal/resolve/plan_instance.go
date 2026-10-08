@@ -99,6 +99,23 @@ func (o PlanOptions) HelperPolicy() (label string, readsUpTo int) {
 	return o.helperLabel, o.helperReads
 }
 
+// ImageCheckNote says, once for a whole plan or apply, that images were not compared with their registries because skopeo is missing
+// on this machine; "" when that did not happen. Instances that cannot be verified for that reason do not each carry a warning that reads
+// the same (one that is set to rebuild is still blocked, with the reason): this is the one line about all of them. Call it after planning.
+func (o PlanOptions) ImageCheckNote() string {
+	if o.env == nil {
+		return ""
+	}
+	n := o.env.skippedCount()
+	switch n {
+	case 0:
+		return ""
+	case 1:
+		return "1 image was not checked against its registry: skopeo was not found on this machine (installing it helps only if this machine has the same CPU architecture as the server; or pass --offline to skip these checks; see docs/remote.md)"
+	}
+	return fmt.Sprintf("%d images were not checked against their registries: skopeo was not found on this machine (installing it helps only if this machine has the same CPU architecture as the server; or pass --offline to skip these checks; see docs/remote.md)", n)
+}
+
 // NewPlanOptions builds options with one registry cache shared by every
 // resource planned (or applied) with them.
 func NewPlanOptions(offline bool) PlanOptions {
@@ -165,7 +182,7 @@ func decideInstance(r Resource, changes []string, chk imageCheck, pre preflight)
 			p.Warnings = append(p.Warnings, d+" -- ignored (on_image_change: ignore)")
 		}
 		p.Drift = nil // already reported above; do not print it twice
-		p.Warnings = append(p.Warnings, chk.Unverified...)
+		p.Warnings = append(p.Warnings, chk.unverifiedWarnings()...)
 
 	case OnImageChangeRebuild:
 		switch {
@@ -182,7 +199,7 @@ func decideInstance(r Resource, changes []string, chk imageCheck, pre preflight)
 		if len(chk.Drift) > 0 {
 			block(fmt.Sprintf("image drift with on_image_change: report -- nothing on this instance is changed (set on_image_change: ignore to accept it, or on_image_change: rebuild to converge it): %s", strings.Join(chk.Drift, "; ")))
 		}
-		p.Warnings = append(p.Warnings, chk.Unverified...)
+		p.Warnings = append(p.Warnings, chk.unverifiedWarnings()...)
 	}
 	return p
 }
