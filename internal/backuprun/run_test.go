@@ -35,6 +35,8 @@ type stub struct {
 	results map[string]volbackup.CopyResult // "vol->target"
 	errs    map[string]error
 	copied  []string
+	nowSeen func() time.Time        // the clock the last copy was handed
+	handed  []volbackup.CopyOptions // what each copy was handed, in order
 	// what listing the server finds
 	listed   []volbackup.ListedVolume
 	poolErrs map[string]error
@@ -55,6 +57,8 @@ func (s *stub) LiveConfig(v volbackup.Volume) (map[string]string, error) {
 func (s *stub) Copy(v volbackup.Volume, t volbackup.Target, opts volbackup.CopyOptions) (volbackup.CopyResult, error) {
 	k := v.Name + "->" + t.Name
 	s.copied = append(s.copied, k)
+	s.nowSeen = opts.Now
+	s.handed = append(s.handed, opts)
 	if err := s.errs[k]; err != nil {
 		return volbackup.CopyResult{}, err
 	}
@@ -343,5 +347,110 @@ func TestTargetFromCarriesWhatTheStackDeclaredAboutTheRemoteNormalised(t *testin
 	plain.Address, plain.Fingerprint = "", ""
 	if got := TargetFrom(plain); got.Address != "" || got.Fingerprint != "" || got.Remote != "vps" {
 		t.Errorf("a target that declared no address must carry none: %+v", got)
+	}
+}
+
+// A schedule that cannot be read fails that copy, says so, and does not stop the others.
+func TestDueWithAnUnreadableScheduleFailsThatCopyOnly(t *testing.T) {
+	bad := vol("a", "t")
+	bad.Backup.Copies[0].Schedule = "whenever"
+	// "a" has been copied before: a copy that never ran is due without its schedule being read at all
+	s := &stub{live: map[string]map[string]string{"a": {backupmeta.CopyStampAt("t"): now.Add(-3 * time.Hour).UTC().Format(time.RFC3339)}, "b": {}}}
+	rep, out, err := run(t, s, []resolve.Resource{bad, vol("b", "t"), target("t", "")}, Options{Due: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "a -> t: ") || !strings.Contains(out, "whenever") {
+		t.Errorf("the unreadable schedule must be said:\n%s", out)
+	}
+	if !reflect.DeepEqual(s.copied, []string{"b->t"}) {
+		t.Errorf("only the readable one runs: %v", s.copied)
+	}
+	if rep.Failed != 1 || rep.Tried != 1 || len(rep.Copies) != 2 || rep.Copies[0].Outcome != Failed || rep.Copies[0].Target != "t" || rep.Copies[1].Outcome != Copied {
+		t.Errorf("report: %+v", rep)
+	}
+}
+
+// With no clock given, Run uses the real one, for deciding what is due and for the copies it starts.
+func TestRunWithoutAClockUsesTheRealOne(t *testing.T) {
+	items, err := FromStack([]resolve.Resource{vol("a", "t"), target("t", "")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &stub{live: map[string]map[string]string{"a": {}}}
+	var out bytes.Buffer
+	rep, err := Run(context.Background(), s, items, Options{Due: true}, &out)
+	if err != nil || rep.Tried != 1 || !reflect.DeepEqual(s.copied, []string{"a->t"}) {
+		t.Fatalf("a copy that never ran is due: %v %+v %v\n%s", err, rep, s.copied, out.String())
+	}
+	if s.nowSeen == nil || time.Since(s.nowSeen()) > time.Minute {
+		t.Errorf("the copy must be handed the real clock")
+	}
+}
+
+func TestTheAbandonedPartialCopiesRemovedAreReportedAfterThePruned(t *testing.T) {
+	s := &stub{results: map[string]volbackup.CopyResult{
+		"a->t": {Volume: "a-bk-1", Swept: []string{"a-bk-0", "a-bk-00"}},
+		"b->t": {Volume: "b-bk-1", Pruned: []string{"b-bk-0"}, Swept: []string{"b-bk-00"}},
+	}}
+	rep, out, err := run(t, s, []resolve.Resource{vol("a", "t"), vol("b", "t"), target("t", "")}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "copied a -> t: restore point a-bk-1 (removed 2 abandoned partial cop(ies): a-bk-0, a-bk-00)\n" +
+		"copied b -> t: restore point b-bk-1 (pruned 1 older: b-bk-0) (removed 1 abandoned partial cop(ies): b-bk-00)\n"
+	if out != want {
+		t.Errorf("output:\n%q\nwant:\n%q", out, want)
+	}
+	if got := rep.Copies[1]; !reflect.DeepEqual(got.Swept, []string{"b-bk-00"}) || !reflect.DeepEqual(got.Pruned, []string{"b-bk-0"}) {
+		t.Errorf("the report carries both: %+v", got)
+	}
+}
+
+// What the engine is handed is what the person asked for: a dry run MUST reach it (or "dry run" would make real copies), and so must the
+// copy's own retention, the run's clock, and somewhere to report progress.
+func TestTheEngineIsHandedWhatTheCopyAndTheRunSay(t *testing.T) {
+	for _, dry := range []bool{false, true} {
+		a, b := vol("a", "t"), vol("b", "t")
+		b.Backup.Copies[0].Retain = "7d"
+		s := &stub{}
+		if _, _, err := run(t, s, []resolve.Resource{a, b, target("t", "")}, Options{DryRun: dry}); err != nil {
+			t.Fatal(err)
+		}
+		if len(s.handed) != 2 {
+			t.Fatalf("dry=%v: copies = %d", dry, len(s.handed))
+		}
+		for i, wantRetain := range []string{"30d", "7d"} {
+			got := s.handed[i]
+			if got.DryRun != dry || got.Retain != wantRetain || got.Progress == nil || got.Now == nil || !got.Now().Equal(now) {
+				t.Errorf("dry=%v copy %d was handed %+v, want DryRun=%v Retain=%s, a progress writer and the run's clock", dry, i, got, dry, wantRetain)
+			}
+		}
+	}
+}
+
+func TestAStoppedCopyIsRecordedWithItsReason(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	items, _ := FromStack([]resolve.Resource{vol("a", "t"), target("t", "")})
+	var out bytes.Buffer
+	rep, _ := Run(ctx, &stub{}, items, Options{Now: func() time.Time { return now }}, &out)
+	if len(rep.Copies) != 1 || rep.Copies[0].Outcome != Skipped || rep.Copies[0].Target != "t" || rep.Copies[0].Detail != "stopped: context canceled" {
+		t.Errorf("report: %+v", rep.Copies)
+	}
+	if !strings.Contains(out.String(), "a -> t: stopped (context canceled)") {
+		t.Errorf("output: %q", out.String())
+	}
+}
+
+// A volume that cannot be read at all is one failure with no target, since no copy of it was ever considered.
+func TestAVolumeThatCannotBeReadIsRecordedWithoutATarget(t *testing.T) {
+	s := &stub{liveErr: map[string]error{"a": errors.New("no such volume")}}
+	rep, _, _ := run(t, s, []resolve.Resource{vol("a", "t", "u"), target("t", ""), target("u", "")}, Options{})
+	if len(rep.Copies) != 1 || rep.Copies[0].Volume != "a" || rep.Copies[0].Target != "" || rep.Copies[0].Outcome != Failed || rep.Copies[0].Detail != "no such volume" {
+		t.Errorf("report: %+v", rep.Copies)
+	}
+	if len(s.copied) != 0 {
+		t.Errorf("none of its copies is tried: %v", s.copied)
 	}
 }
