@@ -107,7 +107,15 @@ func (h *Helper) backupRun(ctx context.Context, j jobs.Job, log io.Writer) (any,
 	if err != nil {
 		return nil, err
 	}
-	return rep, rep.Err()
+	if err := rep.Err(); err != nil {
+		return rep, err
+	}
+	// A run that was told to stop (the job was cancelled, or the daemon is shutting down) and left copies unmade did not finish its work, and
+	// must not be recorded as if it had: a person who cancelled it is waiting to be told it stopped.
+	if n := rep.Stopped(); ctx.Err() != nil && n > 0 {
+		return rep, fmt.Errorf("stopped before it was done: %d copy operation(s) not made", n)
+	}
+	return rep, nil
 }
 
 func sortedKeys(m map[string]error) []string {

@@ -568,3 +568,41 @@ func TestALongCopyDoesNotStopTheSchedulerOrTheHeartbeat(t *testing.T) {
 	}
 	close(be.release)
 }
+
+// cancellingEngine cancels the job after its first copy, as `tink helper cancel` does between copies.
+type cancellingEngine struct {
+	*stubEngine
+	cancel context.CancelFunc
+}
+
+func (c *cancellingEngine) Copy(v volbackup.Volume, t volbackup.Target, o volbackup.CopyOptions) (volbackup.CopyResult, error) {
+	res, err := c.stubEngine.Copy(v, t, o)
+	c.cancel()
+	return res, err
+}
+
+func TestACancelledRunThatLeftCopiesUnmadeIsNotRecordedAsSucceeded(t *testing.T) {
+	r := newRig(t)
+	r.volume(t, "a", "b")
+	ctx, cancel := context.WithCancel(context.Background())
+	ce := &cancellingEngine{stubEngine: r.eng, cancel: cancel}
+	r.h.Connect = func() (backuprun.Engine, error) { return ce, nil }
+	var log bytes.Buffer
+	rep, err := r.h.backupRun(ctx, jobs.Job{Request: jobs.Request{Kind: KindBackupRun}}, &log)
+	if err == nil || !strings.Contains(err.Error(), "stopped before it was done: 1 copy") {
+		t.Fatalf("one copy made, one stopped: %v\n%s", err, log.String())
+	}
+	if copies := r.eng.copies(); len(copies) != 1 {
+		t.Errorf("only the first copy is made: %v", copies)
+	}
+	if rep == nil {
+		t.Error("the summary is kept")
+	}
+
+	// a run that was not stopped is as before
+	r2 := newRig(t)
+	r2.volume(t, "a", "b")
+	if _, err := r2.h.backupRun(context.Background(), jobs.Job{Request: jobs.Request{Kind: KindBackupRun}}, &log); err != nil {
+		t.Errorf("%v", err)
+	}
+}

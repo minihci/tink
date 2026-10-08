@@ -56,3 +56,13 @@ func TestFollowedJobsExitWithTheirOutcome(t *testing.T) {
 		}
 	}
 }
+
+func writeJob(t *testing.T, s jobs.Store, id, status, log string) {
+	t.Helper()
+	os.WriteFile(filepath.Join(s.Dir, id, "status.json"), []byte(status), 0o600)
+	os.WriteFile(filepath.Join(s.Dir, id, "log"), []byte(log), 0o600)
+}
+
+func readFile(s jobs.Store, id, name string) ([]byte, error) {
+	return os.ReadFile(filepath.Join(s.Dir, id, name))
+}

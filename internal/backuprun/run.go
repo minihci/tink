@@ -99,6 +99,17 @@ type Report struct {
 	Skipped int      `json:"skipped"`
 }
 
+// Stopped is how many copies were not made because the run was told to stop.
+func (r Report) Stopped() int {
+	n := 0
+	for _, c := range r.Copies {
+		if c.Outcome == Skipped && strings.HasPrefix(c.Detail, "stopped") {
+			n++
+		}
+	}
+	return n
+}
+
 // Err is the error a run with failures should end with, or nil.
 func (r Report) Err() error {
 	if r.Failed > 0 {
