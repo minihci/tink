@@ -1,6 +1,10 @@
 package resolve
 
-import "testing"
+import (
+	"math/rand"
+	"strings"
+	"testing"
+)
 
 func names(rs []Resource) []string {
 	out := make([]string, len(rs))
@@ -256,5 +260,33 @@ func TestLevels_KindPriorityBreaksTiesWithinALevel(t *testing.T) {
 	}
 	if got := names(levels[0]); len(got) != 1 || got[0] != "myproj" {
 		t.Errorf("level 0 = %v, want [myproj]", got)
+	}
+}
+
+// A level is built by ranging over a map, which Go deliberately randomises, so resources of the same kind with nothing between them
+// came out in a different order on each run and `plan` printed them that way. The order is now kind priority, then name.
+func TestLevels_OrderWithinALevelIsKindThenNameWhateverTheInputOrder(t *testing.T) {
+	in := []Resource{
+		{Kind: KindInstance, Name: "app"},
+		{Kind: KindStorageVolume, Name: "zeta"},
+		{Kind: KindProfile, Name: "mid"},
+		{Kind: KindStorageVolume, Name: "alpha"},
+		{Kind: KindProject, Name: "zz-proj"},
+		{Kind: KindProfile, Name: "beta"},
+		{Kind: KindStorageVolume, Name: "gamma"},
+	}
+	// project (priority 0) first although its name sorts last; then profiles and volumes (priority 1) by name; then the instance (2)
+	want := "zz-proj alpha beta gamma mid zeta app"
+	rng := rand.New(rand.NewSource(1))
+	for run := 0; run < 60; run++ {
+		shuffled := append([]Resource(nil), in...)
+		rng.Shuffle(len(shuffled), func(i, j int) { shuffled[i], shuffled[j] = shuffled[j], shuffled[i] })
+		levels, err := Levels(shuffled)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Join(names(levels[0]), " "); got != want {
+			t.Fatalf("run %d: level 0 = %s, want %s", run, got, want)
+		}
 	}
 }
