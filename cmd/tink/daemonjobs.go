@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"text/tabwriter"
 	"time"
@@ -81,17 +82,7 @@ func newDaemonJobsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "ID\tSTATE\tKIND\tORIGIN\tAGE\tERROR")
-			for i := len(list) - 1; i >= 0; i-- { // newest first
-				st := list[i]
-				msg := st.Error
-				if len(msg) > 70 {
-					msg = msg[:70] + "..."
-				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", st.ID, st.State, st.Kind, st.Origin, jobAge(st.Created), msg)
-			}
-			return w.Flush()
+			return printJobList(out, list)
 		},
 	}
 	cmd.Flags().StringVar(&jobsDir, "jobs", "", "the jobs directory the daemon runs from")
@@ -118,6 +109,21 @@ func newDaemonCancelCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&jobsDir, "jobs", "", "the jobs directory the daemon runs from")
 	return cmd
+}
+
+// printJobList prints jobs, newest first, as a table.
+func printJobList(out io.Writer, list []jobs.Status) error {
+	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(w, "ID\tSTATE\tKIND\tORIGIN\tAGE\tERROR")
+	for i := len(list) - 1; i >= 0; i-- {
+		st := list[i]
+		msg := st.Error
+		if len(msg) > 70 {
+			msg = msg[:70] + "..."
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", st.ID, st.State, st.Kind, st.Origin, jobAge(st.Created), msg)
+	}
+	return w.Flush()
 }
 
 // jobAge is how long ago t was, or "-" when it is not known (a job whose request could not be read has no creation time,
