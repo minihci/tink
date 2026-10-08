@@ -2,8 +2,7 @@
 
 The helper is an Incus instance that runs `tink daemon run` next to the data: the backup scheduler, the job executor and, if you ask for it, the
 ingress reconcile. It is where tink does work that needs nothing from the host's own filesystem or processes, so it behaves the same under `--remote`.
-The design, with its reasoning and the findings behind it, is in [the helper design](https://github.com/minihci/tink/pull/16) (an open pull request: the
-document is `docs/helper-design.md` on the `helper-design` branch, not yet on `main`). This page covers what exists: **`tink helper install`, `upgrade` and
+The design, with its reasoning and the findings behind it, is in [the helper design](helper-design.md). This page covers what exists: **`tink helper install`, `upgrade` and
 `remove`, `remote add|list|remove`, `status`, the status document, the ingress half, the image and its release, and what `plan` and `apply` do with the helper.**
 
 **Not built yet:**
@@ -47,7 +46,7 @@ The host verifies nothing secret until the helper has verified the host, by the 
   status write is an instance PATCH, and the lifecycle event for a PATCH carries no requestor at all, so those writes (one on change and one
   per heartbeat) are not attributed. They are bookkeeping on the helper's own instance; the operations that move data are attributed.
 - **Not confined.** The certificate is unrestricted: it has the reach of root on the host. A restricted certificate is not a boundary on current Incus
-  (see "Security" in [the helper design](https://github.com/minihci/tink/pull/16)), and nothing here claims one.
+  (see "Security" in [the helper design](helper-design.md)), and nothing here claims one.
 
 **When it is "down", and how fast you hear it.** `tink helper status` also checks the host's trust store (if it may read it): a helper whose
 certificate has been revoked is reported **down at once**, not after its last document has aged. Without that check the helper would look healthy for
