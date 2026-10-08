@@ -6,12 +6,14 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/minihci/tink/internal/backupmeta"
 	"github.com/minihci/tink/internal/backuprun"
 	"github.com/minihci/tink/internal/incusapi"
+	"github.com/minihci/tink/internal/jobs"
 	"github.com/minihci/tink/internal/resolve"
 	"github.com/minihci/tink/internal/volbackup"
 )
@@ -312,7 +314,7 @@ func noteUndeclaredPolicies(out io.Writer, eng backuprun.Engine, resources []res
 
 func newBackupRunCmd() *cobra.Command {
 	var f volumeFlags
-	var due, dryRun bool
+	var due, dryRun, local, onHelper bool
 	cmd := &cobra.Command{
 		Use:   "run [VOLUME...] [flags]",
 		Short: "Copy volumes to the backup targets their stack declares",
@@ -337,6 +339,12 @@ reachable from the machine running it (an SSH tunnel is enough).
 timer can call "tink backup run --due" every few minutes, or "tink daemon run --jobs DIR" will, from the copy policies "tink plan apply" puts on the volumes (see docs/daemon-jobs.md).
 --dry-run says what would happen and changes nothing.
 
+Where it runs: when the server has a healthy tink helper (see docs/helper.md), the run is HANDED TO IT and this command only follows it. The copies
+then happen next to the data under the helper's supervision, nothing here is in their way (Ctrl-C stops following, not the run, and a laptop that sleeps
+interrupts nothing), and no volume data passes through this machine. The helper runs the copy policies the volumes carry, not the stack, so the
+volumes are named and the hand-off is refused when what the stack declares for them is not what they carry: "tink plan apply" first. With no helper,
+or one that cannot take the run, it runs here, as it always has. --local runs it here whatever; --helper insists on the helper and never falls back.
+
 Restore from a restore point with: tink backup restore VOLUME --from TARGET`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			resources, err := f.loadStack()
@@ -351,6 +359,18 @@ Restore from a restore point with: tink backup restore VOLUME --from TARGET`,
 			if err != nil {
 				return fmt.Errorf("connecting to incus: %w", err)
 			}
+			if !local {
+				h, note, err := prepareHandoff(server, items, args, onHelper, time.Now())
+				if err != nil {
+					return err
+				}
+				if h != nil {
+					return h.run(cmd.Context(), due, dryRun, cmd.OutOrStdout(), cmd.ErrOrStderr(), time.Now(), jobs.FollowOptions{})
+				}
+				if note != "" {
+					fmt.Fprintf(cmd.OutOrStdout(), "running here instead: %s\n", note)
+				}
+			}
 			rep, err := backuprun.Run(cmd.Context(), backuprun.ServerEngine{Server: server}, items,
 				backuprun.Options{Volumes: args, Due: due, DryRun: dryRun, Remote: incusapi.Remote()}, cmd.OutOrStdout())
 			if err != nil {
@@ -362,5 +382,8 @@ Restore from a restore point with: tink backup restore VOLUME --from TARGET`,
 	f.bind(cmd)
 	cmd.Flags().BoolVar(&due, "due", false, "only the copies whose schedule has come round since their last success")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "say what would happen; change nothing")
+	cmd.Flags().BoolVar(&local, "local", false, "run it here, even when the server has a helper")
+	cmd.Flags().BoolVar(&onHelper, "helper", false, "hand it to the helper or fail: never run it here")
+	cmd.MarkFlagsMutuallyExclusive("local", "helper")
 	return cmd
 }

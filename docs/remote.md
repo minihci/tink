@@ -82,8 +82,9 @@ the remote, with what the helper said, and the registry is not then asked anonym
 
 `backup restore`, and `backup run` to a **pool** target, copy inside one server, which Incus does server-side. A copy to **another server**
 (a `remote:` backup target) is relayed through the machine running tink. Run from a laptop that means the volume's data passes through the
-laptop, and `backup run` prints a note saying so. The way around this for scheduled copies is [the helper](helper.md), a long-running instance that does that work next to the data. A `backup run` you
-start yourself still runs, and relays, on the machine you start it on: handing it to the helper is not built.
+laptop, and `backup run` prints a note saying so. The way around this is [the helper](helper.md), a long-running instance that does that work next to the data: scheduled
+copies already run there, and a `backup run` you start is **handed to it** when the server has a healthy one ([running a backup on the helper](helper.md#running-a-backup-on-the-helper)),
+so nothing passes through the laptop. With no helper, or with `--local`, it runs, and relays, on the machine you start it on.
 
 ## Not covered yet
 

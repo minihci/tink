@@ -7,8 +7,6 @@ document is `docs/helper-design.md` on the `helper-design` branch, not yet on `m
 `remove`, `remote add|list|remove`, `status`, the status document, the ingress half, the image and its release, and what `plan` and `apply` do with the helper.**
 
 **Not built yet:**
-- Handing a `tink backup run` started on another machine to the helper. A run you start yourself runs where you start it, and a copy to another server is
-  relayed through that machine ([remote.md](remote.md)). Following what the helper runs is built: see [its jobs](#its-jobs).
 - Retiring `tink daemon install`, which still prints the old ingress-only unit ([daemon-jobs.md](daemon-jobs.md)).
 
 **Run live so far**, on one host (the lab server): a release build of tink installed the `v0.1.0` image with no flags; the scheduler queues and makes the copies
@@ -127,6 +125,33 @@ is a warning, not a block, because the policy and the remote can be set up in ei
 copy shows as `failing` in `tink helper status`, the helper is `degraded`, and the job's log says which remote and what to do. Once the remote is added the
 next attempt works: the scheduler retries a failing copy with a growing delay (up to the copy's own interval), and a job queued by hand
 (`tink daemon enqueue --jobs /data/jobs`, run inside the helper) does not wait for it.
+
+## Running a backup on the helper
+
+`tink backup run` hands the run to the helper whenever the server has a **healthy** one, from a laptop over `--remote` or on the host itself, and then follows the job
+(see [its jobs](#its-jobs)). The copies happen next to the data under the helper's supervision: a laptop that sleeps or loses its network interrupts nothing, and no volume
+data passes through it, including copies to another server.
+
+```
+tink --remote tron backup run                # the stack's volumes; hands them to the helper and follows; Ctrl-C stops following, not the run
+tink --remote tron backup run lib --due      # one volume, only if its copy is due
+tink backup run --local                      # run it here, whatever (a copy to another server is relayed through this machine)
+tink backup run --helper                     # hand it to the helper or fail; never run it here
+```
+
+**What it runs.** The helper has no stack: it runs the copy policies the volumes carry. So a hand-off names the stack's volumes, and is **refused** when what the stack
+declares for them is not what they carry (no policy, a different one, a policy that cannot be read, or a second volume of the same name that would be picked up too):
+`tink plan apply` first, or `--local` to run the stack as it is. It is also refused, before anything is queued, for a copy to a remote the helper does not have
+(`tink helper remote add`).
+
+**When it runs here instead**, saying why: the helper is stopped or stale, has not published a status document, is draining for an upgrade, or speaks another job protocol.
+A helper that is merely degraded (a copy failing, a volume skipped) takes the run, since that is when a run by hand is most wanted. With no helper at all it runs here
+and says nothing. `--helper` turns each of these into an error.
+
+**One at a time.** The helper runs one job at a time, so a hand-off starts when the jobs ahead of it finish, and says how many there are. The same copy is never made twice at
+once; one that is already running is skipped and reported.
+
+**Exit status** is the job's: non-zero if a copy failed or the run was cancelled. Detaching (`Ctrl-C`) exits 0. (A helper older than the one that added this records a cancelled run that left copies unmade as `succeeded`; `tink helper upgrade` fixes that.)
 
 ## Its jobs
 
