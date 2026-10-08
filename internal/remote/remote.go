@@ -130,6 +130,10 @@ func NormalizeFingerprint(fp string) (string, error) {
 
 // Add adds a TLS remote to conf and saves it. Nothing is saved, and no server certificate file is left behind,
 // unless the whole thing succeeds.
+//
+// The order is the point: the server's certificate is fetched and verified BEFORE anything is sent to it, it is stored so that every
+// later connection is pinned to exactly that certificate, and only then, if the server does not trust this machine yet, is the trust
+// token's secret presented.
 func Add(conf *cliconfig.Config, opts AddOptions) (res Result, err error) {
 	say := func(format string, a ...any) {
 		if opts.Out != nil {
@@ -143,98 +147,26 @@ func Add(conf *cliconfig.Config, opts AddOptions) (res Result, err error) {
 		return res, fmt.Errorf("remote %q already exists (remove it first with `tink remote remove %s`)", opts.Name, opts.Name)
 	}
 
-	// What pins the server, and where it lives.
-	var tok *api.CertificateAddToken
-	if opts.Token != "" {
-		if tok, err = localtls.CertificateTokenDecode(opts.Token); err != nil {
-			// Not an encoded token: an older server's bare secret. It cannot pin the server.
-			tok = nil
-		}
+	target, err := resolveTarget(opts)
+	if err != nil {
+		return res, err
 	}
-	var addrs []string
-	if opts.Addr != "" {
-		a, err := NormalizeAddr(opts.Addr)
-		if err != nil {
-			return res, err
-		}
-		addrs = []string{a}
-	} else if tok != nil {
-		for _, a := range tok.Addresses {
-			n, err := NormalizeAddr(a)
-			if err != nil {
-				return res, err
-			}
-			addrs = append(addrs, n)
-		}
-	}
-	if len(addrs) == 0 {
-		return res, errors.New("no server address: give one, or a trust token that carries the server's addresses")
-	}
-	wantFingerprint := canonicalFingerprint(opts.Fingerprint)
-	how := ""
-	switch {
-	case tok != nil && tok.Fingerprint != "":
-		wantFingerprint, how = strings.ToLower(tok.Fingerprint), "token"
-	case wantFingerprint != "":
-		how = "fingerprint"
+	if err := ensureClientCertificate(conf, say); err != nil {
+		return res, err
 	}
 
-	// This machine's client certificate.
-	if !conf.HasClientCertificate() {
-		say("Generating a client certificate. This may take a minute...")
-		if err := conf.GenerateClientCertificate(); err != nil {
-			return res, err
-		}
+	cert, used, err := fetchServerCertificate(conf, opts, target.addrs)
+	if err != nil {
+		return res, err
+	}
+	got, how, err := verifyServerCertificate(cert, target, opts)
+	if err != nil {
+		return res, err
 	}
 
-	// Fetch the server's certificate and verify it BEFORE anything is sent to it.
-	fetch := opts.fetchCert
-	if fetch == nil {
-		fetch = func(addr string) (*x509.Certificate, error) {
-			return localtls.GetRemoteCertificate(addr, conf.UserAgent)
-		}
-	}
-	var cert *x509.Certificate
-	var used string
-	var errs []error
-	for _, a := range addrs {
-		if cert, err = fetch(a); err == nil {
-			used = a
-			break
-		}
-		errs = append(errs, err)
-	}
-	if cert == nil {
-		return res, fmt.Errorf("could not reach the server: %w", errors.Join(errs...))
-	}
-	got := localtls.CertFingerprint(cert)
-	switch {
-	case wantFingerprint != "":
-		if got != wantFingerprint {
-			return res, fmt.Errorf("the server's certificate (%s) is not the one expected from the %s (%s): refusing to trust it", got, how, wantFingerprint)
-		}
-	case opts.AcceptCertificate:
-		how = "accepted"
-	case opts.Confirm != nil:
-		ok, err := opts.Confirm(got)
-		if err != nil {
-			return res, err
-		}
-		if !ok {
-			return res, errors.New("server certificate refused")
-		}
-		how = "confirmed"
-	default:
-		return res, fmt.Errorf("the server's certificate fingerprint is %s, and nothing verifies it: pass --fingerprint %s if it is right, use a trust token, or --accept-certificate to trust it on first use", got, got)
-	}
-
-	// Store it, so that every later connection is pinned to exactly this certificate.
-	certPath := conf.ServerCertPath(opts.Name)
-	if err := os.MkdirAll(conf.ConfigPath("servercerts"), 0o750); err != nil {
-		return res, fmt.Errorf("creating the server certificate directory: %w", err)
-	}
-	if err := os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}), 0o644); err != nil {
-		return res, fmt.Errorf("storing the server certificate: %w", err)
+	certPath, err := storeServerCertificate(conf, opts.Name, cert)
+	if err != nil {
+		return res, err
 	}
 	defer func() {
 		if err != nil {
@@ -248,32 +180,12 @@ func Add(conf *cliconfig.Config, opts AddOptions) (res Result, err error) {
 	if err != nil {
 		return res, fmt.Errorf("connecting to %s: %w", used, err)
 	}
-	srv, _, err := d.GetServer()
+	srv, err := checkManageable(d)
 	if err != nil {
-		return res, fmt.Errorf("reading the server's state: %w", err)
+		return res, err
 	}
-	if srv.Public {
-		return res, errors.New("that is an image server, not an Incus server to manage")
-	}
-	if !slices.Contains(srv.AuthMethods, api.AuthenticationMethodTLS) {
-		return res, fmt.Errorf("the server does not offer TLS authentication (it offers %v)", srv.AuthMethods)
-	}
-
-	if srv.Auth != "trusted" {
-		if opts.Token == "" {
-			fp, _ := clientFingerprint(conf)
-			return res, fmt.Errorf("the server does not trust this machine's client certificate yet (fingerprint %s): give a trust token (`incus config trust add NAME` on the server), or ask its admin to run `incus config trust add-certificate` with %s", fp, conf.ConfigPath("client.crt"))
-		}
-		// the server decodes its own token; it is sent exactly as given
-		if err := d.CreateCertificate(api.CertificatesPost{TrustToken: opts.Token, CertificatePut: api.CertificatePut{Type: api.CertificateTypeClient}}); err != nil {
-			return res, fmt.Errorf("presenting the trust token: %w", err)
-		}
-		if srv, _, err = d.GetServer(); err != nil {
-			return res, err
-		}
-		if srv.Auth != "trusted" {
-			return res, errors.New("the server still does not trust this machine after the trust token was accepted")
-		}
+	if err := establishTrust(conf, d, srv, opts.Token); err != nil {
+		return res, err
 	}
 
 	project, err := chooseProject(d, opts.Project)
@@ -287,6 +199,160 @@ func Add(conf *cliconfig.Config, opts AddOptions) (res Result, err error) {
 		return res, fmt.Errorf("saving the Incus client configuration: %w", err)
 	}
 	return Result{Addr: used, Fingerprint: got, Verified: how, Trusted: true, Project: project}, nil
+}
+
+// addTarget is what Add was told about the server before it has contacted it: where it may be, and what pins its certificate.
+type addTarget struct {
+	addrs []string // normalised, in the order they are tried
+	// fingerprint is the certificate fingerprint that pins the server (canonical form), or "" when nothing does yet.
+	fingerprint string
+	// how is what supplied fingerprint: "token" or "fingerprint"; "" when nothing did.
+	how string
+}
+
+// resolveTarget works out from the options where the server is and what pins its certificate. A token that is not the encoded kind is
+// an older server's bare secret: it carries neither an address nor a fingerprint, so it pins nothing (it is still presented later).
+func resolveTarget(opts AddOptions) (addTarget, error) {
+	var tok *api.CertificateAddToken
+	if opts.Token != "" {
+		var err error
+		if tok, err = localtls.CertificateTokenDecode(opts.Token); err != nil {
+			tok = nil
+		}
+	}
+	var addrs []string
+	if opts.Addr != "" {
+		a, err := NormalizeAddr(opts.Addr)
+		if err != nil {
+			return addTarget{}, err
+		}
+		addrs = []string{a}
+	} else if tok != nil {
+		for _, a := range tok.Addresses {
+			n, err := NormalizeAddr(a)
+			if err != nil {
+				return addTarget{}, err
+			}
+			addrs = append(addrs, n)
+		}
+	}
+	if len(addrs) == 0 {
+		return addTarget{}, errors.New("no server address: give one, or a trust token that carries the server's addresses")
+	}
+	t := addTarget{addrs: addrs, fingerprint: canonicalFingerprint(opts.Fingerprint)}
+	switch {
+	case tok != nil && tok.Fingerprint != "":
+		t.fingerprint, t.how = strings.ToLower(tok.Fingerprint), "token"
+	case t.fingerprint != "":
+		t.how = "fingerprint"
+	}
+	return t, nil
+}
+
+// ensureClientCertificate generates this machine's client certificate if it has none yet.
+func ensureClientCertificate(conf *cliconfig.Config, say func(string, ...any)) error {
+	if conf.HasClientCertificate() {
+		return nil
+	}
+	say("Generating a client certificate. This may take a minute...")
+	return conf.GenerateClientCertificate()
+}
+
+// fetchServerCertificate takes the certificate of the first address that answers, and says which one it was. Nothing is sent to the
+// server beyond the TLS handshake that shows its certificate.
+func fetchServerCertificate(conf *cliconfig.Config, opts AddOptions, addrs []string) (cert *x509.Certificate, used string, err error) {
+	fetch := opts.fetchCert
+	if fetch == nil {
+		fetch = func(addr string) (*x509.Certificate, error) {
+			return localtls.GetRemoteCertificate(addr, conf.UserAgent)
+		}
+	}
+	var errs []error
+	for _, a := range addrs {
+		if cert, err = fetch(a); err == nil {
+			return cert, a, nil
+		}
+		errs = append(errs, err)
+	}
+	return nil, "", fmt.Errorf("could not reach the server: %w", errors.Join(errs...))
+}
+
+// verifyServerCertificate decides whether to trust the certificate the server showed, and returns its fingerprint and how it was
+// verified: against the pinned fingerprint, by trust on first use (AcceptCertificate), or because the person confirmed it.
+func verifyServerCertificate(cert *x509.Certificate, target addTarget, opts AddOptions) (got, how string, err error) {
+	got, how = localtls.CertFingerprint(cert), target.how
+	switch {
+	case target.fingerprint != "":
+		if got != target.fingerprint {
+			return "", "", fmt.Errorf("the server's certificate (%s) is not the one expected from the %s (%s): refusing to trust it", got, how, target.fingerprint)
+		}
+	case opts.AcceptCertificate:
+		how = "accepted"
+	case opts.Confirm != nil:
+		ok, err := opts.Confirm(got)
+		if err != nil {
+			return "", "", err
+		}
+		if !ok {
+			return "", "", errors.New("server certificate refused")
+		}
+		how = "confirmed"
+	default:
+		return "", "", fmt.Errorf("the server's certificate fingerprint is %s, and nothing verifies it: pass --fingerprint %s if it is right, use a trust token, or --accept-certificate to trust it on first use", got, got)
+	}
+	return got, how, nil
+}
+
+// storeServerCertificate writes the certificate where the client configuration looks for the named remote's, so that every later
+// connection is pinned to exactly it, and returns that path.
+func storeServerCertificate(conf *cliconfig.Config, name string, cert *x509.Certificate) (string, error) {
+	certPath := conf.ServerCertPath(name)
+	if err := os.MkdirAll(conf.ConfigPath("servercerts"), 0o750); err != nil {
+		return "", fmt.Errorf("creating the server certificate directory: %w", err)
+	}
+	if err := os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}), 0o644); err != nil {
+		return "", fmt.Errorf("storing the server certificate: %w", err)
+	}
+	return certPath, nil
+}
+
+// checkManageable reads the server's state and refuses what is not an Incus server this client can manage: an image server, or one that
+// does not offer TLS authentication.
+func checkManageable(d incus.InstanceServer) (*api.Server, error) {
+	srv, _, err := d.GetServer()
+	if err != nil {
+		return nil, fmt.Errorf("reading the server's state: %w", err)
+	}
+	if srv.Public {
+		return nil, errors.New("that is an image server, not an Incus server to manage")
+	}
+	if !slices.Contains(srv.AuthMethods, api.AuthenticationMethodTLS) {
+		return nil, fmt.Errorf("the server does not offer TLS authentication (it offers %v)", srv.AuthMethods)
+	}
+	return srv, nil
+}
+
+// establishTrust makes the server trust this machine's client certificate when it does not already: it presents the trust token, exactly
+// as given (the server decodes its own token), and checks that the server now trusts the machine. Without a token it says what to ask for.
+func establishTrust(conf *cliconfig.Config, d incus.InstanceServer, srv *api.Server, token string) error {
+	if srv.Auth == "trusted" {
+		return nil
+	}
+	if token == "" {
+		fp, _ := clientFingerprint(conf)
+		return fmt.Errorf("the server does not trust this machine's client certificate yet (fingerprint %s): give a trust token (`incus config trust add NAME` on the server), or ask its admin to run `incus config trust add-certificate` with %s", fp, conf.ConfigPath("client.crt"))
+	}
+	if err := d.CreateCertificate(api.CertificatesPost{TrustToken: token, CertificatePut: api.CertificatePut{Type: api.CertificateTypeClient}}); err != nil {
+		return fmt.Errorf("presenting the trust token: %w", err)
+	}
+	after, _, err := d.GetServer()
+	if err != nil {
+		return err
+	}
+	if after.Auth != "trusted" {
+		return errors.New("the server still does not trust this machine after the trust token was accepted")
+	}
+	return nil
 }
 
 // chooseProject follows `incus remote add`: an explicit project must exist; otherwise the only project the

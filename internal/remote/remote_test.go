@@ -30,6 +30,8 @@ type fakeIncus struct {
 	posted       []string // trust tokens presented
 	public       bool
 	requestPaths []string
+	// stayUntrusted makes the server accept a trust token (it answers 200) without starting to trust the caller.
+	stayUntrusted bool
 }
 
 func newFake(t *testing.T, trusted bool, secret string, projects ...string) *fakeIncus {
@@ -67,7 +69,7 @@ func newFake(t *testing.T, trusted bool, secret string, projects ...string) *fak
 			json.NewEncoder(w).Encode(map[string]any{"type": "error", "error": "invalid trust token", "error_code": 403})
 			return
 		}
-		f.trusted = true
+		f.trusted = !f.stayUntrusted
 		sync200(w, nil)
 	})
 	mux.HandleFunc("/1.0/projects", func(w http.ResponseWriter, r *http.Request) {
