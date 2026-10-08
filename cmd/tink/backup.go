@@ -69,7 +69,7 @@ func (f *volumeFlags) resolveVolume(name string) (volbackup.Volume, *backupmeta.
 	if f.from != "" {
 		for _, r := range resources {
 			if r.Kind == resolve.KindBackupTarget && r.Name == f.from {
-				t := volbackup.TargetFrom(r)
+				t := backuprun.TargetFrom(r)
 				target = &t
 			}
 		}

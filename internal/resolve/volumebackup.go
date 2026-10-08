@@ -142,10 +142,10 @@ func decideVolume(r Resource, current *api.StorageVolume, env volumeEnv) Planned
 		}
 	}
 	if current == nil {
-		return PlannedResource{Resource: r, Action: ActionCreate, Changes: append(diffConfig(nil, rest, nil), DescribePolicyChange("", wantPolicy)...), Warnings: warnings}
+		return PlannedResource{Resource: r, Action: ActionCreate, Changes: append(diffConfig(nil, rest, nil), backupmeta.DescribePolicyChange("", wantPolicy)...), Warnings: warnings}
 	}
 	changes := diffConfig(current.Config, rest, nil)
-	changes = append(changes, DescribePolicyChange(current.Config[backupmeta.PolicyKey], wantPolicy)...)
+	changes = append(changes, backupmeta.DescribePolicyChange(current.Config[backupmeta.PolicyKey], wantPolicy)...)
 	for _, k := range remove {
 		if _, there := current.Config[k]; there && k != backupmeta.PolicyKey { // the policy's removal is said above
 			changes = append(changes, fmt.Sprintf("config.%s: removed (the declaration no longer has one)", k))

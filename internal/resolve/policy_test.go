@@ -1,7 +1,6 @@
 package resolve
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 
@@ -36,7 +35,7 @@ func TestBuildPolicyResolvesTargetsInline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := ParsePolicy(text)
+	p, err := backupmeta.ParsePolicy(text)
 	if err != nil {
 		t.Fatalf("what BuildPolicy wrote must parse: %v\n%s", err, text)
 	}
@@ -44,7 +43,7 @@ func TestBuildPolicyResolvesTargetsInline(t *testing.T) {
 		t.Fatalf("policy = %+v", p)
 	}
 	nas, vps := p.Copies[0], p.Copies[1]
-	if nas.Target != (PolicyTarget{Name: "nas", Location: LocationOtherHost, Engine: EngineIncus, Pool: "nas"}) || nas.Schedule != "0 4 * * *" || nas.Retain != "30d" {
+	if nas.Target != (backupmeta.PolicyTarget{Name: "nas", Location: LocationOtherHost, Engine: EngineIncus, Pool: "nas"}) || nas.Schedule != "0 4 * * *" || nas.Retain != "30d" {
 		t.Errorf("nas copy = %+v (schedule is trimmed, the target resolved)", nas)
 	}
 	if vps.Target.Remote != "vps" || vps.Target.Pool != "backups" {
@@ -92,43 +91,6 @@ func TestBuildPolicyIsEmptyWhenThereIsNothingToCopyOrVerify(t *testing.T) {
 func TestBuildPolicyRejectsAnUnknownTarget(t *testing.T) {
 	if _, err := BuildPolicy(volWithCopies(), map[string]Resource{"nas": policyTargets()["nas"]}); err == nil || !strings.Contains(err.Error(), `"vps"`) {
 		t.Errorf("err = %v, want it to name the missing target", err)
-	}
-}
-
-func TestParsePolicyRefusesWhatItCannotUnderstand(t *testing.T) {
-	good, _ := BuildPolicy(volWithCopies(), policyTargets())
-	var doc map[string]any
-	_ = json.Unmarshal([]byte(good), &doc)
-	with := func(mut func(map[string]any)) string {
-		var d map[string]any
-		_ = json.Unmarshal([]byte(good), &d)
-		mut(d)
-		b, _ := json.Marshal(d)
-		return string(b)
-	}
-	copies := func(d map[string]any) []any { return d["copies"].([]any) }
-	tests := map[string]struct {
-		in   string
-		want string
-	}{
-		"not json":              {"nope", "not a policy tink wrote"},
-		"another protocol":      {with(func(d map[string]any) { d["proto"] = 2 }), "protocol 2"},
-		"no protocol":           {with(func(d map[string]any) { delete(d, "proto") }), "protocol 0"},
-		"an unknown field":      {with(func(d map[string]any) { d["colour"] = "red" }), "not a policy tink wrote"},
-		"a copy with no target": {with(func(d map[string]any) { copies(d)[0].(map[string]any)["target"] = map[string]any{} }), "no target name"},
-		"a bad schedule":        {with(func(d map[string]any) { copies(d)[0].(map[string]any)["schedule"] = "whenever" }), "schedule"},
-		"a bad retain":          {with(func(d map[string]any) { copies(d)[0].(map[string]any)["retain"] = "0d" }), "retain"},
-		"a bad cadence":         {with(func(d map[string]any) { d["verify"].(map[string]any)["every"] = "hourly" }), "daily, weekly or monthly"},
-	}
-	for name, tc := range tests {
-		t.Run(name, func(t *testing.T) {
-			if _, err := ParsePolicy(tc.in); err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Errorf("err = %v, want it to contain %q", err, tc.want)
-			}
-		})
-	}
-	if _, err := ParsePolicy(good); err != nil {
-		t.Errorf("the good one must parse: %v", err)
 	}
 }
 
@@ -292,4 +254,15 @@ func (s *volumeServer) GetStoragePoolVolume(_, _, n string) (*api.StorageVolume,
 		return nil, "", errNotFound
 	}
 	return &api.StorageVolume{Name: n, StorageVolumePut: api.StorageVolumePut{Config: s.vol}}, "", nil
+}
+
+func TestAPlanOfAVolumeDoesNotShowTheRawPolicy(t *testing.T) {
+	p := planVolume(t, nil, volumeEnv{})
+	joined := strings.Join(p.Changes, "\n")
+	if strings.Contains(joined, backupmeta.PolicyKey) || strings.Contains(joined, `\"`) {
+		t.Errorf("the key and its escaped JSON are not for a reader:\n%s", joined)
+	}
+	if !strings.Contains(joined, "backup policy: + copy to nas") {
+		t.Errorf("%s", joined)
+	}
 }

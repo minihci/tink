@@ -152,7 +152,7 @@ func FromStack(resources []resolve.Resource) ([]Item, error) {
 		}
 		it := Item{Volume: volbackup.Volume{Project: r.Project, Pool: r.Pool, Name: r.Name}, Label: r.Name}
 		for _, c := range r.Backup.Copies {
-			it.Copies = append(it.Copies, Copy{Target: volbackup.TargetFrom(targets[c.Target]), Schedule: c.Schedule, Retain: c.Retain})
+			it.Copies = append(it.Copies, Copy{Target: TargetFrom(targets[c.Target]), Schedule: c.Schedule, Retain: c.Retain})
 		}
 		items = append(items, it)
 	}
@@ -187,7 +187,7 @@ func Discover(eng Engine) (items []Item, problems map[string]error, err error) {
 			continue
 		}
 		label := Label(lv.Volume)
-		p, perr := resolve.ParsePolicy(text)
+		p, perr := backupmeta.ParsePolicy(text)
 		if perr != nil {
 			problems[label] = perr
 			continue
@@ -207,6 +207,17 @@ func Discover(eng Engine) (items []Item, problems map[string]error, err error) {
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].Label < items[j].Label })
 	return items, problems, nil
+}
+
+// TargetFrom builds the engine's Target from a kind: backup-target resource, carrying the remote's address and fingerprint when the stack
+// opted in to declaring them. It is here, not in volbackup, because it is the one place the engine's type has to learn what a stack
+// resource is.
+func TargetFrom(r resolve.Resource) volbackup.Target {
+	t := volbackup.Target{Name: r.Name, Pool: r.Pool, Remote: r.Remote}
+	if addr, fp, ok := r.DeclaredRemote(); ok {
+		t.Address, t.Fingerprint = addr, fp
+	}
+	return t
 }
 
 // Orphan is a volume that carries a copy policy, and so is being copied, but that the stack does not declare.

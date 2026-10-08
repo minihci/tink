@@ -8,7 +8,6 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 
 	"github.com/minihci/tink/internal/incusapi"
-	"github.com/minihci/tink/internal/resolve"
 )
 
 const hintFingerprint = "0f3a9c2d7b6e41805a9e3c7d2f1b8a4960d5e7c3b2a19f8e7d6c5b4a39281706"
@@ -21,13 +20,9 @@ func connectFailsWith(t *testing.T, err error) {
 	t.Cleanup(func() { connectRemote = old })
 }
 
-func TestAMissingRemoteIsExplainedFromWhatTheStackDeclared(t *testing.T) {
+func TestAMissingRemoteIsExplainedFromWhatTheTargetDeclared(t *testing.T) {
 	connectFailsWith(t, &incusapi.RemoteNotConfiguredError{Name: "vps", Advice: "add it with `incus remote add`"})
-	stack := resolve.Resource{Kind: resolve.KindBackupTarget, Name: "offsite", Remote: "vps", Address: "vps.example.com", Fingerprint: strings.ToUpper(hintFingerprint)}
-	tgt := TargetFrom(stack)
-	if tgt.Address != "https://vps.example.com:8443" || tgt.Fingerprint != hintFingerprint {
-		t.Fatalf("TargetFrom must carry the declared remote, normalised: %+v", tgt)
-	}
+	tgt := Target{Name: "offsite", Remote: "vps", Address: "https://vps.example.com:8443", Fingerprint: hintFingerprint}
 	_, err := tgt.dest(newFake("tron", "default"), Volume{Name: "lib"})
 	if err == nil {
 		t.Fatal("the remote is missing: want an error")
