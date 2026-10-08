@@ -10,6 +10,8 @@ import (
 
 	incus "github.com/lxc/incus/v7/client"
 
+	"github.com/minihci/tink/internal/backupmeta"
+	"github.com/minihci/tink/internal/incusapi"
 	"github.com/minihci/tink/internal/secrets"
 )
 
@@ -48,7 +50,7 @@ type PlannedResource struct {
 // there's nothing a state file would buy here that a live read doesn't
 // already give for free. The real cost of that choice: there's no
 // "generated at create time" value to remember (an auto-assigned IP,
-// say) -- this spike accepts that limitation, matching how every real
+// say) -- tink accepts that limitation, matching how every real
 // resource built on this platform so far uses static, human-chosen
 // names and addresses anyway.
 //
@@ -113,7 +115,7 @@ func planOne(server incus.InstanceServer, r Resource, opts PlanOptions) (Planned
 	case KindProfile:
 		return planProfile(s, r)
 	case KindStorageVolume:
-		return planStorageVolume(s, r, opts.targets)
+		return planStorageVolume(s, r, volumeEnv{targets: opts.targets, stack: opts.stack, helperReads: opts.helperReads, helperLabel: opts.helperLabel, helperRemotes: opts.helperRemotes})
 	case KindBackupTarget:
 		// A declaration only: there is no Incus object to create or converge.
 		return PlannedResource{Resource: r, Action: ActionNone}, nil
@@ -138,15 +140,22 @@ func planOne(server incus.InstanceServer, r Resource, opts PlanOptions) (Planned
 // story to diff toward, and none of this platform's real usage has ever
 // needed one.
 func planProject(server incus.InstanceServer, r Resource) (PlannedResource, error) {
-	if _, _, err := server.GetProject(r.Name); err != nil {
+	_, _, found, err := incusapi.LookupProject(server, r.Name)
+	if err != nil {
+		return PlannedResource{}, fmt.Errorf("reading the live project: %w", err)
+	}
+	if !found {
 		return PlannedResource{Resource: r, Action: ActionCreate}, nil
 	}
 	return PlannedResource{Resource: r, Action: ActionNone}, nil
 }
 
 func planProfile(server incus.InstanceServer, r Resource) (PlannedResource, error) {
-	current, _, err := server.GetProfile(r.Name)
+	current, _, found, err := incusapi.LookupProfile(server, r.Name)
 	if err != nil {
+		return PlannedResource{}, fmt.Errorf("reading the live profile: %w", err)
+	}
+	if !found {
 		return PlannedResource{Resource: r, Action: ActionCreate}, nil
 	}
 	changes := diffConfig(current.Config, r.Config, nil)
@@ -157,17 +166,25 @@ func planProfile(server incus.InstanceServer, r Resource) (PlannedResource, erro
 	return PlannedResource{Resource: r, Action: ActionUpdate, Changes: changes}, nil
 }
 
-func planStorageVolume(server incus.InstanceServer, r Resource, targets map[string]Resource) (PlannedResource, error) {
+func planStorageVolume(server incus.InstanceServer, r Resource, env volumeEnv) (PlannedResource, error) {
 	pool := r.Pool
 	if pool == "" {
 		pool = "default"
 	}
-	current, _, err := server.GetStoragePoolVolume(pool, "custom", r.Name)
+	current, _, _, err := incusapi.LookupVolume(server, pool, "custom", r.Name)
 	if err != nil {
-		current = nil // not found: decideVolume plans a create (or blocks it)
+		return PlannedResource{}, fmt.Errorf("reading the live volume in pool %q: %w", pool, err)
 	}
-	p := decideVolume(r, current)
-	p.Warnings = append(p.Warnings, backupWarnings(r, targets)...)
+	// not found leaves current nil: decideVolume plans a create (or blocks it)
+	// A policy this tink would write, and the helper cannot read, is not written: the volume's copies would stop and nothing would say so.
+	if why := env.helperCannotRead(); why != "" {
+		if want, _, err := volumeBackupConfig(r, env); err == nil && want[backupmeta.PolicyKey] != "" && (current == nil || current.Config[backupmeta.PolicyKey] != want[backupmeta.PolicyKey]) {
+			return PlannedResource{Resource: r, Action: ActionBlocked, Blocked: []string{why}}, nil
+		}
+	}
+	p := decideVolume(r, current, env)
+	p.Warnings = append(p.Warnings, backupWarnings(r, env.targets)...)
+	p.Warnings = append(p.Warnings, env.helperRemoteWarnings(r)...)
 	return p, nil
 }
 
@@ -176,8 +193,13 @@ func planStorageVolume(server incus.InstanceServer, r Resource, targets map[stri
 // principle as every other kind here, just against instance-file
 // content instead of instance/profile config.
 func planFile(server incus.InstanceServer, r Resource) (PlannedResource, error) {
-	rc, _, err := server.GetInstanceFile(r.Instance, r.Path)
+	rc, _, found, err := incusapi.LookupInstanceFile(server, r.Instance, r.Path)
 	if err != nil {
+		// Not "absent": planning a create here would have apply overwrite a file it merely failed to read
+		// (and, with restart: true, restart the instance).
+		return PlannedResource{}, fmt.Errorf("reading current content of %s on %s: %w", r.Path, r.Instance, err)
+	}
+	if !found {
 		return PlannedResource{Resource: r, Action: ActionCreate}, nil
 	}
 	defer rc.Close()
@@ -199,6 +221,13 @@ func planFile(server incus.InstanceServer, r Resource) (PlannedResource, error) 
 // convergence in terms resolve has no first-class resource for yet (see
 // Resource.Check's own doc comment). A zero exit means already converged.
 func planIncus(r Resource) (PlannedResource, error) {
+	// A kind: incus resource is argv for the local `incus` CLI, against that CLI's own default remote, often
+	// with paths on the machine tink runs on. Under --remote it would act on whatever server the CLI happens
+	// to point at, not the one tink was told to manage, so it is blocked, not guessed at.
+	if incusapi.IsRemote() {
+		return PlannedResource{Resource: r, Action: ActionBlocked, Blocked: []string{fmt.Sprintf(
+			"kind: incus runs the local `incus` CLI (with local paths), which is not the remote %q tink is pointed at (--remote or $TINK_REMOTE): run this stack on the host, without a remote", incusapi.Remote())}}, nil
+	}
 	if err := exec.Command("incus", r.Check...).Run(); err != nil {
 		return PlannedResource{Resource: r, Action: ActionCreate, Changes: []string{fmt.Sprintf("check failed: %v", err)}}, nil
 	}
@@ -211,7 +240,11 @@ func planIncus(r Resource) (PlannedResource, error) {
 // "does it exist," the same reasoning project and storage-volume already
 // use to stay create-only.
 func planImage(server incus.InstanceServer, r Resource) (PlannedResource, error) {
-	if _, _, err := server.GetImageAlias(r.Alias); err != nil {
+	_, _, found, err := incusapi.LookupImageAlias(server, r.Alias)
+	if err != nil {
+		return PlannedResource{}, fmt.Errorf("reading the live image alias %q: %w", r.Alias, err)
+	}
+	if !found {
 		return PlannedResource{Resource: r, Action: ActionCreate}, nil
 	}
 	return PlannedResource{Resource: r, Action: ActionNone}, nil

@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/lxc/incus/v7/shared/api"
+
+	"github.com/minihci/tink/internal/backupmeta"
 )
 
 func target(name, location, remote, pool string) Resource {
@@ -15,12 +17,12 @@ func target(name, location, remote, pool string) Resource {
 }
 
 func volWith(name, pool string, snap bool, copies ...string) Resource {
-	b := &VolumeBackup{}
+	b := &backupmeta.VolumeBackup{}
 	if snap {
-		b.Snapshots = &SnapshotPolicy{Schedule: "@daily", Retain: "14d"}
+		b.Snapshots = &backupmeta.SnapshotPolicy{Schedule: "@daily", Retain: "14d"}
 	}
 	for _, t := range copies {
-		b.Copies = append(b.Copies, BackupCopy{Target: t, Schedule: "@daily", Retain: "30d"})
+		b.Copies = append(b.Copies, backupmeta.BackupCopy{Target: t, Schedule: "@daily", Retain: "30d"})
 	}
 	return Resource{Kind: KindStorageVolume, Name: name, Pool: pool, Backup: b}
 }
@@ -55,34 +57,34 @@ func TestValidateBackupTarget(t *testing.T) {
 }
 
 func TestValidateBackupCopiesAndVerify(t *testing.T) {
-	bad := func(b *VolumeBackup, want string) {
+	bad := func(b *backupmeta.VolumeBackup, want string) {
 		t.Helper()
 		err := Validate(Resource{Kind: KindStorageVolume, Name: "v", Backup: b})
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%+v: error = %v, want it to contain %q", b, err, want)
 		}
 	}
-	cp := BackupCopy{Target: "t", Schedule: "@daily", Retain: "30d"}
+	cp := backupmeta.BackupCopy{Target: "t", Schedule: "@daily", Retain: "30d"}
 
-	for _, b := range []*VolumeBackup{
-		{Copies: []BackupCopy{cp}}, // copies without snapshots is fine
-		{Snapshots: &SnapshotPolicy{Schedule: "@daily", Retain: "7d"}, Copies: []BackupCopy{cp}, Verify: "weekly"},
-		{Snapshots: &SnapshotPolicy{Schedule: "@daily", Retain: "7d"}, Verify: "monthly"}, // verify a local snapshot
+	for _, b := range []*backupmeta.VolumeBackup{
+		{Copies: []backupmeta.BackupCopy{cp}}, // copies without snapshots is fine
+		{Snapshots: &backupmeta.SnapshotPolicy{Schedule: "@daily", Retain: "7d"}, Copies: []backupmeta.BackupCopy{cp}, Verify: "weekly"},
+		{Snapshots: &backupmeta.SnapshotPolicy{Schedule: "@daily", Retain: "7d"}, Verify: "monthly"}, // verify a local snapshot
 	} {
 		if err := Validate(Resource{Kind: KindStorageVolume, Name: "v", Backup: b}); err != nil {
 			t.Errorf("%+v: unexpected error %v", b, err)
 		}
 	}
 
-	bad(&VolumeBackup{Verify: "weekly"}, "give snapshots") // nothing to verify
-	bad(&VolumeBackup{None: "x", Copies: []BackupCopy{cp}}, "mutually exclusive")
-	bad(&VolumeBackup{None: "x", Verify: "daily"}, "mutually exclusive")
-	bad(&VolumeBackup{Copies: []BackupCopy{cp}, Verify: "hourly"}, "verify must be daily, weekly or monthly")
-	bad(&VolumeBackup{Copies: []BackupCopy{{Schedule: "@daily", Retain: "1d"}}}, "target is required")
-	bad(&VolumeBackup{Copies: []BackupCopy{cp, cp}}, "twice")
-	bad(&VolumeBackup{Copies: []BackupCopy{{Target: "t", Schedule: "", Retain: "1d"}}}, "schedule: required")
-	bad(&VolumeBackup{Copies: []BackupCopy{{Target: "t", Schedule: "@daily", Retain: ""}}}, "retain: required")
-	bad(&VolumeBackup{Copies: []BackupCopy{{Target: "t", Schedule: "@daily", Retain: "0d"}}}, "expiry syntax")
+	bad(&backupmeta.VolumeBackup{Verify: "weekly"}, "give snapshots") // nothing to verify
+	bad(&backupmeta.VolumeBackup{None: "x", Copies: []backupmeta.BackupCopy{cp}}, "mutually exclusive")
+	bad(&backupmeta.VolumeBackup{None: "x", Verify: "daily"}, "mutually exclusive")
+	bad(&backupmeta.VolumeBackup{Copies: []backupmeta.BackupCopy{cp}, Verify: "hourly"}, "verify must be daily, weekly or monthly")
+	bad(&backupmeta.VolumeBackup{Copies: []backupmeta.BackupCopy{{Schedule: "@daily", Retain: "1d"}}}, "target is required")
+	bad(&backupmeta.VolumeBackup{Copies: []backupmeta.BackupCopy{cp, cp}}, "twice")
+	bad(&backupmeta.VolumeBackup{Copies: []backupmeta.BackupCopy{{Target: "t", Schedule: "", Retain: "1d"}}}, "schedule: required")
+	bad(&backupmeta.VolumeBackup{Copies: []backupmeta.BackupCopy{{Target: "t", Schedule: "@daily", Retain: ""}}}, "retain: required")
+	bad(&backupmeta.VolumeBackup{Copies: []backupmeta.BackupCopy{{Target: "t", Schedule: "@daily", Retain: "0d"}}}, "expiry syntax")
 }
 
 func TestLevelsRejectsUnknownCopyTarget(t *testing.T) {
@@ -111,7 +113,6 @@ func TestBackupWarnings(t *testing.T) {
 		"local":   target("local", LocationSameHost, "", "default"),
 		"tank2":   target("tank2", LocationSameHost, "", "tank"),
 	}
-	const declared = "run only when `tink backup run` is invoked"
 	tests := []struct {
 		name string
 		vol  Resource
@@ -119,14 +120,12 @@ func TestBackupWarnings(t *testing.T) {
 		deny []string // substrings that must not
 	}{
 		{"snapshots only: no copies at all", volWith("v", "", true),
-			[]string{"3-2-1 not met (1 of 3 copies", "2 copies in other failure domains", "off-site copy"}, []string{declared}},
+			[]string{"3-2-1 not met (1 of 3 copies", "2 copies in other failure domains", "off-site copy"}, nil},
 		{"one copy, other host", volWith("v", "", true, "macpro"),
 			[]string{"(2 of 3 copies", "1 more copy in another failure domain", "off-site copy"}, nil},
-		{"two copies in different domains, one off-site: met",
-			volWith("v", "", true, "macpro", "vps"),
-			[]string{declared}, []string{"3-2-1 not met"}},
-		{"NAS pool + off-site VPS: met", volWith("v", "", true, "nas", "vps"),
-			[]string{declared}, []string{"3-2-1 not met"}},
+		{"two copies in different domains, one off-site: met, and nothing to say",
+			volWith("v", "", true, "macpro", "vps"), nil, nil},
+		{"NAS pool + off-site VPS: met, and nothing to say", volWith("v", "", true, "nas", "vps"), nil, nil},
 		{"two copies on different hosts but none off-site", volWith("v", "", false, "macpro", "nas"),
 			[]string{"(3 of 3 copies", "off-site copy"}, []string{"share one failure domain"}},
 		{"two copies on the same remote and pool share a domain",
@@ -138,7 +137,7 @@ func TestBackupWarnings(t *testing.T) {
 			[]string{"not a separate failure domain and is not counted", "(2 of 3 copies", "1 more copy"}, nil},
 		{"live volume on another pool: same-named target pool matters", volWith("v", "tank", true, "tank2", "vps"),
 			[]string{"live volume's own pool (local:tank)", "(2 of 3 copies"}, nil},
-		{"opt-out is not evaluated", Resource{Kind: KindStorageVolume, Name: "v", Backup: &VolumeBackup{None: "x"}}, nil, nil},
+		{"opt-out is not evaluated", Resource{Kind: KindStorageVolume, Name: "v", Backup: &backupmeta.VolumeBackup{None: "x"}}, nil, nil},
 		{"no backup block is not evaluated here", Resource{Kind: KindStorageVolume, Name: "v"}, nil, nil},
 		{"not a volume", Resource{Kind: KindInstance, Name: "i"}, nil, nil},
 	}
@@ -197,7 +196,7 @@ backup:
 		t.Fatalf("targets parsed wrong: %+v %+v", rs[0], rs[1])
 	}
 	b := rs[2].Backup
-	if b == nil || len(b.Copies) != 2 || b.Copies[1] != (BackupCopy{Target: "nas", Schedule: "0 5 * * *", Retain: "30d"}) || b.Verify != "weekly" || b.Snapshots == nil {
+	if b == nil || len(b.Copies) != 2 || b.Copies[1] != (backupmeta.BackupCopy{Target: "nas", Schedule: "0 5 * * *", Retain: "30d"}) || b.Verify != "weekly" || b.Snapshots == nil {
 		t.Fatalf("volume backup parsed wrong: %+v", b)
 	}
 	if _, err := Levels(rs); err != nil {
@@ -230,11 +229,11 @@ func TestBackupWarningsSaysSoWhenATargetIsUnknown(t *testing.T) {
 func TestVerifyWarning(t *testing.T) {
 	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
 	stampAt := func(age time.Duration) map[string]string {
-		return map[string]string{StampVerifiedAt: now.Add(-age).Format(time.RFC3339)}
+		return map[string]string{backupmeta.StampVerifiedAt: now.Add(-age).Format(time.RFC3339)}
 	}
 	vol := func(cadence string) Resource {
-		return Resource{Kind: KindStorageVolume, Name: "lib", Backup: &VolumeBackup{
-			Snapshots: &SnapshotPolicy{Schedule: "@daily", Retain: "7d"}, Verify: cadence}}
+		return Resource{Kind: KindStorageVolume, Name: "lib", Backup: &backupmeta.VolumeBackup{
+			Snapshots: &backupmeta.SnapshotPolicy{Schedule: "@daily", Retain: "7d"}, Verify: cadence}}
 	}
 	tests := []struct {
 		name    string
@@ -247,27 +246,27 @@ func TestVerifyWarning(t *testing.T) {
 		{"stale by days", vol("weekly"), stampAt(12 * 24 * time.Hour), "last verified 12d ago, older than the declared verify: weekly"},
 		{"stale by hours (daily cadence)", vol("daily"), stampAt(30 * time.Hour), "last verified 30h ago"},
 		{"monthly allows 31 days", vol("monthly"), stampAt(30 * 24 * time.Hour), ""},
-		{"a stamp tink did not write is replaced, not trusted", vol("weekly"), map[string]string{StampVerifiedAt: "last tuesday"}, "not a timestamp tink wrote"},
+		{"a stamp tink did not write is replaced, not trusted", vol("weekly"), map[string]string{backupmeta.StampVerifiedAt: "last tuesday"}, "not a timestamp tink wrote"},
 		{"no cadence declared: no nagging", vol(""), nil, ""},
 		{"fresh restore-only stamp does not satisfy a declared check",
 			func() Resource {
 				r := vol("weekly")
-				r.Backup.VerifyCheck = &VerifyCheck{Image: "i", Command: []string{"true"}}
+				r.Backup.VerifyCheck = &backupmeta.VerifyCheck{Image: "i", Command: []string{"true"}}
 				return r
 			}(),
-			map[string]string{StampVerifiedAt: now.Add(-time.Hour).Format(time.RFC3339), StampVerifiedWith: "restore"},
+			map[string]string{backupmeta.StampVerifiedAt: now.Add(-time.Hour).Format(time.RFC3339), backupmeta.StampVerifiedWith: "restore"},
 			"only proved the snapshot restores"},
 		{"fresh check stamp satisfies a declared check",
 			func() Resource {
 				r := vol("weekly")
-				r.Backup.VerifyCheck = &VerifyCheck{Image: "i", Command: []string{"true"}}
+				r.Backup.VerifyCheck = &backupmeta.VerifyCheck{Image: "i", Command: []string{"true"}}
 				return r
 			}(),
-			map[string]string{StampVerifiedAt: now.Add(-time.Hour).Format(time.RFC3339), StampVerifiedWith: "check"},
+			map[string]string{backupmeta.StampVerifiedAt: now.Add(-time.Hour).Format(time.RFC3339), backupmeta.StampVerifiedWith: "check"},
 			""},
 		{"restore-only is fine when no check is declared", vol("weekly"),
-			map[string]string{StampVerifiedAt: now.Add(-time.Hour).Format(time.RFC3339), StampVerifiedWith: "restore"}, ""},
-		{"opt-out: nothing to verify", Resource{Kind: KindStorageVolume, Name: "lib", Backup: &VolumeBackup{None: "x"}}, nil, ""},
+			map[string]string{backupmeta.StampVerifiedAt: now.Add(-time.Hour).Format(time.RFC3339), backupmeta.StampVerifiedWith: "restore"}, ""},
+		{"opt-out: nothing to verify", Resource{Kind: KindStorageVolume, Name: "lib", Backup: &backupmeta.VolumeBackup{None: "x"}}, nil, ""},
 		{"no backup block", Resource{Kind: KindStorageVolume, Name: "lib"}, nil, ""},
 	}
 	for _, tc := range tests {
@@ -281,13 +280,13 @@ func TestVerifyWarning(t *testing.T) {
 }
 
 func TestDecideVolumeWarnsAboutStaleVerificationOnlyForExistingVolumes(t *testing.T) {
-	r := Resource{Kind: KindStorageVolume, Name: "lib", Backup: &VolumeBackup{
-		Snapshots: &SnapshotPolicy{Schedule: "@daily", Retain: "7d"}, Verify: "weekly"}}
-	if w := strings.Join(decideVolume(r, nil).Warnings, "|"); strings.Contains(w, "verified") {
+	r := Resource{Kind: KindStorageVolume, Name: "lib", Backup: &backupmeta.VolumeBackup{
+		Snapshots: &backupmeta.SnapshotPolicy{Schedule: "@daily", Retain: "7d"}, Verify: "weekly"}}
+	if w := strings.Join(decideVolume(r, nil, volumeEnv{}).Warnings, "|"); strings.Contains(w, "verified") {
 		t.Errorf("a volume that does not exist yet has nothing to verify, got %q", w)
 	}
 	existing := &api.StorageVolume{StorageVolumePut: api.StorageVolumePut{Config: map[string]string{}}}
-	if w := strings.Join(decideVolume(r, existing).Warnings, "|"); !strings.Contains(w, "never been verified") {
+	if w := strings.Join(decideVolume(r, existing, volumeEnv{}).Warnings, "|"); !strings.Contains(w, "never been verified") {
 		t.Errorf("an existing, never-verified volume must be warned about, got %q", w)
 	}
 }
@@ -339,14 +338,14 @@ backup:
 }
 
 func TestValidateVerifyCheck(t *testing.T) {
-	snap := &SnapshotPolicy{Schedule: "@daily", Retain: "7d"}
-	chk := func(c *VerifyCheck) error {
-		return Validate(Resource{Kind: KindStorageVolume, Name: "v", Backup: &VolumeBackup{Snapshots: snap, VerifyCheck: c}})
+	snap := &backupmeta.SnapshotPolicy{Schedule: "@daily", Retain: "7d"}
+	chk := func(c *backupmeta.VerifyCheck) error {
+		return Validate(Resource{Kind: KindStorageVolume, Name: "v", Backup: &backupmeta.VolumeBackup{Snapshots: snap, VerifyCheck: c}})
 	}
-	if err := chk(&VerifyCheck{Image: "i", Command: []string{"true"}}); err != nil {
+	if err := chk(&backupmeta.VerifyCheck{Image: "i", Command: []string{"true"}}); err != nil {
 		t.Errorf("valid check rejected: %v", err)
 	}
-	for _, c := range []*VerifyCheck{
+	for _, c := range []*backupmeta.VerifyCheck{
 		{Command: []string{"true"}},
 		{Image: "i"},
 		{Image: "i", Command: []string{"true"}, Mount: "relative/path"},
@@ -355,8 +354,124 @@ func TestValidateVerifyCheck(t *testing.T) {
 			t.Errorf("%+v: expected an error", c)
 		}
 	}
-	if err := Validate(Resource{Kind: KindStorageVolume, Name: "v", Backup: &VolumeBackup{
-		None: "x", VerifyCheck: &VerifyCheck{Image: "i", Command: []string{"true"}}}}); err == nil {
+	if err := Validate(Resource{Kind: KindStorageVolume, Name: "v", Backup: &backupmeta.VolumeBackup{
+		None: "x", VerifyCheck: &backupmeta.VerifyCheck{Image: "i", Command: []string{"true"}}}}); err == nil {
 		t.Error("none excludes a verify check")
+	}
+}
+
+// A target may say where its remote is, as an opt-in: the bare remote name stays the default, and the stack says nothing about the server.
+
+const declaredFingerprint = "0f3a9c2d7b6e41805a9e3c7d2f1b8a4960d5e7c3b2a19f8e7d6c5b4a39281706"
+
+func declaring(r Resource, address, fingerprint string) Resource {
+	r.Address, r.Fingerprint = address, fingerprint
+	return r
+}
+
+// colonised prints a fingerprint the way some tools do: upper case, a colon between bytes.
+func colonised(fp string) string {
+	var parts []string
+	for i := 0; i < len(fp); i += 2 {
+		parts = append(parts, strings.ToUpper(fp[i:i+2]))
+	}
+	return strings.Join(parts, ":")
+}
+
+func TestValidateDeclaredRemote(t *testing.T) {
+	ok := func(r Resource) {
+		t.Helper()
+		if err := Validate(r); err != nil {
+			t.Errorf("%+v: unexpected error %v", r, err)
+		}
+	}
+	bad := func(r Resource, want string) {
+		t.Helper()
+		if err := Validate(r); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%+v: error = %v, want it to contain %q", r, err, want)
+		}
+	}
+	vps := target("t", LocationOffsite, "vps", "backups")
+	ok(vps) // the default: a bare name
+	ok(declaring(vps, "https://10.0.0.7:8443", declaredFingerprint))
+	ok(declaring(vps, "vps.example.com", colonised(declaredFingerprint))) // a bare host, and the way some tools print a fingerprint
+
+	bad(declaring(target("t", LocationOtherHost, "", "nas"), "https://10.0.0.7:8443", declaredFingerprint), "has no remote")
+	bad(declaring(vps, "", declaredFingerprint), "fingerprint needs address")
+	bad(declaring(vps, "https://10.0.0.7:8443", ""), "address needs fingerprint")
+	bad(declaring(vps, "http://10.0.0.7:8443", declaredFingerprint), "only https")
+	bad(declaring(vps, "https://", declaredFingerprint), "no host")
+	bad(declaring(vps, "https://10.0.0.7:8443", "abc123"), "not a SHA-256")
+	bad(declaring(vps, "https://10.0.0.7:8443", strings.Repeat("zz", 32)), "not a SHA-256")
+	// only a backup-target describes a remote
+	bad(Resource{Kind: KindInstance, Name: "i", Address: "https://10.0.0.7:8443"}, "does not use field")
+	bad(Resource{Kind: KindStorageVolume, Name: "v", Fingerprint: declaredFingerprint}, "does not use field")
+}
+
+func TestDeclaredRemoteIsInTheFormTinkRemoteAddTakes(t *testing.T) {
+	addr, fp, ok := declaring(target("t", LocationOffsite, "vps", ""), "vps.example.com", colonised(declaredFingerprint)).DeclaredRemote()
+	if !ok || addr != "https://vps.example.com:8443" || fp != declaredFingerprint {
+		t.Errorf("DeclaredRemote() = %q, %q, %v: want the https URL with the default port, and lower-case hex", addr, fp, ok)
+	}
+	for name, r := range map[string]Resource{
+		"a bare name":           target("t", LocationOffsite, "vps", ""),
+		"a pool on this server": target("t", LocationOffsite, "", "nas"),
+		"half of it":            declaring(target("t", LocationOffsite, "vps", ""), "https://10.0.0.7:8443", ""),
+	} {
+		if _, _, ok := r.DeclaredRemote(); ok {
+			t.Errorf("%s declares nothing", name)
+		}
+	}
+}
+
+func TestLoadFileReadsADeclaredRemoteAndStaysStrict(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	base := "kind: backup-target\nname: offsite\nlocation: offsite\nengine: incus\nremote: vps\npool: backups\n"
+	rs, err := LoadFile(write("good.yaml", base+"address: https://10.0.0.7:8443\nfingerprint: "+declaredFingerprint+"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rs) != 1 || rs[0].Address != "https://10.0.0.7:8443" || rs[0].Fingerprint != declaredFingerprint {
+		t.Fatalf("LoadFile() = %+v", rs)
+	}
+	if rs, err = LoadFile(write("bare.yaml", base)); err != nil || rs[0].Address != "" || rs[0].Fingerprint != "" {
+		t.Errorf("without the opt-in nothing is declared: %+v, %v", rs, err)
+	}
+	// a misspelling must not silently turn the opt-in into a bare name
+	if _, err := LoadFile(write("typo.yaml", base+"adress: https://10.0.0.7:8443\nfingerprint: "+declaredFingerprint+"\n")); err == nil {
+		t.Error("a misspelled key must be refused, not ignored")
+	}
+	if _, err := LoadFile(write("half.yaml", base+"address: https://10.0.0.7:8443\n")); err == nil || !strings.Contains(err.Error(), "needs fingerprint") {
+		t.Errorf("an address with no fingerprint must be refused at load: %v", err)
+	}
+}
+
+// The opt-in is plan-time and error-time only: the policy written on the volume is the same with it or without it, so no helper needs to
+// be upgraded to read one and no address lands in plain volume config.
+func TestADeclaredRemoteDoesNotChangeTheCopyPolicy(t *testing.T) {
+	plain := policyTargets()
+	opted := policyTargets()
+	opted["vps"] = declaring(opted["vps"], "https://10.0.0.7:8443", declaredFingerprint)
+
+	want, err := BuildPolicy(volWithCopies(), plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := BuildPolicy(volWithCopies(), opted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Errorf("the policy must not depend on the opt-in:\n  with:    %s\n  without: %s", got, want)
+	}
+	if strings.Contains(got, "10.0.0.7") || strings.Contains(got, declaredFingerprint) {
+		t.Errorf("neither the address nor the fingerprint may reach the volume: %s", got)
 	}
 }

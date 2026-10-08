@@ -2,6 +2,7 @@ package volbackup
 
 import (
 	"errors"
+	"net/http"
 	"sort"
 	"strings"
 	"testing"
@@ -10,7 +11,7 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
 
-	"github.com/minihci/tink/internal/resolve"
+	"github.com/minihci/tink/internal/backupmeta"
 )
 
 // fakeIncus is just enough of an Incus server to run the copy engine against: storage volumes and their
@@ -23,11 +24,31 @@ type fakeIncus struct {
 	vols  map[string]*api.StorageVolume // "pool/name"
 	snaps map[string][]string           // "pool/name" -> snapshot names
 
-	failCopy    error // the next copy into this server fails part way, leaving a partial volume
-	failDelete  bool  // deleting a volume fails (e.g. the connection died)
+	failCopy   error         // the next copy into this server fails part way, leaving a partial volume
+	entered    chan struct{} // if set, a copy signals here when it starts, then waits for release
+	release    chan struct{}
+	failDelete bool // deleting a volume fails (e.g. the connection died)
+	// inherit makes a copy carry the source volume's own config under the config it was given: the worst case for
+	// what Incus may do with a copy from a snapshot, which tink must not depend on.
+	inherit  bool
+	failPool map[string]error // listing this pool fails
+	// getFails makes reading one volume ("pool/name") fail with err (a 403, say, not a 404) from the call after the first `after` ones.
+	getFails    map[string]getFail
+	getCalls    map[string]int
 	modesSeen   []string
 	copiesFrom  []string
 	deletedVols []string
+	// contentTypes are the content types a copy was asked to carry, one per copy.
+	contentTypes []string
+
+	// More ways to fail, for the branches of a copy that a clean server never reaches.
+	failSnapCreate error            // taking a snapshot fails at once
+	failSnapWait   error            // taking a snapshot fails when it is waited for
+	failSnapDelete error            // removing a snapshot fails
+	failServer     error            // reading the server's name fails
+	failUpdate     map[string]error // updating one volume ("pool/name") fails
+	failList       map[string]error // listing this pool's volumes (the project's own) fails
+	failListOnce   bool             // ... but only the first time, so what comes after it can succeed
 }
 
 func newFake(name string, pools ...string) *fakeIncus {
@@ -58,17 +79,37 @@ func (f *fakeIncus) names(pool string) []string {
 
 func (f *fakeIncus) UseProject(string) incus.InstanceServer { return f }
 
+func (f *fakeIncus) GetServer() (*api.Server, string, error) {
+	if f.failServer != nil {
+		return nil, "", f.failServer
+	}
+	return &api.Server{Environment: api.ServerEnvironment{ServerName: f.name}}, "", nil
+}
+
 func (f *fakeIncus) GetStoragePool(name string) (*api.StoragePool, string, error) {
 	if !f.pools[name] {
-		return nil, "", errors.New("storage pool not found")
+		return nil, "", api.StatusErrorf(http.StatusNotFound, "storage pool not found")
 	}
 	return &api.StoragePool{Name: name}, "", nil
 }
 
+type getFail struct {
+	err   error
+	after int
+}
+
 func (f *fakeIncus) GetStoragePoolVolume(pool, _, name string) (*api.StorageVolume, string, error) {
-	v, ok := f.vols[pool+"/"+name]
+	k := pool + "/" + name
+	if f.getCalls == nil {
+		f.getCalls = map[string]int{}
+	}
+	f.getCalls[k]++
+	if g, ok := f.getFails[k]; ok && f.getCalls[k] > g.after {
+		return nil, "", g.err
+	}
+	v, ok := f.vols[k]
 	if !ok {
-		return nil, "", errors.New("storage volume not found")
+		return nil, "", api.StatusErrorf(http.StatusNotFound, "storage volume not found")
 	}
 	c := *v
 	c.Config = map[string]string{}
@@ -78,7 +119,29 @@ func (f *fakeIncus) GetStoragePoolVolume(pool, _, name string) (*api.StorageVolu
 	return &c, "etag", nil
 }
 
+func (f *fakeIncus) GetStoragePoolNames() ([]string, error) {
+	var out []string
+	for p := range f.pools {
+		out = append(out, p)
+	}
+	return out, nil
+}
+
+// GetStoragePoolVolumesAllProjects is every volume of the pool; a volume's Project is whatever the test set on it.
+func (f *fakeIncus) GetStoragePoolVolumesAllProjects(pool string) ([]api.StorageVolume, error) {
+	if f.failPool[pool] != nil {
+		return nil, f.failPool[pool]
+	}
+	return f.GetStoragePoolVolumes(pool)
+}
+
 func (f *fakeIncus) GetStoragePoolVolumes(pool string) ([]api.StorageVolume, error) {
+	if err := f.failList[pool]; err != nil {
+		if f.failListOnce {
+			delete(f.failList, pool)
+		}
+		return nil, err
+	}
 	var out []api.StorageVolume
 	for _, n := range f.names(pool) {
 		out = append(out, *f.vols[pool+"/"+n])
@@ -86,10 +149,21 @@ func (f *fakeIncus) GetStoragePoolVolumes(pool string) ([]api.StorageVolume, err
 	return out, nil
 }
 
+func (f *fakeIncus) GetStoragePoolVolumeSnapshots(pool, _, name string) ([]api.StorageVolumeSnapshot, error) {
+	var out []api.StorageVolumeSnapshot
+	for _, n := range f.snaps[pool+"/"+name] {
+		out = append(out, api.StorageVolumeSnapshot{Name: name + "/" + n})
+	}
+	return out, nil
+}
+
 func (f *fakeIncus) UpdateStoragePoolVolume(pool, _, name string, put api.StorageVolumePut, _ string) error {
+	if err := f.failUpdate[pool+"/"+name]; err != nil {
+		return err
+	}
 	v, ok := f.vols[pool+"/"+name]
 	if !ok {
-		return errors.New("storage volume not found")
+		return api.StatusErrorf(http.StatusNotFound, "storage volume not found")
 	}
 	v.StorageVolumePut = put
 	return nil
@@ -119,11 +193,17 @@ type remoteOp struct {
 func (o remoteOp) Wait() error { return o.err }
 
 func (f *fakeIncus) CreateStoragePoolVolumeSnapshot(pool, _, name string, snap api.StorageVolumeSnapshotsPost) (incus.Operation, error) {
+	if f.failSnapCreate != nil {
+		return nil, f.failSnapCreate
+	}
 	f.snaps[pool+"/"+name] = append(f.snaps[pool+"/"+name], snap.Name)
-	return localOp{}, nil
+	return localOp{err: f.failSnapWait}, nil
 }
 
 func (f *fakeIncus) DeleteStoragePoolVolumeSnapshot(pool, _, name, snap string) (incus.Operation, error) {
+	if f.failSnapDelete != nil {
+		return nil, f.failSnapDelete
+	}
 	k := pool + "/" + name
 	var keep []string
 	for _, s := range f.snaps[k] {
@@ -137,9 +217,35 @@ func (f *fakeIncus) DeleteStoragePoolVolumeSnapshot(pool, _, name, snap string) 
 
 // CopyStoragePoolVolume is called on the DESTINATION, as in the Incus client.
 func (f *fakeIncus) CopyStoragePoolVolume(pool string, src incus.InstanceServer, srcPool string, vol api.StorageVolume, args *incus.StoragePoolVolumeCopyArgs) (incus.RemoteOperation, error) {
+	// like Incus, the new volume exists, with the config it was given, from the moment the copy starts
+	cfg := map[string]string{}
+	if sf, ok := src.(*fakeIncus); ok && f.inherit {
+		if from, ok := sf.vols[srcPool+"/"+strings.SplitN(vol.Name, "/", 2)[0]]; ok {
+			for k, v := range from.Config {
+				cfg[k] = v
+			}
+		}
+	}
+	for k, v := range vol.Config {
+		cfg[k] = v
+	}
+	f.add(pool, args.Name, cfg)
+	if f.entered != nil {
+		// bounded, so a regression fails the test instead of hanging it
+		select {
+		case f.entered <- struct{}{}:
+		case <-time.After(2 * time.Second):
+			return nil, errors.New("test: nobody was waiting for this copy to start")
+		}
+		select {
+		case <-f.release:
+		case <-time.After(10 * time.Second):
+			return nil, errors.New("test: this copy was never released")
+		}
+	}
 	f.modesSeen = append(f.modesSeen, args.Mode)
 	f.copiesFrom = append(f.copiesFrom, srcPool+"/"+vol.Name)
-	f.add(pool, args.Name, vol.Config) // like Incus, a copy takes the config it is given
+	f.contentTypes = append(f.contentTypes, vol.ContentType)
 	if f.failCopy != nil {
 		err := f.failCopy
 		f.failCopy = nil
@@ -170,13 +276,13 @@ func TestCopyToARemoteServer(t *testing.T) {
 	remote := newFake("vps", "default")
 	useRemote(t, "vps", remote)
 
-	owner := resolve.CopyOf("", "default", "lib")
+	owner := backupmeta.CopyOf("", "default", "lib")
 	old := time.Date(2026, 9, 25, 4, 0, 0, 0, time.UTC).Format(time.RFC3339)
 	older := time.Date(2026, 7, 1, 4, 0, 0, 0, time.UTC).Format(time.RFC3339)
-	remote.add("default", "lib-bk-20260925-040000", map[string]string{resolve.MarkerCopyOf: owner, resolve.MarkerCopyAt: old})
-	remote.add("default", "lib-bk-20260701-040000", map[string]string{resolve.MarkerCopyOf: owner, resolve.MarkerCopyAt: older})
+	remote.add("default", "lib-bk-20260925-040000", map[string]string{backupmeta.MarkerCopyOf: owner, backupmeta.MarkerCopyAt: old})
+	remote.add("default", "lib-bk-20260701-040000", map[string]string{backupmeta.MarkerCopyOf: owner, backupmeta.MarkerCopyAt: older})
 	remote.add("default", "lib-bk-20200101-000000", nil) // looks like ours, carries no marker
-	remote.add("default", "other-bk-20260701-040000", map[string]string{resolve.MarkerCopyOf: resolve.CopyOf("", "default", "other"), resolve.MarkerCopyAt: older})
+	remote.add("default", "other-bk-20260701-040000", map[string]string{backupmeta.MarkerCopyOf: backupmeta.CopyOf("", "default", "other"), backupmeta.MarkerCopyAt: older})
 
 	res, err := Copy(local, Volume{Name: "lib"}, remoteTarget(), CopyOptions{Retain: "30d", Now: func() time.Time { return remoteNow }})
 	if err != nil {
@@ -195,14 +301,14 @@ func TestCopyToARemoteServer(t *testing.T) {
 	}
 	// the new restore point has its markers; the temporary snapshot is gone
 	rp := remote.vols["default/"+res.Volume]
-	if rp == nil || rp.Config[resolve.MarkerCopyOf] != owner || rp.Config[resolve.MarkerCopyTarget] != "vps" {
+	if rp == nil || rp.Config[backupmeta.MarkerCopyOf] != owner || rp.Config[backupmeta.MarkerCopyTarget] != "vps" {
 		t.Fatalf("the restore point must carry its markers: %+v", rp)
 	}
 	if got := local.snaps["default/lib"]; len(got) != 0 {
 		t.Errorf("temporary snapshot left on the source: %v", got)
 	}
 	// the source is stamped
-	if local.vols["default/lib"].Config[resolve.CopyStampAt("vps")] == "" || local.vols["default/lib"].Config[resolve.CopyStampVolume("vps")] != res.Volume {
+	if local.vols["default/lib"].Config[backupmeta.CopyStampAt("vps")] == "" || local.vols["default/lib"].Config[backupmeta.CopyStampVolume("vps")] != res.Volume {
 		t.Errorf("source not stamped: %v", local.vols["default/lib"].Config)
 	}
 	// pruning removed exactly the older marked point on the remote, not the newest, not look-alikes
@@ -236,7 +342,7 @@ func TestCopyToARemoteThatIsCutOffLeavesNoRestorePoint(t *testing.T) {
 	if got := local.snaps["default/lib"]; len(got) != 0 {
 		t.Errorf("temporary snapshot left on the source: %v", got)
 	}
-	if local.vols["default/lib"].Config[resolve.CopyStampAt("vps")] != "" {
+	if local.vols["default/lib"].Config[backupmeta.CopyStampAt("vps")] != "" {
 		t.Error("a failed copy must not stamp the source as copied")
 	}
 }
@@ -272,8 +378,15 @@ func TestUnreachableRemoteFailsBeforeTouchingTheSource(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `remote "vps"`) {
 		t.Fatalf("the error must name the remote: %v", err)
 	}
-	if len(local.snaps["default/lib"]) != 0 || len(local.vols["default/lib"].Config) != 0 {
-		t.Error("an unreachable target must not leave a snapshot or stamp on the source")
+	if len(local.snaps["default/lib"]) != 0 {
+		t.Error("an unreachable target must not leave a snapshot on the source")
+	}
+	cfg := local.vols["default/lib"].Config
+	if cfg[backupmeta.CopyStampAt("vps")] != "" {
+		t.Error("an unreachable target must not stamp the copy as done")
+	}
+	if cfg[backupmeta.CopyFailCount("vps")] != "1" {
+		t.Errorf("it must record exactly one failed attempt, and nothing else: %v", cfg)
 	}
 }
 
@@ -299,9 +412,9 @@ func TestRestoreFromARemoteScrubsMarkersAndNeedsNoSourceVolume(t *testing.T) {
 	local := newFake("tron", "default") // the source volume is GONE
 	remote := newFake("vps", "default")
 	useRemote(t, "vps", remote)
-	owner := resolve.CopyOf("", "default", "lib")
+	owner := backupmeta.CopyOf("", "default", "lib")
 	at := time.Date(2026, 10, 1, 4, 0, 0, 0, time.UTC).Format(time.RFC3339)
-	remote.add("default", "lib-bk-20261001-040000", map[string]string{resolve.MarkerCopyOf: owner, resolve.MarkerCopyAt: at, resolve.MarkerCopyTarget: "vps"})
+	remote.add("default", "lib-bk-20261001-040000", map[string]string{backupmeta.MarkerCopyOf: owner, backupmeta.MarkerCopyAt: at, backupmeta.MarkerCopyTarget: "vps"})
 
 	res, err := Restore(local, Volume{Name: "lib"}, RestoreOptions{From: &Target{Name: "vps", Remote: "vps"}, As: "lib-recovered"})
 	if err != nil {
@@ -326,7 +439,7 @@ func TestRestoreFromARemoteThatFailsLeavesNoPartialVolume(t *testing.T) {
 	remote := newFake("vps", "default")
 	useRemote(t, "vps", remote)
 	at := time.Date(2026, 10, 1, 4, 0, 0, 0, time.UTC).Format(time.RFC3339)
-	remote.add("default", "lib-bk-20261001-040000", map[string]string{resolve.MarkerCopyOf: resolve.CopyOf("", "default", "lib"), resolve.MarkerCopyAt: at})
+	remote.add("default", "lib-bk-20261001-040000", map[string]string{backupmeta.MarkerCopyOf: backupmeta.CopyOf("", "default", "lib"), backupmeta.MarkerCopyAt: at})
 
 	_, err := Restore(local, Volume{Name: "lib"}, RestoreOptions{From: &Target{Name: "vps", Remote: "vps"}, As: "lib-recovered"})
 	if err == nil || !strings.Contains(err.Error(), "tunnel dropped") {

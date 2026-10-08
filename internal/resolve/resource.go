@@ -1,4 +1,4 @@
-// Package resolve is a spike: a lightweight, tink-native version of the
+// Package resolve is tink's resolver: a lightweight, tink-native version of the
 // resolver half of the architecture in docs/resolver-architecture.md --
 // scoped deliberately to what this platform actually uses (project,
 // profile, storage-volume, instance, file, incus, image, exec), stateless
@@ -16,7 +16,11 @@
 // "this must exist before that."
 package resolve
 
-import "time"
+import (
+	"time"
+
+	"github.com/minihci/tink/internal/backupmeta"
+)
 
 // Kind identifies which Incus object a Resource describes. Scoped to
 // exactly what this platform uses today; not a general-purpose registry
@@ -33,6 +37,7 @@ const (
 	KindImage         Kind = "image"
 	KindExec          Kind = "exec"
 	KindBackupTarget  Kind = "backup-target"
+	KindStack         Kind = "stack" // the stack's own name; metadata, not a resource (see StackName)
 )
 
 // kindPriority orders resource creation by type, matching the same
@@ -51,6 +56,7 @@ const (
 var kindPriority = map[Kind]int{
 	KindProject:       0,
 	KindBackupTarget:  0, // pure declaration: nothing to create, but volumes refer to it
+	KindStack:         0, // metadata: kept out of the graph, only here so the kind is known
 	KindProfile:       1,
 	KindStorageVolume: 1,
 	KindIncus:         1,
@@ -73,7 +79,7 @@ type Resource struct {
 	// already inferable from Project/Profiles/device sources below --
 	// e.g. "this instance's installer needs that instance actually
 	// running, not just created" (see nextcloud-app depending on
-	// nextcloud-db in the real stack this spike was built to explain).
+	// nextcloud-db in the real stack this package was first built to explain).
 	DependsOn []string
 
 	// Instance-only.
@@ -88,10 +94,17 @@ type Resource struct {
 	Location string
 	Engine   string
 	Remote   string
+	// Address and Fingerprint are an opt-in way for a target to describe the server its Remote names: where it is, and the SHA-256 of its
+	// certificate. Only the public half: no credential. Without them a target is just the name, resolved from the Incus client
+	// configuration of whoever runs the copy, and the stack says nothing about the server (so it can live in a public repository). With
+	// them, plan and the missing-remote error can print the exact command that adds the remote. They are not part of the copy policy
+	// written on the volume.
+	Address     string
+	Fingerprint string
 
 	// Backup (storage-volume-only) is the volume's mandatory answer to "how is
-	// this backed up?". Nil means unanswered, which plan BLOCKS. See VolumeBackup.
-	Backup *VolumeBackup
+	// this backed up?". Nil means unanswered, which plan BLOCKS. See backupmeta.VolumeBackup.
+	Backup *backupmeta.VolumeBackup
 
 	// File-only: push Content to Path inside the named Instance.
 	Instance string

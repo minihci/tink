@@ -84,9 +84,12 @@ func triggerHashConfigKey(name string) string {
 //
 // The instance-existence check up front matches planProject's,
 // planProfile's, planInstance's, planImage's and planFile's own
-// established convention here: a failed Get means "doesn't exist yet,"
-// answered as ActionCreate/not-converged, never propagated as a plan
-// error. Found live, not designed in up front: Plan computes every
+// established convention here: a Get answered 404 means "doesn't exist
+// yet," answered as ActionCreate/not-converged, never propagated as a plan
+// error. Any other failure (a 403, a 5xx, a dropped connection) says
+// nothing about whether the instance exists and IS propagated: reading it
+// as "not converged" would run Command, which is exactly what Check/Triggers
+// exist to prevent doubling. Found live, not designed in up front: Plan computes every
 // resource's plan concurrently against current reality (see Plan's own
 // doc comment -- "nothing here depends on another resource existing
 // yet"), so an exec resource targeting an instance that's only *planned*
@@ -97,8 +100,11 @@ func triggerHashConfigKey(name string) string {
 // instead of the "would create" every other kind already reports
 // correctly in exactly this situation.
 func execConverged(server incus.InstanceServer, r Resource, attempts int, delay time.Duration) (bool, error) {
-	inst, _, err := server.GetInstance(r.Instance)
+	inst, _, found, err := incusapi.LookupInstance(server, r.Instance)
 	if err != nil {
+		return false, fmt.Errorf("reading %s: %w", r.Instance, err)
+	}
+	if !found {
 		return false, nil
 	}
 

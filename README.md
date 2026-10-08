@@ -29,9 +29,13 @@ comment for the working bash it's replacing.
 |---|---|---|
 | `tink deploy` | verified live | `incus-host/scripts/deploy.sh` |
 | `tink run` | verified live against a real, disposable test host | (new - the manual per-tenant "mental docker-run into `incus launch` plus a sequence of `incus config`/`incus config device add` calls" dance) |
-| `tink plan` / `tink plan apply` | spike - live-verified against two structurally different real stacks (Nextcloud, Nightscout), not yet a committed capability | (new - hand-running a sequence of `incus` commands in the right order from memory or a prose runbook) |
+| `tink plan` / `tink plan apply` | live-verified against real stacks: Nextcloud and Nightscout, and the Immich, mosquitto and Matter stacks on the lab host; the primary way to describe a stack ([docs](docs/resolver-architecture.md)) | (new - hand-running a sequence of `incus` commands in the right order from memory or a prose runbook) |
 | `tink ingress reconcile` / `tink ingress status` | live on `incus.xlii.co` | `incus-host/reconciler/reconcile.sh` |
-| `tink daemon run` / `tink daemon install` | implemented | (new - cron is still how `ingress reconcile` actually runs today) |
+| `tink daemon run` / `tink daemon install` | live on `incus.xlii.co`, running the ingress reconcile; the backup scheduler and job executor run in the helper, on the lab host ([docs](docs/daemon-jobs.md)) | (new - it replaced the cron entry that ran `ingress reconcile`) |
+| `tink backup run` / `restore` / `verify` / `forget` | verified live on the lab host: pool targets (a TrueNAS-backed pool included) and an Incus remote over a tunnel ([docs](docs/volume-backup.md)) | (new) |
+| `tink secret` | verified live on the Immich stack on the lab host ([docs](docs/secrets.md)) | (new) |
+| `tink remote` / `--remote NAME` | verified live from a laptop against the lab host ([docs](docs/remote.md)) | (new) |
+| `tink helper install` / `upgrade` / `remove` / `remote` / `status` | built, and run live on the lab host: installed from the published image, it made the scheduled copies on its own, restarted after being killed, and upgraded from `v0.1.0` to `v0.1.1` with the release binary and no flags; a host reboot has not been tried ([docs](docs/helper.md)) | (new - a way to run the daemon without a unit per init system) |
 | `tink mongo snapshot` | not yet designed | (none yet - still under discussion) |
 
 `deploy` converges a host to its declared platform state - storage
@@ -53,9 +57,14 @@ anything blocked; an instance's `on_image_change` field says whether
 image drift is reported, ignored, or converged by rebuilding an OCI app
 container onto a digest-pinned image - see
 [`docs/image-updates.md`](docs/image-updates.md).
+`--remote NAME` (or `$TINK_REMOTE`) points any command at a remote Incus server from the client configuration instead of the local
+daemon, so tink can run from another machine; see [`docs/remote.md`](docs/remote.md) for what that covers and what refuses.
+
 `tink backup run` copies volumes to the backup targets a stack declares, and `tink backup restore` / `tink backup verify` restore a
 volume's snapshot (or a restore point on a target) to a new volume and prove the backup is usable - see
 [`docs/volume-backup.md`](docs/volume-backup.md).
+`plan apply` also writes each volume's copy policy onto the volume, so `tink daemon run --jobs DIR` schedules the copies from the volumes
+themselves, with no stack for it to hold - see [`docs/daemon-jobs.md`](docs/daemon-jobs.md).
 `plan` also asks every storage volume to declare how it is backed up
 (scheduled snapshots, or an explicit opt-out with a reason), warning about any
 that does not - see [`docs/volume-backup.md`](docs/volume-backup.md).
@@ -98,11 +107,19 @@ than moved, since neither is what's actually executing anywhere anymore.
 ```
 cmd/tink/            thin CLI entrypoint (cobra) - argument parsing only
 internal/incusapi/   shared Incus API client, used by every capability
+internal/incusconf/  the Incus client configuration (and built-in image remotes), for --remote
 internal/bootstrap/  tink deploy
 internal/run/        tink run - see internal/run/DESIGN.md
-internal/resolve/    tink plan / tink plan apply (spike) - see docs/resolver-architecture.md
+internal/resolve/    tink plan / tink plan apply - see docs/resolver-architecture.md
+internal/secrets/    tink secret, ${secret:NAME} references, the output redactor - see docs/secrets.md
+internal/backupmeta/ what tink records on a volume (policy key, stamps, markers), the backup block's rules, the copy policy a volume carries (how it is written, read and put in words) and the schedule arithmetic; depends on nothing here
+internal/volbackup/  copy, restore and verify a storage volume - see docs/volume-backup.md
+internal/backuprun/  tink backup run: decide which copies are due, make them
 internal/ingress/    tink ingress ...
-internal/daemon/     tink daemon ...
+internal/daemon/     tink daemon ... (workers, the backup scheduler, the status document)
+internal/jobs/       the daemon's job queue, a directory - see docs/daemon-jobs.md
+internal/helper/     tink helper ... - see docs/helper.md
+internal/remote/     tink remote ..., the client configuration --remote uses - see docs/remote.md
 internal/backup/     tink mongo ... (undesigned)
 configs/             tink deploy's config templates - see configs/README.md
 ```
@@ -185,3 +202,17 @@ re-deploy can't silently reinstate cron underneath it.
 ```
 go build -o tink ./cmd/tink
 ```
+
+A tag (`v*`) also builds binaries for macOS and Linux (`amd64` and `arm64`) and attaches them to its GitHub Release, next to the helper image
+([`.github/workflows/release.yml`](.github/workflows/release.yml), [`docs/helper.md`](docs/helper.md#the-image-and-releasing-it)). `v0.1.1` was the first release to
+carry them and `v0.1.2` the first to name them without the version, which makes the URLs below stable ([Releases](https://github.com/minihci/tink/releases)); you can
+also build from source, as above.
+
+```
+curl -fsSLO https://github.com/minihci/tink/releases/latest/download/tink_darwin_arm64.tar.gz      # also darwin_amd64, linux_amd64, linux_arm64
+curl -fsSLO https://github.com/minihci/tink/releases/latest/download/checksums.txt
+grep ' ./tink_darwin_arm64.tar.gz$' checksums.txt | shasum -a 256 -c -                              # sha256sum -c - on Linux
+tar -xzf tink_darwin_arm64.tar.gz                                                                    # a directory holding the one binary, tink
+```
+
+They are not signed: a binary downloaded with a browser is quarantined by macOS until `xattr -d com.apple.quarantine tink`, and one fetched with `curl` is not.

@@ -19,7 +19,7 @@ import (
 	"github.com/minihci/tink/internal/run"
 )
 
-func createOne(server incus.InstanceServer, r Resource) error {
+func createOne(server incus.InstanceServer, r Resource, env volumeEnv) error {
 	switch r.Kind {
 	case KindProject:
 		return server.CreateProject(api.ProjectsPost{
@@ -36,8 +36,12 @@ func createOne(server incus.InstanceServer, r Resource) error {
 		if pool == "" {
 			pool = "default"
 		}
+		config, _, err := volumeBackupConfig(r, env)
+		if err != nil {
+			return err
+		}
 		return scopedServer(server, r).CreateStoragePoolVolume(pool, api.StorageVolumesPost{
-			StorageVolumePut: api.StorageVolumePut{Config: backupVolumeConfig(r.Backup)},
+			StorageVolumePut: api.StorageVolumePut{Config: config},
 			Name:             r.Name,
 			Type:             "custom",
 			ContentType:      "filesystem",
@@ -199,7 +203,7 @@ func updateInstance(server incus.InstanceServer, r Resource) error {
 	return run.EnsureRunning(server, r.Name)
 }
 
-func updateOne(server incus.InstanceServer, r Resource) error {
+func updateOne(server incus.InstanceServer, r Resource, env volumeEnv) error {
 	s := scopedServer(server, r)
 	switch r.Kind {
 	case KindProfile:
@@ -234,8 +238,15 @@ func updateOne(server incus.InstanceServer, r Resource) error {
 		if put.Config == nil {
 			put.Config = map[string]string{}
 		}
-		for k, v := range backupVolumeConfig(r.Backup) {
+		set, remove, err := volumeBackupConfig(r, env)
+		if err != nil {
+			return err
+		}
+		for k, v := range set {
 			put.Config[k] = v
+		}
+		for _, k := range remove {
+			delete(put.Config, k)
 		}
 		return s.UpdateStoragePoolVolume(pool, "custom", r.Name, put, etag)
 	case KindInstance:
@@ -245,11 +256,11 @@ func updateOne(server incus.InstanceServer, r Resource) error {
 		// changed -- CreateInstanceFile overwrites either way.
 		return pushFile(server, r)
 	default:
-		// Not exercised in this spike: projects are create-only so far,
+		// Not implemented yet: projects are create-only so far,
 		// matching every real deployment on this platform to date --
 		// nothing has ever needed to mutate one in place. (Storage volumes
 		// became updatable for their backup snapshot policy.)
-		return fmt.Errorf("update not implemented for kind %q in this spike", r.Kind)
+		return fmt.Errorf("update is not implemented for kind %q", r.Kind)
 	}
 }
 

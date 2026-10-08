@@ -143,7 +143,7 @@ func applyOne(server incus.InstanceServer, r Resource, opts PlanOptions, note fu
 		note("%s/%s: BLOCKED: %s", r.Kind, r.Name, strings.Join(plan.Blocked, "; "))
 		return outBlocked, nil
 	case ActionCreate:
-		if err := createOne(server, r); err != nil {
+		if err := createOne(server, r, volumeEnv{targets: opts.targets, stack: opts.stack}); err != nil {
 			return outConverged, err
 		}
 		if r.Kind == KindExec {
@@ -153,18 +153,18 @@ func applyOne(server incus.InstanceServer, r Resource, opts PlanOptions, note fu
 		note("%s/%s: created", r.Kind, r.Name)
 		return outChanged, nil
 	case ActionUpdate:
-		if err := updateOne(server, r); err != nil {
+		if err := updateOne(server, r, volumeEnv{targets: opts.targets, stack: opts.stack}); err != nil {
 			return outConverged, err
 		}
 		if r.Kind == KindInstance && r.Restart {
-			note("%s/%s: updated and restarted (%v)", r.Kind, r.Name, plan.Changes)
+			note("%s/%s: updated and restarted (%s)", r.Kind, r.Name, strings.Join(plan.Changes, "; "))
 			return outChanged, nil
 		}
 		if r.Kind == KindInstance && !r.Restart && changesEnvironment(plan.Changes) {
-			note("%s/%s: updated (%v); its environment changed but it was not restarted, so running processes keep the old values until it is (restart: true does that on apply)", r.Kind, r.Name, plan.Changes)
+			note("%s/%s: updated (%s); its environment changed but it was not restarted, so running processes keep the old values until it is (restart: true does that on apply)", r.Kind, r.Name, strings.Join(plan.Changes, "; "))
 			return outChanged, nil
 		}
-		note("%s/%s: updated (%v)", r.Kind, r.Name, plan.Changes)
+		note("%s/%s: updated (%s)", r.Kind, r.Name, strings.Join(plan.Changes, "; "))
 		return outChanged, nil
 	case ActionRebuild:
 		rebuildMu.Lock()

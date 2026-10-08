@@ -1,21 +1,20 @@
 package resolve
 
 import (
-	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
 	"github.com/lxc/incus/v7/shared/cliconfig"
+
+	"github.com/minihci/tink/internal/incusapi"
+	"github.com/minihci/tink/internal/incusconf"
 
 	"github.com/minihci/tink/internal/secrets"
 )
@@ -31,9 +30,11 @@ import (
 // (":2" vs ":2.1.2-alpine", with or without "library/", tag vs digest) and
 // an unrelated ref can inherit another one's id.
 //
-// So a drift verdict needs a registry lookup, resolved with Incus's own OCI
-// client (skopeo underneath). The only offline shortcut is a conclusive
-// match: a digest-pinned ref whose digest the instance already records.
+// So a drift verdict needs a registry lookup: tink asks the registry itself
+// (registry.go), for the architecture the SERVER runs images for, so it gives
+// the same answer from a laptop as on the server. The only offline shortcut is
+// a conclusive match: a digest-pinned ref whose digest the instance already
+// records.
 
 // errOffline marks a lookup that was skipped because --offline was given.
 var errOffline = errors.New("registry lookups disabled (--offline)")
@@ -49,8 +50,11 @@ type imageCheck struct {
 // imageProbe holds the outside lookups so the logic can be tested without a
 // daemon or a registry.
 type imageProbe struct {
-	remotes     map[string]cliconfig.Remote
-	aliasTarget func(alias string) (string, bool)
+	remotes map[string]cliconfig.Remote
+	// aliasTarget resolves a local image alias to its fingerprint. ok is false when the alias does not
+	// exist (nothing to compare against); any other failure is err, so it is reported as unverified
+	// instead of being read as "no drift".
+	aliasTarget func(alias string) (fingerprint string, ok bool, err error)
 	registryFP  func(remote, ref string) (string, error)
 }
 
@@ -69,7 +73,10 @@ func checkImage(cfg map[string]string, image string, p imageProbe) imageCheck {
 	if base == "" {
 		return imageCheck{} // no image metadata (imported disk, etc.)
 	}
-	fp, ok := p.aliasTarget(image)
+	fp, ok, err := p.aliasTarget(image)
+	if err != nil {
+		return imageCheck{Unverified: []string{fmt.Sprintf("image: could not look up the alias %q to compare it with the instance: %v", image, err)}}
+	}
 	if !ok || fp == base {
 		return imageCheck{}
 	}
@@ -142,11 +149,15 @@ func refSuffix(id string) string {
 	return ""
 }
 
+// remoteHost is the registry host of an OCI remote, without its scheme, its path and any user:password written into its URL.
 func remoteHost(remote cliconfig.Remote) string {
 	if len(remote.Addrs) == 0 {
 		return ""
 	}
 	h := remote.Addrs[0]
+	if u, err := url.Parse(h); err == nil && u.Host != "" {
+		return u.Host
+	}
 	h = strings.TrimPrefix(strings.TrimPrefix(h, "https://"), "http://")
 	return strings.TrimSuffix(h, "/")
 }
@@ -343,9 +354,22 @@ type imageEnv struct {
 	conf    *cliconfig.Config
 	offline bool
 
+	// the platform the server runs images for, asked of it once
+	platOnce sync.Once
+	plat     v1.Platform
+	platErr  error
+
 	mu      sync.Mutex
 	images  map[string]registryResult
 	runtime map[string]runtimeResult
+	helped  map[string]*helperResult // remotes with a credentials helper, once it has been run (credhelper.go)
+}
+
+// platformOf is the platform images are chosen for: the server's, not that of the machine asking. An environment is for one run against one
+// server, so it is asked once.
+func (e *imageEnv) platformOf(server incus.InstanceServer) (v1.Platform, error) {
+	e.platOnce.Do(func() { e.plat, e.platErr = serverPlatform(server) })
+	return e.plat, e.platErr
 }
 
 type registryResult struct {
@@ -360,7 +384,7 @@ type runtimeResult struct {
 
 func newImageEnv(offline bool) *imageEnv {
 	e := &imageEnv{offline: offline, images: map[string]registryResult{}, runtime: map[string]runtimeResult{}}
-	if conf, err := cliconfig.LoadConfig(""); err == nil {
+	if conf, err := incusconf.Load(); err == nil {
 		e.conf = conf
 	}
 	return e
@@ -373,15 +397,20 @@ func (e *imageEnv) remotes() map[string]cliconfig.Remote {
 	return e.conf.Remotes
 }
 
-// registryImage resolves remote:ref through Incus's OCI client.
-func (e *imageEnv) registryImage(remote, ref string) (registryImage, error) {
+// registryImage is what the registry says about remote:ref for the architecture the server runs images for.
+func (e *imageEnv) registryImage(server incus.InstanceServer, remoteName, ref string) (registryImage, error) {
 	if e == nil || e.offline {
 		return registryImage{}, errOffline
 	}
-	if e.conf == nil {
-		return registryImage{}, errors.New("incus client config unavailable")
+	remote, ok := e.remotes()[remoteName]
+	if !ok {
+		return registryImage{}, fmt.Errorf("%q is not a configured OCI remote", remoteName)
 	}
-	key := remote + ":" + ref
+	plat, err := e.platformOf(server)
+	if err != nil {
+		return registryImage{}, err
+	}
+	key := remoteName + ":" + ref
 	e.mu.Lock()
 	if hit, ok := e.images[key]; ok {
 		e.mu.Unlock()
@@ -389,38 +418,30 @@ func (e *imageEnv) registryImage(remote, ref string) (registryImage, error) {
 	}
 	e.mu.Unlock()
 
-	res := registryResult{}
-	ensureSkopeoOnPath()
-	if is, err := e.conf.GetImageServer(remote); err != nil {
-		res.err = err
-	} else if alias, _, err := is.GetImageAlias(ref); err != nil {
-		res.err = err
-	} else if img, _, err := is.GetImage(alias.Target); err != nil {
-		res.err = err
-	} else {
-		res.img = registryImage{Fingerprint: img.Fingerprint, Size: img.Size}
+	authed, err := e.authedRemote(remote)
+	if err != nil {
+		return registryImage{}, fmt.Errorf("remote %q: %w", remoteName, err)
 	}
-
+	img, err := lookupRegistryImage(authed, ref, plat)
 	e.mu.Lock()
-	e.images[key] = res
+	e.images[key] = registryResult{img: img, err: err}
 	e.mu.Unlock()
-	return res.img, res.err
+	return img, err
 }
 
-// runtimeConfig reads the image's baked-in runtime config with skopeo.
-// Anonymous access only for now: a private registry needing credentials
-// reports an error, which blocks a rebuild rather than guessing.
-func (e *imageEnv) runtimeConfig(remote cliconfig.Remote, ref string) (ociRuntime, error) {
+// runtimeConfig reads the runtime config an image bakes in, for the architecture the server runs images for. The registry is reached as
+// registry.go says: the login in the remote's URL (which a credentials helper supplies, credhelper.go), else the person's own
+// container-registry login, else anonymously; an image it cannot
+// read reports an error, which blocks a rebuild rather than guessing.
+func (e *imageEnv) runtimeConfig(server incus.InstanceServer, remote cliconfig.Remote, ref string) (ociRuntime, error) {
 	if e == nil || e.offline {
 		return ociRuntime{}, errOffline
 	}
-	repo := ref
-	if i := strings.Index(ref, "@"); i >= 0 {
-		r, _, _ := strings.Cut(ref[:i], ":")
-		repo = r + ref[i:] // Incus drops :TAG when a digest is present
+	plat, err := e.platformOf(server)
+	if err != nil {
+		return ociRuntime{}, err
 	}
-	key := remoteHost(remote) + "/" + repo
-
+	key := remoteHost(remote) + "/" + ref
 	e.mu.Lock()
 	if hit, ok := e.runtime[key]; ok {
 		e.mu.Unlock()
@@ -428,39 +449,15 @@ func (e *imageEnv) runtimeConfig(remote cliconfig.Remote, ref string) (ociRuntim
 	}
 	e.mu.Unlock()
 
-	ensureSkopeoOnPath()
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, "skopeo", "--insecure-policy", "inspect", "--config", "docker://"+key).Output()
-	res := runtimeResult{}
+	authed, err := e.authedRemote(remote)
 	if err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) && len(ee.Stderr) > 0 {
-			err = fmt.Errorf("%w: %s", err, strings.TrimSpace(string(ee.Stderr)))
-		}
-		res.err = err
-	} else {
-		var doc struct {
-			Config struct {
-				Entrypoint []string
-				Cmd        []string
-				Env        []string
-				WorkingDir string
-				User       string
-			} `json:"config"`
-		}
-		if err := json.Unmarshal(out, &doc); err != nil {
-			res.err = fmt.Errorf("parsing image config: %w", err)
-		} else {
-			c := doc.Config
-			res.rt = ociRuntime{Entrypoint: c.Entrypoint, Cmd: c.Cmd, Env: c.Env, WorkingDir: c.WorkingDir, User: c.User}
-		}
+		return ociRuntime{}, fmt.Errorf("remote %q: %w", remoteHost(remote), err)
 	}
-
+	rt, err := lookupRuntimeConfig(authed, ref, plat)
 	e.mu.Lock()
-	e.runtime[key] = res
+	e.runtime[key] = runtimeResult{rt: rt, err: err}
 	e.mu.Unlock()
-	return res.rt, res.err
+	return rt, err
 }
 
 // checkInstance runs checkImage against the live daemon and registry.
@@ -470,33 +467,16 @@ func (e *imageEnv) checkInstance(server incus.InstanceServer, current *api.Insta
 	}
 	return checkImage(current.Config, r.Image, imageProbe{
 		remotes: e.remotes(),
-		aliasTarget: func(alias string) (string, bool) {
-			a, _, err := server.GetImageAlias(alias)
-			if err != nil || a == nil {
-				return "", false
+		aliasTarget: func(alias string) (string, bool, error) {
+			a, _, found, err := incusapi.LookupImageAlias(server, alias)
+			if err != nil || !found {
+				return "", false, err
 			}
-			return a.Target, true
+			return a.Target, true, nil
 		},
 		registryFP: func(remote, ref string) (string, error) {
-			img, err := e.registryImage(remote, ref)
+			img, err := e.registryImage(server, remote, ref)
 			return img.Fingerprint, err
 		},
-	})
-}
-
-var skopeoOnce sync.Once
-
-// ensureSkopeoOnPath makes the OCI client skopeo call work from tink. The
-// Incus package ships skopeo in /opt/incus/bin, which incusd has on its PATH
-// but an ordinary shell (or the sudo secure_path) does not.
-func ensureSkopeoOnPath() {
-	skopeoOnce.Do(func() {
-		if _, err := exec.LookPath("skopeo"); err == nil {
-			return
-		}
-		const incusBin = "/opt/incus/bin"
-		if _, err := os.Stat(filepath.Join(incusBin, "skopeo")); err == nil {
-			_ = os.Setenv("PATH", incusBin+string(os.PathListSeparator)+os.Getenv("PATH"))
-		}
 	})
 }

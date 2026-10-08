@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"time"
@@ -128,20 +129,32 @@ func ExecInGuestWithRetry(server incus.InstanceServer, instance string, command 
 }
 
 func execInGuestOnce(server incus.InstanceServer, instance string, command []string) (exitCode int, output string, err error) {
+	return execOnce(server, instance, command, bytes.NewReader(nil), nil)
+}
+
+// ExecWithStdin runs command in the instance with stdin as its standard input and env added to its environment, and returns its exit
+// status and what it printed. It is for handing a command something that must not appear on a command line (a trust token) and has no
+// business being written to disk. It makes one attempt: the VM-agent retry of ExecInGuest is about a guest that is still booting.
+func ExecWithStdin(server incus.InstanceServer, instance string, command []string, stdin io.Reader, env map[string]string) (exitCode int, output string, err error) {
+	return execOnce(server, instance, command, stdin, env)
+}
+
+func execOnce(server incus.InstanceServer, instance string, command []string, stdin io.Reader, env map[string]string) (exitCode int, output string, err error) {
 	// Incus copies stdout and stderr from two goroutines, and both go here so the output reads as one
 	// stream. A bare bytes.Buffer is not safe for that: with it, most runs (about 60% in testing, for a
 	// plain `echo`) came back with the output EMPTY while the exit status was right, so a failing command's
 	// error carried no output and a passing one printed nothing.
 	var buf syncBuffer
 	args := incus.InstanceExecArgs{
-		Stdin:    bytes.NewReader(nil),
+		Stdin:    stdin,
 		Stdout:   &buf,
 		Stderr:   &buf,
 		DataDone: make(chan bool),
 	}
 	op, err := server.ExecInstance(instance, api.InstanceExecPost{
-		Command:   command,
-		WaitForWS: true,
+		Command:     command,
+		WaitForWS:   true,
+		Environment: env,
 	}, &args)
 	if err != nil {
 		return 0, "", fmt.Errorf("starting exec of %v on %s: %w", command, instance, err)

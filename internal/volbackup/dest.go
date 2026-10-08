@@ -1,26 +1,17 @@
 package volbackup
 
 import (
+	"errors"
 	"fmt"
 
 	incus "github.com/lxc/incus/v7/client"
-	"github.com/lxc/incus/v7/shared/cliconfig"
+
+	"github.com/minihci/tink/internal/incusapi"
 )
 
-// connectRemote opens a named remote from the Incus client configuration of the user running tink
-// (~/.config/incus, or $INCUS_CONF). That configuration is where `incus remote add` keeps the address,
-// the client certificate and the project, so tink stores no credentials of its own. A variable so tests
-// can stand in for the network.
-var connectRemote = func(name string) (incus.InstanceServer, error) {
-	conf, err := cliconfig.LoadConfig("")
-	if err != nil {
-		return nil, fmt.Errorf("reading the Incus client configuration: %w", err)
-	}
-	if _, ok := conf.Remotes[name]; !ok {
-		return nil, fmt.Errorf("no Incus remote %q is configured for the user running tink (add it with `incus remote add`; sudo uses root's configuration, in %s)", name, conf.ConfigPath())
-	}
-	return conf.GetInstanceServer(name)
-}
+// connectRemote opens a named remote from the Incus client configuration of the user running tink (see
+// incusapi.ConnectRemote). A variable so tests can stand in for the network.
+var connectRemote = incusapi.ConnectRemote
 
 // pool is the pool on the target that holds restore points. A remote target may leave it out: "default".
 func (t Target) pool() string {
@@ -51,6 +42,12 @@ func (t Target) dest(local incus.InstanceServer, v Volume) (incus.InstanceServer
 	}
 	d, err := connectRemote(t.Remote)
 	if err != nil {
+		var missing *incusapi.RemoteNotConfiguredError
+		if t.Address != "" && errors.As(err, &missing) {
+			return nil, fmt.Errorf("target %q: remote %q: %w. The stack declares where it is, so add it with: tink remote add %s %s --fingerprint %s "+
+				"(or a trust token made on that server, `incus config trust add NAME`, instead of --fingerprint, if it does not trust this machine yet)",
+				t.Name, t.Remote, err, t.Remote, t.Address, t.Fingerprint)
+		}
 		return nil, fmt.Errorf("target %q: remote %q: %w", t.Name, t.Remote, err)
 	}
 	return d, nil

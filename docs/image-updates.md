@@ -30,8 +30,9 @@ The four dispositions an instance can have are `no changes`, `would update`
 between the text of two image references. For an OCI image Incus derives
 the fingerprint from the image's layer digests, so it identifies content,
 and it is recorded on the instance as `volatile.base_image`. `plan` asks the
-registry what the YAML's reference resolves to now (through Incus's own OCI
-client, which runs `skopeo`) and compares the result. Two references for
+registry what the YAML's reference resolves to now (tink asks the registry
+itself, for the architecture the *server* runs, so a laptop gets the server's answer:
+[remote.md](remote.md#image-remotes-need-no-setup)) and compares the result. Two references for
 the same bytes (`:2` and `:2.1.2-alpine`, or `library/x` and `x`, or a tag
 and a digest) are therefore not drift, and a floating tag such as `:stable`
 whose content has moved *is*.
@@ -69,12 +70,15 @@ A second field, `snapshot_volumes`, applies only with `rebuild`; see below.
 
 `rebuild` requires a digest-pinned image: `remote:repo:tag@sha256:...`. The
 tag is cosmetic (Incus drops it when a digest is present); the digest is what
-is pulled. Get one with the `skopeo` that ships in the Incus package:
+is pulled. Get one with any tool that shows an image's digest. tink does not need any of them (it asks the registry itself), but one is the
+easiest way to read the digest to paste in, for example `skopeo`, which ships in the Incus package:
 
 ```
 /opt/incus/bin/skopeo inspect --format '{{.Digest}}' docker://ghcr.io/home-assistant/home-assistant:2026.9.4
 sha256:3e6710a7ab2a61311d9d899b719f6c3657791c63e8f4942cec4ebc42401d6b76
 ```
+
+or `crane digest ghcr.io/home-assistant/home-assistant:2026.9.4`.
 
 For a multi-arch image this is the digest of the index, which is what you
 want. A pin cannot move, so the target of a rebuild is exactly what you
@@ -242,7 +246,9 @@ An exit status of 0 therefore means converged. Specifically:
   effective config of every instance that uses it, blocked ones included.
 - tink does not restart dependents of a rebuilt instance, and does not expire
   or prune `tink-pre-rebuild-*` snapshots.
-- The runtime-config read is anonymous. A registry that needs credentials
+- The runtime-config read reaches the registry as the lookup does (the login
+  in the remote's URL or from its credentials helper, else the Docker login,
+  else anonymously; see [remote.md](remote.md)). A registry that refuses it
   produces an error, which blocks a rebuild.
 - Mutable tags: for `report` and `ignore`, `plan` sees content that moved under
   a floating tag; `rebuild` deliberately requires a digest instead.

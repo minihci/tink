@@ -27,8 +27,8 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
 
+	"github.com/minihci/tink/internal/backupmeta"
 	"github.com/minihci/tink/internal/incusapi"
-	"github.com/minihci/tink/internal/resolve"
 	"github.com/minihci/tink/internal/run"
 )
 
@@ -69,6 +69,9 @@ type RestoreOptions struct {
 type RestoreResult struct {
 	Snapshot string // the snapshot, or with From the restore point, that was restored
 	Volume   string // the new volume
+	// MadeBy is the server that made the restore point, when it was not this one: restoring a backup another server
+	// made is allowed (it is the point of a restore on a rebuilt host) but worth saying.
+	MadeBy string
 }
 
 // Restore copies one of v's snapshots (or, with From, a restore point on a target) to a new volume.
@@ -86,13 +89,23 @@ func Restore(server incus.InstanceServer, v Volume, opts RestoreOptions) (Restor
 	if name == "" {
 		name = restoreName(v.Name, now())
 	}
-	if volumeExists(s, v.pool(), name) {
+	exists, err := volumeExists(s, v.pool(), name)
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("checking whether volume %s/%s already exists: %w", v.pool(), name, err)
+	}
+	if exists {
 		return RestoreResult{}, fmt.Errorf("volume %s/%s already exists: restore only ever creates a new volume (pick another --as)", v.pool(), name)
 	}
 	if err := restoreFrom.run(name); err != nil {
 		return RestoreResult{}, err
 	}
-	return RestoreResult{Snapshot: restoreFrom.label, Volume: name}, nil
+	res := RestoreResult{Snapshot: restoreFrom.label, Volume: name}
+	if restoreFrom.server != "" {
+		if me, err := serverName(server); err == nil && me != restoreFrom.server {
+			res.MadeBy = restoreFrom.server
+		}
+	}
+	return res, nil
 }
 
 // VerifyOptions control Verify.
@@ -101,7 +114,7 @@ type VerifyOptions struct {
 	Snapshot string
 	// Check is run against the restored data; nil verifies only that the snapshot
 	// can be restored to a volume at all.
-	Check *resolve.VerifyCheck
+	Check *backupmeta.VerifyCheck
 	// From verifies a restore point on this target instead of a local snapshot.
 	From *Target
 	Now  func() time.Time
@@ -195,7 +208,7 @@ func Verify(server incus.InstanceServer, v Volume, opts VerifyOptions) (res Veri
 		instName := instanceName(v.Name, start)
 		mount := opts.Check.Mount
 		if mount == "" {
-			mount = resolve.DefaultVerifyMount
+			mount = backupmeta.DefaultVerifyMount
 		}
 		say("running the check in throwaway instance %s (%s), volume mounted read-only at %s", instName, opts.Check.Image, mount)
 
@@ -229,12 +242,16 @@ func Verify(server incus.InstanceServer, v Volume, opts VerifyOptions) (res Veri
 		}
 	}
 
-	if volumeExists(s, v.pool(), v.Name) {
+	// A failed look-up does not fail a verification that passed: the result simply is not recorded, and it says why.
+	switch exists, lerr := volumeExists(s, v.pool(), v.Name); {
+	case lerr != nil:
+		say("could not check whether the source volume %s/%s exists (%v), so the result is not recorded on it", v.pool(), v.Name, lerr)
+	case exists:
 		if err := stamp(s, v, snap, res.With, from, now()); err != nil {
 			return res, err
 		}
 		res.Recorded = true
-	} else {
+	default:
 		say("the source volume %s/%s does not exist (lost?), so the result is not recorded on it", v.pool(), v.Name)
 	}
 	res.Duration = now().Sub(start)
@@ -250,10 +267,10 @@ func stamp(s incus.InstanceServer, v Volume, snap, with, from string, at time.Ti
 	if put.Config == nil {
 		put.Config = map[string]string{}
 	}
-	put.Config[resolve.StampVerifiedAt] = at.UTC().Format(time.RFC3339)
-	put.Config[resolve.StampVerifiedSnapshot] = snap
-	put.Config[resolve.StampVerifiedWith] = with
-	put.Config[resolve.StampVerifiedFrom] = from
+	put.Config[backupmeta.StampVerifiedAt] = at.UTC().Format(time.RFC3339)
+	put.Config[backupmeta.StampVerifiedSnapshot] = snap
+	put.Config[backupmeta.StampVerifiedWith] = with
+	put.Config[backupmeta.StampVerifiedFrom] = from
 	if err := s.UpdateStoragePoolVolume(v.pool(), "custom", v.Name, put, etag); err != nil {
 		return fmt.Errorf("recording the verification on %s/%s: %w", v.pool(), v.Name, err)
 	}
@@ -291,18 +308,21 @@ func sourceToRestore(s incus.InstanceServer, v Volume, from *Target, wanted stri
 	if err != nil {
 		return restoreFunc{}, fmt.Errorf("target %q: %w", from.Name, err)
 	}
-	return restoreFunc{label: rp.Volume, run: func(newName string) error { return copyFromTarget(s, v, *from, rp, newName) }}, nil
+	return restoreFunc{label: rp.Volume, server: rp.Server, run: func(newName string) error { return copyFromTarget(s, v, *from, rp, newName) }}, nil
 }
 
 // restoreFunc is a backup that can be materialised as a new local volume (run), and a label saying which.
 type restoreFunc struct {
-	label string
-	run   func(newName string) error
+	label  string
+	server string // the server that made the restore point, if known
+	run    func(newName string) error
 }
 
-func volumeExists(s incus.InstanceServer, pool, name string) bool {
-	_, _, err := s.GetStoragePoolVolume(pool, "custom", name)
-	return err == nil
+// volumeExists says whether the custom volume is there. A look-up that failed is an error, never "not there": a guard that
+// proceeds on a failed read overwrites or double-creates, and a cleanup that skips on one leaves a partial copy behind.
+func volumeExists(s incus.InstanceServer, pool, name string) (bool, error) {
+	_, _, found, err := incusapi.LookupVolume(s, pool, "custom", name)
+	return found, err
 }
 
 func copySnapshot(s incus.InstanceServer, v Volume, snap, newName string) error {
@@ -318,11 +338,22 @@ func copySnapshot(s incus.InstanceServer, v Volume, snap, newName string) error 
 	if err := op.Wait(); err != nil {
 		return fmt.Errorf("restoring %s/%s@%s to %s: %w", v.pool(), v.Name, snap, newName, err)
 	}
+	// the snapshot carries the volume's config, including its copy policy: the restored volume is not the volume that
+	// is copied on a schedule (the operator may swap it in, and applies the stack again, which writes the policy back)
+	if err := scrubPolicy(s, v.pool(), newName); err != nil {
+		return fmt.Errorf("restored %s/%s@%s to %s, but could not clear its copy policy: %w", v.pool(), v.Name, snap, newName, err)
+	}
 	return nil
 }
 
 func deleteInstance(s incus.InstanceServer, name string) error {
-	if _, _, err := s.GetInstance(name); err != nil {
+	_, _, found, err := incusapi.LookupInstance(s, name)
+	if err != nil {
+		// Not "never got created": skipping on a failed read would leave the throwaway instance, and the volume mounted in it, behind
+		// with nothing said. The cleanup reports it, naming the instance to remove by hand.
+		return fmt.Errorf("instance %s: could not check whether it exists, so it was not removed: %w", name, err)
+	}
+	if !found {
 		return nil // never got created
 	}
 	if op, err := s.UpdateInstanceState(name, api.InstanceStatePut{Action: "stop", Force: true, Timeout: 30}, ""); err == nil {

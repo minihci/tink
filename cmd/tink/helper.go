@@ -1,0 +1,458 @@
+package main
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+	"time"
+
+	incus "github.com/lxc/incus/v7/client"
+	"github.com/spf13/cobra"
+
+	"github.com/minihci/tink/internal/backuprun"
+	"github.com/minihci/tink/internal/helper"
+	"github.com/minihci/tink/internal/incusapi"
+	"github.com/minihci/tink/internal/resolve"
+	"github.com/minihci/tink/internal/volbackup"
+)
+
+func newHelperCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "helper",
+		Short: "Look at the tink helper: the instance that runs tink's scheduled work next to the data",
+		Long: `The helper is an Incus instance that runs "tink daemon run" next to the data: the backup scheduler and the ingress
+reconcile. It publishes what it is doing on its own instance config, and these commands read that back. See docs/helper.md.`,
+	}
+	cmd.AddCommand(newHelperInstallCmd(), newHelperUpgradeCmd(), newHelperRemoveCmd(), newHelperStatusCmd(), newHelperRemoteCmd())
+	return cmd
+}
+
+func newHelperInstallCmd() *cobra.Command {
+	var socket string
+	var opts helper.InstallOptions
+	cmd := &cobra.Command{
+		Use:   "install",
+		Short: "Create the helper instance, start it, and enrol it with its own certificate",
+		Long: `install creates the helper: a project of its own (tink-helper), an OCI app container in it that runs "tink daemon run", two volumes
+(its client configuration, and its jobs), a NIC, and a proxy device that gives it the host's HTTPS API on its own loopback. It starts it,
+and enrols it: the host is told to trust a certificate that the helper generates INSIDE the instance, so the private key never leaves it, using
+a single-use token handed over on standard input (never on a command line, never on disk). The helper then publishes a status document, which
+install waits for and reports.
+
+It needs the host's API to be listening (core.https_address); the loopback address is enough, and tink deploy sets one.
+
+With no flag, a release build installs the helper image published for its own version (ghcr:minihci/tink-helper:vX.Y.Z), the same binary built from the
+same tag. A development build has no such image: give --image (an OCI image that has tink at /usr/local/bin/tink), or --binary FILE to put a linux tink
+binary in a stock alpine image: the way to run a development build, or a helper where the image cannot be pulled. It is safe to run again: what exists is left alone,
+and an enrolled helper is not enrolled twice. --reissue enrols it again with a fresh key pair (the old certificate is removed from the trust store).
+
+The helper's certificate is revocable ("tink helper remove", or "incus config trust remove") and its requests are attributed to it. It is not
+confined: it has the reach of root on the host, and nothing here claims otherwise.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if opts.Image == "" && opts.Binary == "" {
+				// a release build knows the image published for it; a development build has none
+				if opts.Image = helper.ReleaseImage(injectedVersion); opts.Image == "" {
+					return fmt.Errorf("this is not a release build, so there is no published helper image that matches it: give --image (an OCI image with tink at /usr/local/bin/tink) or --binary FILE (a linux tink binary, run in a stock alpine image)")
+				}
+			}
+			if opts.TZ == "" {
+				opts.TZ = os.Getenv("TZ")
+			}
+			server, err := incusapi.Connect(socket)
+			if err != nil {
+				return fmt.Errorf("connecting to incus: %w", err)
+			}
+			out := cmd.OutOrStdout()
+			if opts.TZ == "" {
+				fmt.Fprintln(out, "note: no --timezone given (and no $TZ), so the helper evaluates schedules in UTC")
+			}
+			return (&helper.Installer{Server: server, Out: out}).Install(opts)
+		},
+	}
+	cmd.Flags().StringVar(&socket, "socket", "", "Incus daemon unix socket path (default: Incus's own resolution)")
+	cmd.Flags().StringVar(&opts.Project, "project", helper.DefaultProject, "the project to put the helper in")
+	cmd.Flags().StringVar(&opts.Name, "name", helper.DefaultName, "the helper instance's name")
+	cmd.Flags().StringVar(&opts.Pool, "pool", "default", "the storage pool for its root disk and volumes")
+	cmd.Flags().StringVar(&opts.Network, "network", "", "the network its NIC joins (default: the default profile's, else incusbr0)")
+	cmd.Flags().StringVar(&opts.Image, "image", "", "the OCI image it runs (with tink at /usr/local/bin/tink)")
+	cmd.Flags().StringVar(&opts.Binary, "binary", "", "a linux tink binary to put in the instance; with no --image, a stock alpine image is used")
+	cmd.Flags().BoolVar(&opts.Ingress, "ingress", false, "also run the ingress reconcile (through the ingress instance's file API): the helper then does what tink-daemon does on the host, and deploy stops installing that")
+	cmd.Flags().StringVar(&opts.IngressInstance, "ingress-instance", "", "the ingress instance to keep routes for (default \"ingress\"; with --ingress)")
+	cmd.Flags().StringVar(&opts.TZ, "timezone", "", "the time zone schedules are evaluated in, e.g. America/Denver (default: $TZ, else UTC)")
+	cmd.Flags().BoolVar(&opts.Reissue, "reissue", false, "enrol the helper again with a fresh key pair, removing its old certificate from the trust store")
+	cmd.Flags().DurationVar(&opts.Wait, "wait", 90*time.Second, "how long to wait for the helper to report in (negative: do not wait)")
+	return cmd
+}
+
+func newHelperUpgradeCmd() *cobra.Command {
+	var socket string
+	var opts helper.UpgradeOptions
+	cmd := &cobra.Command{
+		Use:   "upgrade",
+		Short: "Drain the helper, replace its tink, and bring it back",
+		Long: `upgrade replaces the helper's tink without losing work. It DRAINS the helper first: its scheduler queues nothing new and its executor starts
+nothing, while a job that is already running finishes (jobs that are queued wait, and run after the upgrade). Only then is it replaced, the drain
+lifted, and the upgraded helper waited for.
+
+  --image REF    replace the instance with one made from that image. Its volumes stay, so it keeps its certificate and key: there is no new enrolment.
+                 With no flag at all, a release build upgrades the helper to the image published for its own version.
+  --binary FILE  replace only the tink binary in the instance (the way a development build is tried).
+
+If a job is still running after --drain-timeout (15 minutes), upgrade gives up and lifts the drain, rather than interrupt it; --force goes on
+anyway, and the interrupted job is marked failed and retried by its schedule. If the new helper does not come up, the old image is named so
+that "tink helper upgrade --image <it>" goes back.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if opts.Image == "" && opts.Binary == "" {
+				if opts.Image = helper.ReleaseImage(injectedVersion); opts.Image == "" {
+					return fmt.Errorf("this is not a release build, so there is no published helper image that matches it: give --image or --binary FILE")
+				}
+			}
+			server, err := incusapi.Connect(socket)
+			if err != nil {
+				return fmt.Errorf("connecting to incus: %w", err)
+			}
+			return (&helper.Installer{Server: server, Out: cmd.OutOrStdout()}).Upgrade(opts)
+		},
+	}
+	cmd.Flags().StringVar(&socket, "socket", "", "Incus daemon unix socket path (default: Incus's own resolution)")
+	cmd.Flags().StringVar(&opts.Project, "project", "", "the helper's project (default: wherever the helper is found)")
+	cmd.Flags().StringVar(&opts.Name, "name", "", "the helper instance's name (default: the helper found)")
+	cmd.Flags().StringVar(&opts.Image, "image", "", "replace the instance with one made from this OCI image")
+	cmd.Flags().StringVar(&opts.Binary, "binary", "", "replace only the tink binary in the instance with this linux binary")
+	cmd.Flags().DurationVar(&opts.DrainTimeout, "drain-timeout", 15*time.Minute, "how long to wait for a running job to finish")
+	cmd.Flags().BoolVar(&opts.Force, "force", false, "after the drain timeout, go on and interrupt the running job (it is retried by its schedule)")
+	cmd.Flags().DurationVar(&opts.Wait, "wait", 90*time.Second, "how long to wait for the upgraded helper to report in (negative: do not wait)")
+	return cmd
+}
+
+func newHelperRemoveCmd() *cobra.Command {
+	var socket string
+	var opts helper.RemoveOptions
+	cmd := &cobra.Command{
+		Use:   "remove",
+		Short: "Revoke the helper's certificate, then stop and delete it",
+		Long: `remove revokes the helper's certificate in the host's trust store, then stops and deletes the instance. Its two volumes (the job history, and its
+client configuration with any keys for remote backup targets) stay, so installing again picks up where it was; --purge deletes them too, and the
+project if that leaves it empty. Nothing is removed from the volumes' data: restore points on the backup targets are not the helper's to remove.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			server, err := incusapi.Connect(socket)
+			if err != nil {
+				return fmt.Errorf("connecting to incus: %w", err)
+			}
+			return (&helper.Installer{Server: server, Out: cmd.OutOrStdout()}).Remove(opts)
+		},
+	}
+	cmd.Flags().StringVar(&socket, "socket", "", "Incus daemon unix socket path (default: Incus's own resolution)")
+	cmd.Flags().StringVar(&opts.Project, "project", "", "the helper's project (default: wherever the helper is found)")
+	cmd.Flags().StringVar(&opts.Name, "name", "", "the helper instance's name (default: the helper found)")
+	cmd.Flags().BoolVar(&opts.Purge, "purge", false, "also delete the helper's volumes, and its project if that leaves it empty")
+	return cmd
+}
+
+func newHelperStatusCmd() *cobra.Command {
+	var socket, instance, project string
+	var check, asJSON bool
+	cmd := &cobra.Command{
+		Use:   "status",
+		Short: "Say whether the helper is well, from what it publishes about itself",
+		Long: `status finds the helper (an instance marked with user.tink.helper, in any project) and reads the status document it keeps on its
+own instance config (user.tink.helper.status). That works when the helper has stopped, which is the case that matters: the last
+thing it said is still there, going stale.
+
+It judges the helper, from what it said and from the state of its instance:
+
+  healthy   running, heard from recently, nothing skipped, nothing failing
+  degraded  running and heard from, but skipping a volume, failing a copy, failing an ingress reconcile, or saying nothing useful
+  down      stopped, not found, or silent for longer than 2.5 of its heartbeats
+
+--check prints one line per helper and exits 0 for healthy, 1 for degraded and 2 for down, so cron, a monitor or Home Assistant can
+poll it. Without --check it prints the details and exits 0 whatever it found, unless it could not look. Nothing here sends a
+notification; it is what a notifier would run.`,
+		Args:          cobra.NoArgs,
+		SilenceErrors: true, // execute prints an error once; the check modes say what they have to on standard output
+		RunE: func(cmd *cobra.Command, args []string) error {
+			server, err := incusapi.Connect(socket)
+			if err != nil {
+				return fmt.Errorf("connecting to incus: %w", err)
+			}
+			return runHelperStatus(cmd.OutOrStdout(), server, instance, project, check, asJSON, time.Now())
+		},
+	}
+	cmd.Flags().StringVar(&socket, "socket", "", "Incus daemon unix socket path (default: Incus's own resolution)")
+	cmd.Flags().StringVar(&instance, "instance", "", "look only at the helper instance with this name")
+	cmd.Flags().StringVar(&project, "project", "", "look only at helpers in this project")
+	cmd.Flags().BoolVar(&check, "check", false, "print one line per helper and exit 0 (healthy), 1 (degraded) or 2 (down)")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print everything as JSON")
+	return cmd
+}
+
+// runHelperStatus is the command with its connection and clock handed in, so it can be tested.
+func runHelperStatus(out io.Writer, server incus.InstanceServer, instance, project string, check, asJSON bool, now time.Time) error {
+	all, err := helper.Find(server)
+	if err != nil {
+		return err
+	}
+	var found []helper.Found
+	for _, f := range all {
+		if (instance == "" || f.Name == instance) && (project == "" || f.Project == project) {
+			found = append(found, f)
+		}
+	}
+	if len(found) == 0 {
+		what := "no helper instance found (an instance with user.tink.helper set, in any project)"
+		if instance != "" || project != "" {
+			what = "no helper instance found matching the --instance and --project given"
+		}
+		if check {
+			fmt.Fprintln(out, helper.Down.String()+": "+what)
+			return &exitCodeError{code: int(helper.Down), silent: true}
+		}
+		return errors.New(what)
+	}
+
+	reports := judgeHelpers(server, found, now)
+	worst := helper.Healthy
+	for _, r := range reports {
+		if r.Health > worst {
+			worst = r.Health
+		}
+	}
+
+	switch {
+	case asJSON:
+		if err := printHelperJSON(out, reports); err != nil {
+			return err
+		}
+	case check:
+		for _, r := range reports {
+			fmt.Fprintln(out, r.Summary())
+		}
+	default:
+		for i, r := range reports {
+			if i > 0 {
+				fmt.Fprintln(out)
+			}
+			printHelperDetails(out, r, now)
+		}
+	}
+	if check && worst != helper.Healthy {
+		return &exitCodeError{code: int(worst), silent: true}
+	}
+	return nil
+}
+
+// judgeHelpers evaluates each helper from what it published and the state of its instance, and checks its certificate against the
+// host's trust store. Reading the trust store takes admin access; a client that cannot is simply not told, and the rest still holds.
+func judgeHelpers(server incus.InstanceServer, found []helper.Found, now time.Time) []helper.Report {
+	certs, certErr := server.GetCertificates()
+	reports := make([]helper.Report, len(found))
+	for i, f := range found {
+		reports[i] = helper.Evaluate(f, now)
+		if certErr == nil {
+			reports[i].CheckTrust(certs)
+		}
+	}
+	return reports
+}
+
+// helperPolicyOptions tells `plan` and `apply` what the server's helper can read, so that a copy policy it would skip silently is not
+// written, and which remotes it can reach, so that a copy to another one is warned about. It is silent when there is no helper, or the helper has said nothing about it (an older one): nothing can be held to what it
+// has not said. A lookup that fails is not an error here either: `plan` does not fail because the helper cannot be found.
+func helperPolicyOptions(server incus.InstanceServer, opts resolve.PlanOptions) resolve.PlanOptions {
+	found, err := helper.Find(server)
+	if err != nil || len(found) == 0 {
+		return opts
+	}
+	label, reads := "", 0
+	var remotes map[string]bool // the remotes EVERY helper that has said anything reports: one that has none of them cannot be counted on
+	reported := false
+	for _, r := range judgeHelpers(server, found, time.Now()) {
+		if r.Status == nil {
+			continue
+		}
+		if r.Status.PolicyProto > 0 && (reads == 0 || r.Status.PolicyProto < reads) {
+			label, reads = r.Found.Label(), r.Status.PolicyProto
+		}
+		if r.Status.Remotes == nil {
+			continue
+		}
+		have := map[string]bool{}
+		for _, rm := range r.Status.Remotes {
+			have[rm.Name] = !reported || remotes[rm.Name]
+		}
+		remotes, reported = have, true
+		if label == "" {
+			label = r.Found.Label()
+		}
+	}
+	opts = opts.WithHelperPolicy(label, reads)
+	if reported {
+		names := make([]string, 0, len(remotes))
+		for n, ok := range remotes {
+			if ok {
+				names = append(names, n)
+			}
+		}
+		opts = opts.WithHelperRemotes(label, names)
+	}
+	return opts
+}
+
+// noteHelper ends `plan` and `plan apply` with what they know about whatever is going to run the stack's copies. A helper that has stopped,
+// gone quiet, lost its certificate, or is skipping volumes is the thing a plan of backups should not leave you to find out about at a
+// restore. No helper at all, while the stack declares copies, is the plainer version of the same trap: a policy that is applied and that
+// nothing ever runs. Both are notes, never failures, and nothing is said when the helper is healthy, or when the stack declares no copies.
+func noteHelper(out io.Writer, server incus.InstanceServer, now time.Time, resources []resolve.Resource) {
+	found, err := helper.Find(server)
+	if err != nil {
+		return // not knowing whether there is a helper is not the same as there being none
+	}
+	if len(found) == 0 {
+		if copying := copyingVolumes(resources); len(copying) > 0 {
+			verb := "declare"
+			if len(copying) == 1 {
+				verb = "declares"
+			}
+			fmt.Fprintf(out, "note: %s %s copies (%s), and there is no helper on this server, so nothing here will run them.\n"+
+				"      `tink helper install` adds one. (If something else runs them, `tink backup run --due` from cron or a `tink daemon run --jobs DIR` unit, this does not apply.)\n",
+				countOf(len(copying), "volume"), verb, nameList(copying, 5))
+		}
+		return
+	}
+	for _, r := range judgeHelpers(server, found, now) {
+		if r.Health != helper.Healthy {
+			fmt.Fprintf(out, "note: the helper is %s (see `tink helper status`)\n", r.Summary())
+		}
+	}
+}
+
+// copyingVolumes names the storage volumes the stack gives copies to, the way a run labels them.
+func copyingVolumes(resources []resolve.Resource) []string {
+	var out []string
+	for _, r := range resources {
+		if r.Kind == resolve.KindStorageVolume && r.Backup != nil && r.Backup.None == "" && len(r.Backup.Copies) > 0 {
+			out = append(out, backuprun.Label(volbackup.Volume{Project: r.Project, Name: r.Name}))
+		}
+	}
+	return out
+}
+
+func countOf(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
+}
+
+// nameList is the first max names, and how many more there are.
+func nameList(names []string, max int) string {
+	if len(names) <= max {
+		return strings.Join(names, ", ")
+	}
+	return fmt.Sprintf("%s, and %d more", strings.Join(names[:max], ", "), len(names)-max)
+}
+
+type helperJSON struct {
+	Project string         `json:"project"`
+	Name    string         `json:"name"`
+	State   string         `json:"instance_state"`
+	Health  string         `json:"health"`
+	Code    int            `json:"exit_code"`
+	Reasons []string       `json:"reasons,omitempty"`
+	Status  *helper.Status `json:"status,omitempty"`
+}
+
+func printHelperJSON(out io.Writer, reports []helper.Report) error {
+	list := make([]helperJSON, len(reports))
+	for i, r := range reports {
+		list[i] = helperJSON{Project: r.Found.Project, Name: r.Found.Name, State: r.Found.State, Health: r.Health.String(), Code: int(r.Health), Reasons: r.Reasons, Status: r.Status}
+	}
+	b, err := json.MarshalIndent(list, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "%s\n", b)
+	return nil
+}
+
+func printHelperDetails(out io.Writer, r helper.Report, now time.Time) {
+	fmt.Fprintf(out, "helper %s: %s\n", r.Found.Label(), r.Health)
+	for _, why := range r.Reasons {
+		fmt.Fprintf(out, "  - %s\n", why)
+	}
+	fmt.Fprintf(out, "  instance:    %s\n", r.Found.State)
+	st := r.Status
+	if st == nil {
+		return
+	}
+	fmt.Fprintf(out, "  version:     %s\n", orDash(st.Version))
+	fmt.Fprintf(out, "  speaks:      jobs protocol %d; copy policies up to protocol %d; status protocol %d\n", st.JobProto, st.PolicyProto, st.Proto)
+	fmt.Fprintf(out, "  time zone:   %s\n", orDash(st.TZ))
+	if !st.Started.IsZero() {
+		fmt.Fprintf(out, "  started:     %s (%s ago)\n", st.Started.Format("2006-01-02 15:04 MST"), roundAge(now.Sub(st.Started)))
+	}
+	if !st.Tick.IsZero() {
+		fmt.Fprintf(out, "  last heard:  %s ago (it writes at least every %s)\n", roundAge(now.Sub(st.Tick)), roundAge(time.Duration(st.HeartbeatSeconds)*time.Second))
+	}
+	fmt.Fprintf(out, "  skipped:     %s\n", listOrNone(len(st.Skipped), func(i int) string { return fmt.Sprintf("%s: %s", st.Skipped[i].Volume, st.Skipped[i].Reason) }))
+	fmt.Fprintf(out, "  failing:     %s\n", listOrNone(len(st.Failing), func(i int) string {
+		f := st.Failing[i]
+		return fmt.Sprintf("%s -> %s, %d in a row since %s", f.Volume, f.Target, f.Count, f.Since.Format("2006-01-02 15:04 MST"))
+	}))
+	if j := st.LastJob; j != nil {
+		fmt.Fprintf(out, "  last job:    %s %s, %s ago\n", j.ID, j.State, roundAge(now.Sub(j.Finished)))
+	} else {
+		fmt.Fprintf(out, "  last job:    none finished\n")
+	}
+	switch {
+	case st.Remotes == nil:
+		fmt.Fprintf(out, "  remotes:     not reported (this helper is older than this tink)\n")
+	default:
+		fmt.Fprintf(out, "  remotes:     %s\n", listOrNone(len(st.Remotes), func(i int) string { return st.Remotes[i].Name }))
+	}
+	switch i := st.Ingress; {
+	case i == nil:
+		fmt.Fprintf(out, "  ingress:     not run by this helper\n")
+	case i.OK:
+		fmt.Fprintf(out, "  ingress:     ok, %s ago\n", roundAge(now.Sub(i.At)))
+	default:
+		fmt.Fprintf(out, "  ingress:     the last reconcile FAILED, %s ago\n", roundAge(now.Sub(i.At)))
+	}
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
+
+func listOrNone(n int, item func(int) string) string {
+	if n == 0 {
+		return "none"
+	}
+	parts := make([]string, n)
+	for i := range parts {
+		parts[i] = item(i)
+	}
+	return strings.Join(parts, "; ")
+}
+
+func roundAge(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 48*time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd", int(d.Hours()/24))
+	}
+}

@@ -15,6 +15,7 @@ import (
 	"github.com/lxc/incus/v7/shared/cliconfig"
 
 	"github.com/minihci/tink/internal/incusapi"
+	"github.com/minihci/tink/internal/incusconf"
 	"github.com/minihci/tink/internal/secrets"
 )
 
@@ -158,7 +159,7 @@ func Create(server incus.InstanceServer, spec *Spec, project string) error {
 		scoped = server.UseProject(project)
 	}
 
-	conf, err := cliconfig.LoadConfig("")
+	conf, err := incusconf.Load()
 	if err != nil {
 		return fmt.Errorf("creating %s: loading incus client config: %w", spec.Name, err)
 	}
@@ -214,7 +215,11 @@ func resolveImage(scoped incus.InstanceServer, conf *cliconfig.Config, image str
 		return imgServer, api.Image{Fingerprint: ref, ImagePut: api.ImagePut{Public: true}}, nil
 	}
 
-	if alias, _, err := imgServer.GetImageAlias(ref); err == nil {
+	alias, _, found, err := incusapi.LookupImageAlias(imgServer, ref)
+	if err != nil {
+		return nil, api.Image{}, fmt.Errorf("resolving %s: %w", image, err)
+	}
+	if found {
 		ref = alias.Target
 	}
 	imgInfo, _, err := imgServer.GetImage(ref)
@@ -230,7 +235,11 @@ func resolveImage(scoped incus.InstanceServer, conf *cliconfig.Config, image str
 // features.images is enabled, the same isolation confirmed live while
 // building this platform's own haos test project.
 func resolveLocalImage(scoped incus.InstanceServer, ref string) (incus.ImageServer, api.Image, error) {
-	if alias, _, err := scoped.GetImageAlias(ref); err == nil {
+	alias, _, found, err := incusapi.LookupImageAlias(scoped, ref)
+	if err != nil {
+		return nil, api.Image{}, fmt.Errorf("resolving local image %q: %w", ref, err)
+	}
+	if found {
 		ref = alias.Target
 	}
 	imgInfo, _, err := scoped.GetImage(ref)
@@ -284,12 +293,17 @@ func ApplyConfig(server incus.InstanceServer, spec *Spec) error {
 // translated config/device change too.
 func ensureManagedVolumes(server incus.InstanceServer, spec *Spec) error {
 	for _, dev := range spec.Devices {
-		if dev["type"] != "disk" || dev["pool"] == "" {
-			continue // a bind mount (no pool) or a non-disk device
+		if dev["type"] != "disk" || dev["pool"] == "" || dev["source"] == "" {
+			continue // a bind mount (no pool), a non-disk device, or a root disk (a pool, but no volume of its own to create)
 		}
 
 		pool, name := dev["pool"], dev["source"]
-		if _, _, err := server.GetStoragePoolVolume(pool, "custom", name); err == nil {
+		_, _, found, err := incusapi.LookupVolume(server, pool, "custom", name)
+		if err != nil {
+			// Not "does not exist": creating on a failed read would fail confusingly, or hide the real problem.
+			return fmt.Errorf("checking whether managed volume %s/%s exists: %w", pool, name, err)
+		}
+		if found {
 			continue // already exists
 		}
 

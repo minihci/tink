@@ -2,9 +2,12 @@ package resolve
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	incus "github.com/lxc/incus/v7/client"
+
+	"github.com/minihci/tink/internal/incusapi"
 )
 
 // PlanOptions are the read-only knobs shared by plan and plan apply, so the
@@ -22,6 +25,17 @@ type PlanOptions struct {
 	// because the targets and the volumes that copy to them land in different
 	// levels. PlanWithOptions/ApplyWithOptions only fill it in when it is unset.
 	targets map[string]Resource
+	// helperReads is the newest copy-policy protocol the server's helper says it can read (0: there is no helper, or it has said
+	// nothing), and helperLabel names it. A policy of a newer protocol would be skipped by that helper without a word, so plan blocks
+	// writing one.
+	helperReads int
+	helperLabel string
+	// helperRemotes are the Incus remotes the helper says it can reach, by name; nil means it has not said (no helper, or an older one),
+	// and nothing is checked. A copy to a remote the helper does not have fails on every attempt.
+	helperRemotes map[string]bool
+	// stack is the name the stack gives itself (kind: stack), stamped on the storage volumes it applies. Set with
+	// targets, from the full stack, for the same reason.
+	stack string
 }
 
 // ForResources returns the options carrying the backup targets of the full
@@ -29,6 +43,7 @@ type PlanOptions struct {
 // copies against the targets declared elsewhere in the stack.
 func (o PlanOptions) ForResources(resources []Resource) PlanOptions {
 	o.targets = backupTargets(resources)
+	o.stack, _ = StackName(resources) // more than one is reported by Levels
 	return o
 }
 
@@ -37,8 +52,51 @@ func (o PlanOptions) ForResources(resources []Resource) PlanOptions {
 func (o PlanOptions) withTargets(resources []Resource) PlanOptions {
 	if o.targets == nil {
 		o.targets = backupTargets(resources)
+		o.stack, _ = StackName(resources)
 	}
 	return o
+}
+
+// WithHelperPolicy tells planning what the server's helper can read. Without it nothing is checked: a server with no helper has
+// nobody to skip a policy, and one that has not said what it reads cannot be held to it.
+func (o PlanOptions) WithHelperPolicy(label string, readsUpTo int) PlanOptions {
+	o.helperLabel, o.helperReads = label, readsUpTo
+	return o
+}
+
+// WithHelperRemotes tells planning which remotes the helper can reach, so that a copy to another one is warned about, not found out at the
+// first scheduled run. A nil list means the helper has not said, and nothing is checked; an empty one means it has none.
+func (o PlanOptions) WithHelperRemotes(label string, remotes []string) PlanOptions {
+	if o.helperLabel == "" {
+		o.helperLabel = label
+	}
+	if remotes == nil {
+		o.helperRemotes = nil
+		return o
+	}
+	o.helperRemotes = map[string]bool{}
+	for _, r := range remotes {
+		o.helperRemotes[r] = true
+	}
+	return o
+}
+
+// HelperRemotes is what planning was told the helper can reach, sorted: nil when it was told nothing, empty when the helper has none.
+func (o PlanOptions) HelperRemotes() []string {
+	if o.helperRemotes == nil {
+		return nil
+	}
+	out := make([]string, 0, len(o.helperRemotes))
+	for r := range o.helperRemotes {
+		out = append(out, r)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// HelperPolicy is what planning was told the helper can read: its name and the newest copy-policy protocol, or 0 for nothing.
+func (o PlanOptions) HelperPolicy() (label string, readsUpTo int) {
+	return o.helperLabel, o.helperReads
 }
 
 // NewPlanOptions builds options with one registry cache shared by every
@@ -57,8 +115,11 @@ func (r Resource) onImageChangePolicy() string {
 // planInstance reports config/device drift and image drift, and decides what
 // apply may do about each according to the instance's on_image_change policy.
 func planInstance(server incus.InstanceServer, r Resource, opts PlanOptions) (PlannedResource, error) {
-	current, _, err := server.GetInstance(r.Name)
+	current, _, found, err := incusapi.LookupInstance(server, r.Name)
 	if err != nil {
+		return PlannedResource{}, fmt.Errorf("reading the live instance: %w", err)
+	}
+	if !found {
 		return PlannedResource{Resource: r, Action: ActionCreate}, nil
 	}
 	changes := diffConfig(current.Config, r.Config, r.SecretKeys)

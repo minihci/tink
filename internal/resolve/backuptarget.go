@@ -3,6 +3,8 @@ package resolve
 import (
 	"fmt"
 	"strings"
+
+	"github.com/minihci/tink/internal/remote"
 )
 
 // Where a backup target lives relative to the volumes copied to it. Tink cannot
@@ -48,7 +50,49 @@ func validateBackupTarget(r Resource) error {
 	if strings.ContainsAny(r.Pool, "/ ") {
 		return fmt.Errorf("resource %q: pool must be a bare storage pool name, got %q", r.Name, r.Pool)
 	}
+	return validateDeclaredRemote(r)
+}
+
+// validateDeclaredRemote checks the opt-in description of a target's remote (address and fingerprint). Both or neither: an address with no
+// fingerprint would invite trusting whatever answers on it the first time, which is what the fingerprint is there to prevent.
+func validateDeclaredRemote(r Resource) error {
+	if r.Address == "" && r.Fingerprint == "" {
+		return nil
+	}
+	if r.Remote == "" {
+		return fmt.Errorf("resource %q: address and fingerprint describe the Incus server that remote: names, and this target has no remote (it copies to a pool on this server)", r.Name)
+	}
+	if r.Address == "" {
+		return fmt.Errorf("resource %q: fingerprint needs address: say where %q is, or leave both out and let each machine that runs the copy have a remote of that name", r.Name, r.Remote)
+	}
+	if r.Fingerprint == "" {
+		return fmt.Errorf("resource %q: address needs fingerprint (the SHA-256 of the server's certificate), so nobody has to trust %q on first use", r.Name, r.Address)
+	}
+	if _, err := remote.NormalizeAddr(r.Address); err != nil {
+		return fmt.Errorf("resource %q: %w", r.Name, err)
+	}
+	if _, err := remote.NormalizeFingerprint(r.Fingerprint); err != nil {
+		return fmt.Errorf("resource %q: %w", r.Name, err)
+	}
 	return nil
+}
+
+// DeclaredRemote returns the address and certificate fingerprint a backup-target declares for its remote, in the forms `tink remote add` and
+// `tink helper remote add` take (an https URL with a port; lower-case hex), and whether it declares them. A target that does not is the
+// default: only the name is written down, and each machine that runs the copy has to have a remote of that name.
+func (r Resource) DeclaredRemote() (address, fingerprint string, ok bool) {
+	if r.Remote == "" || r.Address == "" || r.Fingerprint == "" {
+		return "", "", false
+	}
+	a, err := remote.NormalizeAddr(r.Address)
+	if err != nil {
+		return "", "", false
+	}
+	f, err := remote.NormalizeFingerprint(r.Fingerprint)
+	if err != nil {
+		return "", "", false
+	}
+	return a, f, true
 }
 
 // validateBackupReferences checks that every copy names a backup-target that is
@@ -169,9 +213,5 @@ func backupWarnings(v Resource, targets map[string]Resource) []string {
 			have, strings.Join(missing, "; ")))
 	}
 
-	if len(v.Backup.Copies) > 0 {
-		warnings = append(warnings, "backup.copies run only when `tink backup run` is invoked (run `tink backup run --due` from cron or a timer): "+
-			"tink does not schedule them itself yet, and the 3-2-1 result above is judged on the declaration plus the copy warnings")
-	}
 	return warnings
 }

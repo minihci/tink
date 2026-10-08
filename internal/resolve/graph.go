@@ -9,10 +9,20 @@ import (
 // N depends only on resources in levels < N, so everything within one
 // level can be created in parallel. Kind priority breaks ties among
 // resources with no dependency relationship to each other, matching the
-// same coarse "containers before contents" ordering incus-apply uses.
+// same coarse "containers before contents" ordering incus-apply uses, and
+// name breaks the ties that are left, so the same stack always yields the
+// same levels in the same order (a plan reads the same on every run).
 func Levels(resources []Resource) ([][]Resource, error) {
+	if _, err := StackName(resources); err != nil {
+		return nil, err
+	}
+	// The stack's name is metadata, not something to plan: it is skipped below, in place, because the passes after this
+	// one update the caller's resources (project inheritance, image aliases) and callers rely on that.
 	all := make(map[string]*Resource, len(resources))
 	for i := range resources {
+		if resources[i].Kind == KindStack {
+			continue
+		}
 		if _, dup := all[resources[i].Name]; dup {
 			return nil, fmt.Errorf("duplicate resource name %q", resources[i].Name)
 		}
@@ -25,6 +35,9 @@ func Levels(resources []Resource) ([][]Resource, error) {
 
 	deps := make(map[string][]string, len(resources))
 	for _, r := range resources {
+		if r.Kind == KindStack {
+			continue
+		}
 		deps[r.Name] = r.dependencies(all)
 	}
 
@@ -60,8 +73,13 @@ func Levels(resources []Resource) ([][]Resource, error) {
 		if len(level) == 0 {
 			return nil, fmt.Errorf("cyclic or unresolvable dependency among: %v", remainingNames(remaining))
 		}
-		sort.SliceStable(level, func(i, j int) bool {
-			return kindPriority[level[i].Kind] < kindPriority[level[j].Kind]
+		// Names are unique (checked above), so kind and then name is a total order. `remaining` is a map and Go randomises how a map is
+		// ranged over; without the name, resources of one kind would come out in a different order on every run.
+		sort.Slice(level, func(i, j int) bool {
+			if pi, pj := kindPriority[level[i].Kind], kindPriority[level[j].Kind]; pi != pj {
+				return pi < pj
+			}
+			return level[i].Name < level[j].Name
 		})
 		levels = append(levels, level)
 		for _, r := range level {

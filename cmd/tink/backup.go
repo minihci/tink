@@ -3,12 +3,14 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/minihci/tink/internal/backupmeta"
+	"github.com/minihci/tink/internal/backuprun"
 	"github.com/minihci/tink/internal/incusapi"
 	"github.com/minihci/tink/internal/resolve"
 	"github.com/minihci/tink/internal/volbackup"
@@ -36,14 +38,14 @@ func (f *volumeFlags) bind(cmd *cobra.Command) {
 // resolveVolume finds the volume's pool/project, and its declared verify check, in the stack file(s)
 // when it is declared there; flags override what the stack says. With --from it also resolves the
 // named backup target from the stack.
-func (f *volumeFlags) resolveVolume(name string) (volbackup.Volume, *resolve.VerifyCheck, *volbackup.Target, error) {
+func (f *volumeFlags) resolveVolume(name string) (volbackup.Volume, *backupmeta.VerifyCheck, *volbackup.Target, error) {
 	v := volbackup.Volume{Name: name, Pool: f.pool, Project: f.project}
 
 	resources, err := f.loadStack()
 	if err != nil {
 		return v, nil, nil, err
 	}
-	var check *resolve.VerifyCheck
+	var check *backupmeta.VerifyCheck
 	var vol *resolve.Resource
 	for i, r := range resources {
 		if r.Kind == resolve.KindStorageVolume && r.Name == name {
@@ -67,7 +69,7 @@ func (f *volumeFlags) resolveVolume(name string) (volbackup.Volume, *resolve.Ver
 	if f.from != "" {
 		for _, r := range resources {
 			if r.Kind == resolve.KindBackupTarget && r.Name == f.from {
-				t := volbackup.TargetFrom(r)
+				t := backuprun.TargetFrom(r)
 				target = &t
 			}
 		}
@@ -102,11 +104,11 @@ func (f *volumeFlags) loadStack() ([]resolve.Resource, error) {
 func newVolBackupCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "backup",
-		Short: "Restore and verify volumes from their snapshots",
+		Short: "Run copies, restore and verify volumes, and let a volume go",
 		Long: `Restore and verify custom storage volumes from their snapshots: the restore half of the
 backup story (docs/volume-backup.md), and run the copies a stack declares to its backup targets.`,
 	}
-	cmd.AddCommand(newBackupRunCmd(), newBackupRestoreCmd(), newBackupVerifyCmd())
+	cmd.AddCommand(newBackupRunCmd(), newBackupRestoreCmd(), newBackupVerifyCmd(), newBackupForgetCmd())
 	return cmd
 }
 
@@ -144,6 +146,9 @@ instance, or repoint the instance's disk device at it, when you are ready.`,
 			out := cmd.OutOrStdout()
 			if target != nil {
 				fmt.Fprintf(out, "restored restore point %s (from %s) -> %s/%s\n", res.Snapshot, target.Name, pool, res.Volume)
+				if res.MadeBy != "" {
+					fmt.Fprintf(out, "note: that restore point was made by another server (%s), not this one\n", res.MadeBy)
+				}
 			} else {
 				fmt.Fprintf(out, "restored %s/%s@%s -> %s/%s\n", pool, v.Name, res.Snapshot, pool, res.Volume)
 			}
@@ -216,6 +221,95 @@ verification never looks fresh.
 	return cmd
 }
 
+func newBackupForgetCmd() *cobra.Command {
+	var socket, pool string
+	cmd := &cobra.Command{
+		Use:   "forget [PROJECT/]VOLUME... [flags]",
+		Short: "Stop copying a volume: clear the copy policy that apply put on it",
+		Long: `forget removes the copy policy (user.tink.backup.policy) from each volume, so the daemon's scheduler stops
+copying it. Nothing else changes: the volume's data, its restore points on the targets, and the record of past
+copies are left exactly as they are.
+
+It is how a volume that has been taken out of the stack is let go. "tink plan apply" never removes a policy for a
+volume it is no longer told about, because it cannot tell a volume that was dropped from this stack from one that
+belongs to another, and a backup that stops by mistake is found out at restore time. "tink plan" lists the
+volumes in this stack's projects and pools that carry a policy the stack does not declare.
+
+Name a volume outside the default project as PROJECT/VOLUME, and one outside the "default" pool with --pool. If a
+stack still declares copies for the volume, the next "tink plan apply" writes the policy back: remove them from the
+YAML as well.`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			server, err := incusapi.Connect(socket)
+			if err != nil {
+				return fmt.Errorf("connecting to incus: %w", err)
+			}
+			out := cmd.OutOrStdout()
+			failed := 0
+			for _, arg := range args {
+				v := volbackup.Volume{Pool: pool, Name: arg}
+				if project, name, found := strings.Cut(arg, "/"); found {
+					v.Project, v.Name = project, name
+				}
+				label := backuprun.Label(v)
+				had, owner, err := volbackup.Forget(server, v)
+				switch {
+				case err != nil:
+					fmt.Fprintf(out, "%s: %v\n", label, err)
+					failed++
+				case !had:
+					fmt.Fprintf(out, "%s: carries no copy policy; nothing to do\n", label)
+				default:
+					fmt.Fprintf(out, "forgot %s: nothing will copy it any more. Its data, its restore points and the record of past copies are untouched.\n", label)
+					if owner != "" {
+						fmt.Fprintf(out, "  it was applied by stack %q: if that stack still declares copies for it, the next plan apply writes the policy back\n", owner)
+					}
+				}
+			}
+			if failed > 0 {
+				return fmt.Errorf("%d volume(s) could not be forgotten", failed)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&socket, "socket", "", "Incus daemon unix socket path (default: Incus's own resolution)")
+	cmd.Flags().StringVar(&pool, "pool", "", "storage pool of the volumes (default \"default\")")
+	return cmd
+}
+
+// noteUndeclaredPolicies says which volumes are still being copied although the stack no longer declares them. Volumes
+// that point back at this stack are certain; the others are only found in its projects and pools and may belong to another
+// stack, so they are a note and never a failure.
+func noteUndeclaredPolicies(out io.Writer, eng backuprun.Engine, resources []resolve.Resource) {
+	orphans, err := backuprun.Undeclared(eng, resources)
+	if err != nil {
+		fmt.Fprintf(out, "note: could not look for volumes that carry a copy policy this stack does not declare: %v\n", err)
+		return
+	}
+	stack, _ := resolve.StackName(resources)
+	var owned, unowned []string
+	for _, o := range orphans {
+		name := backuprun.Label(o.Volume)
+		if o.Volume.Pool != "" && o.Volume.Pool != "default" {
+			name += " (pool " + o.Volume.Pool + ")"
+		}
+		if o.Owned {
+			owned = append(owned, name)
+		} else {
+			unowned = append(unowned, name)
+		}
+	}
+	if len(owned) > 0 {
+		fmt.Fprintf(out, "note: %d volume(s) applied by stack %q carry a copy policy but the stack no longer declares them, so they are still being copied: %s\n"+
+			"      To stop copying one: tink backup forget [PROJECT/]VOLUME [--pool POOL]\n", len(owned), stack, strings.Join(owned, ", "))
+	}
+	if len(unowned) > 0 {
+		fmt.Fprintf(out, "note: %d volume(s) in this stack's projects and pools carry a copy policy that the stack does not declare, and point at no stack, so they are still being copied: %s\n"+
+			"      They may be another stack's; if they are this one's, to stop copying one: tink backup forget [PROJECT/]VOLUME [--pool POOL]\n"+
+			"      (Name this stack with a `kind: stack` document and the next apply marks its volumes, so it can tell.)\n", len(unowned), strings.Join(unowned, ", "))
+	}
+}
+
 func newBackupRunCmd() *cobra.Command {
 	var f volumeFlags
 	var due, dryRun bool
@@ -240,7 +334,7 @@ no credentials of its own. A remote's data is relayed through tink, so the remot
 reachable from the machine running it (an SSH tunnel is enough).
 
 --due runs only the copies whose schedule has come round since their last success, so cron or a
-timer can call "tink backup run --due" every few minutes. Tink does not schedule them itself yet.
+timer can call "tink backup run --due" every few minutes, or "tink daemon run --jobs DIR" will, from the copy policies "tink plan apply" puts on the volumes (see docs/daemon-jobs.md).
 --dry-run says what would happen and changes nothing.
 
 Restore from a restore point with: tink backup restore VOLUME --from TARGET`,
@@ -249,112 +343,24 @@ Restore from a restore point with: tink backup restore VOLUME --from TARGET`,
 			if err != nil {
 				return err
 			}
-			if len(resources) == 0 {
-				return fmt.Errorf("no stack: give one with -f, or run from the directory holding %s", resolve.DefaultFile)
-			}
-			if _, err := resolve.Levels(resources); err != nil { // validates references, e.g. an unknown copy target
+			items, err := backuprun.FromStack(resources)
+			if err != nil {
 				return err
 			}
-			targets := map[string]resolve.Resource{}
-			for _, r := range resources {
-				if r.Kind == resolve.KindBackupTarget {
-					targets[r.Name] = r
-				}
-			}
-			selected, unknown := selectCopyVolumes(resources, args)
-
 			server, err := incusapi.Connect(f.socket)
 			if err != nil {
 				return fmt.Errorf("connecting to incus: %w", err)
 			}
-			out := cmd.OutOrStdout()
-			var tried, failed, skipped int
-			for _, r := range selected {
-				v := volbackup.Volume{Project: r.Project, Pool: r.Pool, Name: r.Name}
-				live, err := volbackup.LiveConfig(server, v)
-				if err != nil {
-					fmt.Fprintf(out, "%s: %v\n", r.Name, err)
-					failed++
-					continue
-				}
-				for _, c := range r.Backup.Copies {
-					if due {
-						isDue, err := resolve.CopyIsDue(c.Schedule, live, c.Target, time.Now())
-						if err != nil {
-							fmt.Fprintf(out, "%s -> %s: %v\n", r.Name, c.Target, err)
-							failed++
-							continue
-						}
-						if !isDue {
-							fmt.Fprintf(out, "%s -> %s: not due\n", r.Name, c.Target)
-							skipped++
-							continue
-						}
-					}
-					tried++
-					res, err := volbackup.Copy(server, v, volbackup.TargetFrom(targets[c.Target]),
-						volbackup.CopyOptions{Retain: c.Retain, DryRun: dryRun, Progress: out})
-					if err != nil {
-						fmt.Fprintf(out, "FAILED %s -> %s: %v\n", r.Name, c.Target, err)
-						failed++
-						continue
-					}
-					if dryRun {
-						for _, p := range res.Planned {
-							fmt.Fprintf(out, "%s -> %s: would %s\n", r.Name, c.Target, p)
-						}
-						continue
-					}
-					fmt.Fprintf(out, "copied %s -> %s: restore point %s", r.Name, c.Target, res.Volume)
-					if len(res.Pruned) > 0 {
-						fmt.Fprintf(out, " (pruned %d older: %s)", len(res.Pruned), strings.Join(res.Pruned, ", "))
-					}
-					fmt.Fprintln(out)
-				}
+			rep, err := backuprun.Run(cmd.Context(), backuprun.ServerEngine{Server: server}, items,
+				backuprun.Options{Volumes: args, Due: due, DryRun: dryRun, Remote: incusapi.Remote()}, cmd.OutOrStdout())
+			if err != nil {
+				return err
 			}
-			for _, name := range unknown {
-				fmt.Fprintf(out, "%s: not a storage-volume with copies in the stack\n", name)
-				failed++
-			}
-			if tried == 0 && skipped == 0 && failed == 0 {
-				fmt.Fprintln(out, "nothing to do: no volume in the stack declares copies")
-			}
-			if failed > 0 {
-				return fmt.Errorf("%d copy operation(s) failed", failed)
-			}
-			return nil
+			return rep.Err()
 		},
 	}
 	f.bind(cmd)
 	cmd.Flags().BoolVar(&due, "due", false, "only the copies whose schedule has come round since their last success")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "say what would happen; change nothing")
 	return cmd
-}
-
-// selectCopyVolumes picks the volumes `tink backup run` acts on: every storage volume that declares
-// copies, or with names, only those. Names that are not such a volume come back in unknown, in the order
-// given, so that asking for a volume that cannot be backed up is an error and not silently nothing.
-func selectCopyVolumes(resources []resolve.Resource, names []string) (selected []resolve.Resource, unknown []string) {
-	asked := map[string]bool{}
-	for _, n := range names {
-		asked[n] = true
-	}
-	found := map[string]bool{}
-	for _, r := range resources {
-		if r.Kind != resolve.KindStorageVolume || r.Backup == nil || len(r.Backup.Copies) == 0 {
-			continue
-		}
-		if len(names) > 0 && !asked[r.Name] {
-			continue
-		}
-		found[r.Name] = true
-		selected = append(selected, r)
-	}
-	for _, n := range names {
-		if !found[n] {
-			unknown = append(unknown, n)
-			found[n] = true // a name given twice is reported once
-		}
-	}
-	return selected, unknown
 }

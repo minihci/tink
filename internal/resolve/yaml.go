@@ -10,6 +10,8 @@ import (
 	"time"
 
 	yaml "go.yaml.in/yaml/v4"
+
+	"github.com/minihci/tink/internal/backupmeta"
 )
 
 // yamlResource is the on-disk shape: multi-document YAML files
@@ -34,7 +36,11 @@ type yamlResource struct {
 	Config   map[string]string            `yaml:"config"`
 	Devices  map[string]map[string]string `yaml:"devices"`
 
-	// Storage-volume-only -- see VolumeBackup.
+	// Backup-target-only, optional, and only with remote: the server's address and certificate fingerprint -- see Resource.Address.
+	Address     string `yaml:"address"`
+	Fingerprint string `yaml:"fingerprint"`
+
+	// Storage-volume-only -- see backupmeta.VolumeBackup.
 	Backup *yamlBackup `yaml:"backup"`
 
 	// File-only.
@@ -131,19 +137,19 @@ func (v *yamlVerify) UnmarshalYAML(node *yaml.Node) error {
 	return fmt.Errorf("line %d: verify must be a cadence (daily, weekly, monthly) or a mapping with every and check", node.Line)
 }
 
-func (b *yamlBackup) toVolumeBackup() *VolumeBackup {
+func (b *yamlBackup) toVolumeBackup() *backupmeta.VolumeBackup {
 	if b == nil {
 		return nil
 	}
-	out := &VolumeBackup{None: b.None, Verify: b.Verify.Every}
+	out := &backupmeta.VolumeBackup{None: b.None, Verify: b.Verify.Every}
 	if c := b.Verify.Check; c != nil {
-		out.VerifyCheck = &VerifyCheck{Image: c.Image, Command: c.Command, Mount: c.Mount}
+		out.VerifyCheck = &backupmeta.VerifyCheck{Image: c.Image, Command: c.Command, Mount: c.Mount}
 	}
 	for _, c := range b.Copies {
-		out.Copies = append(out.Copies, BackupCopy{Target: c.Target, Schedule: c.Schedule, Retain: c.Retain})
+		out.Copies = append(out.Copies, backupmeta.BackupCopy{Target: c.Target, Schedule: c.Schedule, Retain: c.Retain})
 	}
 	if b.Snapshots != nil {
-		out.Snapshots = &SnapshotPolicy{Schedule: b.Snapshots.Schedule, Retain: b.Snapshots.Retain}
+		out.Snapshots = &backupmeta.SnapshotPolicy{Schedule: b.Snapshots.Schedule, Retain: b.Snapshots.Retain}
 	}
 	return out
 }
@@ -231,7 +237,8 @@ func (d yamlResource) toResource(dir string) (Resource, error) {
 		if d.Content != "" {
 			return Resource{}, fmt.Errorf("resource %q: content and source_path are mutually exclusive", d.Name)
 		}
-		data, err := os.ReadFile(filepath.Join(dir, d.SourcePath))
+		src := filepath.Join(dir, d.SourcePath)
+		data, err := os.ReadFile(src)
 		if err != nil {
 			return Resource{}, fmt.Errorf("resource %q: reading source_path: %w", d.Name, err)
 		}
@@ -300,6 +307,8 @@ func (d yamlResource) toResource(dir string) (Resource, error) {
 		Location:        d.Location,
 		Engine:          d.Engine,
 		Remote:          d.Remote,
+		Address:         d.Address,
+		Fingerprint:     d.Fingerprint,
 		Backup:          d.Backup.toVolumeBackup(),
 		Config:          d.Config,
 		Devices:         d.Devices,

@@ -1,0 +1,96 @@
+name: release binaries
+
+# On a tag (v*) this builds the tink command-line binary for macOS and Linux (amd64 and arm64) and attaches them, with a checksums file, to the
+# GitHub Release for that tag, each under its versioned name and again under a version-less one (see the build step). The helper image (helper-image.yml) is built from the same tag, and a release build of tink is what picks it:
+# `tink helper install` with no flag installs the image published for the version it reports.
+#
+# On a pull request that touches this file it only builds and checks the result, so a broken workflow is found before a release, not during one.
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
+
+jobs:
+  binaries:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.26"
+
+      # The version compiled into the binary (what `tink version` reports, and what `tink helper install` uses to pick its image) is the tag.
+      # A build that is not a tag says so.
+      - name: version
+        id: v
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            echo "version=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=dev-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # One archive per platform, holding just the binary, named tink_<version>_<os>_<arch>.tar.gz, and a byte-identical copy named
+      # tink_<os>_<arch>.tar.gz: an asset is a file, not a link, so a download URL that does not name the version, such as
+      # releases/latest/download/tink_darwin_arm64.tar.gz, needs a file of that name. Both are in checksums.txt. The binaries are static (no
+      # cgo), so one runner builds them all. They are not signed: a macOS binary downloaded with a browser is quarantined until `xattr -d
+      # com.apple.quarantine tink`, and one fetched with curl is not.
+      - name: build
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          mkdir -p dist
+          for target in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64; do
+            os=${target%/*}
+            arch=${target#*/}
+            name="tink_${VERSION}_${os}_${arch}"
+            mkdir -p "dist/$name"
+            CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath \
+              -ldflags "-s -w -X main.injectedVersion=${VERSION}" \
+              -o "dist/$name/tink" ./cmd/tink
+            tar -C dist -czf "dist/$name.tar.gz" "$name"
+            cp "dist/$name.tar.gz" "dist/tink_${os}_${arch}.tar.gz"
+            rm -r "dist/$name"
+          done
+          (cd dist && sha256sum ./*.tar.gz > checksums.txt)
+          ls -l dist
+
+      # What was built is what will be published: the checksums match, there are eight archives (four platforms, each under two names) that
+      # each hold exactly one file, each version-less archive is identical to its versioned one, and the linux/amd64 binary (the one this
+      # runner can run) reports the version it was given.
+      - name: check
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          (cd dist && sha256sum --check checksums.txt)
+          set -- dist/*.tar.gz
+          [ "$#" = 8 ] || { echo "$# archives, want 8"; exit 1; }
+          for a in dist/*.tar.gz; do
+            n=$(tar -tzf "$a" | grep -c -v '/$')
+            [ "$n" = 1 ] || { echo "$a holds $n files, want 1"; exit 1; }
+          done
+          for t in darwin_arm64 darwin_amd64 linux_amd64 linux_arm64; do
+            cmp "dist/tink_${VERSION}_${t}.tar.gz" "dist/tink_${t}.tar.gz" || { echo "tink_${t}.tar.gz differs from its versioned archive"; exit 1; }
+          done
+          tar -xzf "dist/tink_${VERSION}_linux_amd64.tar.gz" -C "$RUNNER_TEMP"
+          "$RUNNER_TEMP/tink_${VERSION}_linux_amd64/tink" version | tee /dev/stderr | grep -q "tink ${VERSION} "
+
+      - name: publish the release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # A tag with a suffix (v0.2.0-rc.1) is a pre-release; any other tag (v0.1.1) is an ordinary release, whatever its major version. Every
+          # v0.x.y being a pre-release would leave GitHub with no "Latest" release, and releases/latest/download/... links would return 404.
+          # (releaseVersion in internal/helper/install.go accepts the same two shapes.)
+          PRERELEASE=""
+          case "$GITHUB_REF_NAME" in
+            *-*) PRERELEASE="--prerelease" ;;
+          esac
+          # PRERELEASE is deliberately unquoted: empty means no argument at all
+          # shellcheck disable=SC2086
+          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/checksums.txt --verify-tag --generate-notes $PRERELEASE

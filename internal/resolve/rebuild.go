@@ -10,6 +10,7 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
 
+	"github.com/minihci/tink/internal/incusapi"
 	"github.com/minihci/tink/internal/run"
 )
 
@@ -70,14 +71,14 @@ func rebuildPreflight(server incus.InstanceServer, current *api.Instance, r Reso
 		return p
 	}
 
-	if rt, err := env.runtimeConfig(remote, ref); err != nil {
+	if rt, err := env.runtimeConfig(server, remote, ref); err != nil {
 		block("could not read the new image's runtime config: %v", err)
 	} else if diffs, keys := runtimeConfigDiff(current.Config, r.Config, rt); len(diffs) > 0 {
 		block("the new image changes runtime config that a rebuild does not refresh; declare these keys under config: so they are written after the rebuild (%s) -- %s",
 			strings.Join(keys, ", "), strings.Join(diffs, "; "))
 	}
 
-	if img, err := env.registryImage(remoteName, ref); err != nil {
+	if img, err := env.registryImage(server, remoteName, ref); err != nil {
 		p.Warnings = append(p.Warnings, fmt.Sprintf("could not size the new image for the free-space check: %v", err))
 	} else if pool := current.ExpandedDevices["root"]["pool"]; pool != "" && img.Size > 0 {
 		if res, err := server.GetStoragePoolResources(pool); err != nil {
@@ -205,37 +206,54 @@ func (o incusRebuildOps) InstanceSnapshots(name string) ([]string, error) {
 	return o.server.GetInstanceSnapshotNames(name)
 }
 
-// PullImage copies the image into the local store (no instance involved) and
-// returns its fingerprint; a later rebuild then needs no download.
+// PullImage puts the image into the server's local store (no instance involved) and returns its fingerprint; the rebuild then needs no
+// download. The registry is asked for the image's fingerprint first, for the server's architecture, to see whether it is already there;
+// if not, the SERVER is told to pull it by reference, with its own tools, so no image data and no tool of ours is involved, from a laptop
+// as on the server. (Naming the image by fingerprint instead does not work: the server would try to resolve the hash as a registry name.)
 func (o incusRebuildOps) PullImage(image string) (string, error) {
 	remoteName, ref, _ := strings.Cut(image, ":")
-	if o.env == nil || o.env.conf == nil {
-		return "", errors.New("incus client config unavailable")
+	if o.env == nil {
+		return "", errors.New("no registry access")
 	}
-	ensureSkopeoOnPath()
-	is, err := o.env.conf.GetImageServer(remoteName)
+	remote, ok := o.env.remotes()[remoteName]
+	if !ok || len(remote.Addrs) == 0 {
+		return "", fmt.Errorf("%q is not a configured OCI remote", remoteName)
+	}
+	reg, err := o.env.registryImage(o.server, remoteName, ref)
 	if err != nil {
 		return "", err
 	}
-	alias, _, err := is.GetImageAlias(ref)
+	_, _, local, err := incusapi.LookupImage(o.server, reg.Fingerprint)
 	if err != nil {
-		return "", err
+		// Not "not local": pulling on a lookup that merely failed would hide the real problem behind a second one.
+		return "", fmt.Errorf("checking whether the image is already local: %w", err)
 	}
-	img, _, err := is.GetImage(alias.Target)
+	if local {
+		return reg.Fingerprint, nil
+	}
+	// The server pulls from the address it is given, and the API has no other place for a credential: as `incus launch` does, send the
+	// address with the credentials the remote's helper supplies written into it.
+	authed, err := o.env.authedRemote(remote)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("remote %q: %w", remoteName, err)
 	}
-	if _, _, err := o.server.GetImage(img.Fingerprint); err == nil {
-		return img.Fingerprint, nil // already local
-	}
-	op, err := o.server.CopyImage(is, *img, &incus.ImageCopyArgs{})
+	addr := authed.Addrs[0]
+	op, err := o.server.CreateImage(api.ImagesPost{Source: &api.ImagesPostSource{
+		ImageSource: api.ImageSource{Protocol: "oci", Server: addr, Alias: ref},
+		Mode:        "pull",
+		Type:        "image",
+	}}, nil)
 	if err != nil {
-		return "", err
+		return "", scrubCredentials(err, addr)
 	}
 	if err := op.Wait(); err != nil {
-		return "", err
+		return "", scrubCredentials(err, addr)
 	}
-	return img.Fingerprint, nil
+	fp, _ := op.Get().Metadata["fingerprint"].(string)
+	if fp == "" {
+		return "", errors.New("the server pulled the image but did not say its fingerprint")
+	}
+	return fp, nil
 }
 
 func (o incusRebuildOps) Stop(name string) error {

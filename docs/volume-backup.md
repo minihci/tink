@@ -8,8 +8,9 @@ at restore time.
 stacks written before this field applying unchanged. The intent is to promote it
 to BLOCKED (the way image drift is) once the feature has matured.
 
-This is **tier 1**: local, Incus-native snapshots. See [Not covered](#not-covered)
-for what that does and doesn't protect against.
+The snapshot policy below is **tier 1**: local, Incus-native snapshots, a rollback aid. Copies to other pools and servers
+([Copies and 3-2-1](#copies-and-3-2-1)) are what protect against losing the disk. See [Not covered](#not-covered)
+for what each does and doesn't protect against.
 
 ## Declaring it
 
@@ -66,7 +67,7 @@ backup:
   copies:
     - {target: macpro, schedule: "0 4 * * *", retain: 30d}
     - {target: nas,    schedule: "0 5 * * *", retain: 30d}
-  verify: weekly            # daily | weekly | monthly; parsed and validated, not acted on yet
+  verify: weekly            # daily | weekly | monthly: how stale a verification may get before `plan` warns; run it with `tink backup verify`
 ```
 
 `copies` can be used with or without `snapshots`; `none` excludes all of them. A target needs `remote`
@@ -108,10 +109,14 @@ A target is either another **storage pool on this server** (another disk, or the
 
 ### Remote targets
 
-`remote:` is the name `incus remote add` gave the other server. Tink does **not** store credentials or addresses: it opens that
+`remote:` is the name `incus remote add` gave the other server. Tink does **not** store credentials, and by default no addresses either (a
+stack may [say where the server is](#saying-where-the-server-is-optional), as an opt-in): it opens that
 remote the way the `incus` command does, from the Incus client configuration of the user running tink (`~/.config/incus`, or
 `$INCUS_CONF`; under `sudo` that is *root's*, so add the remote as root). The remote's **project** is the one configured for the
 remote (`incus remote add NAME URL --project tink-backup`), and its pool is `pool:` on the target, default `default`.
+
+**Run by the helper**, the remote has to be in the *helper's* client configuration, not yours: see
+[Copying to another Incus server](helper.md#copying-to-another-incus-server) for `tink helper remote add`.
 
 ```
 incus remote add homelabvps https://127.0.0.1:18444 --project tink-backup   # as the user that runs tink
@@ -124,14 +129,49 @@ incus remote add homelabvps https://127.0.0.1:18444 --project tink-backup   # as
 - **A cut-off copy is never a backup.** The restore point carries its markers only once the copy has *completed*. A copy that dies
   part way (the tunnel drops, the disk fills) is deleted; if even that fails, the error names the volume to delete by hand, and
   because it has no markers tink will never list, prune, restore or verify from it.
-- **One source server per target project.** Restore points are matched by project, pool and volume name only, so two servers backing
-  a volume of the same name up into the same remote project would see (and prune) each other's. Give each source its own project
-  on the remote. (The hostname is not part of the match: after losing a host, the rebuilt one must still find its backups.)
+- **Several source servers can share a target.** Each restore point records the server it was made on (`user.tink.backup.copy-server`, the
+  server's name: its host name unless configured otherwise), and **pruning only ever removes points the pruning server made** (points from
+  before this marker existed count as that server's own). Two servers copying a volume of the same name into one remote pool therefore cannot
+  delete each other's backups, and `backup run` says when it sees another server's points and leaves them alone. Restore still sees **all**
+  of them, so a rebuilt host, under whatever name, finds its predecessor's backups; it says when the point it used was made by another server.
+  Separate projects are still tidier, but no longer needed for safety.
 - **Restore and verify `--from` a remote** pull the restore point back through tink the same way, and need nothing but the remote.
 - **Trust scoped to a project may not be enforced.** An Incus *restricted* client certificate is limited to its projects only if the
   server's authorization lets Incus's own check run. A server that routes `authorization.client.tls-restricted` through a custom
   scriptlet that returns `True` (as an `incus-ui` setup might) gives that certificate full access. Check what the remote lets the
   certificate see (`incus project list REMOTE:`) before relying on it.
+
+#### Saying where the server is (optional)
+
+The bare name is the default, and a stack that says nothing about the server can live in a public repository: nothing in it names a machine.
+A stack that would rather describe the server itself can add the public half of it, **both together**: the server's address and the SHA-256
+fingerprint of its certificate (`certificate_fingerprint` in `incus info` on that server). An address on its own is refused when the stack is
+read, because it would mean trusting whatever answers there the first time.
+
+```yaml
+kind: backup-target
+name: offsite
+location: offsite
+engine: incus
+remote: homelabvps
+pool: backups
+address: https://203.0.113.7:8443     # optional, and only with fingerprint ("host" or "host:port" also work; the port defaults to 8443)
+fingerprint: 0f3a9c2d7b6e4180...      # optional, and only with address (upper case and colons are fine)
+```
+
+- **What it changes:** the commands tink prints. `tink plan` and `tink plan apply` already warn about a copy to a remote the helper does not have; with
+  this they also give the exact `tink helper remote add NAME ADDRESS --fingerprint FP` for a server that already trusts the helper's certificate. A
+  local `tink backup run`, `restore` or `verify` that finds no remote of that name in your Incus client configuration says to add it with
+  `tink remote add NAME ADDRESS --fingerprint FP`.
+- **What it does not change:** copies still go by the remote's *name*. Neither field is written to the volume with the copy policy (the helper does
+  not read them, and the policy stays protocol 1), and nothing is added to any client configuration for you.
+- **Trust is still one step you take.** The other server has to trust the certificate of whoever connects. A server that does not yet trust it needs
+  a token made on that server (`incus config trust add NAME`), which carries its own address and fingerprint, so a stack gains little there; the opt-in
+  earns its keep for a server that already trusts the machine, and for saying in one place which server a name means.
+- **Anything in the stack is as public as the stack.** An address is not a credential, but if the repository is public, so is where your server is.
+  Leave both out and nothing about the server is published.
+
+### How copies are kept and retried
 
 **Why a new volume each time, and not one target volume refreshed with `incus storage volume copy --refresh`?** Because a refresh
 makes the target *mirror* the source's snapshots. Tested on two TrueNAS-backed pools: when the source pruned a snapshot, the next
@@ -140,15 +180,112 @@ own snapshots. A mirror cannot keep a longer history than its source, and, worse
 the backup**. With one independent volume per run, nothing that happens to the source can reach an existing restore point. The price
 is a **full copy per run** (space and time proportional to the volume); incremental transfer is future work.
 
-**What tink will and won't delete.** Restore points carry markers (`user.tink.backup.copy-of`, `-at`, `-target`) naming exactly the
-volume (project, pool and name) they back up. Pruning and restoring consider **only** volumes with the marker for the volume in
-question: a volume tink did not make, a lookalike name, another volume's restore point, or one whose marker it cannot read is never
-touched.
+**What tink will and won't delete.** Restore points carry markers (`user.tink.backup.copy-of`, `-at`, `-target`, `-server`) naming
+exactly the volume (project, pool and name) they back up and the server it lived on. Pruning and restoring consider **only** volumes with
+the marker for the volume in question: a volume tink did not make, a lookalike name, another volume's restore point, or one whose marker it
+cannot read is never touched. **Pruning goes further: only points made by the server doing the pruning**, and "never the newest" means the
+newest of that server's own.
+
+**A copy that never finished.** A copy is marked **in progress** (`user.tink.backup.copy-partial-of` and `-at`, a *different* key from a restore
+point's) from the moment its volume is created on the target, and the mark is swapped for the restore point's markers only when the copy has completed. So
+a copy that is cut off, or whose tink was killed, or whose host lost power, is **never** listed, restored from, verified or counted as the newest backup. It
+is not deleted at once either, because tink cannot tell a dead copy from one still running: on a later run, `backup run` removes volumes that carry this tink's
+in-progress mark **for this volume**, started by this server, **more than 7 days ago**, and says so (`removed 1 abandoned partial cop(ies)`). It never removes
+a volume that also carries a restore point's mark, one without the mark (a look-alike name included), another server's, or a younger one. The grace is long
+because a large volume over a slow link takes long, and removing a copy still going would be worse than keeping a dead one a few days. (A copy made *inside*
+one Incus server keeps running even if tink is killed, so what is left is often a complete but unmarked copy; it is removed anyway, since a newer one exists by
+then and an unverified one is not a backup.)
+
+**One copy at a time.** Within a process, the same copy (the same volume to the same target) never runs twice at once: the second is
+refused as "already running" and is not counted as a failed copy. This guard is per process: a `tink backup run` on a laptop and a scheduled
+run on the server are different processes, and nothing yet stops both copying the same volume at the same moment (it is wasteful, not unsafe:
+each makes its own restore point).
+
+**When a copy fails.** The source volume is marked with when the last attempt failed and how many in a row
+(`user.tink.backup.copy.<target>.fail.at` and `.fail.n`); a success removes both. **No reason is stored**: errors from Incus and its
+drivers can echo credentials, and a volume's config is the wrong place for that, so the reason is only in the output of the run that
+failed. `plan` says the copy is failing (or "has never succeeded"). With `--due`, a failing copy is **not retried every time the command
+is called**: it waits `5 minutes x 2^(failures-1)`, but never longer than the copy's own schedule interval (an hourly copy retries at
+least hourly), and says so:
+
+```
+lib -> dead: backing off after 2 failed attempt(s), next try after 2026-10-07 00:56 MDT
+lib -> nas: not yet due, next at 2026-10-07 01:00 MDT
+```
+
+A run you ask for by name (`tink backup run lib`) ignores the backoff: you asking is not a scheduler retrying. A copy that succeeded but
+could not prune older restore points is **not** a failed copy (the restore point exists and the source is stamped); its error says so and
+the copy is not put into backoff.
 
 **`--due`** runs only the copies whose `schedule` has come round since their last success (by the stamp), so cron or a timer can call
-`tink backup run --due` every few minutes. **Tink does not schedule copies itself yet**, so until something calls it, `plan` warns
+`tink backup run --due` every few minutes, or `tink daemon run --jobs DIR` does it for you ([daemon-jobs.md](daemon-jobs.md)).
+Until something calls it, `plan` warns
 that a copy "has never run" or "is overdue" (the schedule's next time after the last success plus a grace of a quarter of the
 interval, between 10 minutes and 6 hours). **`--dry-run`** says what would happen and changes nothing.
+
+## Where the policy lives
+
+The YAML is where you write the intent. `tink plan apply` also writes what it means onto the volume, so the volume says what is to happen to it, and
+whatever runs the copies (the daemon's scheduler) needs no copy of your stack:
+
+| What | Where it lives | Written by |
+|---|---|---|
+| Snapshot `schedule` and `retain` | Incus's own keys `snapshots.schedule` and `snapshots.expiry` (Incus enforces them) | `apply` |
+| The copy policy: `copies` (each target resolved inline), `verify` | one key, `user.tink.backup.policy`, a one-line JSON document | `apply` |
+| Which stack applied the volume | `user.tink.stack`, the name from the stack's `kind: stack` document (below) | `apply` |
+| What has happened: copies, failures, verifications | `user.tink.backup.copy.<target>.*`, `.verified-*` stamps on the volume | `backup run`, `backup verify` |
+| What a restore point is | `user.tink.backup.copy-*` markers on the restore point | `backup run` |
+
+```
+$ incus storage volume get immich-library user.tink.backup.policy
+{"proto":1,"copies":[{"target":{"name":"nas","location":"other-host","engine":"incus","pool":"nas"},"schedule":"0 5 * * *","retain":"30d"}],"verify":{"every":"weekly"}}
+```
+
+- **Drift shows in `plan`.** The key is converged like any other config: a changed `retain`, a new copy, or a hand edit of the key is an `update` until applied. A change to
+  the YAML takes effect when it is **applied**. `plan` describes the policy in words, one line per difference, and not as the escaped JSON the key holds:
+
+  ```
+  storage-volume/immich-library: would update
+      backup policy: ~ copy to nas: schedule "0 5 * * *" -> "0 6 * * *", keep 30d -> 60d
+      backup policy: + copy to offsite (remote vps, pool backups): schedule "@daily", keep 7d
+      backup policy: - verify weekly
+  ```
+
+  `+` is added, `-` removed, `~` changed (only what differs). A policy the volume carries that cannot be read (another protocol, a hand edit) is "replaced", and
+  everything wanted is listed as added. Removing it says what stops: `removed (...): the volume stops being copied and verified`.
+- **Tink owns the key outright, and removes it.** Take the `backup:` block off, switch it to `none:`, or drop its last copy and `verify`, and `apply` deletes the key, so
+  the volume stops being copied. (This is the one place tink clears config; it never removes the snapshot keys.) A volume deleted from the YAML but still on the server
+  keeps its key, and so keeps being copied.
+- **It is resolved, and contains no secrets.** A copy carries its target's `location`, `engine`, `remote` and `pool`, so the scheduler does not need your `kind: backup-target`
+  resources. It is plain volume config, visible to anyone with Incus access; a target that needs a credential would have to name it, not hold it. A remote is a name from the
+  Incus client configuration of whoever runs the copy, as ever.
+- **A copy of a volume does not inherit it.** Restore points, volumes made by `backup restore` and verify's scratch volumes are cleared of the key (a copy carries its source's
+  config), and the scheduler never schedules a volume that carries a restore point's or an in-progress copy's marker, so a backup is not scheduled for backup.
+- **A policy the scheduler cannot read is skipped, not guessed at.** Another `proto`, an unknown field or a schedule that does not parse is reported (once) and that volume is
+  left alone; the others carry on.
+- **A volume points back at its stack.** Give a stack a name with a document of its own, and `apply` stamps every storage volume it applies with it:
+
+  ```yaml
+  kind: stack
+  name: immich
+  ```
+
+  So `incus storage volume show` says whose YAML to edit, and the stack can find its own volumes exactly. The declaration is only a name (lower case letters, digits, `.`, `_`,
+  `-`); it is not a resource, so it may share a name with an instance or volume in the stack, and a stack names itself once. It is optional. An unnamed stack writes no
+  pointer and never removes one; a named stack that applies a volume stamped by another stack takes it over and `plan` warns you first.
+- **A volume taken out of the YAML keeps being copied.** Tink never removes what it is no longer told about, and cannot tell a volume dropped from this stack from one that
+  belongs to another. `plan` and `plan apply` end with a **note** (never a failure) listing the volumes that carry a policy this stack does not declare. A volume stamped with
+  this stack's name is certain: the stack applied it and dropped it, wherever it is. A volume with no stamp can only be guessed at (it sits in a project and pool this stack
+  declares volumes in), and the note says it may be another stack's. A volume stamped by another stack is never listed. To let one go:
+
+  ```
+  tink backup forget [PROJECT/]VOLUME... [--pool POOL]
+  ```
+
+  It clears the policy and nothing else: the volume, its restore points and the record of past copies stay. It tells you which stack applied the volume, because if that stack
+  still declares copies for it the next `apply` writes the policy back.
+- **Not the whole stack.** `tink backup run` still reads the stack you give it (`-f`, or `./tink.yaml`), which is what you want when you are working on one; the
+  daemon works from the volumes. `restore` and `verify` still take their targets from the stack, because restoring is for the case where the volume, and its key, is gone.
 
 ## Restoring from a target
 
@@ -166,8 +303,8 @@ it. If it is gone, `verify` still runs the check but cannot record the result, a
 
 ## Restore and verify
 
-A backup you have never restored is a hope. Two commands, local snapshots only for now (restoring from
-a backup *target* needs the copy engine, a later slice; `--from` says so rather than pretending):
+A backup you have never restored is a hope. Two commands; without `--from` they use the volume's local snapshots (with it, a restore point on a
+target, as above):
 
 ```
 tink backup restore VOLUME [--snapshot S] [--as NAME]
@@ -232,8 +369,8 @@ to get closer. Verification reads a crash-consistent snapshot, like everything h
 
 `schedule` and `retain` map one-to-one onto Incus's own volume keys
 `snapshots.schedule` and `snapshots.expiry`. Tink only converges that config;
-Incus takes and prunes the snapshots. There is no tink daemon in the loop and
-no state of its own, consistent with the rest of `plan`.
+Incus takes and prunes the snapshots, with no tink process in the loop. The copy policy is on the volume too ([above](#where-the-policy-lives)), and tink keeps no
+state of its own, consistent with the rest of `plan`.
 
 | Situation | `plan` says |
 |---|---|
@@ -241,7 +378,9 @@ no state of its own, consistent with the rest of `plan`.
 | Snapshot policy, volume absent | create, with the config |
 | Snapshot policy, config differs live | update |
 | `none`, volume absent or present | nothing to do |
-| `none`, but the live volume still has `snapshots.schedule` | nothing to do, plus a warning: tink never removes keys it no longer sets |
+| `none`, but the live volume still has `snapshots.schedule` | nothing to do, plus a warning: tink never removes the snapshot keys it no longer sets |
+| Copies or `verify` declared | create or update, with `user.tink.backup.policy` |
+| The volume carries `user.tink.backup.policy` but the declaration has no copies or `verify` | update: the key is removed |
 
 Storage volumes used to be create-only; they are now updatable, but only for
 these two keys. Other live config on the volume is left alone.
@@ -267,9 +406,9 @@ missing volume via `run.ApplyConfig` and routes around the check.
 
 The direction for everything below is in [`volume-backup-design.md`](volume-backup-design.md).
 
-- **It is one disk.** Snapshots live in the same pool as the volume, so they
+- **Snapshots are one disk.** They live in the same pool as the volume, so they
   guard against a bad upgrade or a deleted file, not a failed disk or a lost
-  host. Off-site copies (tier 2) are not implemented.
+  host. That is what copies to other targets are for.
 - **Crash-consistent only.** Snapshots are atomic per volume but know nothing
   about the application. A database volume snapshotted live restores as if
   power was cut -- fine for Postgres (it replays WAL), not a substitute for a
@@ -278,6 +417,7 @@ The direction for everything below is in [`volume-backup-design.md`](volume-back
 - **A volume that lives on a TrueNAS pool cannot restore its own snapshots on stock TrueNAS 25.10** (an upstream middleware bug, fixed
   in truenas/middleware#19962 and #19963): the same-pool clone Incus uses fails. Copies to and from TrueNAS pools are not affected.
 - **Each run is a full copy**, over the network for a remote target; there is no incremental transfer yet.
-- **Nothing schedules copies**: call `tink backup run --due` from cron or a timer.
+- **Copies do not schedule themselves.** Install the helper ([helper.md](helper.md)), run `tink daemon run --jobs DIR` ([daemon-jobs.md](daemon-jobs.md)), or call
+  `tink backup run --due` from cron or a timer. **Nothing runs `verify` on a schedule yet**: `plan` warns when one is overdue, and you run `tink backup verify`.
 - **A restore point is crash-consistent**, like the snapshot it is copied from.
 - **Verify is only as strong as its check**, and an unchecked verify only proves the snapshot restores.
