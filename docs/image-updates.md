@@ -30,8 +30,8 @@ The four dispositions an instance can have are `no changes`, `would update`
 between the text of two image references. For an OCI image Incus derives
 the fingerprint from the image's layer digests, so it identifies content,
 and it is recorded on the instance as `volatile.base_image`. `plan` asks the
-registry what the YAML's reference resolves to now (through Incus's own OCI
-client, which runs `skopeo` on the machine tink runs on, so under `--remote` on the client:
+registry what the YAML's reference resolves to now (tink asks the registry
+itself, for the architecture the *server* runs, so a laptop gets the server's answer:
 [remote.md](remote.md#image-remotes-need-no-setup)) and compares the result. Two references for
 the same bytes (`:2` and `:2.1.2-alpine`, or `library/x` and `x`, or a tag
 and a digest) are therefore not drift, and a floating tag such as `:stable`
@@ -70,7 +70,7 @@ A second field, `snapshot_volumes`, applies only with `rebuild`; see below.
 
 `rebuild` requires a digest-pinned image: `remote:repo:tag@sha256:...`. The
 tag is cosmetic (Incus drops it when a digest is present); the digest is what
-is pulled. Get one with the `skopeo` that ships in the Incus package:
+is pulled. Get one with any tool that shows an image's digest, for example the `skopeo` that ships in the Incus package:
 
 ```
 /opt/incus/bin/skopeo inspect --format '{{.Digest}}' docker://ghcr.io/home-assistant/home-assistant:2026.9.4

@@ -54,19 +54,14 @@ stack commonly uses, only where the client configuration lacks them:
 | `ghcr` | https://ghcr.io | oci |
 | `images` | https://images.linuxcontainers.org | simplestreams |
 
-A remote the client configuration defines under the same name **always wins** (a mirror, say). The server pulls the image itself, so creating an instance needs no
-`skopeo` on the client, and the instance is created for the **server's** architecture.
+A remote the client configuration defines under the same name **always wins** (a mirror, say). The server pulls the image itself, and the instance is created for the **server's** architecture.
 
-`plan` and `plan apply` also ask the registry whether an image has moved ([image-updates.md](image-updates.md)), and that lookup runs `skopeo` **on the
-machine tink runs on**: under `--remote` that is the client. Without it, `plan` and `plan apply` end with one note that the images were not checked (`note: 2 images were not checked against their registries: skopeo was not found on
-this machine …`), and an instance set to `on_image_change: rebuild` is also blocked, with the reason, because rebuild will not act on an image it cannot verify. Pass `--offline`
-to skip the lookups on purpose.
-
-**Installing it on a client of a different CPU architecture does not help, and can mislead.** The lookup resolves the image for the architecture of the machine running `skopeo`
-(Incus's client passes no platform), and the fingerprint it compares is that architecture's, while an instance on the server was built from the server's. An arm64 laptop
-planning against an amd64 server therefore compares one image with another build of the same tag and reports drift that is not there: for `eclipse-mosquitto` the two
-fingerprints are `e59c17…` (amd64, the live instance's) and `bece04…` (arm64). From a client whose architecture differs from the server's, use `--offline`, or run `plan` on the
-server.
+`plan` and `plan apply` also ask the registry whether an image has moved ([image-updates.md](image-updates.md)). tink does that itself, over HTTPS, from wherever it runs, and asks for the
+image of the **server's** architecture, not the machine's own: an arm64 laptop planning against an amd64 server gets the answer the server would, and nothing has to be installed on
+the client. It reaches the registry as the login written into the remote's URL says (`https://user:password@host`), else as the container-registry login of whoever runs tink (the one
+`docker login` and `skopeo login` write), else anonymously. A registry that cannot be reached, or an image it does not have, is reported against that image, and an instance set to
+`on_image_change: rebuild` is blocked on an image it cannot verify; `--offline` skips the lookups on purpose. The same goes for a rebuild's image: the server is told to pull it, so none of
+it passes through the client either.
 
 ## What does not work under a remote, and says so
 

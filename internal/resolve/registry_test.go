@@ -285,8 +285,12 @@ func TestCredentialsWrittenIntoARemotesURLAreUsedAndNeverShown(t *testing.T) {
 	enforce.Store(true)
 	amd := v1.Platform{OS: "linux", Architecture: "amd64"}
 
-	if _, err := lookupRegistryImage(remoteAt(host), "team/private:1", amd); err == nil {
+	_, err := lookupRegistryImage(remoteAt(host), "team/private:1", amd)
+	if err == nil {
 		t.Fatal("a registry that wants a login must refuse an anonymous lookup")
+	}
+	if strings.Contains(err.Error(), "login could not be read") {
+		t.Errorf("there was no login to read, which is not the same as one that could not be read: %v", err)
 	}
 	withLogin := cliconfig.Remote{Addrs: []string{"http://puller:s3cret@" + host}, Protocol: "oci"}
 	got, err := lookupRegistryImage(withLogin, "team/private:1", amd)
@@ -344,5 +348,52 @@ func TestTheContainerRegistryLoginOfWhoeverRunsTinkIsUsed(t *testing.T) {
 	wrong := cliconfig.Remote{Addrs: []string{"http://puller:nope@" + host}, Protocol: "oci"}
 	if _, err := lookupRegistryImage(wrong, "team/private:1", amd); err == nil {
 		t.Error("what the remote's URL says is what is used")
+	}
+}
+
+// A credential helper named in the person's docker config can be missing or broken (Docker Desktop's, on a laptop that no longer has it:
+// a real laptop did exactly this). That must not stop a lookup that works anonymously, and when the registry then refuses the anonymous
+// request, the error must say that the login could not be read, because that is what the person has to fix.
+func brokenHelperConfig(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("DOCKER_CONFIG", dir)
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"auths": {}, "credsStore": "no-such-helper"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestABrokenLoginHelperDoesNotStopALookupOfAPublicImage(t *testing.T) {
+	host := newRegistry(t, nil)
+	imgs, _ := pushIndex(t, host, "team/public:1", "amd64")
+	brokenHelperConfig(t)
+	amd := v1.Platform{OS: "linux", Architecture: "amd64"}
+
+	got, err := lookupRegistryImage(remoteAt(host), "team/public:1", amd)
+	if err != nil || got != want(t, imgs["amd64"]) {
+		t.Errorf("the image: %+v %v", got, err)
+	}
+	if _, err := lookupRuntimeConfig(remoteAt(host), "team/public:1", amd); err != nil {
+		t.Errorf("the runtime config: %v", err)
+	}
+}
+
+func TestABrokenLoginHelperIsNamedWhenTheRegistryThenRefuses(t *testing.T) {
+	var enforce atomic.Bool
+	host := newRegistry(t, requireBasic(&enforce, "puller", "s3cret"))
+	pushIndex(t, host, "team/private:1", "amd64")
+	enforce.Store(true)
+	brokenHelperConfig(t)
+	amd := v1.Platform{OS: "linux", Architecture: "amd64"}
+
+	_, err := lookupRegistryImage(remoteAt(host), "team/private:1", amd)
+	if err == nil || !strings.Contains(err.Error(), "the container-registry login could not be read") || !strings.Contains(err.Error(), "no-such-helper") {
+		t.Errorf("a refused lookup must say that the login could not be read, and why: %v", err)
+	}
+	// but an image that is merely missing is not blamed on a login: the registry did not refuse anything
+	enforce.Store(false)
+	_, err = lookupRegistryImage(remoteAt(host), "team/nothing:1", amd)
+	if err == nil || strings.Contains(err.Error(), "login could not be read") {
+		t.Errorf("a missing image is an error, and not one about the login: %v", err)
 	}
 }

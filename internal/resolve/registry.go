@@ -5,13 +5,16 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	regremote "github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/cliconfig"
 )
@@ -96,23 +99,58 @@ func registryCredentials(remote cliconfig.Remote) (user, password string, ok boo
 	return u.User.Username(), password, true
 }
 
+// loginKeychain is the container-registry login of whoever runs tink (the one docker and skopeo use), tolerating a login that cannot
+// be read. A credential helper named in the person's docker config can be missing or broken (Docker Desktop's, on a machine that no
+// longer has it), and that must not stop a lookup of a public image that works anonymously. The problem is remembered instead, so that
+// if the anonymous request is then refused, the error can say why.
+type loginKeychain struct {
+	mu  sync.Mutex
+	err error
+}
+
+func (k *loginKeychain) Resolve(r authn.Resource) (authn.Authenticator, error) {
+	a, err := authn.DefaultKeychain.Resolve(r)
+	if err != nil {
+		k.mu.Lock()
+		k.err = err
+		k.mu.Unlock()
+		return authn.Anonymous, nil
+	}
+	return a, nil
+}
+
+// explain adds, to a REFUSAL from the registry (401 or 403), that the login could not be read, when that is so: it is the likely reason,
+// and what the person has to fix. Any other error is left as it is.
+func (k *loginKeychain) explain(err error) error {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if err == nil || k.err == nil {
+		return err
+	}
+	var terr *transport.Error
+	if !errors.As(err, &terr) || (terr.StatusCode != http.StatusUnauthorized && terr.StatusCode != http.StatusForbidden) {
+		return err
+	}
+	return fmt.Errorf("%w (the container-registry login could not be read, so the registry was asked anonymously: %v)", err, k.err)
+}
+
 // registryOptions say how to reach the registry: for the given platform, and as whoever the remote's URL names, or else as the
-// container-registry login of the person running tink (the same one skopeo and docker use), or anonymously when there is none.
-func registryOptions(ctx context.Context, remote cliconfig.Remote, plat v1.Platform) []regremote.Option {
+// container-registry login of the person running tink, or anonymously when there is none (or it cannot be read).
+func registryOptions(ctx context.Context, remote cliconfig.Remote, plat v1.Platform, login *loginKeychain) []regremote.Option {
 	opts := []regremote.Option{regremote.WithContext(ctx), regremote.WithPlatform(plat)}
 	if user, password, ok := registryCredentials(remote); ok {
 		return append(opts, regremote.WithAuth(&authn.Basic{Username: user, Password: password}))
 	}
-	return append(opts, regremote.WithAuthFromKeychain(authn.DefaultKeychain))
+	return append(opts, regremote.WithAuthFromKeychain(login))
 }
 
 // openImage resolves ref on the remote's registry to the one platform's image the server would run.
-func openImage(ctx context.Context, remote cliconfig.Remote, ref string, plat v1.Platform) (v1.Image, error) {
+func openImage(ctx context.Context, remote cliconfig.Remote, ref string, plat v1.Platform, login *loginKeychain) (v1.Image, error) {
 	r, err := name.ParseReference(registryRef(remote, ref))
 	if err != nil {
 		return nil, err
 	}
-	desc, err := regremote.Get(r, registryOptions(ctx, remote, plat)...)
+	desc, err := regremote.Get(r, registryOptions(ctx, remote, plat, login)...)
 	if err != nil {
 		return nil, err
 	}
@@ -123,13 +161,14 @@ func openImage(ctx context.Context, remote cliconfig.Remote, ref string, plat v1
 func lookupRegistryImage(remote cliconfig.Remote, ref string, plat v1.Platform) (registryImage, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), registryTimeout)
 	defer cancel()
-	img, err := openImage(ctx, remote, ref, plat)
+	login := &loginKeychain{}
+	img, err := openImage(ctx, remote, ref, plat, login)
 	if err != nil {
-		return registryImage{}, err
+		return registryImage{}, login.explain(err)
 	}
 	m, err := img.Manifest()
 	if err != nil {
-		return registryImage{}, err
+		return registryImage{}, login.explain(err)
 	}
 	var size int64
 	for _, l := range m.Layers {
@@ -142,13 +181,14 @@ func lookupRegistryImage(remote cliconfig.Remote, ref string, plat v1.Platform) 
 func lookupRuntimeConfig(remote cliconfig.Remote, ref string, plat v1.Platform) (ociRuntime, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), registryTimeout)
 	defer cancel()
-	img, err := openImage(ctx, remote, ref, plat)
+	login := &loginKeychain{}
+	img, err := openImage(ctx, remote, ref, plat, login)
 	if err != nil {
-		return ociRuntime{}, err
+		return ociRuntime{}, login.explain(err)
 	}
 	cf, err := img.ConfigFile()
 	if err != nil {
-		return ociRuntime{}, fmt.Errorf("reading the image config: %w", err)
+		return ociRuntime{}, login.explain(fmt.Errorf("reading the image config: %w", err))
 	}
 	c := cf.Config
 	return ociRuntime{Entrypoint: c.Entrypoint, Cmd: c.Cmd, Env: c.Env, WorkingDir: c.WorkingDir, User: c.User}, nil
