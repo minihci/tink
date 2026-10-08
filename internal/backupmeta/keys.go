@@ -3,7 +3,8 @@
 // Records: the config key names (the copy policy, the stamps `backup run` and `backup verify` leave on the source volume, the markers on a
 // restore point, the pointer to the stack that applied the volume) and the arithmetic on the failure stamps. Declaration: the backup block
 // (VolumeBackup and its parts), its validation, the Incus snapshot keys it maps to, and the warnings `plan` gives about a volume's copies
-// and verification. Schedule: when a cron expression next fires, when an Incus expiry is reached, and whether a copy is due.
+// and verification. Policy: the resolved copy policy a volume carries (BackupPolicy), how it is written and read, and how a change to it
+// is put in words for `plan`. Schedule: when a cron expression next fires, when an Incus expiry is reached, and whether a copy is due.
 //
 // It is the vocabulary that the planner, the backup engine, the daemon's scheduler and the CLI all have to agree on, and it depends on
 // none of them. That is the point of it being a package of its own: the engine that makes a copy should not have to import the resolver

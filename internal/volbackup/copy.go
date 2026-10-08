@@ -12,29 +12,19 @@ import (
 	"github.com/lxc/incus/v7/shared/api"
 
 	"github.com/minihci/tink/internal/backupmeta"
-	"github.com/minihci/tink/internal/resolve"
 )
 
 // Target is where copies of a volume go: a storage pool on THIS server (a second disk, or the
-// Incus `truenas` driver). Remote Incus servers are not supported yet.
+// Incus `truenas` driver), or one on a remote Incus server named by Remote.
 type Target struct {
 	Name   string // the kind: backup-target's name
 	Pool   string
 	Remote string
-	// Address and Fingerprint are what the stack declared for the remote's server, when it opted in (see resolve.Resource.DeclaredRemote). They
+	// Address and Fingerprint are what the stack declared for the remote's server, when it opted in (see backuprun.TargetFrom). They
 	// are only used to say how to add a remote that is missing: connecting always goes by Remote's name. A target read from a volume's
 	// copy policy has neither, because the policy does not carry them.
 	Address     string
 	Fingerprint string
-}
-
-// TargetFrom builds a Target from a kind: backup-target resource.
-func TargetFrom(r resolve.Resource) Target {
-	t := Target{Name: r.Name, Pool: r.Pool, Remote: r.Remote}
-	if addr, fp, ok := r.DeclaredRemote(); ok {
-		t.Address, t.Fingerprint = addr, fp
-	}
-	return t
 }
 
 // RestorePoint is one backup of a volume on a target: a volume of its own.

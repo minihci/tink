@@ -330,3 +330,18 @@ func TestAFailureThatALaterSuccessSupersededIsNotFailing(t *testing.T) {
 		t.Errorf("%+v", a.Failing)
 	}
 }
+
+func TestTargetFromCarriesWhatTheStackDeclaredAboutTheRemoteNormalised(t *testing.T) {
+	const fp = "0f3a9c2d7b6e41805a9e3c7d2f1b8a4960d5e7c3b2a19f8e7d6c5b4a39281706"
+	declared := resolve.Resource{Kind: resolve.KindBackupTarget, Name: "offsite", Remote: "vps", Pool: "backups", Address: "vps.example.com", Fingerprint: strings.ToUpper(fp)}
+	want := volbackup.Target{Name: "offsite", Remote: "vps", Pool: "backups", Address: "https://vps.example.com:8443", Fingerprint: fp}
+	if got := TargetFrom(declared); got != want {
+		t.Errorf("TargetFrom = %+v, want the https URL with the default port and lower-case hex: %+v", got, want)
+	}
+	// the default is a bare remote name: nothing is carried that the stack did not write down
+	plain := declared
+	plain.Address, plain.Fingerprint = "", ""
+	if got := TargetFrom(plain); got.Address != "" || got.Fingerprint != "" || got.Remote != "vps" {
+		t.Errorf("a target that declared no address must carry none: %+v", got)
+	}
+}
