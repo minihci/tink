@@ -26,7 +26,7 @@ func newHelperCmd() *cobra.Command {
 		Long: `The helper is an Incus instance that runs "tink daemon run" next to the data: the backup scheduler and the ingress
 reconcile. It publishes what it is doing on its own instance config, and these commands read that back. See docs/helper.md.`,
 	}
-	cmd.AddCommand(newHelperInstallCmd(), newHelperUpgradeCmd(), newHelperRemoveCmd(), newHelperStatusCmd(), newHelperRemoteCmd())
+	cmd.AddCommand(newHelperInstallCmd(), newHelperUpgradeCmd(), newHelperRemoveCmd(), newHelperStatusCmd(), newHelperRemoteCmd(), newHelperJobsCmd(), newHelperLogCmd(), newHelperCancelCmd())
 	return cmd
 }
 

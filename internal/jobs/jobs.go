@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -95,10 +96,22 @@ func NewID(now time.Time) string {
 	return now.UTC().Format("20060102T150405Z") + "-" + hex.EncodeToString(b[:])
 }
 
-// Store is a jobs directory.
-type Store struct{ Dir string }
+// Store is a jobs directory. Dir is a directory on this machine. FS, when set, stands in for it: the same directory reached from
+// somewhere else, and then Dir is not used. Only the methods a client needs (Enqueue, Cancel, Status, Log, List, Draining, Counts,
+// Pending) go through it; the executor, which runs next to the directory, uses the directory itself.
+type Store struct {
+	Dir string
+	FS  FS
+}
 
 func (s Store) jobDir(id string) string { return filepath.Join(s.Dir, id) }
+
+func (s Store) fs() FS {
+	if s.FS != nil {
+		return s.FS
+	}
+	return localFS{root: s.Dir}
+}
 
 // Enqueue creates a job: request.json, then READY, last. It is how the scheduler starts work; a remote client does the same
 // with the file API. It returns the new job's id.
@@ -112,23 +125,29 @@ func (s Store) Enqueue(req Request, now time.Time) (string, error) {
 	}
 	id := NewID(now)
 	dir := s.jobDir(id)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	f := s.fs()
+	undo := func() {
+		for _, n := range []string{"READY", "request.json", ""} {
+			_ = f.Remove(path.Join(id, n))
+		}
+	}
+	if err := f.Mkdir(id); err != nil {
 		return "", err
 	}
 	b, err := json.MarshalIndent(req, "", "  ")
 	if err != nil {
-		_ = os.RemoveAll(dir)
+		undo()
 		return "", err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "request.json"), b, 0o600); err != nil {
-		_ = os.RemoveAll(dir)
+	if err := f.WriteFile(path.Join(id, "request.json"), b); err != nil {
+		undo()
 		return "", err
 	}
 	if beforeREADY != nil {
 		beforeREADY(dir)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "READY"), nil, 0o600); err != nil {
-		_ = os.RemoveAll(dir)
+	if err := f.WriteFile(path.Join(id, "READY"), nil); err != nil {
+		undo()
 		return "", err
 	}
 	return id, nil
@@ -143,38 +162,46 @@ func (s Store) Cancel(id string) error {
 	if !ValidID(id) {
 		return fmt.Errorf("%q is not a job id", id)
 	}
-	if _, err := os.Stat(filepath.Join(s.jobDir(id), "READY")); err != nil {
+	f := s.fs()
+	if ok, err := f.Exists(path.Join(id, "READY")); err != nil {
+		return err
+	} else if !ok {
 		return fmt.Errorf("no such job %q", id)
 	}
-	return os.WriteFile(filepath.Join(s.jobDir(id), "cancel"), nil, 0o600)
+	return f.WriteFile(path.Join(id, "cancel"), nil)
 }
 
 // Status reads a job's status. A job that is READY and has no status yet is queued.
+//
+// status.json is read first: the executor writes it only for a job it has seen READY, and for a finished job it is the one file
+// that answers, which matters when every read is a call over the network.
 func (s Store) Status(id string) (Status, error) {
 	if !ValidID(id) {
 		return Status{}, fmt.Errorf("%q is not a job id", id)
 	}
-	dir := s.jobDir(id)
-	if _, err := os.Stat(filepath.Join(dir, "READY")); err != nil {
-		return Status{}, fmt.Errorf("no such job %q", id)
-	}
-	b, err := os.ReadFile(filepath.Join(dir, "status.json"))
-	if errors.Is(err, os.ErrNotExist) {
-		st := Status{Proto: Proto, ID: id, State: Queued}
-		if rb, err := os.ReadFile(filepath.Join(dir, "request.json")); err == nil {
-			var r Request
-			if json.Unmarshal(rb, &r) == nil {
-				st.Kind, st.Origin, st.Created = r.Kind, r.Origin, r.Created
-			}
+	f := s.fs()
+	b, err := f.ReadFile(path.Join(id, "status.json"))
+	if err == nil {
+		var st Status
+		if err := json.Unmarshal(b, &st); err != nil {
+			return Status{}, fmt.Errorf("job %s: status.json: %w", id, err)
 		}
 		return st, nil
 	}
-	if err != nil {
+	if !errors.Is(err, os.ErrNotExist) {
 		return Status{}, err
 	}
-	var st Status
-	if err := json.Unmarshal(b, &st); err != nil {
-		return Status{}, fmt.Errorf("job %s: status.json: %w", id, err)
+	if ok, err := f.Exists(path.Join(id, "READY")); err != nil {
+		return Status{}, err
+	} else if !ok {
+		return Status{}, fmt.Errorf("no such job %q", id)
+	}
+	st := Status{Proto: Proto, ID: id, State: Queued}
+	if rb, err := f.ReadFile(path.Join(id, "request.json")); err == nil {
+		var r Request
+		if json.Unmarshal(rb, &r) == nil {
+			st.Kind, st.Origin, st.Created = r.Kind, r.Origin, r.Created
+		}
 	}
 	return st, nil
 }
@@ -184,7 +211,7 @@ func (s Store) Log(id string) (string, error) {
 	if !ValidID(id) {
 		return "", fmt.Errorf("%q is not a job id", id)
 	}
-	b, err := os.ReadFile(filepath.Join(s.jobDir(id), "log"))
+	b, err := s.fs().ReadFile(path.Join(id, "log"))
 	if errors.Is(err, os.ErrNotExist) {
 		return "", nil
 	}
@@ -193,7 +220,7 @@ func (s Store) Log(id string) (string, error) {
 
 // List returns every READY job's status, oldest first.
 func (s Store) List() ([]Status, error) {
-	entries, err := os.ReadDir(s.Dir)
+	names, err := s.fs().ReadDir("")
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -201,11 +228,11 @@ func (s Store) List() ([]Status, error) {
 		return nil, err
 	}
 	var out []Status
-	for _, e := range entries {
-		if !e.IsDir() || !ValidID(e.Name()) {
+	for _, name := range names {
+		if !ValidID(name) {
 			continue
 		}
-		st, err := s.Status(e.Name())
+		st, err := s.Status(name)
 		if err != nil {
 			continue // not READY yet, or unreadable: not a job to show
 		}
@@ -227,8 +254,8 @@ const DrainFile = "DRAIN"
 
 // Draining reports whether the directory is being drained.
 func (s Store) Draining() bool {
-	_, err := os.Stat(filepath.Join(s.Dir, DrainFile))
-	return err == nil
+	ok, err := s.fs().Exists(DrainFile)
+	return err == nil && ok
 }
 
 // Counts is how many jobs are running and how many are queued, which is what a drain waits on.

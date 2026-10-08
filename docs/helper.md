@@ -7,8 +7,8 @@ document is `docs/helper-design.md` on the `helper-design` branch, not yet on `m
 `remove`, `remote add|list|remove`, `status`, the status document, the ingress half, the image and its release, and what `plan` and `apply` do with the helper.**
 
 **Not built yet:**
-- Handing a `tink backup run` started on another machine to the helper (and `tink helper jobs|log|cancel` to follow it). A run you start yourself runs
-  where you start it, and a copy to another server is relayed through that machine ([remote.md](remote.md)).
+- Handing a `tink backup run` started on another machine to the helper. A run you start yourself runs where you start it, and a copy to another server is
+  relayed through that machine ([remote.md](remote.md)). Following what the helper runs is built: see [its jobs](#its-jobs).
 - Retiring `tink daemon install`, which still prints the old ingress-only unit ([daemon-jobs.md](daemon-jobs.md)).
 
 **Run live so far**, on one host (the lab server): a release build of tink installed the `v0.1.0` image with no flags; the scheduler queues and makes the copies
@@ -127,6 +127,23 @@ is a warning, not a block, because the policy and the remote can be set up in ei
 copy shows as `failing` in `tink helper status`, the helper is `degraded`, and the job's log says which remote and what to do. Once the remote is added the
 next attempt works: the scheduler retries a failing copy with a growing delay (up to the copy's own interval), and a job queued by hand
 (`tink daemon enqueue --jobs /data/jobs`, run inside the helper) does not wait for it.
+
+## Its jobs
+
+`tink helper jobs`, `tink helper log ID` and `tink helper cancel ID` are `tink daemon jobs|cancel` for the helper: the same jobs directory, reached through the
+helper instance's file API, so they work from any machine that can reach the server (`--remote NAME`), not only inside the helper. They need the helper's instance
+to be running, and find it the way `status` does (`--instance` and `--project` choose between several).
+
+```
+tink --remote tron helper jobs              # newest first: id, state, kind, origin (schedule or trigger), age, error
+tink --remote tron helper log ID            # the job's status document and its log
+tink --remote tron helper log -f ID         # keep printing the log until the job is over; exits non-zero if it failed or was cancelled
+tink --remote tron helper cancel ID         # takes effect between copies; a copy under way finishes
+```
+
+`log -f` reads the job every 2 seconds at first and backs off to every 30 while nothing changes, because **each read is a request to the server that leaves an
+event in its log**. It rides out a short gap (the helper restarting, a network blip) and gives up after five minutes of failing reads; the job is not affected
+either way. `Ctrl-C` stops following and leaves the job running.
 
 ## What `plan` and `apply` do about the helper
 
