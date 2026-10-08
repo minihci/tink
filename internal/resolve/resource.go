@@ -1,4 +1,4 @@
-// Package resolve is a spike: a lightweight, tink-native version of the
+// Package resolve is tink's resolver: a lightweight, tink-native version of the
 // resolver half of the architecture in docs/resolver-architecture.md --
 // scoped deliberately to what this platform actually uses (project,
 // profile, storage-volume, instance, file, incus, image, exec), stateless
@@ -79,7 +79,7 @@ type Resource struct {
 	// already inferable from Project/Profiles/device sources below --
 	// e.g. "this instance's installer needs that instance actually
 	// running, not just created" (see nextcloud-app depending on
-	// nextcloud-db in the real stack this spike was built to explain).
+	// nextcloud-db in the real stack this package was first built to explain).
 	DependsOn []string
 
 	// Instance-only.

@@ -50,7 +50,7 @@ type PlannedResource struct {
 // there's nothing a state file would buy here that a live read doesn't
 // already give for free. The real cost of that choice: there's no
 // "generated at create time" value to remember (an auto-assigned IP,
-// say) -- this spike accepts that limitation, matching how every real
+// say) -- tink accepts that limitation, matching how every real
 // resource built on this platform so far uses static, human-chosen
 // names and addresses anyway.
 //
