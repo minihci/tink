@@ -327,9 +327,6 @@ none, and when the helper is not well. See docs/volume-backup.md and docs/helper
 					printPlanned(cmd.OutOrStdout(), p)
 				}
 			}
-			if note := opts.ImageCheckNote(); note != "" {
-				fmt.Fprintln(cmd.OutOrStdout(), "note: "+note)
-			}
 			noteUndeclaredPolicies(cmd.OutOrStdout(), backuprun.ServerEngine{Server: server}, resources)
 			noteHelper(cmd.OutOrStdout(), server, time.Now(), resources)
 			return nil
@@ -386,9 +383,6 @@ says on_image_change: rebuild; see docs/image-updates.md.`, resolve.DefaultFile)
 			actions, err := resolve.ApplyWithOptions(socket, resources, opts)
 			for _, a := range actions {
 				fmt.Fprintln(cmd.OutOrStdout(), a)
-			}
-			if note := opts.ImageCheckNote(); note != "" {
-				fmt.Fprintln(cmd.OutOrStdout(), "note: "+note)
 			}
 			if cerr == nil {
 				noteUndeclaredPolicies(cmd.OutOrStdout(), backuprun.ServerEngine{Server: server}, resources)
