@@ -38,6 +38,17 @@ type fakeIncus struct {
 	modesSeen   []string
 	copiesFrom  []string
 	deletedVols []string
+	// contentTypes are the content types a copy was asked to carry, one per copy.
+	contentTypes []string
+
+	// More ways to fail, for the branches of a copy that a clean server never reaches.
+	failSnapCreate error            // taking a snapshot fails at once
+	failSnapWait   error            // taking a snapshot fails when it is waited for
+	failSnapDelete error            // removing a snapshot fails
+	failServer     error            // reading the server's name fails
+	failUpdate     map[string]error // updating one volume ("pool/name") fails
+	failList       map[string]error // listing this pool's volumes (the project's own) fails
+	failListOnce   bool             // ... but only the first time, so what comes after it can succeed
 }
 
 func newFake(name string, pools ...string) *fakeIncus {
@@ -69,6 +80,9 @@ func (f *fakeIncus) names(pool string) []string {
 func (f *fakeIncus) UseProject(string) incus.InstanceServer { return f }
 
 func (f *fakeIncus) GetServer() (*api.Server, string, error) {
+	if f.failServer != nil {
+		return nil, "", f.failServer
+	}
 	return &api.Server{Environment: api.ServerEnvironment{ServerName: f.name}}, "", nil
 }
 
@@ -122,6 +136,12 @@ func (f *fakeIncus) GetStoragePoolVolumesAllProjects(pool string) ([]api.Storage
 }
 
 func (f *fakeIncus) GetStoragePoolVolumes(pool string) ([]api.StorageVolume, error) {
+	if err := f.failList[pool]; err != nil {
+		if f.failListOnce {
+			delete(f.failList, pool)
+		}
+		return nil, err
+	}
 	var out []api.StorageVolume
 	for _, n := range f.names(pool) {
 		out = append(out, *f.vols[pool+"/"+n])
@@ -138,6 +158,9 @@ func (f *fakeIncus) GetStoragePoolVolumeSnapshots(pool, _, name string) ([]api.S
 }
 
 func (f *fakeIncus) UpdateStoragePoolVolume(pool, _, name string, put api.StorageVolumePut, _ string) error {
+	if err := f.failUpdate[pool+"/"+name]; err != nil {
+		return err
+	}
 	v, ok := f.vols[pool+"/"+name]
 	if !ok {
 		return api.StatusErrorf(http.StatusNotFound, "storage volume not found")
@@ -170,11 +193,17 @@ type remoteOp struct {
 func (o remoteOp) Wait() error { return o.err }
 
 func (f *fakeIncus) CreateStoragePoolVolumeSnapshot(pool, _, name string, snap api.StorageVolumeSnapshotsPost) (incus.Operation, error) {
+	if f.failSnapCreate != nil {
+		return nil, f.failSnapCreate
+	}
 	f.snaps[pool+"/"+name] = append(f.snaps[pool+"/"+name], snap.Name)
-	return localOp{}, nil
+	return localOp{err: f.failSnapWait}, nil
 }
 
 func (f *fakeIncus) DeleteStoragePoolVolumeSnapshot(pool, _, name, snap string) (incus.Operation, error) {
+	if f.failSnapDelete != nil {
+		return nil, f.failSnapDelete
+	}
 	k := pool + "/" + name
 	var keep []string
 	for _, s := range f.snaps[k] {
@@ -216,6 +245,7 @@ func (f *fakeIncus) CopyStoragePoolVolume(pool string, src incus.InstanceServer,
 	}
 	f.modesSeen = append(f.modesSeen, args.Mode)
 	f.copiesFrom = append(f.copiesFrom, srcPool+"/"+vol.Name)
+	f.contentTypes = append(f.contentTypes, vol.ContentType)
 	if f.failCopy != nil {
 		err := f.failCopy
 		f.failCopy = nil

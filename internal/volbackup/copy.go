@@ -93,6 +93,10 @@ func Copy(server incus.InstanceServer, v Volume, t Target, opts CopyOptions) (Co
 // but older restore points could not be removed.
 var errPrune = errors.New("pruning failed")
 
+// copyTo is the work of Copy, without its bookkeeping of failures. The order is what keeps a backup safe: the target is checked before
+// anything is touched, the temporary snapshot is taken and then removed on every path, the new volume carries an in-progress mark until
+// the copy has completed (so a copy that is cut off is never a restore point), and only then are the markers applied, the source stamped
+// and older runs tidied.
 func copyTo(server incus.InstanceServer, v Volume, t Target, opts CopyOptions) (res CopyResult, err error) {
 	now := nowOr(opts.Now)
 	s := v.scoped(server)
@@ -102,13 +106,8 @@ func copyTo(server incus.InstanceServer, v Volume, t Target, opts CopyOptions) (
 		}
 	}
 
-	if t.Remote == "" {
-		if t.Pool == "" {
-			return res, fmt.Errorf("target %q has no pool", t.Name)
-		}
-		if t.Pool == v.pool() {
-			return res, fmt.Errorf("target %q is pool %q, the volume's own pool: that is the same failure domain, not a copy", t.Name, t.Pool)
-		}
+	if err := checkTargetCanHoldACopy(v, t); err != nil {
+		return res, err
 	}
 	dst, err := t.dest(server, v)
 	if err != nil {
@@ -137,43 +136,15 @@ func copyTo(server incus.InstanceServer, v Volume, t Target, opts CopyOptions) (
 	if exists {
 		return res, fmt.Errorf("%s/%s already exists (a second run in the same second?)", t.where(), res.Volume)
 	}
-	copyOf := backupmeta.CopyOf(v.Project, v.pool(), v.Name)
 
 	if opts.DryRun {
-		res.Planned = []string{
-			fmt.Sprintf("snapshot %s/%s@%s", v.pool(), v.Name, res.Snapshot),
-			fmt.Sprintf("copy it to %s/%s", t.where(), res.Volume),
-			fmt.Sprintf("remove the temporary snapshot, and stamp %s", backupmeta.CopyStampAt(t.Name)),
-		}
-		if opts.Retain != "" {
-			pruned, others, perr := prune(dst, v, t, opts.Retain, start, "", true, me)
-			if perr != nil {
-				return res, perr
-			}
-			res.OtherServers = others
-			for _, p := range pruned {
-				res.Planned = append(res.Planned, fmt.Sprintf("prune restore point %s/%s (older than %s)", t.where(), p, opts.Retain))
-			}
-		}
-		swept, serr := sweepPartials(dst, v, t, start, "", true, me)
-		if serr != nil {
-			return res, serr
-		}
-		for _, p := range swept {
-			res.Planned = append(res.Planned, fmt.Sprintf("remove abandoned partial copy %s/%s (started more than %d days ago and never finished)", t.where(), p, int(PartialGrace/(24*time.Hour))))
-		}
-		return res, nil
+		return planCopy(dst, v, t, opts, res, start, me)
 	}
 
 	// The temporary snapshot is removed on every path, and carries an expiry as a safety net should tink die.
 	say("snapshotting %s/%s as %s", v.pool(), v.Name, res.Snapshot)
-	safety := start.Add(24 * time.Hour)
-	op, err := s.CreateStoragePoolVolumeSnapshot(v.pool(), "custom", v.Name, api.StorageVolumeSnapshotsPost{Name: res.Snapshot, ExpiresAt: &safety})
-	if err != nil {
-		return res, fmt.Errorf("snapshotting %s/%s: %w", v.pool(), v.Name, err)
-	}
-	if err := op.Wait(); err != nil {
-		return res, fmt.Errorf("snapshotting %s/%s: %w", v.pool(), v.Name, err)
+	if err := takeSnapshot(s, v, res.Snapshot, start.Add(24*time.Hour)); err != nil {
+		return res, err
 	}
 	defer func() {
 		if derr := removeSnapshot(s, v, res.Snapshot); derr != nil {
@@ -187,40 +158,9 @@ func copyTo(server incus.InstanceServer, v Volume, t Target, opts CopyOptions) (
 	}()
 
 	say("copying it to %s/%s", t.where(), res.Volume)
-	// The restore point's markers are applied only AFTER the copy has completed. Until then the new volume carries an
-	// in-progress mark instead (a different key), so a copy that is cut off part way (a tunnel that drops, a full
-	// disk, tink killed) is never listed as a restore point, so it can never be restored from, verified, or counted
-	// as the newest backup, and yet tink can recognise it later and remove it (sweepPartials).
-	inProgress := map[string]string{
-		backupmeta.MarkerPartialOf:  copyOf,
-		backupmeta.MarkerPartialAt:  start.UTC().Format(time.RFC3339),
-		backupmeta.MarkerCopyTarget: t.Name,
-		backupmeta.MarkerCopyServer: me,
-	}
-	markers := map[string]string{
-		backupmeta.MarkerCopyOf:     copyOf,
-		backupmeta.MarkerCopyAt:     start.UTC().Format(time.RFC3339),
-		backupmeta.MarkerCopyTarget: t.Name,
-		backupmeta.MarkerCopySnap:   res.Snapshot,
-		backupmeta.MarkerCopyServer: me,
-	}
-	from := api.StorageVolume{Name: v.Name + "/" + res.Snapshot, Type: "custom", ContentType: src.ContentType,
-		StorageVolumePut: api.StorageVolumePut{Config: inProgress}}
-	cop, cerr := dst.CopyStoragePoolVolume(t.pool(), s, v.pool(), from, &incus.StoragePoolVolumeCopyArgs{Name: res.Volume, Mode: t.transferMode()})
-	if cerr == nil {
-		cerr = cop.Wait()
-	}
-	if cerr != nil {
-		// the name is unique to this run, so anything under it is ours: do not leave a half-made restore point
-		note := ""
-		if left, lerr := volumeExists(dst, t.pool(), res.Volume); lerr != nil {
-			note = fmt.Sprintf(" (and could not check whether a partial volume %s/%s was left: %v; tink will never use it, and removes it itself once it is %d days old if the target kept its in-progress mark, otherwise delete it by hand)", t.where(), res.Volume, lerr, int(PartialGrace/(24*time.Hour)))
-		} else if left {
-			if derr := dst.DeleteStoragePoolVolume(t.pool(), "custom", res.Volume); derr != nil {
-				note = fmt.Sprintf(" (and the partial volume %s/%s could not be removed: %v; tink will never use it, and removes it itself once it is %d days old if the target kept its in-progress mark, otherwise delete it by hand)", t.where(), res.Volume, derr, int(PartialGrace/(24*time.Hour)))
-			}
-		}
-		return res, fmt.Errorf("copying %s/%s@%s to %s/%s: %w%s", v.pool(), v.Name, res.Snapshot, t.where(), res.Volume, cerr, note)
+	inProgress, markers := copyMarkers(backupmeta.CopyOf(v.Project, v.pool(), v.Name), start, t, res.Snapshot, me)
+	if err := copyIntoRestorePoint(dst, s, v, t, res, src.ContentType, inProgress); err != nil {
+		return res, err
 	}
 	// PolicyKey describes the volume this was copied FROM; a restore point must not carry it, or a scheduler that lists
 	// volumes would copy the copy.
@@ -231,9 +171,110 @@ func copyTo(server incus.InstanceServer, v Volume, t Target, opts CopyOptions) (
 	if err := stampCopy(s, v, t.Name, res.Volume, start); err != nil {
 		return res, err
 	}
-	// Tidy up after older runs: restore points past their retention, and copies another run started and never finished.
-	// A failure here is not a failed copy (the restore point exists and the source is stamped), so it is reported as
-	// its own kind of error.
+	return tidyAfterCopy(dst, v, t, opts, res, start, me, say)
+}
+
+// checkTargetCanHoldACopy refuses a pool target that names no pool, or the volume's own: that is the same failure domain, not a copy.
+func checkTargetCanHoldACopy(v Volume, t Target) error {
+	if t.Remote != "" {
+		return nil
+	}
+	if t.Pool == "" {
+		return fmt.Errorf("target %q has no pool", t.Name)
+	}
+	if t.Pool == v.pool() {
+		return fmt.Errorf("target %q is pool %q, the volume's own pool: that is the same failure domain, not a copy", t.Name, t.Pool)
+	}
+	return nil
+}
+
+// planCopy is what a dry run says: the steps a copy would take, what it would prune and what it would sweep. It changes nothing. On a
+// failure it returns what it had planned so far along with the error.
+func planCopy(dst incus.InstanceServer, v Volume, t Target, opts CopyOptions, res CopyResult, start time.Time, me string) (CopyResult, error) {
+	res.Planned = []string{
+		fmt.Sprintf("snapshot %s/%s@%s", v.pool(), v.Name, res.Snapshot),
+		fmt.Sprintf("copy it to %s/%s", t.where(), res.Volume),
+		fmt.Sprintf("remove the temporary snapshot, and stamp %s", backupmeta.CopyStampAt(t.Name)),
+	}
+	if opts.Retain != "" {
+		pruned, others, perr := prune(dst, v, t, opts.Retain, start, "", true, me)
+		if perr != nil {
+			return res, perr
+		}
+		res.OtherServers = others
+		for _, p := range pruned {
+			res.Planned = append(res.Planned, fmt.Sprintf("prune restore point %s/%s (older than %s)", t.where(), p, opts.Retain))
+		}
+	}
+	swept, serr := sweepPartials(dst, v, t, start, "", true, me)
+	if serr != nil {
+		return res, serr
+	}
+	for _, p := range swept {
+		res.Planned = append(res.Planned, fmt.Sprintf("remove abandoned partial copy %s/%s (started more than %d days ago and never finished)", t.where(), p, int(PartialGrace/(24*time.Hour))))
+	}
+	return res, nil
+}
+
+// takeSnapshot snapshots the source volume, with an expiry so that the snapshot goes away on its own should tink die before removing it.
+func takeSnapshot(s incus.InstanceServer, v Volume, name string, expires time.Time) error {
+	op, err := s.CreateStoragePoolVolumeSnapshot(v.pool(), "custom", v.Name, api.StorageVolumeSnapshotsPost{Name: name, ExpiresAt: &expires})
+	if err != nil {
+		return fmt.Errorf("snapshotting %s/%s: %w", v.pool(), v.Name, err)
+	}
+	if err := op.Wait(); err != nil {
+		return fmt.Errorf("snapshotting %s/%s: %w", v.pool(), v.Name, err)
+	}
+	return nil
+}
+
+// copyMarkers are the two sets of marks a restore point carries. A restore point's own markers are applied only AFTER the copy has
+// completed. Until then the new volume carries an in-progress mark instead (a different key), so a copy that is cut off part way (a
+// tunnel that drops, a full disk, tink killed) is never listed as a restore point, so it can never be restored from, verified, or counted
+// as the newest backup, and yet tink can recognise it later and remove it (sweepPartials).
+func copyMarkers(copyOf string, start time.Time, t Target, snapshot, me string) (inProgress, markers map[string]string) {
+	inProgress = map[string]string{
+		backupmeta.MarkerPartialOf:  copyOf,
+		backupmeta.MarkerPartialAt:  start.UTC().Format(time.RFC3339),
+		backupmeta.MarkerCopyTarget: t.Name,
+		backupmeta.MarkerCopyServer: me,
+	}
+	markers = map[string]string{
+		backupmeta.MarkerCopyOf:     copyOf,
+		backupmeta.MarkerCopyAt:     start.UTC().Format(time.RFC3339),
+		backupmeta.MarkerCopyTarget: t.Name,
+		backupmeta.MarkerCopySnap:   snapshot,
+		backupmeta.MarkerCopyServer: me,
+	}
+	return inProgress, markers
+}
+
+// copyIntoRestorePoint copies the temporary snapshot into the new restore point on the target, carrying the in-progress mark. If the copy
+// fails, the new volume's name is unique to this run, so anything under it is ours: it is removed, and the error says if that could not be done.
+func copyIntoRestorePoint(dst, s incus.InstanceServer, v Volume, t Target, res CopyResult, contentType string, inProgress map[string]string) error {
+	from := api.StorageVolume{Name: v.Name + "/" + res.Snapshot, Type: "custom", ContentType: contentType,
+		StorageVolumePut: api.StorageVolumePut{Config: inProgress}}
+	cop, cerr := dst.CopyStoragePoolVolume(t.pool(), s, v.pool(), from, &incus.StoragePoolVolumeCopyArgs{Name: res.Volume, Mode: t.transferMode()})
+	if cerr == nil {
+		cerr = cop.Wait()
+	}
+	if cerr == nil {
+		return nil
+	}
+	note := ""
+	if left, lerr := volumeExists(dst, t.pool(), res.Volume); lerr != nil {
+		note = fmt.Sprintf(" (and could not check whether a partial volume %s/%s was left: %v; tink will never use it, and removes it itself once it is %d days old if the target kept its in-progress mark, otherwise delete it by hand)", t.where(), res.Volume, lerr, int(PartialGrace/(24*time.Hour)))
+	} else if left {
+		if derr := dst.DeleteStoragePoolVolume(t.pool(), "custom", res.Volume); derr != nil {
+			note = fmt.Sprintf(" (and the partial volume %s/%s could not be removed: %v; tink will never use it, and removes it itself once it is %d days old if the target kept its in-progress mark, otherwise delete it by hand)", t.where(), res.Volume, derr, int(PartialGrace/(24*time.Hour)))
+		}
+	}
+	return fmt.Errorf("copying %s/%s@%s to %s/%s: %w%s", v.pool(), v.Name, res.Snapshot, t.where(), res.Volume, cerr, note)
+}
+
+// tidyAfterCopy removes what older runs left: restore points past their retention, and copies another run started and never finished.
+// A failure here is not a failed copy (the restore point exists and the source is stamped), so it is reported as its own kind of error.
+func tidyAfterCopy(dst incus.InstanceServer, v Volume, t Target, opts CopyOptions, res CopyResult, start time.Time, me string, say func(string, ...any)) (CopyResult, error) {
 	var tidy []error
 	if opts.Retain != "" {
 		say("pruning restore points older than %s", opts.Retain)
