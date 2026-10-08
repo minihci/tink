@@ -58,8 +58,8 @@ A remote the client configuration defines under the same name **always wins** (a
 
 `plan` and `plan apply` also ask the registry whether an image has moved ([image-updates.md](image-updates.md)). tink does that itself, over HTTPS, from wherever it runs, and asks for the
 image of the **server's** architecture, not the machine's own: an arm64 laptop planning against an amd64 server gets the answer the server would, and nothing has to be installed on
-the client. It reaches the registry as the login written into the remote's URL says (`https://user:password@host`), else as the container-registry login of whoever runs tink (the one
-`docker login` and `skopeo login` write), else anonymously. A registry that cannot be reached, or an image it does not have, is reported against that image, and an instance set to
+the client. It reaches the registry as the login written into the remote's URL says (`https://user:password@host`), else as the container-registry login of whoever runs tink (the Docker config `docker login` writes; only when there is none, the `auth.json` that
+`skopeo login` and Podman write, or `$REGISTRY_AUTH_FILE`), else anonymously. A registry that cannot be reached, or an image it does not have, is reported against that image, and an instance set to
 `on_image_change: rebuild` is blocked on an image it cannot verify; `--offline` skips the lookups on purpose. The same goes for a rebuild's image: the server is told to pull it, so none of
 it passes through the client either.
 

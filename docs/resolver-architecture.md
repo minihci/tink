@@ -229,8 +229,8 @@ manual-translation cost — not a hypothetical one.
 
 ## Update, 2026-09-18: the resolver got built, and the diagram was wrong
 
-The convergence half got built after all, as `internal/resolve` on the
-`resolve-spike` branch — not OpenTofu, not `incus-apply`, a small
+The convergence half got built after all, as `internal/resolve` (first
+merged as PR #2, from a branch since deleted) — not OpenTofu, not `incus-apply`, a small
 tink-native package: a dependency graph inferred by name-matching
 (project/profiles/device sources, plus an explicit `depends_on` for
 edges structural inference can't reach), stateless (every check queries
