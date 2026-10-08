@@ -31,7 +31,8 @@ between the text of two image references. For an OCI image Incus derives
 the fingerprint from the image's layer digests, so it identifies content,
 and it is recorded on the instance as `volatile.base_image`. `plan` asks the
 registry what the YAML's reference resolves to now (through Incus's own OCI
-client, which runs `skopeo`) and compares the result. Two references for
+client, which runs `skopeo` on the machine tink runs on, so under `--remote` on the client:
+[remote.md](remote.md#image-remotes-need-no-setup)) and compares the result. Two references for
 the same bytes (`:2` and `:2.1.2-alpine`, or `library/x` and `x`, or a tag
 and a digest) are therefore not drift, and a floating tag such as `:stable`
 whose content has moved *is*.

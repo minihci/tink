@@ -261,10 +261,10 @@ func newPlanCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "plan [flags] [FILE...]",
-		Short: "Spike: show what would change to converge a set of resources declared in YAML",
-		Long: fmt.Sprintf(`plan is a spike (see docs/resolver-architecture.md): a lightweight,
-tink-native version of the resolver half of that document's proposed
-architecture. It computes a dependency graph from each resource's own
+		Short: "Show what would change to converge a set of resources declared in YAML",
+		Long: fmt.Sprintf(`plan is tink's resolver (the design is in docs/resolver-architecture.md):
+a lightweight, tink-native take on the resolver half of that document's
+proposed architecture. It computes a dependency graph from each resource's own
 Project/Profiles/device sources plus any explicit depends_on, then
 reports what "tink plan apply" would do, level by level -- everything in
 one level would run concurrently, since nothing in it depends on

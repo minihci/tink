@@ -54,8 +54,13 @@ stack commonly uses, only where the client configuration lacks them:
 | `ghcr` | https://ghcr.io | oci |
 | `images` | https://images.linuxcontainers.org | simplestreams |
 
-A remote the client configuration defines under the same name **always wins** (a mirror, say). The server pulls the image itself, so no
-`skopeo` is needed on the client, and the instance is created for the **server's** architecture.
+A remote the client configuration defines under the same name **always wins** (a mirror, say). The server pulls the image itself, so creating an instance needs no
+`skopeo` on the client, and the instance is created for the **server's** architecture.
+
+`plan` and `plan apply` also ask the registry whether an image has moved ([image-updates.md](image-updates.md)), and that lookup runs `skopeo` **on the
+machine tink runs on**: under `--remote` that is the client. Without it, `plan` warns once per image (`could not verify … exec: "skopeo": executable file not
+found in $PATH`) and an instance set to `on_image_change: rebuild` is blocked, as for any lookup that fails. Install it (`brew install skopeo`), or pass `--offline` to skip
+the lookups.
 
 ## What does not work under a remote, and says so
 

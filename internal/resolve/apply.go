@@ -256,11 +256,11 @@ func updateOne(server incus.InstanceServer, r Resource, env volumeEnv) error {
 		// changed -- CreateInstanceFile overwrites either way.
 		return pushFile(server, r)
 	default:
-		// Not exercised in this spike: projects are create-only so far,
+		// Not implemented yet: projects are create-only so far,
 		// matching every real deployment on this platform to date --
 		// nothing has ever needed to mutate one in place. (Storage volumes
 		// became updatable for their backup snapshot policy.)
-		return fmt.Errorf("update not implemented for kind %q in this spike", r.Kind)
+		return fmt.Errorf("update is not implemented for kind %q", r.Kind)
 	}
 }
 
