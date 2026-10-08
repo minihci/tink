@@ -70,12 +70,15 @@ A second field, `snapshot_volumes`, applies only with `rebuild`; see below.
 
 `rebuild` requires a digest-pinned image: `remote:repo:tag@sha256:...`. The
 tag is cosmetic (Incus drops it when a digest is present); the digest is what
-is pulled. Get one with any tool that shows an image's digest, for example the `skopeo` that ships in the Incus package:
+is pulled. Get one with any tool that shows an image's digest. tink does not need any of them (it asks the registry itself), but one is the
+easiest way to read the digest to paste in, for example `skopeo`, which ships in the Incus package:
 
 ```
 /opt/incus/bin/skopeo inspect --format '{{.Digest}}' docker://ghcr.io/home-assistant/home-assistant:2026.9.4
 sha256:3e6710a7ab2a61311d9d899b719f6c3657791c63e8f4942cec4ebc42401d6b76
 ```
+
+or `crane digest ghcr.io/home-assistant/home-assistant:2026.9.4`.
 
 For a multi-arch image this is the digest of the index, which is what you
 want. A pin cannot move, so the target of a rebuild is exactly what you
