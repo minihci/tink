@@ -246,7 +246,9 @@ An exit status of 0 therefore means converged. Specifically:
   effective config of every instance that uses it, blocked ones included.
 - tink does not restart dependents of a rebuilt instance, and does not expire
   or prune `tink-pre-rebuild-*` snapshots.
-- The runtime-config read is anonymous. A registry that needs credentials
+- The runtime-config read reaches the registry as the lookup does (the login
+  in the remote's URL or from its credentials helper, else the Docker login,
+  else anonymously; see [remote.md](remote.md)). A registry that refuses it
   produces an error, which blocks a rebuild.
 - Mutable tags: for `report` and `ignore`, `plan` sees content that moved under
   a floating tag; `rebuild` deliberately requires a digest instead.
