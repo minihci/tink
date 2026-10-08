@@ -98,10 +98,23 @@ const cronFields = 5
 
 // ValidateBackup rejects a malformed backup block at load time. A missing block
 // is NOT an error here: it is a plan-time warning (see decideVolume).
+//
+// The checks run in the order the errors are reported in: what the block is (a block that is wrong about that has nothing else
+// worth saying), then verification, then copies, then snapshots.
 func ValidateBackup(name string, b *VolumeBackup) error {
 	if b == nil {
 		return nil
 	}
+	for _, check := range []func(string, *VolumeBackup) error{validateShape, validateVerify, validateCopies, validateSnapshots} {
+		if err := check(name, b); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateShape checks what the block says it is: none (with a reason) or snapshots and/or copies, never both.
+func validateShape(name string, b *VolumeBackup) error {
 	hasSnap, hasCopies, hasNone := b.Snapshots != nil, len(b.Copies) > 0, b.None != ""
 	switch {
 	case hasNone && (hasSnap || hasCopies || b.Verify != "" || b.VerifyCheck != nil):
@@ -111,17 +124,27 @@ func ValidateBackup(name string, b *VolumeBackup) error {
 	case hasNone && strings.TrimSpace(b.None) == "":
 		return fmt.Errorf("resource %q: backup.none needs a reason, not whitespace", name)
 	}
+	return nil
+}
+
+// validateVerify checks how often a restore is rehearsed and the check that decides whether the restored data is good.
+func validateVerify(name string, b *VolumeBackup) error {
 	if b.Verify != "" && !verifyCadences[b.Verify] {
 		return fmt.Errorf("resource %q: backup.verify must be daily, weekly or monthly, got %q", name, b.Verify)
 	}
 	if c := b.VerifyCheck; c != nil {
-		if (!hasSnap && !hasCopies) || strings.TrimSpace(c.Image) == "" || len(c.Command) == 0 {
+		if (b.Snapshots == nil && len(b.Copies) == 0) || strings.TrimSpace(c.Image) == "" || len(c.Command) == 0 {
 			return fmt.Errorf("resource %q: backup.verify.check needs image and command, and something to restore (snapshots or copies)", name)
 		}
 		if c.Mount != "" && !strings.HasPrefix(c.Mount, "/") {
 			return fmt.Errorf("resource %q: backup.verify.check.mount must be an absolute path, got %q", name, c.Mount)
 		}
 	}
+	return nil
+}
+
+// validateCopies checks each copy: it names a target, once, and can be scheduled and expired.
+func validateCopies(name string, b *VolumeBackup) error {
 	seen := map[string]bool{}
 	for i, c := range b.Copies {
 		if c.Target == "" {
@@ -138,13 +161,19 @@ func ValidateBackup(name string, b *VolumeBackup) error {
 			return fmt.Errorf("resource %q: backup.copies[%d] (%s) retain: %w", name, i, c.Target, err)
 		}
 	}
-	if hasSnap {
-		if err := ValidateSchedule(b.Snapshots.Schedule); err != nil {
-			return fmt.Errorf("resource %q: backup.snapshots.schedule: %w", name, err)
-		}
-		if err := ValidateRetain(b.Snapshots.Retain); err != nil {
-			return fmt.Errorf("resource %q: backup.snapshots.retain: %w", name, err)
-		}
+	return nil
+}
+
+// validateSnapshots checks the Incus snapshot schedule and expiry the block maps to.
+func validateSnapshots(name string, b *VolumeBackup) error {
+	if b.Snapshots == nil {
+		return nil
+	}
+	if err := ValidateSchedule(b.Snapshots.Schedule); err != nil {
+		return fmt.Errorf("resource %q: backup.snapshots.schedule: %w", name, err)
+	}
+	if err := ValidateRetain(b.Snapshots.Retain); err != nil {
+		return fmt.Errorf("resource %q: backup.snapshots.retain: %w", name, err)
 	}
 	return nil
 }
