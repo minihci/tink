@@ -345,97 +345,133 @@ func Run(ctx context.Context, eng Engine, items []Item, opts Options, out io.Wri
 	if opts.EmptyMsg == "" {
 		opts.EmptyMsg = stackEmptyMsg
 	}
-	now := opts.Now
-	if now == nil {
-		now = time.Now
+	if opts.Now == nil {
+		opts.Now = time.Now
 	}
 	selected, unknown := Select(items, opts.Volumes)
 
-	var rep Report
-	rep.Unknown = unknown
-	warnedRelay := map[string]bool{}
-	add := func(c CopyReport) { rep.Copies = append(rep.Copies, c) }
-
+	r := &runner{ctx: ctx, eng: eng, opts: opts, out: out, warnedRelay: map[string]bool{}}
+	r.rep.Unknown = unknown
 	for _, it := range selected {
 		live, err := eng.LiveConfig(it.Volume)
 		if err != nil {
-			fmt.Fprintf(out, "%s: %v\n", it.Label, err)
-			rep.Failed++
-			add(CopyReport{Volume: it.Label, Outcome: Failed, Detail: err.Error()})
+			r.failed(it.Label, "", fmt.Sprintf("%s: %v", it.Label, err), err)
 			continue
 		}
 		for _, c := range it.Copies {
-			name := c.Target.Name
-			if err := ctx.Err(); err != nil {
-				fmt.Fprintf(out, "%s -> %s: stopped (%v)\n", it.Label, name, err)
-				rep.Skipped++
-				add(CopyReport{Volume: it.Label, Target: name, Outcome: Skipped, Detail: "stopped: " + err.Error()})
-				continue
-			}
-			if opts.Due {
-				decision, err := backupmeta.CopyDue(c.Schedule, live, name, now())
-				if err != nil {
-					fmt.Fprintf(out, "%s -> %s: %v\n", it.Label, name, err)
-					rep.Failed++
-					add(CopyReport{Volume: it.Label, Target: name, Outcome: Failed, Detail: err.Error()})
-					continue
-				}
-				if !decision.Due {
-					fmt.Fprintf(out, "%s -> %s: %s\n", it.Label, name, decision.Reason)
-					rep.Skipped++
-					add(CopyReport{Volume: it.Label, Target: name, Outcome: Skipped, Detail: decision.Reason})
-					continue
-				}
-			}
-			rep.Tried++
-			// A copy to ANOTHER server is relayed through the process that runs it.
-			if opts.Remote != "" && c.Target.Remote != "" && !warnedRelay[name] {
-				warnedRelay[name] = true
-				fmt.Fprintf(out, "note: tink is pointed at the remote %q, and the copy to %q (remote %q) is relayed through this machine, so the volume's data passes through it\n", opts.Remote, name, c.Target.Remote)
-			}
-			res, err := eng.Copy(it.Volume, c.Target, volbackup.CopyOptions{Retain: c.Retain, DryRun: opts.DryRun, Now: now, Progress: out})
-			if errors.Is(err, volbackup.ErrBusy) {
-				rep.Tried--
-				rep.Skipped++
-				fmt.Fprintf(out, "%s -> %s: already running\n", it.Label, name)
-				add(CopyReport{Volume: it.Label, Target: name, Outcome: Skipped, Detail: "already running"})
-				continue
-			}
-			if err != nil {
-				fmt.Fprintf(out, "FAILED %s -> %s: %v\n", it.Label, name, err)
-				rep.Failed++
-				add(CopyReport{Volume: it.Label, Target: name, Outcome: Failed, Detail: err.Error()})
-				continue
-			}
-			if opts.DryRun {
-				for _, p := range res.Planned {
-					fmt.Fprintf(out, "%s -> %s: would %s\n", it.Label, name, p)
-				}
-				add(CopyReport{Volume: it.Label, Target: name, Outcome: Planned})
-				continue
-			}
-			if len(res.OtherServers) > 0 {
-				fmt.Fprintf(out, "note: %s -> %s also holds restore points of a volume with this name made by other server(s) (%s); tink leaves them alone\n", it.Label, name, strings.Join(res.OtherServers, ", "))
-			}
-			fmt.Fprintf(out, "copied %s -> %s: restore point %s", it.Label, name, res.Volume)
-			if len(res.Pruned) > 0 {
-				fmt.Fprintf(out, " (pruned %d older: %s)", len(res.Pruned), strings.Join(res.Pruned, ", "))
-			}
-			if len(res.Swept) > 0 {
-				fmt.Fprintf(out, " (removed %d abandoned partial cop(ies): %s)", len(res.Swept), strings.Join(res.Swept, ", "))
-			}
-			fmt.Fprintln(out)
-			add(CopyReport{Volume: it.Label, Target: name, Outcome: Copied, RestorePoint: res.Volume, Pruned: res.Pruned, Swept: res.Swept, OtherServers: res.OtherServers})
+			r.runCopy(it, live, c)
 		}
 	}
 	for _, name := range unknown {
 		fmt.Fprintf(out, "%s: %s\n", name, opts.UnknownMsg)
-		rep.Failed++
+		r.rep.Failed++
 	}
-	if rep.Tried == 0 && rep.Skipped == 0 && rep.Failed == 0 {
+	if r.rep.Tried == 0 && r.rep.Skipped == 0 && r.rep.Failed == 0 {
 		fmt.Fprintln(out, opts.EmptyMsg)
 	}
-	return rep, nil
+	return r.rep, nil
+}
+
+// runner is one Run: where it writes, what it has reported so far, and which notes it has already given.
+type runner struct {
+	ctx         context.Context
+	eng         Engine
+	opts        Options // with its defaults filled in
+	out         io.Writer
+	rep         Report
+	warnedRelay map[string]bool
+}
+
+func (r *runner) add(c CopyReport) { r.rep.Copies = append(r.rep.Copies, c) }
+
+// failed prints the line for a volume or copy that failed, and records it. target is "" for a volume that could not be read at all.
+func (r *runner) failed(label, target, line string, err error) {
+	fmt.Fprintln(r.out, line)
+	r.rep.Failed++
+	r.add(CopyReport{Volume: label, Target: target, Outcome: Failed, Detail: err.Error()})
+}
+
+// skipped prints the line for a copy that was not made, and records why.
+func (r *runner) skipped(label, target, line, detail string) {
+	fmt.Fprintln(r.out, line)
+	r.rep.Skipped++
+	r.add(CopyReport{Volume: label, Target: target, Outcome: Skipped, Detail: detail})
+}
+
+// runCopy does one copy of one volume: unless the run was stopped or the copy is not due, it is made (or, in a dry run, planned), and what
+// happened is printed and recorded. A copy that fails does not stop the others.
+func (r *runner) runCopy(it Item, live map[string]string, c Copy) {
+	name := c.Target.Name
+	if err := r.ctx.Err(); err != nil {
+		r.skipped(it.Label, name, fmt.Sprintf("%s -> %s: stopped (%v)", it.Label, name, err), "stopped: "+err.Error())
+		return
+	}
+	if r.opts.Due && !r.isDue(it, live, c) {
+		return
+	}
+	r.rep.Tried++
+	r.noteRelay(name, c)
+	res, err := r.eng.Copy(it.Volume, c.Target, volbackup.CopyOptions{Retain: c.Retain, DryRun: r.opts.DryRun, Now: r.opts.Now, Progress: r.out})
+	switch {
+	case errors.Is(err, volbackup.ErrBusy):
+		r.rep.Tried--
+		r.skipped(it.Label, name, fmt.Sprintf("%s -> %s: already running", it.Label, name), "already running")
+	case err != nil:
+		r.failed(it.Label, name, fmt.Sprintf("FAILED %s -> %s: %v", it.Label, name, err), err)
+	case r.opts.DryRun:
+		r.reportPlanned(it, name, res)
+	default:
+		r.reportCopied(it, name, res)
+	}
+}
+
+// isDue says whether a copy should be made now, when only the due ones are wanted. One that is not due, or whose schedule cannot be read,
+// is recorded (as skipped, or as failed) and is not made.
+func (r *runner) isDue(it Item, live map[string]string, c Copy) bool {
+	name := c.Target.Name
+	decision, err := backupmeta.CopyDue(c.Schedule, live, name, r.opts.Now())
+	if err != nil {
+		r.failed(it.Label, name, fmt.Sprintf("%s -> %s: %v", it.Label, name, err), err)
+		return false
+	}
+	if !decision.Due {
+		r.skipped(it.Label, name, fmt.Sprintf("%s -> %s: %s", it.Label, name, decision.Reason), decision.Reason)
+		return false
+	}
+	return true
+}
+
+// noteRelay says, once per target, that a copy to ANOTHER server is relayed through the process that runs it.
+func (r *runner) noteRelay(name string, c Copy) {
+	if r.opts.Remote == "" || c.Target.Remote == "" || r.warnedRelay[name] {
+		return
+	}
+	r.warnedRelay[name] = true
+	fmt.Fprintf(r.out, "note: tink is pointed at the remote %q, and the copy to %q (remote %q) is relayed through this machine, so the volume's data passes through it\n", r.opts.Remote, name, c.Target.Remote)
+}
+
+// reportPlanned prints what a dry run says a copy would do.
+func (r *runner) reportPlanned(it Item, name string, res volbackup.CopyResult) {
+	for _, p := range res.Planned {
+		fmt.Fprintf(r.out, "%s -> %s: would %s\n", it.Label, name, p)
+	}
+	r.add(CopyReport{Volume: it.Label, Target: name, Outcome: Planned})
+}
+
+// reportCopied prints a copy that was made, with what it pruned and swept, and anything the person should know about the target.
+func (r *runner) reportCopied(it Item, name string, res volbackup.CopyResult) {
+	if len(res.OtherServers) > 0 {
+		fmt.Fprintf(r.out, "note: %s -> %s also holds restore points of a volume with this name made by other server(s) (%s); tink leaves them alone\n", it.Label, name, strings.Join(res.OtherServers, ", "))
+	}
+	fmt.Fprintf(r.out, "copied %s -> %s: restore point %s", it.Label, name, res.Volume)
+	if len(res.Pruned) > 0 {
+		fmt.Fprintf(r.out, " (pruned %d older: %s)", len(res.Pruned), strings.Join(res.Pruned, ", "))
+	}
+	if len(res.Swept) > 0 {
+		fmt.Fprintf(r.out, " (removed %d abandoned partial cop(ies): %s)", len(res.Swept), strings.Join(res.Swept, ", "))
+	}
+	fmt.Fprintln(r.out)
+	r.add(CopyReport{Volume: it.Label, Target: name, Outcome: Copied, RestorePoint: res.Volume, Pruned: res.Pruned, Swept: res.Swept, OtherServers: res.OtherServers})
 }
 
 // DueCopy is a copy that should run now.
