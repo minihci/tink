@@ -181,11 +181,16 @@ daemon, the crontab, or any instance.`,
 			if err != nil {
 				return err
 			}
+			source, err := helperSource()
+			if err != nil {
+				return err
+			}
 			result, err := bootstrap.Run(bootstrap.Options{
 				RepoRoot: repoRoot,
 				Config:   cfg,
 				DryRun:   dryRun,
 				Socket:   socket,
+				Helper:   source,
 			})
 			for _, action := range result.Actions {
 				fmt.Fprintln(cmd.OutOrStdout(), action)
@@ -572,7 +577,6 @@ func newDaemonCmd() *cobra.Command {
 	}
 
 	daemonCmd.AddCommand(newDaemonRunCmd())
-	daemonCmd.AddCommand(newDaemonInstallCmd())
 	daemonCmd.AddCommand(newDaemonEnqueueCmd(), newDaemonJobsCmd(), newDaemonCancelCmd())
 	return daemonCmd
 }
@@ -591,7 +595,7 @@ func newDaemonRunCmd() *cobra.Command {
 		Short: "Run tink's periodic work (ingress reconcile, backup scheduler) until stopped",
 		Long: `run reconciles ingress registrations immediately, then again every
 --interval, until it receives SIGTERM or SIGINT -- the mode an init
-system's unit file (see "tink daemon install") actually invokes.
+system's unit file, or the helper's entrypoint (see docs/helper.md), actually invokes.
 
 With --jobs it also runs the helper's work: a scheduler that, every --scheduler-interval,
 lists the volumes that carry a copy policy (written by "tink plan apply" from the stack's
@@ -691,47 +695,6 @@ reach. Anything else is refused rather than act on the wrong machine.`,
 	return cmd
 }
 
-func newDaemonInstallCmd() *cobra.Command {
-	unitOpts := daemon.DefaultUnitOptions()
-	var initSystem string
-
-	cmd := &cobra.Command{
-		Use:   "install",
-		Short: "Print a unit/init file for supervising \"tink daemon run\", for review before installing",
-		Long: `install prints (to stdout, for you to review and redirect yourself) the
-unit or init script content for running "tink daemon run" under the given
-init system. It does not write, enable, or start anything -- generating
-and applying are kept separate, the same way "kubectl create" and
-"kubectl apply" are two different steps.
-
-  tink daemon install --init=systemd > /etc/systemd/system/tink-daemon.service
-  tink daemon install --init=openrc  > /etc/init.d/tink-daemon
-
-Defaults to auto-detecting the running init system if --init is omitted;
-fails rather than guessing if detection is inconclusive.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if initSystem == "" {
-				initSystem = daemon.DetectInit()
-				if initSystem == "" {
-					return fmt.Errorf("could not detect the running init system -- pass --init explicitly (one of: %v)", daemon.InitSystems)
-				}
-				fmt.Fprintf(cmd.ErrOrStderr(), "detected init system: %s\n", initSystem)
-			}
-
-			out, err := daemon.Generate(initSystem, unitOpts)
-			if err != nil {
-				return err
-			}
-			fmt.Fprint(cmd.OutOrStdout(), out)
-			return nil
-		},
-	}
-
-	cmd.Flags().StringVar(&initSystem, "init", "", fmt.Sprintf("init system to generate for (one of: %v; default: auto-detect)", daemon.InitSystems))
-	cmd.Flags().StringVar(&unitOpts.ExecPath, "exec-path", unitOpts.ExecPath, "path to the tink binary on the target host")
-	return cmd
-}
-
 // daemonRunUnderRemote is `daemon run`'s PreRunE. The daemon is a client of whatever server it is pointed at, except for
 // the ingress half, which reads and writes a directory: refused under a remote unless that half is off (--no-ingress) or
 // the directory was named (--routes-dir), because the default is a path inside the host's own storage pool, which is
@@ -760,4 +723,19 @@ func refuseUnderRemote(what string) func(*cobra.Command, []string) error {
 		}
 		return nil
 	}
+}
+
+// helperSource is what "tink deploy" installs the helper from: the image published for this release, or, for a build that has none, this
+// binary itself (deploy runs on the host, so it is the host's own linux tink).
+func helperSource() (bootstrap.HelperSource, error) {
+	src := bootstrap.HelperSource{TZ: os.Getenv("TZ")}
+	if src.Image = helper.ReleaseImage(injectedVersion); src.Image != "" {
+		return src, nil
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return src, fmt.Errorf("finding this tink binary to install the helper from: %w", err)
+	}
+	src.Binary = exe
+	return src, nil
 }

@@ -30,6 +30,16 @@ type Options struct {
 	// client-library call (profiles, storage volumes, instance
 	// existence/deletion). Defaults to incusapi.DefaultSocket.
 	Socket string
+	// Helper says what the helper is installed from; the caller gives an Image or a Binary.
+	Helper HelperSource
+}
+
+// HelperSource is where the helper's tink comes from: a published image (a release build), or this host's own linux binary (a build that
+// has none).
+type HelperSource struct {
+	Image  string
+	Binary string
+	TZ     string
 }
 
 func (o Options) socket() string {
@@ -48,9 +58,9 @@ type Result struct {
 // Run validates deploy.env and the required secret files, then converges
 // the host to its declared state: registries, storage volumes, profiles,
 // incus-ui, authelia, ingress, the Incus daemon's own config, and finally
-// installing/enabling "tink daemon run" under the host's real init
-// system (superseding deploy.sh's original cron-based reconciler step --
-// removing any leftover legacy cron entry from an older run first).
+// installing the helper with the ingress reconcile (superseding deploy.sh's
+// original cron-based reconciler step, and the "tink daemon run" unit that
+// deploy wrote after it: both are removed once the helper reconciles ingress).
 func Run(opts Options) (*Result, error) {
 	if err := opts.Config.Validate(); err != nil {
 		return &Result{}, err
@@ -72,7 +82,7 @@ func Run(opts Options) (*Result, error) {
 		{"authelia", applyAuthelia},
 		{"ingress", applyIngress},
 		{"daemon config", applyDaemonConfig},
-		{"reconciler daemon", applyReconcilerDaemon},
+		{"helper", applyHelper},
 	}
 
 	for _, step := range steps {

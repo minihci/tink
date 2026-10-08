@@ -14,6 +14,15 @@ import (
 type runner struct {
 	dryRun  bool
 	actions []string
+	// exec runs a command and returns its combined output. Nil means os/exec; a test replaces it so no real command runs.
+	exec func(name string, args ...string) ([]byte, error)
+}
+
+func (r *runner) combinedOutput(name string, args ...string) ([]byte, error) {
+	if r.exec != nil {
+		return r.exec(name, args...)
+	}
+	return exec.Command(name, args...).CombinedOutput()
 }
 
 // note records a human-readable line describing something that happened
@@ -31,7 +40,7 @@ func (r *runner) run(description string, name string, args ...string) (string, e
 		r.note("would run: %s (%s)", cmdline, description)
 		return "", nil
 	}
-	out, err := exec.Command(name, args...).CombinedOutput()
+	out, err := r.combinedOutput(name, args...)
 	if err != nil {
 		return string(out), fmt.Errorf("%s: %s: %w\n%s", description, cmdline, err, out)
 	}

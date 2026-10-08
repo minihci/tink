@@ -6,8 +6,8 @@
   `--jobs` if at least one of their copies is **due**, and no backup job is already queued or running;
 - an **executor**: it runs the queued jobs one at a time, oldest first, through the same code as `tink backup run`.
 
-It runs under any supervisor: a systemd unit, OpenRC, or by hand. [The helper](helper.md) is an Incus instance that runs exactly this, which is the way to
-run it without writing a unit; `daemon install` is not retired yet.
+It runs under any supervisor, or by hand. [The helper](helper.md) is an Incus instance that runs exactly this, which is the way to run it: tink no longer
+generates systemd or OpenRC units (`tink daemon install` is gone; see [replacing the host's tink-daemon](helper.md#replacing-the-hosts-tink-daemon)).
 
 ```
 tink plan apply tink.yaml                                         # puts each volume's copy policy on the volume
@@ -83,5 +83,4 @@ that has the directory.
 ## Not here yet
 
 Starting a run from another machine and following it: `daemon enqueue`, `jobs` and `cancel` work where the jobs directory is, which for the helper is inside its
-instance ([helper.md](helper.md)). `daemon install` still prints a unit for the old ingress-only invocation; for this, write the unit's `ExecStart` with the
-flags above, or use the helper.
+instance ([helper.md](helper.md)). To run the daemon under a supervisor of your own, write its `ExecStart` with the flags above; or use the helper.

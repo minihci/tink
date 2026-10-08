@@ -31,7 +31,7 @@ comment for the working bash it's replacing.
 | `tink run` | verified live against a real, disposable test host | (new - the manual per-tenant "mental docker-run into `incus launch` plus a sequence of `incus config`/`incus config device add` calls" dance) |
 | `tink plan` / `tink plan apply` | live-verified against real stacks: Nextcloud and Nightscout, and the Immich, mosquitto and Matter stacks on the lab host; the primary way to describe a stack ([docs](docs/resolver-architecture.md)) | (new - hand-running a sequence of `incus` commands in the right order from memory or a prose runbook) |
 | `tink ingress reconcile` / `tink ingress status` | live on `incus.xlii.co` | `incus-host/reconciler/reconcile.sh` |
-| `tink daemon run` / `tink daemon install` | live on `incus.xlii.co`, running the ingress reconcile; the backup scheduler and job executor run in the helper, on the lab host ([docs](docs/daemon-jobs.md)) | (new - it replaced the cron entry that ran `ingress reconcile`) |
+| `tink daemon run` | the helper's entrypoint, and what a host's `tink-daemon` unit used to run (`tink deploy` now installs the helper with the ingress reconcile in its place and retires that unit); `incus.xlii.co` still runs the unit until it is deployed again ([docs](docs/daemon-jobs.md), [helper](docs/helper.md)) | (new - it replaced the cron entry that ran `ingress reconcile`) |
 | `tink backup run` / `restore` / `verify` / `forget` | verified live on the lab host: pool targets (a TrueNAS-backed pool included) and an Incus remote over a tunnel ([docs](docs/volume-backup.md)) | (new) |
 | `tink secret` | verified live on the Immich stack on the lab host ([docs](docs/secrets.md)) | (new) |
 | `tink remote` / `--remote NAME` | verified live from a laptop against the lab host ([docs](docs/remote.md)) | (new) |
@@ -72,9 +72,8 @@ that does not - see [`docs/volume-backup.md`](docs/volume-backup.md).
 `user.ingress.{domain,port,enabled}` config and converges the shared
 `ingress` instance's routes to match, without a restart or a manual file
 push. `daemon run` runs that same reconcile loop as a persistent process
-instead of a cron-invoked one-shot; `daemon install` prints (doesn't
-apply) the systemd unit or OpenRC init script needed to supervise it, for
-whichever init system the host actually runs. `mongo snapshot` doesn't
+instead of a cron-invoked one-shot; in a deployment it runs as the
+[helper](docs/helper.md), an Incus instance supervised by Incus itself. `mongo snapshot` doesn't
 have a settled design yet.
 
 ## Secrets
@@ -124,8 +123,8 @@ internal/backup/     tink mongo ... (undesigned)
 configs/             tink deploy's config templates - see configs/README.md
 ```
 
-One binary, not two: `tink daemon run`/`tink daemon install` are
-subcommands of the same `tink` binary, not a separate `tinkd` daemon
+One binary, not two: `tink daemon run` is a
+subcommand of the same `tink` binary, not a separate `tinkd` daemon
 binary or a client/server split. Considered both and rejected them -- see
 `internal/daemon`'s own package doc for why (short version: a
 symlink/argv[0] dispatch trick is implicit "magic," and a
@@ -185,17 +184,15 @@ Confirmed idempotent: running `deploy` twice in a row against the same
 host, back to back, produced identical results both times with no
 manual intervention needed on the second run.
 
-`daemon` is implemented, smoke-tested on a disposable VPS, and **now the
-live mechanism running the reconciler on `incus.xlii.co`** -- supervised
-by a real, `systemd-analyze verify`-passed unit (`systemctl enable --now
-tink-daemon`), not cron. `daemon run`'s loop mechanics (immediate first
+`daemon` is implemented, smoke-tested on a disposable VPS, and was the
+live mechanism running the reconciler on `incus.xlii.co`, supervised by a
+`systemd` unit rather than cron. `tink deploy` now installs the
+[helper](docs/helper.md) with the ingress reconcile instead, and retires that
+unit once the helper has reconciled ingress. `daemon run`'s loop mechanics (immediate first
 pass, ticks at the given interval, survives a failed pass without dying,
 exits cleanly on SIGTERM/SIGINT) are unit-tested with an injected
-reconcile function; `daemon install` auto-detects the init system,
-failing honestly rather than guessing wrong when neither systemd nor
-OpenRC is found. `deploy` (`tink` and `deploy.sh` both) now installs and
-enables this instead of the old cron entry on every run, so a future
-re-deploy can't silently reinstate cron underneath it.
+reconcile function. `deploy` removes the old cron entry on every run, so
+a re-deploy can't silently reinstate cron underneath the helper.
 
 ## Building
 

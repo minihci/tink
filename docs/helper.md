@@ -6,13 +6,12 @@ The design, with its reasoning and the findings behind it, is in [the helper des
 document is `docs/helper-design.md` on the `helper-design` branch, not yet on `main`). This page covers what exists: **`tink helper install`, `upgrade` and
 `remove`, `remote add|list|remove`, `status`, the status document, the ingress half, the image and its release, and what `plan` and `apply` do with the helper.**
 
-**Not built yet:**
-- Retiring `tink daemon install`, which still prints the old ingress-only unit ([daemon-jobs.md](daemon-jobs.md)).
+Everything in the design is built. What is left is what has not been run live, below.
 
 **Run live so far**, on one host (the lab server): a release build of tink installed the `v0.1.0` image with no flags; the scheduler queues and makes the copies
 on its own, and the restore point it made verifies; a helper whose process was killed is running again in about six seconds, with a fresh status document and
 its job history; and `upgrade` with no flags, from the `v0.1.1` release binary, drained it, moved it from the `v0.1.0` image to the `v0.1.1` one, and kept its
-certificate and its job history. **Not yet tried:** a host reboot or an Incus restart, and the helper copying to a second physical server.
+certificate and its job history. **Not yet tried:** a host reboot or an Incus restart, the helper copying to a second physical server, and `tink deploy` installing the helper and retiring the old unit (its decisions are unit-tested; it has not been run on a host).
 
 ## Installing it
 
@@ -86,10 +85,27 @@ host path uses, so the files are the same bytes.
 - **A routes directory it cannot read is an error, never "no routes"**: a failed read taken for an empty directory would rewrite every route.
 - **Writes before removals.** It writes the desired files first and removes the stale ones after, so there is never a moment with no routes; Caddy is told to
   reload only once everything is in place. A pass that changes nothing writes nothing and does not reload.
-- **One reconciler.** With `--ingress` the instance is marked `user.tink.helper.ingress`, and **`tink deploy` then does not install the host's `tink-daemon`**, which
-  would reconcile the same routes and reload the same Caddy from a place that does not know about the helper. If `tink-daemon` is already installed on the host,
-  deploy says so and leaves it: disable it (`systemctl disable --now tink-daemon`). A helper without `--ingress` leaves ingress to the host's daemon, as before.
+- **One reconciler.** With `--ingress` the instance is marked `user.tink.helper.ingress`, and it is the host's reconciler: **`tink deploy` installs it that way**
+  and retires the host's `tink-daemon` unit (below). Two reconcilers would render the same routes and reload the same Caddy from places that do not know about each
+  other.
 - **A failed pass is retried in 5 seconds**, not after the whole minute: the helper's first pass races its own enrolment.
+
+## Replacing the host's tink-daemon
+
+`tink deploy` used to write a `tink-daemon` unit (systemd or OpenRC) that ran `tink daemon run` on the host. It now installs the helper with the ingress reconcile
+instead, in this order:
+
+1. If the host has no helper, it installs one (`tink helper install --ingress`): from the image published for the release, or, for a build with none, from the
+   deploying `tink` binary itself (`--binary`), since deploy runs on the host. `$TZ` sets its time zone.
+2. It waits up to 90 seconds for the helper to report **a successful ingress reconcile**.
+3. Only then does it stop, disable and remove the old unit (`systemctl disable --now tink-daemon` and the unit file; on OpenRC `rc-service stop`, `rc-update del` and the
+   init script). If the helper has not reconciled in that time the unit is **left running** and deploy says so: a host is never left without a reconciler.
+
+If the host already has a helper that does **not** run ingress, deploy changes nothing and says how: `tink helper remove` (its volumes and job history stay), then
+deploy again. A dry run (`tink deploy --dry-run`) says what it would do and connects to nothing.
+
+There is no `tink daemon install` any more: tink does not generate units. To run `tink daemon run` under a supervisor of your own, write the unit yourself ([daemon-jobs.md](daemon-jobs.md)
+has the flags); the helper is the supported way.
 
 ## Copying to another Incus server
 
