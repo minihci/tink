@@ -362,6 +362,7 @@ type imageEnv struct {
 	mu      sync.Mutex
 	images  map[string]registryResult
 	runtime map[string]runtimeResult
+	helped  map[string]*helperResult // remotes with a credentials helper, once it has been run (credhelper.go)
 }
 
 // platformOf is the platform images are chosen for: the server's, not that of the machine asking. An environment is for one run against one
@@ -417,7 +418,11 @@ func (e *imageEnv) registryImage(server incus.InstanceServer, remoteName, ref st
 	}
 	e.mu.Unlock()
 
-	img, err := lookupRegistryImage(remote, ref, plat)
+	authed, err := e.authedRemote(remote)
+	if err != nil {
+		return registryImage{}, fmt.Errorf("remote %q: %w", remoteName, err)
+	}
+	img, err := lookupRegistryImage(authed, ref, plat)
 	e.mu.Lock()
 	e.images[key] = registryResult{img: img, err: err}
 	e.mu.Unlock()
@@ -425,7 +430,8 @@ func (e *imageEnv) registryImage(server incus.InstanceServer, remoteName, ref st
 }
 
 // runtimeConfig reads the runtime config an image bakes in, for the architecture the server runs images for. The registry is reached as
-// registry.go says: the login in the remote's URL, else the person's own container-registry login, else anonymously; an image it cannot
+// registry.go says: the login in the remote's URL (which a credentials helper supplies, credhelper.go), else the person's own
+// container-registry login, else anonymously; an image it cannot
 // read reports an error, which blocks a rebuild rather than guessing.
 func (e *imageEnv) runtimeConfig(server incus.InstanceServer, remote cliconfig.Remote, ref string) (ociRuntime, error) {
 	if e == nil || e.offline {
@@ -443,7 +449,11 @@ func (e *imageEnv) runtimeConfig(server incus.InstanceServer, remote cliconfig.R
 	}
 	e.mu.Unlock()
 
-	rt, err := lookupRuntimeConfig(remote, ref, plat)
+	authed, err := e.authedRemote(remote)
+	if err != nil {
+		return ociRuntime{}, fmt.Errorf("remote %q: %w", remoteHost(remote), err)
+	}
+	rt, err := lookupRuntimeConfig(authed, ref, plat)
 	e.mu.Lock()
 	e.runtime[key] = runtimeResult{rt: rt, err: err}
 	e.mu.Unlock()

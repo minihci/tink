@@ -63,6 +63,12 @@ the client. It reaches the registry as the login written into the remote's URL s
 `on_image_change: rebuild` is blocked on an image it cannot verify; `--offline` skips the lookups on purpose. The same goes for a rebuild's image: the server is told to pull it, so none of
 it passes through the client either.
 
+A private registry can also be reached through a remote's **credentials helper** (`incus remote add --credentials-helper`, a program in the Docker credential-helper protocol), and tink
+treats it as Incus does: it runs `HELPER get` with the registry's host on standard input, reads the `Username` and `Secret` that come back, and uses them as the login written into the URL
+(replacing any that is there). The helper is run once per run, however many images and instances ask. The same login goes into the address the server is told to pull from, because the
+API has no other place for a credential and that is what `incus launch` sends, so an image is pulled with the credentials it was looked up with. A helper that fails is reported against
+the remote, with what the helper said, and the registry is not then asked anonymously. The password is removed from any error that repeats the address.
+
 ## What does not work under a remote, and says so
 
 | Command or resource | Why | What happens |

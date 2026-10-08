@@ -231,16 +231,23 @@ func (o incusRebuildOps) PullImage(image string) (string, error) {
 	if local {
 		return reg.Fingerprint, nil
 	}
+	// The server pulls from the address it is given, and the API has no other place for a credential: as `incus launch` does, send the
+	// address with the credentials the remote's helper supplies written into it.
+	authed, err := o.env.authedRemote(remote)
+	if err != nil {
+		return "", fmt.Errorf("remote %q: %w", remoteName, err)
+	}
+	addr := authed.Addrs[0]
 	op, err := o.server.CreateImage(api.ImagesPost{Source: &api.ImagesPostSource{
-		ImageSource: api.ImageSource{Protocol: "oci", Server: remote.Addrs[0], Alias: ref},
+		ImageSource: api.ImageSource{Protocol: "oci", Server: addr, Alias: ref},
 		Mode:        "pull",
 		Type:        "image",
 	}}, nil)
 	if err != nil {
-		return "", err
+		return "", scrubCredentials(err, addr)
 	}
 	if err := op.Wait(); err != nil {
-		return "", err
+		return "", scrubCredentials(err, addr)
 	}
 	fp, _ := op.Get().Metadata["fingerprint"].(string)
 	if fp == "" {
