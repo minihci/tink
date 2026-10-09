@@ -166,6 +166,8 @@ func createInstance(server incus.InstanceServer, r Resource) error {
 		Devices:  r.Devices,
 		Profiles: r.Profiles,
 		VM:       r.VM,
+
+		Ephemeral: r.Ephemeral,
 	}
 	if err := run.Create(server, spec, r.Project); err != nil {
 		return err
@@ -193,7 +195,7 @@ func createInstance(server incus.InstanceServer, r Resource) error {
 // that; that's real downtime, a bigger decision than this function
 // makes for you.
 func updateInstance(server incus.InstanceServer, r Resource) error {
-	spec := &run.Spec{Name: r.Name, Config: r.Config, Devices: r.Devices}
+	spec := &run.Spec{Name: r.Name, Config: r.Config, Devices: r.Devices, Ephemeral: r.Ephemeral}
 	if err := run.ApplyConfig(server, spec); err != nil {
 		return err
 	}

@@ -2,7 +2,6 @@ package run
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/minihci/tink/internal/secrets"
@@ -21,6 +20,9 @@ type Spec struct {
 	Profiles  []string
 	Ephemeral bool
 	VM        bool
+
+	// Notes are things the person should be told about what was asked for (a bind mount that will not be writable, an option that was ignored).
+	Notes []string
 
 	// VolumeConfig is the config a managed storage volume gets when this run has to CREATE it (one that exists is not changed). From --user.
 	VolumeConfig map[string]string
@@ -73,11 +75,35 @@ func Build(opts Options) (*Spec, error) {
 	}
 
 	for i, v := range opts.Volume {
-		dev, err := volumeDevice(v, opts.Pool)
+		dev, notes, err := volumeDevice(v, opts.Pool)
 		if err != nil {
 			return nil, fmt.Errorf("--volume %q: %w", v, err)
 		}
 		spec.Devices[fmt.Sprintf("volume%d", i)] = dev
+		spec.Notes = append(spec.Notes, notes...)
+	}
+
+	for i, d := range opts.Device {
+		dev, err := deviceFlag(d)
+		if err != nil {
+			return nil, fmt.Errorf("--device %q: %w", d, err)
+		}
+		spec.Devices[fmt.Sprintf("device%d", i)] = dev
+	}
+
+	if opts.Memory != "" {
+		limit, err := parseMemory(opts.Memory)
+		if err != nil {
+			return nil, err
+		}
+		spec.Config["limits.memory"] = limit
+	}
+	if opts.CPUs != "" {
+		allowance, err := parseCPUs(opts.CPUs)
+		if err != nil {
+			return nil, err
+		}
+		spec.Config["limits.cpu.allowance"] = allowance
 	}
 
 	if opts.IP != "" && opts.Network == "" {
@@ -100,6 +126,9 @@ func Build(opts Options) (*Spec, error) {
 			return nil, err
 		}
 		spec.Config["boot.autorestart"] = autorestart
+		// Docker's policies also decide whether the container comes back when the daemon (here, the host) starts; Incus keeps that in a
+		// second key. Without it an instance would come back after a crash but only by luck after a reboot.
+		spec.Config["boot.autostart"] = autorestart
 	}
 
 	if err := applyUser(spec, opts.User); err != nil {
@@ -146,6 +175,13 @@ func CommandLine(opts Options) string {
 	if opts.Network != "" {
 		flag("--network", opts.Network)
 	}
+	if opts.Memory != "" {
+		flag("--memory", opts.Memory)
+	}
+	if opts.CPUs != "" {
+		flag("--cpus", opts.CPUs)
+	}
+	flag("--device", opts.Device...)
 	if opts.IP != "" {
 		flag("--ip", opts.IP)
 	}
@@ -185,55 +221,6 @@ func shellQuote(s string) string {
 		return s
 	}
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
-}
-
-// publishDevice translates a docker -p HOST:CONTAINER value into a proxy
-// device. Only the plain HOST:CONTAINER form is supported -- no protocol
-// suffix, no bind-address prefix.
-func publishDevice(p string) (map[string]string, error) {
-	hostPort, containerPort, ok := strings.Cut(p, ":")
-	if !ok {
-		return nil, fmt.Errorf("expected HOST:CONTAINER")
-	}
-	if _, err := strconv.Atoi(hostPort); err != nil {
-		return nil, fmt.Errorf("host port %q is not a number", hostPort)
-	}
-	if _, err := strconv.Atoi(containerPort); err != nil {
-		return nil, fmt.Errorf("container port %q is not a number", containerPort)
-	}
-
-	return map[string]string{
-		"type":    "proxy",
-		"listen":  "tcp:0.0.0.0:" + hostPort,
-		"connect": "tcp:127.0.0.1:" + containerPort,
-	}, nil
-}
-
-// volumeDevice translates a docker -v value into a disk device. A source
-// containing "/" is a host-path bind mount (matching Docker's own
-// disambiguation rule); a bare name is a managed Incus storage volume,
-// which -- unlike a Docker named volume -- needs a storage pool, attached
-// in whichever pool --pool names.
-func volumeDevice(v, pool string) (map[string]string, error) {
-	src, dst, ok := strings.Cut(v, ":")
-	if !ok {
-		return nil, fmt.Errorf("expected SRC:DST")
-	}
-
-	if strings.Contains(src, "/") {
-		return map[string]string{
-			"type":   "disk",
-			"source": src,
-			"path":   dst,
-		}, nil
-	}
-
-	return map[string]string{
-		"type":   "disk",
-		"pool":   pool,
-		"source": src,
-		"path":   dst,
-	}, nil
 }
 
 // restartToAutorestart maps a docker --restart value onto Incus's plain

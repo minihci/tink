@@ -27,6 +27,7 @@ type yamlResource struct {
 	Image     string   `yaml:"image"`
 	Profiles  []string `yaml:"profiles"`
 	VM        bool     `yaml:"vm"`
+	Ephemeral bool     `yaml:"ephemeral"`
 	Pool      string   `yaml:"pool"`
 
 	// Backup-target-only -- see backuptarget.go.
@@ -303,6 +304,7 @@ func (d yamlResource) toResource(dir string) (Resource, error) {
 		Image:           d.Image,
 		Profiles:        d.Profiles,
 		VM:              d.VM,
+		Ephemeral:       d.Ephemeral,
 		Pool:            d.Pool,
 		Location:        d.Location,
 		Engine:          d.Engine,

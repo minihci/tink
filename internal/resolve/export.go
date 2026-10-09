@@ -224,6 +224,7 @@ func exportInstance(server, scoped incus.InstanceServer, env *imageEnv, inst *ap
 	if inst.Type == "virtual-machine" {
 		d.res.VM = true
 	}
+	d.res.Ephemeral = inst.Ephemeral
 	for name, dev := range inst.Devices {
 		d.res.Devices[name] = copyMap(dev)
 	}
@@ -425,6 +426,9 @@ func renderDocs(docs []exportDoc) string {
 			}
 			if r.VM {
 				b.WriteString("vm: true\n")
+			}
+			if r.Ephemeral {
+				b.WriteString("ephemeral: true\n")
 			}
 			b.WriteString("profiles:\n")
 			for _, p := range r.Profiles {

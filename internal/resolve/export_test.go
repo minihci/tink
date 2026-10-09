@@ -269,3 +269,59 @@ func TestAGroupAPersonSetIsKeptWhenTheImageNamesNone(t *testing.T) {
 		t.Error("a different group is an override")
 	}
 }
+
+func TestAnEphemeralInstanceKeepsItsFlagThroughExport(t *testing.T) {
+	inst := kumaInstance()
+	inst.Ephemeral = true
+	res, err := Export(&exportServer{inst: inst, volCfg: map[string]string{}}, ExportOptions{Project: "tink-play", Instances: []string{"kuma-play"}, Offline: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(res.YAML, "\nephemeral: true\n") {
+		t.Errorf("export dropped ephemeral:\n%s", res.YAML)
+	}
+	path := t.TempDir() + "/tink.yaml"
+	if err := writeFile(path, res.YAML); err != nil {
+		t.Fatal(err)
+	}
+	rs, err := LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rs[2].Ephemeral {
+		t.Errorf("ephemeral did not load: %+v", rs[2])
+	}
+	if !res.Verified {
+		t.Errorf("must plan as no changes: %+v", res.Plans)
+	}
+	// and a plain instance does not grow the line
+	plain, _ := Export(&exportServer{inst: kumaInstance(), volCfg: map[string]string{}}, ExportOptions{Project: "tink-play", Instances: []string{"kuma-play"}, Offline: true})
+	if strings.Contains(plain.YAML, "ephemeral") {
+		t.Errorf("a persistent instance says nothing about it:\n%s", plain.YAML)
+	}
+}
+
+func TestPlanSeesAnInstanceThatShouldBeEphemeralAndIsNot(t *testing.T) {
+	s := &exportServer{inst: kumaInstance(), volCfg: map[string]string{}} // not ephemeral
+	plans, err := PlanWithOptions(s, []Resource{{Kind: KindInstance, Name: "kuma-play", Ephemeral: true}}, PlanOptions{Offline: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plans[0].Action != ActionUpdate || !strings.Contains(strings.Join(plans[0].Changes, "\n"), "ephemeral: false -> true") {
+		t.Errorf("%+v", plans[0])
+	}
+	// not declaring it changes nothing, as with every other field
+	plans, _ = PlanWithOptions(s, []Resource{{Kind: KindInstance, Name: "kuma-play"}}, PlanOptions{Offline: true})
+	if plans[0].Action != ActionNone {
+		t.Errorf("%+v", plans[0])
+	}
+}
+
+func TestEphemeralIsOnlyForInstances(t *testing.T) {
+	if err := Validate(Resource{Kind: KindStorageVolume, Name: "x", Ephemeral: true}); err == nil {
+		t.Error("a volume cannot be ephemeral")
+	}
+	if err := Validate(Resource{Kind: KindInstance, Name: "x", Image: "docker-oci:alpine:3", Ephemeral: true}); err != nil {
+		t.Errorf("an instance can: %v", err)
+	}
+}

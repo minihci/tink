@@ -360,3 +360,6 @@ A `kind: storage-volume` can carry `config:`, the Incus volume config it is crea
 - Keys tink writes itself are refused so that two sources cannot fight over one key: `user.tink.backup.*` and `user.tink.stack` (the copy policy, its stamps, the owning stack), `volatile.*` (Incus's), and
   `snapshots.schedule`/`snapshots.expiry` when the `backup:` block already has a `snapshots` policy.
 
+An instance can also say `ephemeral: true` (deleted by Incus when it stops, whatever the reason; `tink run --rm`). Like every other declared field it is only ever turned on: not declaring it changes nothing, and `plan`
+reports `ephemeral: false -> true` for a live instance that should be.
+

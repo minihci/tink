@@ -85,8 +85,10 @@ type Resource struct {
 	// Instance-only.
 	Image    string
 	Profiles []string
-	VM       bool   // create a virtual machine instead of a container (passes --vm to incus init, same as tink run's own flag)
-	Pool     string // storage pool a storage-volume lives in, or the pool a backup-target copies into
+	// Ephemeral (instance-only) deletes the instance once it stops, for any reason (Incus's own flag; `tink run --rm`).
+	Ephemeral bool
+	VM        bool   // create a virtual machine instead of a container (passes --vm to incus init, same as tink run's own flag)
+	Pool      string // storage pool a storage-volume lives in, or the pool a backup-target copies into
 
 	// Backup-target-only. See backuptarget.go: where the target is (Location, the
 	// user's claim, used by the 3-2-1 check), how copies get there (Engine), and

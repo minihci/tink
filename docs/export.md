@@ -23,6 +23,7 @@ An Incus instance carries about twenty-five config keys for every one a person s
 | `oci.entrypoint`, `oci.cwd`, `oci.uid`, `oci.gid`, `environment.*` that **equal what the image says** | left out: the image's own, copied at creation |
 | the same keys when they **differ** from the image | kept: an override (`tink run IMAGE CMD` sets `oci.entrypoint`) |
 | `environment.HOME=/root`, `environment.TERM=xterm` | left out: set by Incus at creation |
+| `ephemeral` | `ephemeral: true` |
 | the instance's own `devices`, `profiles`, every other `config` key | kept (`root` comes from the profile and is not the instance's) |
 | `user.tink.run.command` | not config: written as a `# created by:` comment |
 | a custom volume an instance's disk device attaches | a `kind: storage-volume`, in the same project and pool |
