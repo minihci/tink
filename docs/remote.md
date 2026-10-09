@@ -58,7 +58,7 @@ stack commonly uses, only where the client configuration lacks them:
 | `images` | https://images.linuxcontainers.org | simplestreams |
 
 An image can also be written the way Docker writes it, and tink maps it onto these: `ghcr.io/org/app:1` is `ghcr:org/app:1`, `docker.io/org/app:1` is `docker-oci:org/app:1`. A name with **no** registry
-(`org/app:1`) is Docker Hub, with a warning that says how to be explicit; a registry no remote is configured for is an error that says how to add one (docker-gap-analysis.md).
+(`org/app:1`) is Docker Hub, with a warning that says how to be explicit; a registry no remote is configured for is an error that says how to add one ([docker-gap-analysis.md](docker-gap-analysis.md#6-the-registry-story)).
 
 A remote the client configuration defines under the same name **always wins** (a mirror, say). The server pulls the image itself, and the instance is created for the **server's** architecture.
 
