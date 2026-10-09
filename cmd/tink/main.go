@@ -247,6 +247,8 @@ which Docker flags map to which key or device.`,
 	cmd.Flags().StringVar(&opts.Restart, "restart", "", "always|unless-stopped|on-failure|no (boot.autorestart is a plain boolean -- retry counts aren't supported)")
 	cmd.Flags().StringVar(&opts.Pool, "pool", opts.Pool, "storage pool a bare -v name:path managed-volume mount attaches in")
 	cmd.Flags().StringArrayVar(&opts.Profiles, "profile", nil, "an existing Incus profile to layer in addition (repeatable)")
+	cmd.Flags().StringArrayVar(&opts.EnvFile, "env-file", nil, "read KEY=VALUE lines from a file on this machine (repeatable; -e overrides it)")
+	cmd.Flags().BoolVar(&opts.Privileged, "privileged", false, "run the container privileged (security.privileged=true): no user-namespace isolation. Not Docker's every-device grant: name devices with --device")
 	cmd.Flags().StringVarP(&opts.Memory, "memory", "m", "", "memory limit, as Docker writes it (512m, 1g); becomes limits.memory")
 	cmd.Flags().StringVar(&opts.CPUs, "cpus", "", "CPU time limit in CPUs (0.5, 2); becomes a hard limits.cpu.allowance, not the number of CPUs the instance sees")
 	cmd.Flags().StringArrayVar(&opts.Device, "device", nil, "pass a host character device through, HOST[:CONTAINER[:rwm]] (a serial adapter, /dev/kvm); for a GPU or a block device use --incus-device (repeatable)")

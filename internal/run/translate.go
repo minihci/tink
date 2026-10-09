@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -236,4 +237,33 @@ func deviceFlag(d string) (map[string]string, error) {
 		}
 	}
 	return map[string]string{"type": "unix-char", "source": src, "path": dst}, nil
+}
+
+// readEnvFile reads a Docker env file: KEY=VALUE per line, blank lines and lines starting with # skipped, values taken literally (Docker does
+// not strip quotes), and a bare KEY taken from the environment of the process running tink if it is set there (and skipped if not).
+func readEnvFile(path string) ([][2]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("--env-file: %w", err)
+	}
+	var out [][2]string
+	for i, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimRight(line, "\r")
+		if t := strings.TrimSpace(line); t == "" || strings.HasPrefix(t, "#") {
+			continue
+		}
+		k, v, hasValue := strings.Cut(line, "=")
+		k = strings.TrimSpace(k)
+		if k == "" || strings.ContainsAny(k, " \t") {
+			return nil, fmt.Errorf("--env-file %s:%d: %q is not a variable name", path, i+1, k)
+		}
+		if !hasValue {
+			if inherited, ok := os.LookupEnv(k); ok {
+				out = append(out, [2]string{k, inherited})
+			}
+			continue
+		}
+		out = append(out, [2]string{k, v})
+	}
+	return out, nil
 }

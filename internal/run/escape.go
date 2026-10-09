@@ -81,13 +81,15 @@ func addIncusConfig(spec *Spec, entries []string) error {
 func flagFor(key string) string {
 	switch {
 	case strings.HasPrefix(key, "environment."):
-		return "-e"
+		return "-e or --env-file"
 	case key == "oci.entrypoint":
 		return "the command after the image"
 	case key == "oci.uid" || key == "oci.gid":
 		return "--user"
 	case key == "boot.autorestart" || key == "boot.autostart":
 		return "--restart"
+	case key == "security.privileged":
+		return "--privileged"
 	case key == "limits.memory":
 		return "--memory"
 	case key == "limits.cpu.allowance":
