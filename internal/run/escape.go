@@ -86,8 +86,12 @@ func flagFor(key string) string {
 		return "the command after the image"
 	case key == "oci.uid" || key == "oci.gid":
 		return "--user"
-	case key == "boot.autorestart":
+	case key == "boot.autorestart" || key == "boot.autostart":
 		return "--restart"
+	case key == "limits.memory":
+		return "--memory"
+	case key == "limits.cpu.allowance":
+		return "--cpus"
 	}
 	return "another flag"
 }

@@ -18,6 +18,7 @@ var fieldOwners = map[string][]Kind{
 	"Image":           {KindInstance},
 	"Profiles":        {KindInstance},
 	"VM":              {KindInstance},
+	"Ephemeral":       {KindInstance},
 	"Pool":            {KindStorageVolume, KindBackupTarget},
 	"Location":        {KindBackupTarget},
 	"Engine":          {KindBackupTarget},

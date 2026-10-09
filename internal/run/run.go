@@ -44,6 +44,11 @@ type Options struct {
 	Rm       bool
 	VM       bool
 
+	// Memory is -m (512m, 1g), CPUs is --cpus (1.5), Device is --device HOST[:CONTAINER[:rwm]].
+	Memory string
+	CPUs   string
+	Device []string
+
 	// User is --user: a numeric UID[:GID]. IncusConfig and IncusDevice are the escape hatch (escape.go).
 	User        string
 	IncusConfig []string
@@ -97,6 +102,27 @@ func Run(opts Options) (*Result, error) {
 		}
 	}
 
+	for _, n := range spec.Notes {
+		note("note: %s", n)
+	}
+	if incusapi.IsRemote() {
+		var paths []string
+		seen := map[string]bool{}
+		for _, name := range sortedDeviceNames(spec.Devices) {
+			if d := spec.Devices[name]; d["type"] == "disk" && d["pool"] == "" && strings.HasPrefix(d["source"], "/") && !seen[d["source"]] {
+				seen[d["source"]] = true
+				paths = append(paths, d["source"])
+			}
+		}
+		if len(paths) > 0 {
+			verb := "is a path"
+			if len(paths) > 1 {
+				verb = "are paths"
+			}
+			note("note: %s %s on the server %s, not on this machine", strings.Join(paths, ", "), verb, incusapi.Remote())
+		}
+	}
+
 	if opts.DryRun {
 		project := opts.Project
 		if project == "" {
@@ -114,7 +140,8 @@ func Run(opts Options) (*Result, error) {
 		for _, p := range spec.Profiles {
 			note("would layer profile %s", p)
 		}
-		for name, dev := range spec.Devices {
+		for _, name := range sortedDeviceNames(spec.Devices) {
+			dev := spec.Devices[name]
 			if dev["type"] == "disk" && dev["pool"] != "" {
 				note("would ensure managed volume %s/%s exists (creating it if needed)", dev["pool"], dev["source"])
 			}
@@ -315,6 +342,9 @@ func ApplyConfig(server incus.InstanceServer, spec *Spec) error {
 	}
 
 	put := inst.Writable()
+	if spec.Ephemeral { // only ever turned on here, like every other declared field: not declaring it changes nothing
+		put.Ephemeral = true
+	}
 	if put.Config == nil {
 		put.Config = map[string]string{}
 	}

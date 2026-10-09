@@ -123,6 +123,9 @@ func planInstance(server incus.InstanceServer, r Resource, opts PlanOptions) (Pl
 	}
 	changes := diffConfig(current.Config, r.Config, r.SecretKeys)
 	changes = append(changes, diffDevices(current.Devices, r.Devices)...)
+	if r.Ephemeral && !current.Ephemeral {
+		changes = append(changes, "ephemeral: false -> true")
+	}
 
 	env := opts.env
 	if env == nil {
