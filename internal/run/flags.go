@@ -21,6 +21,9 @@ type Spec struct {
 	Profiles  []string
 	Ephemeral bool
 	VM        bool
+
+	// VolumeConfig is the config a managed storage volume gets when this run has to CREATE it (one that exists is not changed). From --user.
+	VolumeConfig map[string]string
 }
 
 // Build translates already-parsed docker-run-style flag values (Options,
@@ -99,13 +102,24 @@ func Build(opts Options) (*Spec, error) {
 		spec.Config["boot.autorestart"] = autorestart
 	}
 
+	if err := applyUser(spec, opts.User); err != nil {
+		return nil, err
+	}
+	// The escape hatch comes last so that it can only add, never silently override.
+	if err := addIncusConfig(spec, opts.IncusConfig); err != nil {
+		return nil, err
+	}
+	if err := addIncusDevices(spec, opts.IncusDevice); err != nil {
+		return nil, err
+	}
+
 	spec.Config[KeyCommand] = CommandLine(opts)
 
 	return spec, nil
 }
 
 // KeyCommand is the instance config key tink run records the command it was given in: the only trace, on the instance, of how it
-// came to be. Environment values that look like secrets are masked in it.
+// came to be. `tink export` reads it back as a comment. Environment values that look like secrets are masked in it.
 const KeyCommand = "user.tink.run.command"
 
 // CommandLine is the tink run invocation opts stand for, in a fixed order, for KeyCommand. Quoted so that it can be pasted.
@@ -136,6 +150,13 @@ func CommandLine(opts Options) string {
 		flag("--ip", opts.IP)
 	}
 	flag("--profile", opts.Profiles...)
+	if opts.User != "" {
+		flag("--user", opts.User)
+	}
+	for _, e := range opts.IncusConfig {
+		flag("--incus-config", incusConfigForCommand(e, secrets.SensitiveKey))
+	}
+	flag("--incus-device", opts.IncusDevice...)
 	for _, e := range opts.Env {
 		k, v, ok := strings.Cut(e, "=")
 		if ok && secrets.SensitiveKey(k) {

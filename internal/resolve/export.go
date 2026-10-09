@@ -3,6 +3,7 @@ package resolve
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	incus "github.com/lxc/incus/v7/client"
@@ -179,7 +180,7 @@ func exportVolumes(scoped incus.InstanceServer, inst *api.Instance, project stri
 			continue
 		}
 
-		d := exportDoc{res: Resource{Kind: KindStorageVolume, Name: name, Project: project, Pool: pool}}
+		d := exportDoc{res: Resource{Kind: KindStorageVolume, Name: name, Project: project, Pool: pool, Config: map[string]string{}}}
 		var snapSchedule, snapExpiry string
 		for k, v := range vol.Config {
 			switch {
@@ -194,10 +195,7 @@ func exportVolumes(scoped incus.InstanceServer, inst *api.Instance, project stri
 			case strings.HasPrefix(k, "user.tink.backup.") || k == backupmeta.StackKey:
 				// tink's own stamps (last copy, failures, owning stack): state, not declaration
 			default:
-				// A stack's storage-volume has no config: field (Validate refuses it), so a key like size or initial.uid cannot be written
-				// back. Say so where the person will see it, instead of writing a file tink will not load.
-				d.trailing = append(d.trailing, fmt.Sprintf("not exported: config %s=%s (a stack's storage-volume cannot carry volume config yet)", k, scalar(v)))
-				res.Notes = append(res.Notes, fmt.Sprintf("volume %s: config %s is set on it but a stack's storage-volume cannot carry config, so it is only a comment", key, k))
+				d.res.Config[k] = v
 			}
 		}
 		if snapSchedule != "" || snapExpiry != "" {
@@ -347,9 +345,21 @@ func imageDerivedKeys(cfg map[string]string, rt ociRuntime) map[string]bool {
 		differs[k] = true
 	}
 	derived := map[string]bool{}
-	for _, k := range []string{"oci.entrypoint", "oci.cwd", "oci.uid", "oci.gid"} {
+	for _, k := range []string{"oci.entrypoint", "oci.cwd", "oci.uid"} {
 		if !differs[k] {
 			derived[k] = true
+		}
+	}
+	// runtimeConfigDiff compares the group only when the image names one (user "uid:gid"), so "not reported as different" does not mean
+	// "equal" here: an image with no user, or a bare uid, says nothing about the group, and a gid a person set (--user 1000:1000) would be
+	// dropped as the image's own. The group is the image's own only when it is the root group, or the one the image names.
+	if !differs["oci.gid"] {
+		_, igid, hasGID, ok := parseImageUser(rt.User)
+		switch gid := cfg["oci.gid"]; {
+		case gid == "" || gid == "0":
+			derived["oci.gid"] = true
+		case ok && hasGID && gid == strconv.Itoa(igid):
+			derived["oci.gid"] = true
 		}
 	}
 	for _, kv := range rt.Env {

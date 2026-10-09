@@ -44,6 +44,11 @@ type Options struct {
 	Rm       bool
 	VM       bool
 
+	// User is --user: a numeric UID[:GID]. IncusConfig and IncusDevice are the escape hatch (escape.go).
+	User        string
+	IncusConfig []string
+	IncusDevice []string
+
 	DryRun bool
 
 	// Out, when set, gets each action line as it happens (the first pull of an image can take a minute, and a silent minute reads as a
@@ -171,7 +176,7 @@ func Run(opts Options) (*Result, error) {
 	for _, line := range describeVolumes(server, spec) {
 		note("%s", line)
 	}
-	if err := ApplyConfig(server, spec); err != nil {
+	if err := configureOrRemove(server, spec); err != nil {
 		return result, err
 	}
 	note("applied config and devices to %s", spec.Name)
@@ -354,9 +359,10 @@ func ensureManagedVolumes(server incus.InstanceServer, spec *Spec) error {
 		}
 
 		post := api.StorageVolumesPost{
-			Name:        name,
-			Type:        "custom",
-			ContentType: "filesystem",
+			Name:             name,
+			Type:             "custom",
+			ContentType:      "filesystem",
+			StorageVolumePut: api.StorageVolumePut{Config: spec.VolumeConfig},
 		}
 		if err := server.CreateStoragePoolVolume(pool, post); err != nil {
 			return fmt.Errorf("creating managed volume %s/%s: %w", pool, name, err)
@@ -480,7 +486,7 @@ func Qualify(scoped incus.InstanceServer, image string) (ImageQualification, err
 	if host, rest, ok := registryHost(image); ok {
 		for _, name := range sortedRemoteNames(conf.Remotes) {
 			if r := conf.Remotes[name]; r.Protocol == "oci" && remoteHostOf(r) == host {
-				return ImageQualification{Image: name + ":" + rest, Note: fmt.Sprintf("%q is the registry %s: using the remote %s", image, host, name+":")}, nil
+				return ImageQualification{Image: name + ":" + rest, Note: fmt.Sprintf("%q is the registry %s: using the remote %s", image, host, name)}, nil
 			}
 		}
 		return same, fmt.Errorf("image %q is on the registry %s, and no OCI remote is configured for it: add one (for example `incus remote add NAME https://%s --protocol=oci`) and write the image as NAME:%s", image, host, host, rest)
@@ -547,8 +553,12 @@ func describeVolumes(server incus.InstanceServer, spec *Spec) []string {
 		switch {
 		case err != nil:
 			// ApplyConfig reports the real error; this is only a courtesy line
+		case found && len(spec.VolumeConfig) > 0:
+			lines = append(lines, fmt.Sprintf("reusing volume %s/%s (its ownership is not changed: if the app cannot write to it, chown it to %s)", dev["pool"], dev["source"], ownerOf(spec.VolumeConfig)))
 		case found:
 			lines = append(lines, fmt.Sprintf("reusing volume %s/%s", dev["pool"], dev["source"]))
+		case len(spec.VolumeConfig) > 0:
+			lines = append(lines, fmt.Sprintf("creating volume %s/%s, owned by %s", dev["pool"], dev["source"], ownerOf(spec.VolumeConfig)))
 		default:
 			lines = append(lines, fmt.Sprintf("creating volume %s/%s", dev["pool"], dev["source"]))
 		}
@@ -563,4 +573,31 @@ func sortedDeviceNames(devices map[string]map[string]string) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// ownerOf writes the owner a volume is created with, as uid or uid:gid.
+func ownerOf(volumeConfig map[string]string) string {
+	if gid := volumeConfig["initial.gid"]; gid != "" {
+		return volumeConfig["initial.uid"] + ":" + gid
+	}
+	return volumeConfig["initial.uid"]
+}
+
+// configureOrRemove applies spec's config and devices to the instance Run has just created, and removes that instance if it cannot. Incus
+// applies a config update atomically and validates it only then, so a bad device or key (a relative host path, a misspelt --incus-config) is
+// reported after the instance exists; left alone it would be a stopped shell that a second run answers with "already exists". Only Run does
+// this: the instance is one it made a moment ago under a name that was free, and managed volumes it created stay, as Docker keeps volumes.
+func configureOrRemove(server incus.InstanceServer, spec *Spec) error {
+	err := ApplyConfig(server, spec)
+	if err == nil {
+		return nil
+	}
+	op, derr := server.DeleteInstance(spec.Name)
+	if derr == nil {
+		derr = op.Wait()
+	}
+	if derr != nil {
+		return fmt.Errorf("%w (and %s, which was just created, could not be removed: %v)", err, spec.Name, derr)
+	}
+	return fmt.Errorf("%w (%s was removed again: nothing is left of this run but any volume it made)", err, spec.Name)
 }

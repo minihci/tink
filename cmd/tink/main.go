@@ -219,7 +219,12 @@ translate to at all.
 
 Use --dry-run to compute and print the plan without creating or
 starting anything, matching tink deploy's and tink ingress reconcile's
-existing convention.`,
+existing convention.
+
+--incus-config and --incus-device are the escape hatch: Incus's own vocabulary, for anything
+the flags above do not say (memory and cpu limits, sysctls, host devices, a tmpfs, privileged...).
+They may add to what the flags decide but not override it. See docs/docker-gap-analysis.md for
+which Docker flags map to which key or device.`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.Image = args[0]
@@ -242,6 +247,9 @@ existing convention.`,
 	cmd.Flags().StringVar(&opts.Restart, "restart", "", "always|unless-stopped|on-failure|no (boot.autorestart is a plain boolean -- retry counts aren't supported)")
 	cmd.Flags().StringVar(&opts.Pool, "pool", opts.Pool, "storage pool a bare -v name:path managed-volume mount attaches in")
 	cmd.Flags().StringArrayVar(&opts.Profiles, "profile", nil, "an existing Incus profile to layer in addition (repeatable)")
+	cmd.Flags().StringVar(&opts.User, "user", "", "run the process as UID[:GID] (numbers only); volumes created by this run are owned by it")
+	cmd.Flags().StringArrayVar(&opts.IncusConfig, "incus-config", nil, "an Incus instance config KEY=VALUE for anything no flag says, e.g. limits.memory=512MiB (repeatable)")
+	cmd.Flags().StringArrayVar(&opts.IncusDevice, "incus-device", nil, "an Incus device as 'NAME type=TYPE key=value ...' for anything no flag says, e.g. 'cache type=disk source=tmpfs: path=/cache size=64MiB' (repeatable)")
 	cmd.Flags().BoolVar(&opts.Rm, "rm", false, "delete the instance automatically once it stops, for any reason (Incus's own ephemeral flag)")
 	cmd.Flags().BoolVar(&opts.VM, "vm", false, "create a virtual machine instead of a container (passes --vm to incus init)")
 	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "compute and print the plan without applying it")

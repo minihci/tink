@@ -22,6 +22,7 @@ type readFake struct {
 	imageErr         error  // what GetImage answers
 	aliasTarget      string // what a found alias points at
 	created          []string
+	createdConfig    []map[string]string
 	fetchedImages    []string
 }
 
@@ -31,6 +32,7 @@ func (f *readFake) GetStoragePoolVolume(_, _, n string) (*api.StorageVolume, str
 
 func (f *readFake) CreateStoragePoolVolume(pool string, v api.StorageVolumesPost) error {
 	f.created = append(f.created, pool+"/"+v.Name)
+	f.createdConfig = append(f.createdConfig, v.Config)
 	return nil
 }
 

@@ -25,7 +25,7 @@ var fieldOwners = map[string][]Kind{
 	"Address":         {KindBackupTarget},
 	"Fingerprint":     {KindBackupTarget},
 	"Backup":          {KindStorageVolume},
-	"Config":          {KindProject, KindProfile, KindInstance},
+	"Config":          {KindProject, KindProfile, KindInstance, KindStorageVolume},
 	"Devices":         {KindProfile, KindInstance},
 	"Instance":        {KindFile, KindExec},
 	"Path":            {KindFile},
@@ -71,6 +71,9 @@ func Validate(r Resource) error {
 		return err
 	}
 	if err := validateBackup(r); err != nil {
+		return err
+	}
+	if err := validateVolumeConfig(r); err != nil {
 		return err
 	}
 	if err := validateBackupTarget(r); err != nil {

@@ -71,6 +71,9 @@ was hand-exercised for real, repeatedly, building nextcloud-incus.
 | `--ip ADDR` (requires `--network`) | NIC device's `ipv4.address:` field | Found missing while recreating a real known deployment (nextcloud-incus): every one of its five profiles pins a static address on `incusbr0`, which `--network` alone can't express. Errors if given without `--network` |
 | `--name NAME` | the Incus instance name (positional in Incus, a flag in Docker) | **Required** — unlike Docker, `tink run` does not invent a random name when omitted; Incus instance names are meaningful and persistent on this platform (ingress registration, profiles), so an unnamed instance is a mistake to catch, not a default to paper over |
 | `--restart=on-failure:5` | `boot.autorestart` (plain boolean) | **No clean map** — Incus has no retry-count concept. `tink run` accepts `--restart` as a boolean-ish flag (`always`/`unless-stopped` → `true`, `no` → `false`) and errors on a retry-count value rather than silently discarding it |
+| `--user UID[:GID]` | `oci.uid` / `oci.gid` on the instance, **and** `initial.uid` / `initial.gid` on every managed volume this run has to create | Numbers only: a name is looked up in the image's `/etc/passwd`, which tink cannot read. A new Incus volume is root-owned, so a non-root process could not write to it; Incus applies `initial.*` when a volume is created and never afterwards, so a volume that already exists is **reused as it is**, with a line saying so and what to `chown`. Verified live with Navidrome (`user: 1000:1000` in its install page): the process ran as 1000 and wrote its database into `/data`; the same run against a root-owned existing volume failed to open it, as the line predicted |
+| `--incus-config KEY=VALUE` (repeatable) | instance config, as it is | The escape hatch: anything an instance's config can hold (`limits.memory`, `linux.sysctl.*`, `security.privileged`, `oci.dns.*`...). May add, never override: a key a flag already set is an error naming the flag. `volatile.*` is refused |
+| `--incus-device 'NAME type=TYPE key=value ...'` (repeatable) | a device, as it is | The escape hatch for devices (`unix-char` for a serial adapter, `tmpfs`, `gpu`, a LAN `nic`). The words are separated by spaces as `incus config device add` takes them, so a value cannot contain one. The name may not be one a flag made (`eth0`, `proxyN`, `volumeN`) |
 | `--rm` | `ephemeral: true` on the instance (`incus init/launch -e, --ephemeral`) | A real Docker flag with a real Incus analog, unlike `-it`/`-d` (see below). **Confirmed live which one wins when combined with `--restart`**: an ephemeral instance with `boot.autorestart: true`, stopped, is deleted rather than restarted — `ephemeral` wins, matching Docker's own `--rm` removing the container on any stop, not just a clean exit |
 
 ## Docker flags with no `tink run` analog
@@ -168,6 +171,9 @@ tink run [flags] IMAGE [CMD...]
   --project string       Incus project to create the instance in (default: the daemon's own default project)
   --restart string      always|unless-stopped|no (boolean autorestart only)
   --rm                    delete the instance automatically once it stops, for any reason
+  --user UID[:GID]       run as this user; volumes created by this run are owned by it
+  --incus-config K=V     an Incus instance config key, for what no flag says (repeatable)
+  --incus-device 'N type=T k=v'   an Incus device, for what no flag says (repeatable)
   --profile string       an existing Incus profile to layer in addition (repeatable)
   --dry-run              compute and print the plan without applying it
 ```
@@ -241,6 +247,11 @@ Running the README's one-line install for Uptime Kuma (`louislam/uptime-kuma:2`)
   default profile is shared).
 - **It leaves a trace**: `user.tink.run.command` holds the command line (secret-looking values masked). Incus otherwise keeps nothing that says how an instance came to be, and
   [`tink export`](../../docs/export.md) shows it as a comment in the stack file it writes.
+
+- **`--user` and the escape hatch** (`--incus-config`, `--incus-device`), built from the gap analysis (docs/docker-gap-analysis.md). The long names are deliberate: Docker uses
+  `-c` for cpu shares and `--device` for a host device path, and a Docker-style `--device /dev/ttyUSB0` is better added later as sugar over `unix-char` than collided with now.
+- **A config Incus refuses removes the instance `run` just made.** Incus validates a config update only when it is applied, so a bad key or device (a relative host path, a misspelt `--incus-config`) used to leave a
+  stopped, device-less instance behind that the next run answered with "already exists". Only `run` does this: it made the instance a moment ago under a name that was free. Managed volumes it created stay, as Docker keeps volumes.
 
 ## Open questions, not blocking v1
 

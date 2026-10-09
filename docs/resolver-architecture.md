@@ -347,3 +347,16 @@ This also makes the scope boundary above stale in one respect: "no in-place
 instance reconfiguration" has been untrue since existing instances started
 converging in place, and image changes are now handled as described, though
 only through an explicit opt-in.
+
+## Update, 2026-10-09: a volume's own settings
+
+A `kind: storage-volume` can carry `config:`, the Incus volume config it is created with (`initial.uid`, `initial.gid`, `initial.mode`, `size`, `block.filesystem`...). It was refused before
+("does not use field Config"), which left no way for a stack to say who owns a volume, and `tink run --user` made that matter: it creates volumes owned by the user, and a stack rebuilt from
+`tink export` came up with root-owned volumes that the app could not write to (verified live with Navidrome).
+
+- It is created with those keys, and `plan`/`apply` converge the others like an instance's config: only declared keys are compared, nothing else is touched.
+- **`initial.*` is creation-only.** Incus reads it when it makes the volume and does nothing afterwards, so on a volume that already exists a difference is a **warning** ("only applies when a volume is
+  created: change what it is by hand"), never a change `apply` would claim to make. Setting the key on an existing volume would only record a value that has no effect.
+- Keys tink writes itself are refused so that two sources cannot fight over one key: `user.tink.backup.*` and `user.tink.stack` (the copy policy, its stamps, the owning stack), `volatile.*` (Incus's), and
+  `snapshots.schedule`/`snapshots.expiry` when the `backup:` block already has a `snapshots` policy.
+

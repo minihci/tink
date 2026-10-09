@@ -2,6 +2,7 @@ package resolve
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/lxc/incus/v7/shared/api"
@@ -15,6 +16,14 @@ import (
 // loading a stack already rejects.
 func volumeBackupConfig(r Resource, env volumeEnv) (set map[string]string, remove []string, err error) {
 	set = backupmeta.SnapshotConfig(r.Backup)
+	if len(r.Config) > 0 { // the volume's own settings, declared in the stack (validateVolumeConfig has kept them clear of the keys below)
+		if set == nil {
+			set = map[string]string{}
+		}
+		for k, v := range r.Config {
+			set[k] = v
+		}
+	}
 	if env.stack != "" { // the pointer back to the stack that applied it; never removed (see backupmeta.StackKey)
 		if set == nil {
 			set = map[string]string{}
@@ -144,6 +153,14 @@ func decideVolume(r Resource, current *api.StorageVolume, env volumeEnv) Planned
 	if current == nil {
 		return PlannedResource{Resource: r, Action: ActionCreate, Changes: append(diffConfig(nil, rest, nil), backupmeta.DescribePolicyChange("", wantPolicy)...), Warnings: warnings}
 	}
+	// A creation-only key (initial.uid...) says how a volume is made, and Incus does nothing with it afterwards: it is a warning when the
+	// volume was made otherwise, not a change that apply could converge.
+	creationOnly := splitCreationOnly(rest)
+	for _, k := range sortedKeys(creationOnly) {
+		if have := current.Config[k]; have != creationOnly[k] {
+			warnings = append(warnings, fmt.Sprintf("config.%s is %q here and %q in the stack, but it only applies when a volume is created: this one exists, so change what it is by hand (for ownership: chown inside it)", k, have, creationOnly[k]))
+		}
+	}
 	changes := diffConfig(current.Config, rest, nil)
 	changes = append(changes, backupmeta.DescribePolicyChange(current.Config[backupmeta.PolicyKey], wantPolicy)...)
 	for _, k := range remove {
@@ -170,4 +187,38 @@ func copyWarnings(r Resource, current map[string]string, now time.Time) []string
 
 func verifyWarning(r Resource, current map[string]string, now time.Time) string {
 	return backupmeta.VerifyWarning(r.Name, r.Backup, current, now)
+}
+
+// creationOnlyPrefix marks the volume config keys Incus reads only when it creates the volume (initial.uid, initial.gid, initial.mode...).
+const creationOnlyPrefix = "initial."
+
+// splitCreationOnly removes the creation-only keys from m, in place, and returns them.
+func splitCreationOnly(m map[string]string) map[string]string {
+	out := map[string]string{}
+	for k, v := range m {
+		if strings.HasPrefix(k, creationOnlyPrefix) {
+			out[k] = v
+			delete(m, k)
+		}
+	}
+	return out
+}
+
+// validateVolumeConfig refuses the config keys a volume's declaration owns elsewhere: the ones tink writes itself (snapshots from the
+// backup block, its own stamps), and Incus's volatile.* state. Two sources for one key would let one silently win.
+func validateVolumeConfig(r Resource) error {
+	if r.Kind != KindStorageVolume {
+		return nil
+	}
+	for _, k := range sortedKeys(r.Config) {
+		switch {
+		case strings.HasPrefix(k, "volatile."):
+			return fmt.Errorf("storage-volume %q: config.%s belongs to Incus", r.Name, k)
+		case strings.HasPrefix(k, "user.tink.backup.") || k == backupmeta.StackKey:
+			return fmt.Errorf("storage-volume %q: config.%s is written by tink itself (the backup block, or the stack that applied the volume)", r.Name, k)
+		case (k == backupmeta.KeySnapshotSchedule || k == backupmeta.KeySnapshotExpiry) && r.Backup != nil && r.Backup.Snapshots != nil:
+			return fmt.Errorf("storage-volume %q: config.%s is set by its backup: snapshots block: use one or the other", r.Name, k)
+		}
+	}
+	return nil
 }

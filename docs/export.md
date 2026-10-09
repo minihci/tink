@@ -26,7 +26,7 @@ An Incus instance carries about twenty-five config keys for every one a person s
 | the instance's own `devices`, `profiles`, every other `config` key | kept (`root` comes from the profile and is not the instance's) |
 | `user.tink.run.command` | not config: written as a `# created by:` comment |
 | a custom volume an instance's disk device attaches | a `kind: storage-volume`, in the same project and pool |
-| a volume's other config (`size`, `initial.uid`...) | **not exported**: a stack's `storage-volume` cannot carry config yet, so each key is a `# not exported:` comment and a note |
+| a volume's other config (`initial.uid`, `size`...) | the volume's `config:` ([resolver-architecture.md](resolver-architecture.md#update-2026-10-09-a-volumes-own-settings)); tink's own keys and `volatile.*` stay out |
 | a volume's `snapshots.schedule` / `snapshots.expiry` | a `backup: {snapshots: ...}` block |
 | a volume with no snapshot policy | **no `backup:` block**, and a comment: `plan` warns until someone decides. It does not invent `none:` |
 | the instance's project, if not the default | a `kind: project` with its config |
@@ -89,5 +89,9 @@ carries the command it was distilled from. Plan and apply never read or diff it.
 
 - `abs-play` (Audiobookshelf, image on `ghcr.io`, two managed volumes and two bind mounts): exported, pinned, then the instance and both volumes were deleted and `tink plan apply` rebuilt
   everything from the exported file alone in 8 seconds; the app answered with the same version and a second `plan` said no changes (notes).
+
+- `navi-play` (Navidrome, made with `tink run --user 1000:1000 --incus-config limits.memory=256MiB`): `oci.uid`/`oci.gid` kept as overrides of the image, both volumes exported with
+  `initial.uid`/`initial.gid`, then the instance and volumes deleted and rebuilt with `tink plan apply` from the file alone: the process ran as 1000, `/data` was owned by 1000:1000, a second `plan` said no changes.
+  (Before volume `config:` existed the same rebuild produced root-owned volumes and the app failed to open its database.)
 
 Not tried: VMs, instances with several profiles, volumes carrying a copy policy (noted but not rebuilt), a registry that needs a login, an `image.id` that does not match what the instance runs.
