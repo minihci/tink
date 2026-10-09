@@ -1,0 +1,54 @@
+# Headscale: the control plane of a private overlay network (a self-hosted Tailscale control server), as a tink stack.
+#
+# Draft for the reference VPS (incus.xlii.co). Plain tink YAML: nothing expands it. `tink plan` it first.
+#
+#   hs.xlii.co            needs one DNS record: A -> this host's public IP. Nothing else outside this file.
+#   ingress               serves it. The instance registers with the three user.tink.ingress.* keys below; the edge's
+#                         HTTP-01 certificate needs no Cloudflare token.
+#   headscale-data        holds the overlay's identity (noise key, node database). Losing it means re-enrolling every device,
+#                         so it declares a backup like any volume that matters.
+#
+# Per-host values are literals: the domain (here and in config.yaml), and trusted_proxies in config.yaml (the bridge).
+---
+kind: stack
+name: headscale
+---
+kind: storage-volume
+name: headscale-data
+backup:
+  snapshots:
+    schedule: "0 3 * * *"
+    retain: 14d
+  # An off-site copy is what makes this 3-2-1. It needs a `kind: backup-target` for a second server and `tink remote add` for it;
+  # until then `plan` says 3-2-1 is not met, which is true.
+---
+kind: instance
+name: headscale
+# Pinned by digest. 0.29.4 is the release of 2026-09-23. The image has an entrypoint (/ko-app/headscale) and no default command, so
+# it would print its help and exit: oci.entrypoint gives the whole command line, as the helper's does. (Incus has no oci.cmd.)
+image: docker-oci:headscale/headscale:0.29.4@sha256:8833f828b414c0907b7e5c71da76473216fe17cce0818a166b536ec552c0903f
+profiles:
+  - default
+config:
+  boot.autorestart: "true"
+  boot.autostart: "true"
+  limits.memory: 256MiB
+  oci.entrypoint: /ko-app/headscale serve -c /etc/headscale.yaml
+  user.tink.ingress.enabled: "true"
+  user.tink.ingress.domain: hs.xlii.co
+  user.tink.ingress.port: "8080"
+devices:
+  data:
+    type: disk
+    pool: default
+    source: headscale-data
+    path: /var/lib/headscale
+---
+# Headscale's usual place for its config is /etc/headscale/, which this image does not have, and the file API does not create directories.
+# /etc exists, so the file goes there and the entrypoint says where to find it (-c).
+kind: file
+name: headscale-config
+instance: headscale
+path: /etc/headscale.yaml
+source_path: config.yaml
+restart: true

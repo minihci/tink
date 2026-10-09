@@ -1,0 +1,68 @@
+# Headscale 0.29 configuration, trimmed to what this deployment sets. Everything not listed here is the release's default
+# (https://raw.githubusercontent.com/juanfont/headscale/v0.29.4/config-example.yaml documents every key).
+
+# What clients are told to connect to. This is the name in the ingress registration (headscale.yaml).
+server_url: https://hs.xlii.co
+listen_addr: 0.0.0.0:8080
+metrics_listen_addr: 127.0.0.1:9090
+grpc_listen_addr: 127.0.0.1:50443
+grpc_allow_insecure: false
+
+# Trust X-Real-IP / X-Forwarded-For only from the reverse proxy in front: the bridge the ingress is on (incusbr-ns on the reference VPS).
+# Without this the logs show the proxy's address for every client; with it set wider than the proxy, a client could spoof its logged address.
+trusted_proxies:
+  - 10.77.20.0/24
+
+noise:
+  private_key_path: /var/lib/headscale/noise_private.key
+
+prefixes:
+  v4: 100.64.0.0/10
+  v6: fd7a:115c:a1e0::/48
+  allocation: sequential
+
+# Relays: Tailscale's public DERP servers to begin with. They carry only WireGuard-encrypted packets, and only when two devices cannot reach each other
+# directly. Running Headscale's own (derp.server.enabled, with UDP 3478 open) is a later, separate step.
+derp:
+  server:
+    enabled: false
+  urls:
+    - https://controlplane.tailscale.com/derpmap/default
+  paths: []
+  auto_update_enabled: true
+  update_frequency: 3h
+
+node:
+  # Servers must not need re-authentication. 0 = never expire unless done by hand.
+  expiry: 0
+
+database:
+  type: sqlite
+  sqlite:
+    path: /var/lib/headscale/db.sqlite
+    write_ahead_log: true
+
+log:
+  level: info
+  format: text
+
+# No policy file yet, so every device can reach every other. Writing one (tags for servers, a group for people) comes before more devices join.
+policy:
+  mode: file
+  path: ""
+
+dns:
+  magic_dns: true
+  # Must differ from the server_url's domain. Devices are named <hostname>.ts.xlii.co on the overlay.
+  base_domain: ts.xlii.co
+  # Leave each device's own resolver in charge; Headscale answers only for the overlay's names and extra_records.
+  override_local_dns: false
+  nameservers:
+    global: []
+  search_domains: []
+  # Static records pushed to every device on the overlay. Not used yet; here is where a name like ha.lab.xlii.co -> a 100.x address
+  # could be served without a public DNS record.
+  extra_records: []
+
+unix_socket: /var/run/headscale/headscale.sock
+unix_socket_permission: "0770"
