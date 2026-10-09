@@ -181,6 +181,13 @@ func want(t *testing.T, img v1.Image) registryImage {
 	return registryImage{Fingerprint: ociFingerprint(m.Layers), Size: size}
 }
 
+// identity is a lookup's answer without the digest it also reports, for comparing with what want derives from the image alone. The digest is
+// of the REFERENCE (an index, for a multi-architecture image), and is checked by its own test.
+func identity(r registryImage) registryImage {
+	r.Digest = ""
+	return r
+}
+
 func TestAMultiArchitectureReferenceIsResolvedForTheServersArchitecture(t *testing.T) {
 	host := newRegistry(t, nil)
 	imgs, _ := pushIndex(t, host, "team/app:1", "amd64", "arm64")
@@ -189,7 +196,7 @@ func TestAMultiArchitectureReferenceIsResolvedForTheServersArchitecture(t *testi
 		if err != nil {
 			t.Fatal(err)
 		}
-		if w := want(t, imgs[arch]); got != w {
+		if w := want(t, imgs[arch]); identity(got) != w {
 			t.Errorf("%s: %+v, want %+v (its own layers' fingerprint and size)", arch, got, w)
 		}
 	}
@@ -209,14 +216,20 @@ func TestADigestPinnedReferenceIsResolvedByItsDigestWhateverTheTagNowPointsAt(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pinned != want(t, first["amd64"]) {
+	if identity(pinned) != want(t, first["amd64"]) {
 		t.Errorf("tag and digest together: the digest is what is resolved: %+v", pinned)
+	}
+	if pinned.Digest != digest.String() {
+		t.Errorf("the digest reported is the one the reference names: %s, want %s", pinned.Digest, digest)
 	}
 	floating, err := lookupRegistryImage(remoteAt(host), "team/app:1", amd)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if floating != want(t, second["amd64"]) || floating == pinned {
+	if floating.Digest == "" || floating.Digest == pinned.Digest {
+		t.Errorf("a tag that moved reports the digest it points at now: %q (was %q)", floating.Digest, pinned.Digest)
+	}
+	if identity(floating) != want(t, second["amd64"]) || floating == pinned {
 		t.Errorf("the bare tag follows the tag: %+v", floating)
 	}
 }
@@ -294,7 +307,7 @@ func TestCredentialsWrittenIntoARemotesURLAreUsedAndNeverShown(t *testing.T) {
 	}
 	withLogin := cliconfig.Remote{Addrs: []string{"http://puller:s3cret@" + host}, Protocol: "oci"}
 	got, err := lookupRegistryImage(withLogin, "team/private:1", amd)
-	if err != nil || got != want(t, imgs["amd64"]) {
+	if err != nil || identity(got) != want(t, imgs["amd64"]) {
 		t.Fatalf("with the login in the URL: %+v %v", got, err)
 	}
 	wrong := cliconfig.Remote{Addrs: []string{"http://puller:nope@" + host}, Protocol: "oci"}
@@ -341,7 +354,7 @@ func TestTheContainerRegistryLoginOfWhoeverRunsTinkIsUsed(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := lookupRegistryImage(remoteAt(host), "team/private:1", amd)
-	if err != nil || got != want(t, imgs["amd64"]) {
+	if err != nil || identity(got) != want(t, imgs["amd64"]) {
 		t.Fatalf("with a login on this machine: %+v %v", got, err)
 	}
 	// and the login in a remote's URL wins over it
@@ -370,7 +383,7 @@ func TestABrokenLoginHelperDoesNotStopALookupOfAPublicImage(t *testing.T) {
 	amd := v1.Platform{OS: "linux", Architecture: "amd64"}
 
 	got, err := lookupRegistryImage(remoteAt(host), "team/public:1", amd)
-	if err != nil || got != want(t, imgs["amd64"]) {
+	if err != nil || identity(got) != want(t, imgs["amd64"]) {
 		t.Errorf("the image: %+v %v", got, err)
 	}
 	if _, err := lookupRuntimeConfig(remoteAt(host), "team/public:1", amd); err != nil {

@@ -146,15 +146,26 @@ func registryOptions(ctx context.Context, remote cliconfig.Remote, plat v1.Platf
 
 // openImage resolves ref on the remote's registry to the one platform's image the server would run.
 func openImage(ctx context.Context, remote cliconfig.Remote, ref string, plat v1.Platform, login *loginKeychain) (v1.Image, error) {
+	img, _, err := openImageDigest(ctx, remote, ref, plat, login)
+	return img, err
+}
+
+// openImageDigest is openImage that also returns the digest the reference itself names: what a registry shows as the digest of a tag
+// (for a multi-architecture image, the index's), which is what `image: name:tag@sha256:...` pins.
+func openImageDigest(ctx context.Context, remote cliconfig.Remote, ref string, plat v1.Platform, login *loginKeychain) (v1.Image, string, error) {
 	r, err := name.ParseReference(registryRef(remote, ref))
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	desc, err := regremote.Get(r, registryOptions(ctx, remote, plat, login)...)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return desc.Image()
+	img, err := desc.Image()
+	if err != nil {
+		return nil, "", err
+	}
+	return img, desc.Digest.String(), nil
 }
 
 // lookupRegistryImage is what the registry says about ref for plat: the fingerprint Incus would give it, and the size of its layers.
@@ -162,7 +173,7 @@ func lookupRegistryImage(remote cliconfig.Remote, ref string, plat v1.Platform) 
 	ctx, cancel := context.WithTimeout(context.Background(), registryTimeout)
 	defer cancel()
 	login := &loginKeychain{}
-	img, err := openImage(ctx, remote, ref, plat, login)
+	img, digest, err := openImageDigest(ctx, remote, ref, plat, login)
 	if err != nil {
 		return registryImage{}, login.explain(err)
 	}
@@ -174,7 +185,7 @@ func lookupRegistryImage(remote cliconfig.Remote, ref string, plat v1.Platform) 
 	for _, l := range m.Layers {
 		size += l.Size
 	}
-	return registryImage{Fingerprint: ociFingerprint(m.Layers), Size: size}, nil
+	return registryImage{Fingerprint: ociFingerprint(m.Layers), Size: size, Digest: digest}, nil
 }
 
 // lookupRuntimeConfig reads the runtime config an image bakes in (entrypoint, command, environment, working directory, user).

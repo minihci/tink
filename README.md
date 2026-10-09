@@ -30,6 +30,7 @@ comment for the working bash it's replacing.
 | `tink deploy` | verified live | `incus-host/scripts/deploy.sh` |
 | `tink run` | verified live against a real, disposable test host | (new - the manual per-tenant "mental docker-run into `incus launch` plus a sequence of `incus config`/`incus config device add` calls" dance) |
 | `tink plan` / `tink plan apply` | live-verified against real stacks: Nextcloud and Nightscout, and the Immich, mosquitto and Matter stacks on the lab host; the primary way to describe a stack ([docs](docs/resolver-architecture.md)) | (new - hand-running a sequence of `incus` commands in the right order from memory or a prose runbook) |
+| `tink export` | run live against the lab host: an instance made with `tink run`, and the real Mosquitto, each came back as a stack that plans as no changes ([docs](docs/export.md)) | (new - writing down by hand what a `tink run` or `incus` session had built) |
 | `tink ingress reconcile` / `tink ingress status` | live on `incus.xlii.co` | `incus-host/reconciler/reconcile.sh` |
 | `tink daemon run` / `tink daemon install` | live on `incus.xlii.co`, running the ingress reconcile; the backup scheduler and job executor run in the helper, on the lab host ([docs](docs/daemon-jobs.md)) | (new - it replaced the cron entry that ran `ingress reconcile`) |
 | `tink backup run` / `restore` / `verify` / `forget` | verified live on the lab host: pool targets (a TrueNAS-backed pool included) and an Incus remote over a tunnel ([docs](docs/volume-backup.md)) | (new) |
@@ -57,6 +58,8 @@ anything blocked; an instance's `on_image_change` field says whether
 image drift is reported, ignored, or converged by rebuilding an OCI app
 container onto a digest-pinned image - see
 [`docs/image-updates.md`](docs/image-updates.md).
+`export` is the other direction: it reads live instances, with their project and volumes, back into that YAML (leaving out what Incus and the image
+wrote, pinning the image, never writing a secret) and checks the result with `plan`; see [`docs/export.md`](docs/export.md).
 `--remote NAME` (or `$TINK_REMOTE`) points any command at a remote Incus server from the client configuration instead of the local
 daemon, so tink can run from another machine; see [`docs/remote.md`](docs/remote.md) for what that covers and what refuses.
 

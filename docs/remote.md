@@ -8,6 +8,7 @@ lets `tink` run from a laptop against a server.
 tink --remote tron plan  stack.yaml
 tink --remote tron apply stack.yaml
 TINK_REMOTE=tron tink backup verify immich-library
+tink --remote tron export --project tink-play kuma-play > tink.yaml    # reads only ([export.md](export.md))
 ```
 
 `--remote` is a global flag and wins over `$TINK_REMOTE`. **There is no ambient default**: without either, tink uses the local
