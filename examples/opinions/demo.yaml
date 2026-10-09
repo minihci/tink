@@ -1,0 +1,29 @@
+# One of each: what `tink opinions` says when a stack meets an opinion, departs from it with a reason, and departs without one.
+# Pool names are the ones on the machine this was written for; `scratch` is a `dir` pool and `default` a btrfs one.
+---
+kind: storage-volume            # storage: met (btrfs).  backup: accepted, with its reason.
+name: library
+pool: default
+backup:
+  none: demo volume, nothing in it
+---
+kind: storage-volume            # storage: accepted (dir pool, with a reason).  backup: accepted.
+name: thumbnails
+pool: scratch
+backup:
+  none: regenerated from the library
+accept:
+  storage: a cache; the originals are in library
+---
+kind: storage-volume            # storage: DEPARTS (dir pool, no reason).  backup: DEPARTS (never says how it is backed up).
+name: notes
+pool: scratch
+---
+kind: instance                  # identity: DEPARTS (public, no sign-in, no reason).
+name: wiki
+image: docker-oci:traefik/whoami:v1.11
+profiles:
+  - default
+config:
+  user.ingress.enabled: "true"
+  user.ingress.domain: wiki.example.com

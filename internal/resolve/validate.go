@@ -31,6 +31,7 @@ var fieldOwners = map[string][]Kind{
 	"Path":            {KindFile},
 	"Content":         {KindFile},
 	"Restart":         {KindFile, KindInstance},
+	"Accept":          {KindStorageVolume, KindInstance},
 	"OnImageChange":   {KindInstance},
 	"SnapshotVolumes": {KindInstance},
 	"Check":           {KindIncus, KindExec},
@@ -71,6 +72,9 @@ func Validate(r Resource) error {
 		return err
 	}
 	if err := validateBackup(r); err != nil {
+		return err
+	}
+	if err := validateAccept(r); err != nil {
 		return err
 	}
 	if err := validateBackupTarget(r); err != nil {

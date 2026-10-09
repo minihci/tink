@@ -67,3 +67,39 @@ func keysOf(m map[string]string) []string {
 	}
 	return keys
 }
+
+func TestRender_PutsAnAutheliaRouteBehindForwardAuth(t *testing.T) {
+	files, err := Render([]Registration{{Name: "ns", Domain: "ns.example.com", Port: "1337", Address: "10.0.0.5", Auth: "authelia"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := files["ns.caddy"]
+	want := `	forward_auth {$AUTHELIA_ADDR} {
+		uri /api/authz/forward-auth
+		copy_headers Remote-User Remote-Groups Remote-Email Remote-Name
+	}
+
+	reverse_proxy http://10.0.0.5:1337 {`
+	if !contains(got, want) {
+		t.Errorf("the sign-in check must come before the proxy:\n%s", got)
+	}
+	// a route with no auth is byte-for-byte what it always was
+	plain, _ := Render([]Registration{{Name: "ns", Domain: "ns.example.com", Port: "1337", Address: "10.0.0.5"}})
+	if contains(plain["ns.caddy"], "forward_auth") {
+		t.Errorf("no auth, no forward_auth:\n%s", plain["ns.caddy"])
+	}
+	// and an auth value tink does not know adds nothing
+	other, _ := Render([]Registration{{Name: "ns", Domain: "ns.example.com", Port: "1337", Address: "10.0.0.5", Auth: "authentik"}})
+	if contains(other["ns.caddy"], "forward_auth") {
+		t.Errorf("only a value tink knows changes the route:\n%s", other["ns.caddy"])
+	}
+}
+
+func contains(s, sub string) bool {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}

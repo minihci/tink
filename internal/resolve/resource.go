@@ -136,6 +136,11 @@ type Resource struct {
 	// does.
 	Restart bool
 
+	// Accept (storage-volume and instance) records, per opinion, why this resource departs from it on purpose: `accept: {storage: "regenerable
+	// cache"}`. The reason is required and is kept: a departure that explains itself is a decision, and one that does not is an oversight.
+	// The backup opinion has its own opt-out (backup: none: REASON), so it is not accepted here. See internal/opinion.
+	Accept map[string]string
+
 	// OnImageChange (instance-only) says what apply may do when the image the
 	// instance was built from no longer matches Image: "report" (default;
 	// the instance is BLOCKED and nothing on it is changed), "ignore" (drift

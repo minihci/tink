@@ -19,6 +19,8 @@ type Registration struct {
 	Domain  string
 	Port    string
 	Address string
+	// Auth is user.ingress.auth: "authelia" puts the route behind the identity provider (forward_auth), and "" leaves it public.
+	Auth string
 }
 
 // Discover queries every instance on the daemon, across every project --
@@ -45,6 +47,7 @@ func filterAndResolve(instances []api.InstanceFull) (regs []Registration, warnin
 		name, project, domain, port string
 		hasAddress                  bool
 		address                     string
+		auth                        string
 	}
 
 	var candidates []candidate
@@ -69,6 +72,7 @@ func filterAndResolve(instances []api.InstanceFull) (regs []Registration, warnin
 			port:       port,
 			hasAddress: ok,
 			address:    address,
+			auth:       inst.Config["user.ingress.auth"],
 		})
 	}
 
@@ -102,6 +106,7 @@ func filterAndResolve(instances []api.InstanceFull) (regs []Registration, warnin
 			Domain:  c.domain,
 			Port:    c.port,
 			Address: c.address,
+			Auth:    c.auth,
 		})
 	}
 

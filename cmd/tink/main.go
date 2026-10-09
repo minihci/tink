@@ -95,6 +95,7 @@ made executable instead of just documented.`,
 	root.AddCommand(newDeployCmd())
 	root.AddCommand(newRunCmd())
 	root.AddCommand(newPlanCmd())
+	root.AddCommand(newOpinionsCmd())
 	root.AddCommand(newSecretCmd())
 	root.AddCommand(newVolBackupCmd())
 	root.AddCommand(newRemoteCmd())
@@ -329,6 +330,7 @@ none, and when the helper is not well. See docs/volume-backup.md and docs/helper
 			}
 			noteUndeclaredPolicies(cmd.OutOrStdout(), backuprun.ServerEngine{Server: server}, resources)
 			noteHelper(cmd.OutOrStdout(), server, time.Now(), resources)
+			noteOpinions(cmd.OutOrStdout(), server, resources)
 			return nil
 		},
 	}

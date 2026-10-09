@@ -53,8 +53,9 @@ type yamlResource struct {
 	// comment.
 	Restart bool `yaml:"restart"`
 
-	OnImageChange   string `yaml:"on_image_change"`
-	SnapshotVolumes bool   `yaml:"snapshot_volumes"`
+	Accept          map[string]string `yaml:"accept"`
+	OnImageChange   string            `yaml:"on_image_change"`
+	SnapshotVolumes bool              `yaml:"snapshot_volumes"`
 
 	// Incus-only. Both are argv for the incus binary, e.g. `command: [image,
 	// import, /path/to.qcow2, --alias, haos-x86-64]` -- never a shell
@@ -316,6 +317,7 @@ func (d yamlResource) toResource(dir string) (Resource, error) {
 		Path:            d.Path,
 		Content:         content,
 		Restart:         d.Restart,
+		Accept:          d.Accept,
 		OnImageChange:   d.OnImageChange,
 		SnapshotVolumes: d.SnapshotVolumes,
 		Check:           d.Check,

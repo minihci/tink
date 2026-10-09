@@ -1,0 +1,34 @@
+# Two apps that register with the edge in edge.yaml. Apply both files together: tink plan edge.yaml apps.yaml
+#
+# The first is behind sign-in. The second is public on purpose, and says why: that sentence is the whole opt-out.
+---
+kind: instance
+name: whoami
+image: docker-oci:traefik/whoami:v1.11
+profiles:
+  - default
+config:
+  boot.autorestart: "true"
+  boot.autostart: "true"
+  user.ingress.enabled: "true"
+  user.ingress.domain: whoami.example.com
+  user.ingress.port: "80"
+  user.ingress.auth: authelia
+devices:
+  eth0: {name: eth0, type: nic, network: incusbr0}
+---
+kind: instance
+name: status-page
+image: docker-oci:traefik/whoami:v1.11
+profiles:
+  - default
+config:
+  boot.autorestart: "true"
+  boot.autostart: "true"
+  user.ingress.enabled: "true"
+  user.ingress.domain: status.example.com
+  user.ingress.port: "80"
+accept:
+  identity: a read-only status page, public by design
+devices:
+  eth0: {name: eth0, type: nic, network: incusbr0}

@@ -1,0 +1,65 @@
+# The shared public edge: one Caddy instance that owns :80/:443, and nothing else.
+#
+# This is plain tink YAML. Nothing expands it, and nothing in tink knows it came from here: copy it, edit it, apply it
+# (`tink plan`, then `tink plan apply`). It is what `tink deploy` used to build for the ingress, as resources `plan` can diff.
+#
+# Apps do not edit this. An app registers itself with three config keys on its own instance (see apps.yaml):
+#   user.ingress.enabled / domain / port      and, to put the route behind sign-in:   user.ingress.auth: authelia
+# and `tink daemon run` (or the helper, `tink helper install --ingress`) writes its route into the routes volume below.
+#
+# Per-host values are literals here, on purpose: change them in this file.
+#   domain for your ACME account:  ACME_EMAIL
+#   where Authelia listens:        AUTHELIA_ADDR  (only read by routes that ask for auth)
+---
+kind: storage-volume
+name: ingress-caddy-data
+backup:
+  none: ACME state. Losing it re-requests the certificates, and the only cost is Let's Encrypt's rate limits
+---
+kind: storage-volume
+name: ingress-routes
+backup:
+  none: generated from the instances that register with the edge, so it is rebuilt by the next reconcile
+---
+kind: instance
+name: ingress
+image: docker-oci:caddy:2.11.4
+profiles:
+  - default
+config:
+  boot.autorestart: "true"
+  boot.autostart: "true"
+  limits.cpu: "1"
+  limits.memory: 256MiB
+  environment.ACME_EMAIL: admin@example.com
+  environment.AUTHELIA_ADDR: 10.0.0.20:9091
+devices:
+  eth0:
+    name: eth0
+    type: nic
+    network: incusbr0
+  http:
+    type: proxy
+    listen: tcp:0.0.0.0:80
+    connect: tcp:127.0.0.1:80
+  https:
+    type: proxy
+    listen: tcp:0.0.0.0:443
+    connect: tcp:127.0.0.1:443
+  caddy-data:
+    type: disk
+    pool: default
+    source: ingress-caddy-data
+    path: /data
+  routes:
+    type: disk
+    pool: default
+    source: ingress-routes
+    path: /etc/caddy/routes
+---
+kind: file
+name: ingress-caddyfile
+instance: ingress
+path: /etc/caddy/Caddyfile
+source_path: Caddyfile
+restart: true

@@ -23,7 +23,12 @@ var routeTemplate = template.Must(template.New("route").Parse(
 		-Server
 	}
 
-	reverse_proxy http://{{.Address}}:{{.Port}} {
+{{if eq .Auth "authelia"}}	forward_auth {$AUTHELIA_ADDR} {
+		uri /api/authz/forward-auth
+		copy_headers Remote-User Remote-Groups Remote-Email Remote-Name
+	}
+
+{{end}}	reverse_proxy http://{{.Address}}:{{.Port}} {
 		header_up X-Real-IP {remote_host}
 	}
 
