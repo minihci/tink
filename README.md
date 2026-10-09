@@ -58,6 +58,7 @@ anything blocked; an instance's `on_image_change` field says whether
 image drift is reported, ignored, or converged by rebuilding an OCI app
 container onto a digest-pinned image - see
 [`docs/image-updates.md`](docs/image-updates.md).
+If you are starting from a `docker run` line or a Compose file, [`docs/docker-to-tink.md`](docs/docker-to-tink.md) says what to change and what Docker has that Incus does not.
 `export` is the other direction: it reads live instances, with their project and volumes, back into that YAML (leaving out what Incus and the image
 wrote, pinning the image, never writing a secret) and checks the result with `plan`; see [`docs/export.md`](docs/export.md).
 `--remote NAME` (or `$TINK_REMOTE`) points any command at a remote Incus server from the client configuration instead of the local

@@ -89,7 +89,7 @@ carries the command it was distilled from. Plan and apply never read or diff it.
   What remained different from the hand-written stack was exactly what a live object cannot say (the `exec` step, comments, `library/`, the backup decision).
 
 - `abs-play` (Audiobookshelf, image on `ghcr.io`, two managed volumes and two bind mounts): exported, pinned, then the instance and both volumes were deleted and `tink plan apply` rebuilt
-  everything from the exported file alone in 8 seconds; the app answered with the same version and a second `plan` said no changes (notes).
+  everything from the exported file alone in 8 seconds; the app answered with the same version and a second `plan` said no changes ([notes](explore-audiobookshelf.md)).
 
 - `navi-play` (Navidrome, made with `tink run --user 1000:1000 --incus-config limits.memory=256MiB`): `oci.uid`/`oci.gid` kept as overrides of the image, both volumes exported with
   `initial.uid`/`initial.gid`, then the instance and volumes deleted and rebuilt with `tink plan apply` from the file alone: the process ran as 1000, `/data` was owned by 1000:1000, a second `plan` said no changes.

@@ -63,7 +63,7 @@ was hand-exercised for real, repeatedly, building nextcloud-incus.
 | Docker flag | Incus primitive | Notes |
 |---|---|---|
 | `-e KEY=VAL` (repeatable) | `environment.KEY=VAL` config key | |
-| `-p [IP:]HOST[-HOST]:CONTAINER[-CONTAINER][/tcp\|/udp]` (repeatable) | `proxy` device: `listen=PROTO:IP:HOST connect=PROTO:127.0.0.1:CONTAINER` | IP defaults to `0.0.0.0`; IPv6 in brackets, as Docker writes it; ranges map one to one (or onto a single container port). A container port alone is refused: Docker would pick a random host port and tink could not report it. UDP and a bind address are 3 and 1 of the 12 install pages sampled in docs/docker-gap-analysis.md; verified live (a `udp` socket, `127.0.0.1:5302` and a three-port range bound on the host) |
+| `-p [IP:]HOST[-HOST]:CONTAINER[-CONTAINER][/tcp\|/udp]` (repeatable) | `proxy` device: `listen=PROTO:IP:HOST connect=PROTO:127.0.0.1:CONTAINER` | IP defaults to `0.0.0.0`; IPv6 in brackets, as Docker writes it; ranges map one to one (or onto a single container port). A container port alone is refused: Docker would pick a random host port and tink could not report it. UDP and a bind address are 3 and 1 of the 12 install pages sampled in [docs/docker-gap-analysis.md](../../docs/docker-gap-analysis.md); verified live (a `udp` socket, `127.0.0.1:5302` and a three-port range bound on the host) |
 | `-v /host/path:/container/path[:ro\|rw\|shift]` (repeatable) | `disk` device, `source=/host/path path=/container/path`, plus `readonly=true` for `ro` and `shift=true` for `shift` | The host path must be **absolute**, and with `--remote` it is a path on the server (a relative one such as `./media` used to be accepted and refused by Incus after the instance existed). `:ro` is Docker's and was silently read as part of the container path before. **`shift` is Incus's**: it maps the ids of the host path into the container so files owned by a host user keep their numbers instead of showing as `nobody` (verified live: writable with `shift`, "Permission denied" without). It is opt-in because it needs idmapped-mount support from the filesystem and a mount that cannot be made stops the instance starting; `run` says so when a writable bind mount has neither `:ro` nor `:shift`. With `shift` the container's root writes as root on the host, as in Docker. `z`, `Z`, `nocopy`, `cached`, `delegated`, `consistent` mean nothing here and are accepted with a note |
 | `-v name:/container/path` (repeatable) | `disk` device pointing at a managed storage volume, in the pool named by `--pool` (default `default`) | Distinguished from the bind-mount form by whether the source contains a `/` — a bare name is a managed volume, a path is a bind mount, matching Docker's own disambiguation rule. **Docker/Incus semantic gap, found live**: Docker auto-creates a named volume on first use; Incus's own managed volumes don't — attaching a disk device to one that's never been created fails validation outright. `tink run` creates the volume first if it's missing, matching Docker's ergonomics rather than Incus's stricter default (confirmed against a real, disposable test host, 2026-09-18) |
 | `IMAGE [CMD...]` (positional, after flags) | `oci.entrypoint` config key | Exactly what scoped `nextcloud-mcp` to `webdav`+`calendar` |
@@ -237,14 +237,14 @@ alone — both needed a real daemon to surface.
 ## Update, 2026-10-09: what standing up Uptime Kuma on the lab host found
 
 Running the README's one-line install for Uptime Kuma (`louislam/uptime-kuma:2`) through `tink run` against the lab host, then reading back every Incus object it made
-(notes: docs/explore-uptime-kuma.md), changed `run` in five ways. None changes a flag.
+(notes: [docs/explore-uptime-kuma.md](../../docs/explore-uptime-kuma.md)), changed `run` in five ways. None changes a flag.
 
 - **Published ports with no network device are refused, before anything is created.** The lab host's `default` profile has a root disk and no NIC, so the first attempt produced
   a RUNNING instance with no address and a proxy forwarding to nothing, which looks exactly like a broken app. `run` now looks at the NICs of the instance's own devices and of the
   profiles it will get (Incus uses `default` when none is named); no NIC with `-p` is an error naming `--network`, no NIC without `-p` is a warning (an isolated app is legitimate).
   A dry run cannot check (it never connects) and says so.
 - **The registry follows one rule, shared with `plan` and `plan apply`** (`run.Qualify`; the reasoning and the table are in
-  docs/docker-gap-analysis.md). A reference that names a registry host (`ghcr.io/advplyr/audiobookshelf:latest`) uses the configured OCI
+  [docs/docker-gap-analysis.md](../../docs/docker-gap-analysis.md#6-the-registry-story)). A reference that names a registry host (`ghcr.io/advplyr/audiobookshelf:latest`) uses the configured OCI
   remote for that host (`ghcr:`); one that names **no** registry (`louislam/uptime-kuma:2`, as the README writes it) is Docker Hub, with a warning that suggests `docker.io/...` or `docker-oci:...`;
   a host with no remote is an error that says how to add one. A local alias or fingerprint, and a configured `REMOTE:REF`, are left alone. (This answers the first open question below for non-`library/`
   names; `library/` is accepted either way, as the Mosquitto instance shows.)
@@ -254,7 +254,7 @@ Running the README's one-line install for Uptime Kuma (`louislam/uptime-kuma:2`)
 - **It leaves a trace**: `user.tink.run.command` holds the command line (secret-looking values masked). Incus otherwise keeps nothing that says how an instance came to be, and
   [`tink export`](../../docs/export.md) shows it as a comment in the stack file it writes.
 
-- **`--user` and the escape hatch** (`--incus-config`, `--incus-device`), built from the gap analysis (docs/docker-gap-analysis.md). The long names are deliberate: Docker uses
+- **`--user` and the escape hatch** (`--incus-config`, `--incus-device`), built from the gap analysis ([docs/docker-gap-analysis.md](../../docs/docker-gap-analysis.md)). The long names are deliberate: Docker uses
   `-c` for cpu shares and `--device` for a host device path, and a Docker-style `--device /dev/ttyUSB0` is better added later as sugar over `unix-char` than collided with now.
 - **A config Incus refuses removes the instance `run` just made.** Incus validates a config update only when it is applied, so a bad key or device (a relative host path, a misspelt `--incus-config`) used to leave a
   stopped, device-less instance behind that the next run answered with "already exists". Only `run` does this: it made the instance a moment ago under a name that was free. Managed volumes it created stay, as Docker keeps volumes.
