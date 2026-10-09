@@ -7,6 +7,7 @@ package incusapi
 import (
 	"errors"
 	"fmt"
+	"syscall"
 
 	incus "github.com/lxc/incus/v7/client"
 
@@ -62,7 +63,11 @@ func Connect(socketPath string) (incus.InstanceServer, error) {
 	if useRemote {
 		return ConnectRemote(remote)
 	}
-	return incus.ConnectIncusUnix(socketPath, nil)
+	server, err := incus.ConnectIncusUnix(socketPath, nil)
+	if err != nil && errors.Is(err, syscall.ENOENT) {
+		return nil, fmt.Errorf("%w (there is no local Incus daemon on this machine: to manage a server from here, use --remote NAME or $TINK_REMOTE, see `tink remote`)", err)
+	}
+	return server, err
 }
 
 // remoteAdvice replaces the usual advice for a remote that is not configured, in a process where `incus remote add` is not how it is fixed.

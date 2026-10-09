@@ -20,7 +20,7 @@ its `on_image_change` policy (below):
 ```
 instance/ha: BLOCKED []
     drift: image: "ghcr.io/home-assistant/home-assistant:2026.9.4" resolves to abc1634ab347, but the instance was built from 7d7a19271ad2 (ghcr.io/home-assistant/home-assistant:2026.9.1)
-    blocked: image drift with on_image_change: report -- nothing on this instance is changed (set on_image_change: ignore to accept it, or on_image_change: rebuild to converge it): ...
+    blocked: image drift with on_image_change: report -- nothing on this instance is changed (set on_image_change: ignore to accept it, or on_image_change: rebuild to converge it)
 ```
 
 The four dispositions an instance can have are `no changes`, `would update`

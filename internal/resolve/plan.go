@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"reflect"
 	"sort"
+	"strings"
 	"sync"
 
 	incus "github.com/lxc/incus/v7/client"
@@ -283,17 +284,69 @@ func diffConfig(current, desired map[string]string, hidden map[string]bool) []st
 }
 
 // diffDevices reports desired devices that are missing or different from
-// current. Devices merge as whole blocks by name, not field-by-field
-// (confirmed against real Incus docs while building tink run), so a
-// device is either exactly right or needs full replacement -- there's no
-// partial-field diff to compute.
+// current, one line per field that differs. Devices merge as whole blocks by
+// name, not field-by-field (confirmed against real Incus docs while building
+// tink run), so applying replaces the whole device; but a reader asking "what
+// is different" is helped by seeing which field, so that is what is printed.
 func diffDevices(current, desired map[string]map[string]string) []string {
 	var changes []string
 	for name, dev := range desired {
-		if !reflect.DeepEqual(current[name], dev) {
-			changes = append(changes, fmt.Sprintf("device.%s: %v -> %v", name, current[name], dev))
+		cur, exists := current[name]
+		if exists && reflect.DeepEqual(cur, dev) {
+			continue
+		}
+		if !exists {
+			changes = append(changes, fmt.Sprintf("device.%s: added (%s)", name, deviceFields(dev)))
+			continue
+		}
+		for _, k := range sortedKeys(unionKeys(cur, dev)) {
+			have, hasHave := cur[k]
+			want, hasWant := dev[k]
+			switch {
+			case hasHave && hasWant && have != want:
+				changes = append(changes, fmt.Sprintf("device.%s.%s: %q -> %q", name, k, have, want))
+			case !hasHave:
+				changes = append(changes, fmt.Sprintf("device.%s.%s: (unset) -> %q", name, k, want))
+			case !hasWant:
+				changes = append(changes, fmt.Sprintf("device.%s.%s: %q -> (unset)", name, k, have))
+			}
 		}
 	}
 	sort.Strings(changes)
 	return changes
+}
+
+// deviceFields writes a device's fields as k=v pairs, type first.
+func deviceFields(dev map[string]string) string {
+	var parts []string
+	if t, ok := dev["type"]; ok {
+		parts = append(parts, "type="+t)
+	}
+	for _, k := range sortedKeys(dev) {
+		if k != "type" {
+			parts = append(parts, k+"="+dev[k])
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+func unionKeys(a, b map[string]string) map[string]bool {
+	u := map[string]bool{}
+	for k := range a {
+		u[k] = true
+	}
+	for k := range b {
+		u[k] = true
+	}
+	return u
+}
+
+// sortedKeys returns m's keys in order.
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }

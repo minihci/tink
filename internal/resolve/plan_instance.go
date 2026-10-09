@@ -3,7 +3,6 @@ package resolve
 import (
 	"fmt"
 	"sort"
-	"strings"
 
 	incus "github.com/lxc/incus/v7/client"
 
@@ -180,7 +179,7 @@ func decideInstance(r Resource, changes []string, chk imageCheck, pre preflight)
 
 	default: // report
 		if len(chk.Drift) > 0 {
-			block(fmt.Sprintf("image drift with on_image_change: report -- nothing on this instance is changed (set on_image_change: ignore to accept it, or on_image_change: rebuild to converge it): %s", strings.Join(chk.Drift, "; ")))
+			block("image drift with on_image_change: report -- nothing on this instance is changed (set on_image_change: ignore to accept it, or on_image_change: rebuild to converge it)")
 		}
 		p.Warnings = append(p.Warnings, chk.Unverified...)
 	}
