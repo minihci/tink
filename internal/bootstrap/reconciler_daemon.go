@@ -92,14 +92,13 @@ func applyHelper(r *runner, opts Options) error {
 		r.note("removed legacy reconciler cron entry")
 	}
 
-	if r.dryRun {
-		r.note("would install the helper with the ingress reconcile (tink helper install --ingress) if the host has none, " +
-			"and retire the host's tink-daemon unit once the helper has reconciled ingress")
-		return nil
-	}
-
 	server, err := connectIncus(opts.socket())
 	if err != nil {
+		if r.dryRun {
+			r.note("would install the helper with the ingress reconcile (tink helper install --ingress) if the host has none, "+
+				"and retire the host's tink-daemon unit once the helper has reconciled ingress (could not look: %v)", err)
+			return nil
+		}
 		return fmt.Errorf("connecting to incus to install the helper: %w", err)
 	}
 	found, err := helper.Find(server)
@@ -114,6 +113,12 @@ func applyHelper(r *runner, opts Options) error {
 		r.note("WARN: the helper %s does not run the ingress reconcile, and deploy no longer installs a host daemon to do it. "+
 			"`tink helper remove` (its volumes and history stay), then deploy again to install one that does. "+
 			"The host's tink-daemon unit, if there is one, is left running.", found[0].Label())
+		return nil
+	case r.dryRun:
+		r.note("would install the helper with the ingress reconcile (tink helper install --ingress), from %s", helperSourceText(opts.Helper))
+		if hostUnitInstalled() {
+			r.note("would then retire the host's tink-daemon unit, once the helper has reported a successful ingress reconcile")
+		}
 		return nil
 	default:
 		w := &noteWriter{r: r}
@@ -133,6 +138,14 @@ func applyHelper(r *runner, opts Options) error {
 	if !hostUnitInstalled() {
 		return nil
 	}
+	if r.dryRun {
+		if rep := ingressReport(server, label); rep {
+			r.note("would retire the host's tink-daemon unit: the helper %s has reconciled ingress", label)
+		} else {
+			r.note("would leave the host's tink-daemon unit running: the helper %s has not reported a successful ingress reconcile", label)
+		}
+		return nil
+	}
 	if !waitForIngress(server, label) {
 		r.note("WARN: the host's tink-daemon unit is still installed, and is left running: the helper %s has not reported a successful ingress reconcile "+
 			"within %s (see `tink helper status`). Once it does, disable the unit: systemctl disable --now tink-daemon", label, ingressWait)
@@ -141,19 +154,35 @@ func applyHelper(r *runner, opts Options) error {
 	return retireHostDaemon(r)
 }
 
+// helperSourceText says what the helper would be installed from.
+func helperSourceText(h HelperSource) string {
+	if h.Image != "" {
+		return "the image " + h.Image
+	}
+	return "this tink binary (" + h.Binary + ") in a stock alpine image"
+}
+
+// ingressReport is whether the helper has reported a successful ingress reconcile, now.
+func ingressReport(server incus.InstanceServer, label string) bool {
+	found, err := helper.Find(server)
+	if err != nil {
+		return false
+	}
+	for _, f := range found {
+		if f.Label() == label {
+			rep := helper.Evaluate(f, time.Now())
+			return rep.Status != nil && rep.Status.Ingress != nil && rep.Status.Ingress.OK
+		}
+	}
+	return false
+}
+
 // waitForIngress is whether the helper has reported a successful ingress reconcile, within ingressWait.
 func waitForIngress(server incus.InstanceServer, label string) bool {
 	deadline := time.Now().Add(ingressWait)
 	for {
-		if found, err := helper.Find(server); err == nil {
-			for _, f := range found {
-				if f.Label() != label {
-					continue
-				}
-				if rep := helper.Evaluate(f, time.Now()); rep.Status != nil && rep.Status.Ingress != nil && rep.Status.Ingress.OK {
-					return true
-				}
-			}
+		if ingressReport(server, label) {
+			return true
 		}
 		if !time.Now().Before(deadline) {
 			return false

@@ -153,14 +153,51 @@ func TestAFailedInstallFailsTheDeployAndKeepsTheUnit(t *testing.T) {
 	}
 }
 
-func TestADryRunChangesNothing(t *testing.T) {
+func TestADryRunLooksAndSaysWhatItWouldReallyDo(t *testing.T) {
+	// no helper, an old unit: it would install, then retire
 	g := newRig(t, true)
 	g.r.dryRun = true
-	connectIncus = func(string) (incus.InstanceServer, error) { t.Fatal("a dry run must not connect"); return nil, nil }
-	if err := applyHelper(g.r, Options{}); err != nil {
+	if err := applyHelper(g.r, Options{Helper: HelperSource{Binary: "/usr/local/bin/tink"}}); err != nil {
 		t.Fatal(err)
 	}
-	if len(g.installed) != 0 || !g.unitExists() || !strings.Contains(g.notes(), "would install the helper") {
+	if len(g.installed) != 0 || !g.unitExists() || len(g.cmds) != 0 {
+		t.Errorf("a dry run changes nothing: %+v unit=%v %v", g.installed, g.unitExists(), g.cmds)
+	}
+	for _, want := range []string{"would install the helper", "/usr/local/bin/tink", "would then retire the host's tink-daemon unit"} {
+		if !strings.Contains(g.notes(), want) {
+			t.Errorf("missing %q:\n%s", want, g.notes())
+		}
+	}
+
+	// a helper with ingress that has reconciled: it would retire the unit
+	g = newRig(t, true, helperInst("ingress", true))
+	g.r.dryRun = true
+	applyHelper(g.r, Options{})
+	if !strings.Contains(g.notes(), "would retire the host's tink-daemon unit") || !g.unitExists() || len(g.cmds) != 0 {
 		t.Errorf("%s", g.notes())
+	}
+
+	// one that has not: it would leave the unit
+	g = newRig(t, true, helperInst("ingress", false))
+	g.r.dryRun = true
+	applyHelper(g.r, Options{})
+	if !strings.Contains(g.notes(), "would leave the host's tink-daemon unit running") {
+		t.Errorf("%s", g.notes())
+	}
+
+	// a helper without ingress, as on a hand-built host: the same warning as a real run
+	g = newRig(t, false, helperInst("", false))
+	g.r.dryRun = true
+	applyHelper(g.r, Options{})
+	if !strings.Contains(g.notes(), "does not run the ingress reconcile") || len(g.installed) != 0 {
+		t.Errorf("%s", g.notes())
+	}
+
+	// a server that cannot be reached still gets a plan, not an error
+	g = newRig(t, false)
+	g.r.dryRun = true
+	connectIncus = func(string) (incus.InstanceServer, error) { return nil, errors.New("no socket") }
+	if err := applyHelper(g.r, Options{}); err != nil || !strings.Contains(g.notes(), "could not look: no socket") {
+		t.Errorf("%v\n%s", err, g.notes())
 	}
 }
