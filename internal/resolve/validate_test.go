@@ -52,7 +52,7 @@ func TestValidate_RejectsFieldNotOwnedByKind(t *testing.T) {
 	}{
 		{"project with pool", Resource{Kind: KindProject, Name: "x", Pool: "default"}},
 		{"profile with image", Resource{Kind: KindProfile, Name: "x", Image: "docker-oci:library/redis:7-alpine"}},
-		{"storage-volume with config", Resource{Kind: KindStorageVolume, Name: "x", Config: map[string]string{"a": "b"}}},
+		{"backup-target with config", Resource{Kind: KindBackupTarget, Name: "x", Config: map[string]string{"a": "b"}}},
 		{"instance with check/command", Resource{Kind: KindInstance, Name: "x", Check: []string{"image", "list"}}},
 		{"instance with path", Resource{Kind: KindInstance, Name: "x", Path: "/etc/foo"}},
 		{"file with profiles", Resource{Kind: KindFile, Name: "x", Instance: "i", Path: "/x", Profiles: []string{"default"}}},

@@ -242,6 +242,7 @@ func updateOne(server incus.InstanceServer, r Resource, env volumeEnv) error {
 		if err != nil {
 			return err
 		}
+		splitCreationOnly(set) // how a volume was made is not changed afterwards (decideVolume warns about it)
 		for k, v := range set {
 			put.Config[k] = v
 		}

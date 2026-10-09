@@ -210,9 +210,10 @@ func TestRenderedScalarsAreQuotedWhereYAMLWouldReadThemAsSomethingElse(t *testin
 
 func writeFile(path, content string) error { return os.WriteFile(path, []byte(content), 0o600) }
 
-// Found by gap analysis: a volume with config (size, initial.uid...) was exported with a config: block that tink then refuses to load.
+// A volume's settings (size, initial.uid...) are written back as config: and the file loads; --user made them matter (found live: a stack rebuilt from
+// an export had root-owned volumes and the app could not open its database).
 func TestAVolumeWithConfigExportsAsAFileTinkCanLoad(t *testing.T) {
-	s := &exportServer{inst: kumaInstance(), volCfg: map[string]string{"size": "1GiB", "initial.uid": "1000", "volatile.idmap.last": "[]"}}
+	s := &exportServer{inst: kumaInstance(), volCfg: map[string]string{"size": "1GiB", "initial.uid": "1000", "volatile.idmap.last": "[]", "user.tink.backup.copy.nas.at": "2026-10-09T00:00:00Z", "user.tink.stack": "s"}}
 	res, err := Export(s, ExportOptions{Project: "tink-play", Instances: []string{"kuma-play"}, Offline: true})
 	if err != nil {
 		t.Fatal(err)
@@ -221,10 +222,50 @@ func TestAVolumeWithConfigExportsAsAFileTinkCanLoad(t *testing.T) {
 	if err := writeFile(path, res.YAML); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LoadFile(path); err != nil {
+	rs, err := LoadFile(path)
+	if err != nil {
 		t.Fatalf("the export must load: %v\n%s", err, res.YAML)
 	}
-	if !strings.Contains(res.YAML, "# not exported: config initial.uid=") || !strings.Contains(res.YAML, "# not exported: config size=") {
-		t.Errorf("the volume's config should survive as comments:\n%s", res.YAML)
+	if got := rs[1].Config; got["initial.uid"] != "1000" || got["size"] != "1GiB" || len(got) != 2 {
+		t.Errorf("volume config did not round-trip (and tink's own and Incus's keys must stay out): %v", got)
+	}
+	if !res.Verified {
+		t.Errorf("must plan as no changes: %+v", res.Plans)
+	}
+}
+
+// Found live exporting a --user 1000:1000 instance: the image names no user, so the group was never compared, and oci.gid was dropped.
+func TestAGroupAPersonSetIsKeptWhenTheImageNamesNone(t *testing.T) {
+	rt := ociRuntime{Entrypoint: []string{"/app/x"}, WorkingDir: "/app"} // no User
+	base := map[string]string{"oci.entrypoint": "/app/x", "oci.cwd": "/app", "oci.uid": "1000"}
+
+	cfg := copyMap(base)
+	cfg["oci.gid"] = "1000"
+	got := imageDerivedKeys(cfg, rt)
+	if got["oci.gid"] {
+		t.Error("oci.gid=1000 was set by --user and the image says nothing about a group: it must be kept")
+	}
+	if got["oci.uid"] {
+		t.Error("oci.uid=1000 differs from the image's root and must be kept")
+	}
+
+	cfg["oci.gid"] = "0"
+	if !imageDerivedKeys(cfg, rt)["oci.gid"] {
+		t.Error("the root group is what an image with no user has")
+	}
+	delete(cfg, "oci.gid")
+	if !imageDerivedKeys(cfg, rt)["oci.gid"] {
+		t.Error("no oci.gid at all is nothing to write")
+	}
+
+	// an image that names the group: equal to it is its own, anything else is an override
+	named := ociRuntime{Entrypoint: []string{"/app/x"}, WorkingDir: "/app", User: "1000:1001"}
+	cfg = map[string]string{"oci.entrypoint": "/app/x", "oci.cwd": "/app", "oci.uid": "1000", "oci.gid": "1001"}
+	if !imageDerivedKeys(cfg, named)["oci.gid"] {
+		t.Error("the image's own group is not an override")
+	}
+	cfg["oci.gid"] = "5"
+	if imageDerivedKeys(cfg, named)["oci.gid"] {
+		t.Error("a different group is an override")
 	}
 }
