@@ -44,6 +44,10 @@ type Options struct {
 	Rm       bool
 	VM       bool
 
+	// EnvFile is --env-file PATH (read on the machine running tink); Privileged is --privileged.
+	EnvFile    []string
+	Privileged bool
+
 	// Memory is -m (512m, 1g), CPUs is --cpus (1.5), Device is --device HOST[:CONTAINER[:rwm]].
 	Memory string
 	CPUs   string

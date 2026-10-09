@@ -51,6 +51,16 @@ func Build(opts Options) (*Spec, error) {
 		VM:        opts.VM,
 	}
 
+	// Env files first, then -e, so that -e wins, as in Docker.
+	for _, path := range opts.EnvFile {
+		vars, err := readEnvFile(path)
+		if err != nil {
+			return nil, err
+		}
+		for _, kv := range vars {
+			spec.Config["environment."+kv[0]] = kv[1]
+		}
+	}
 	for _, e := range opts.Env {
 		k, v, ok := strings.Cut(e, "=")
 		if !ok {
@@ -104,6 +114,11 @@ func Build(opts Options) (*Spec, error) {
 			return nil, err
 		}
 		spec.Config["limits.cpu.allowance"] = allowance
+	}
+
+	if opts.Privileged {
+		spec.Config["security.privileged"] = "true"
+		spec.Notes = append(spec.Notes, "--privileged becomes security.privileged=true: the container runs without user-namespace isolation, so its root is the host's root. Unlike Docker's flag it does not also hand over every host device (name those with --device)")
 	}
 
 	if opts.IP != "" && opts.Network == "" {
@@ -166,6 +181,9 @@ func CommandLine(opts Options) string {
 	if opts.VM {
 		parts = append(parts, "--vm")
 	}
+	if opts.Privileged {
+		parts = append(parts, "--privileged")
+	}
 	if opts.Rm {
 		parts = append(parts, "--rm")
 	}
@@ -193,6 +211,7 @@ func CommandLine(opts Options) string {
 		flag("--incus-config", incusConfigForCommand(e, secrets.SensitiveKey))
 	}
 	flag("--incus-device", opts.IncusDevice...)
+	flag("--env-file", opts.EnvFile...) // the path only: the file's values are not recorded
 	for _, e := range opts.Env {
 		k, v, ok := strings.Cut(e, "=")
 		if ok && secrets.SensitiveKey(k) {
