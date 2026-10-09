@@ -7,6 +7,9 @@ package run
 
 import (
 	"fmt"
+	"io"
+	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -42,6 +45,10 @@ type Options struct {
 	VM       bool
 
 	DryRun bool
+
+	// Out, when set, gets each action line as it happens (the first pull of an image can take a minute, and a silent minute reads as a
+	// hang). The lines are still collected in Result.Actions.
+	Out io.Writer
 }
 
 // DefaultOptions returns sensible defaults: the local socket every tink
@@ -78,7 +85,11 @@ func Run(opts Options) (*Result, error) {
 
 	result := &Result{Spec: spec}
 	note := func(format string, args ...any) {
-		result.Actions = append(result.Actions, fmt.Sprintf(format, args...))
+		line := fmt.Sprintf(format, args...)
+		result.Actions = append(result.Actions, line)
+		if opts.Out != nil {
+			fmt.Fprintln(opts.Out, line)
+		}
 	}
 
 	if opts.DryRun {
@@ -107,6 +118,9 @@ func Run(opts Options) (*Result, error) {
 		if len(spec.Config) > 0 {
 			note("would set config: %v", secrets.MaskedConfig(spec.Config))
 		}
+		if !hasNIC(spec.Devices) {
+			note("no --network given: the profiles layered on %s must supply a NIC (checked for real when run, and refused if ports are published without one)", spec.Name)
+		}
 		note("would start %s", spec.Name)
 		return result, nil
 	}
@@ -116,15 +130,47 @@ func Run(opts Options) (*Result, error) {
 		return result, fmt.Errorf("connecting to incus: %w", err)
 	}
 
+	scoped := server
+	if opts.Project != "" {
+		scoped = server.UseProject(opts.Project)
+	}
+
+	// Everything that can be refused is refused before anything exists: a half-made instance is the worse outcome.
+	if opts.Project != "" {
+		if _, _, found, err := incusapi.LookupProject(server, opts.Project); err != nil {
+			return result, fmt.Errorf("reading project %q: %w", opts.Project, err)
+		} else if !found {
+			return result, fmt.Errorf("project %q does not exist: tink run does not create projects (they carry choices of their own). Create it first, for example `incus project create %s -c features.profiles=false` to share the default profile", opts.Project, opts.Project)
+		}
+	}
+	q, err := Qualify(scoped, spec.Image)
+	if err != nil {
+		return result, err
+	}
+	if q.Note != "" {
+		note("%s", q.Note)
+	}
+	if q.Warning != "" {
+		note("warning: %s", q.Warning)
+	}
+	spec.Image = q.Image
+	if warning, err := checkNetwork(scoped, spec); err != nil {
+		return result, err
+	} else if warning != "" {
+		note("warning: %s", warning)
+	}
+
+	note("creating %s from %s (a first pull of the image can take a minute)", spec.Name, spec.Image)
 	if err := Create(server, spec, opts.Project); err != nil {
 		return result, err
 	}
-	note("created %s from %s", spec.Name, spec.Image)
+	note("created %s", spec.Name)
 
-	if opts.Project != "" {
-		server = server.UseProject(opts.Project)
+	server = scoped
+
+	for _, line := range describeVolumes(server, spec) {
+		note("%s", line)
 	}
-
 	if err := ApplyConfig(server, spec); err != nil {
 		return result, err
 	}
@@ -350,4 +396,171 @@ func EnsureRunning(server incus.InstanceServer, name string) error {
 		time.Sleep(time.Second)
 	}
 	return fmt.Errorf("starting/restarting %s to apply its config: giving up after %d attempts: %w", name, maxAttempts, lastErr)
+}
+
+// hasNIC reports whether devices holds a network device.
+func hasNIC(devices map[string]map[string]string) bool {
+	for _, d := range devices {
+		if d["type"] == "nic" {
+			return true
+		}
+	}
+	return false
+}
+
+// checkNetwork looks for the one thing that makes a published port impossible: no network device at all, in the instance's own devices
+// or in any profile it will get (Incus uses "default" when none is named). An Incus profile does not have to carry a NIC, and tron's
+// default does not, so an instance made without --network is RUNNING with no address and a proxy that forwards to nothing, which looks
+// like a bug in the app. Published ports without a NIC are refused; no NIC and no ports only warns, since an isolated app is legitimate.
+func checkNetwork(scoped incus.InstanceServer, spec *Spec) (warning string, err error) {
+	if hasNIC(spec.Devices) {
+		return "", nil
+	}
+	profiles := spec.Profiles
+	if len(profiles) == 0 {
+		profiles = []string{"default"}
+	}
+	for _, name := range profiles {
+		p, _, found, err := incusapi.LookupProfile(scoped, name)
+		if err != nil {
+			return "", fmt.Errorf("reading profile %q: %w", name, err)
+		}
+		if !found {
+			return "", fmt.Errorf("profile %q does not exist", name)
+		}
+		if hasNIC(p.Devices) {
+			return "", nil
+		}
+	}
+	for _, d := range spec.Devices {
+		if d["type"] == "proxy" {
+			return "", fmt.Errorf("%s would have no network device: neither profile %s has a NIC and --network was not given, so the published port(s) would forward to an instance with no address; add --network NAME (for example --network incusbr0)", spec.Name, strings.Join(profiles, ", "))
+		}
+	}
+	return fmt.Sprintf("%s has no network device (no NIC in profile %s and no --network): it will have no address", spec.Name, strings.Join(profiles, ", ")), nil
+}
+
+// ImageQualification is what Qualify decided about an image reference.
+type ImageQualification struct {
+	// Image is the reference to use: the input when nothing needed doing, else REMOTE:REF.
+	Image string
+	// Note says what was done when the person had been explicit (a registry host written Docker's way, mapped to its remote).
+	Note string
+	// Warning is set when the registry was a guess: the reference named none, so Docker Hub was assumed.
+	Warning string
+}
+
+// Qualify turns a docker-run-style reference into one Incus can resolve, when nothing else would: it is not REMOTE:REF with a configured
+// remote, and not a local alias or fingerprint (a name that resolves locally is left alone, so this only ever turns an error into an
+// attempt). Used by `tink run` and, for a stack's instances, by `plan` and `plan apply`, so one reference means one thing everywhere.
+//
+//	ghcr.io/advplyr/audiobookshelf:latest   -> ghcr:advplyr/audiobookshelf:latest        a registry host: that host's OCI remote
+//	louislam/uptime-kuma:2                  -> docker-oci:louislam/uptime-kuma:2         no registry: Docker Hub, with a Warning
+//	registry.example.com/team/app:1         -> an error saying how to add a remote for it
+//
+// An unknown host is an error, not a guess: sending the whole name to Docker Hub fails with a message about docker.io/registry.example.com/...
+// that hides the cause.
+func Qualify(scoped incus.InstanceServer, image string) (ImageQualification, error) {
+	same := ImageQualification{Image: image}
+	conf, err := incusconf.Load()
+	if err != nil {
+		return same, nil
+	}
+	if remoteName, _, has := strings.Cut(image, ":"); has {
+		if _, known := conf.Remotes[remoteName]; known {
+			return same, nil
+		}
+	}
+	if _, _, found, err := incusapi.LookupImageAlias(scoped, image); err != nil || found {
+		return same, nil
+	}
+	if _, _, found, err := incusapi.LookupImage(scoped, image); err != nil || found {
+		return same, nil
+	}
+	if host, rest, ok := registryHost(image); ok {
+		for _, name := range sortedRemoteNames(conf.Remotes) {
+			if r := conf.Remotes[name]; r.Protocol == "oci" && remoteHostOf(r) == host {
+				return ImageQualification{Image: name + ":" + rest, Note: fmt.Sprintf("%q is the registry %s: using the remote %s", image, host, name+":")}, nil
+			}
+		}
+		return same, fmt.Errorf("image %q is on the registry %s, and no OCI remote is configured for it: add one (for example `incus remote add NAME https://%s --protocol=oci`) and write the image as NAME:%s", image, host, host, rest)
+	}
+	if _, known := conf.Remotes[dockerRemote]; !known {
+		return same, nil
+	}
+	hub := image
+	if !strings.Contains(image, "/") {
+		hub = "library/" + image // Docker Hub's official images live under library/
+	}
+	return ImageQualification{
+		Image:   dockerRemote + ":" + image,
+		Warning: fmt.Sprintf("%q names no registry: assuming Docker Hub. Say so with docker.io/%s (or %s:%s) to silence this", image, hub, dockerRemote, image),
+	}, nil
+}
+
+// registryHost splits "host/path" when the first path segment looks like a registry host, as Docker decides it: it has a dot or a colon,
+// or is localhost.
+func registryHost(image string) (host, rest string, ok bool) {
+	host, rest, found := strings.Cut(image, "/")
+	if !found || rest == "" {
+		return "", "", false
+	}
+	if strings.ContainsAny(host, ".:") || host == "localhost" {
+		return host, rest, true
+	}
+	return "", "", false
+}
+
+// remoteHostOf is the registry host an OCI remote points at, without scheme, path or login.
+func remoteHostOf(r cliconfig.Remote) string {
+	if len(r.Addrs) == 0 {
+		return ""
+	}
+	h := r.Addrs[0]
+	if u, err := url.Parse(h); err == nil && u.Host != "" {
+		return u.Host
+	}
+	return strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(h, "https://"), "http://"), "/")
+}
+
+func sortedRemoteNames(m map[string]cliconfig.Remote) []string {
+	names := make([]string, 0, len(m))
+	for n := range m {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// dockerRemote is the built-in OCI remote for Docker Hub (see internal/incusconf).
+const dockerRemote = "docker-oci"
+
+// describeVolumes says, for each managed volume the spec attaches, whether it is about to be created or already there.
+func describeVolumes(server incus.InstanceServer, spec *Spec) []string {
+	var lines []string
+	for _, name := range sortedDeviceNames(spec.Devices) {
+		dev := spec.Devices[name]
+		if dev["type"] != "disk" || dev["pool"] == "" || dev["source"] == "" {
+			continue
+		}
+		_, _, found, err := incusapi.LookupVolume(server, dev["pool"], "custom", dev["source"])
+		switch {
+		case err != nil:
+			// ApplyConfig reports the real error; this is only a courtesy line
+		case found:
+			lines = append(lines, fmt.Sprintf("reusing volume %s/%s", dev["pool"], dev["source"]))
+		default:
+			lines = append(lines, fmt.Sprintf("creating volume %s/%s", dev["pool"], dev["source"]))
+		}
+	}
+	return lines
+}
+
+func sortedDeviceNames(devices map[string]map[string]string) []string {
+	names := make([]string, 0, len(devices))
+	for n := range devices {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
 }

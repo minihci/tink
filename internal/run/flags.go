@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/minihci/tink/internal/secrets"
 )
 
 // Spec is the fully-resolved instance-creation request produced by
@@ -97,7 +99,71 @@ func Build(opts Options) (*Spec, error) {
 		spec.Config["boot.autorestart"] = autorestart
 	}
 
+	spec.Config[KeyCommand] = CommandLine(opts)
+
 	return spec, nil
+}
+
+// KeyCommand is the instance config key tink run records the command it was given in: the only trace, on the instance, of how it
+// came to be. Environment values that look like secrets are masked in it.
+const KeyCommand = "user.tink.run.command"
+
+// CommandLine is the tink run invocation opts stand for, in a fixed order, for KeyCommand. Quoted so that it can be pasted.
+func CommandLine(opts Options) string {
+	parts := []string{"tink run"}
+	flag := func(name string, vals ...string) {
+		for _, v := range vals {
+			parts = append(parts, name, shellQuote(v))
+		}
+	}
+	flag("--name", opts.Name)
+	if opts.Project != "" {
+		flag("--project", opts.Project)
+	}
+	if opts.VM {
+		parts = append(parts, "--vm")
+	}
+	if opts.Rm {
+		parts = append(parts, "--rm")
+	}
+	if opts.Restart != "" {
+		flag("--restart", opts.Restart)
+	}
+	if opts.Network != "" {
+		flag("--network", opts.Network)
+	}
+	if opts.IP != "" {
+		flag("--ip", opts.IP)
+	}
+	flag("--profile", opts.Profiles...)
+	for _, e := range opts.Env {
+		k, v, ok := strings.Cut(e, "=")
+		if ok && secrets.SensitiveKey(k) {
+			v = "***"
+		}
+		if ok {
+			e = k + "=" + v
+		}
+		flag("-e", e)
+	}
+	flag("-p", opts.Publish...)
+	flag("-v", opts.Volume...)
+	if len(opts.Volume) > 0 && opts.Pool != "" && opts.Pool != "default" {
+		flag("--pool", opts.Pool)
+	}
+	parts = append(parts, shellQuote(opts.Image))
+	for _, c := range opts.Cmd {
+		parts = append(parts, shellQuote(c))
+	}
+	return strings.Join(parts, " ")
+}
+
+// shellQuote leaves a plain word alone and single-quotes anything else.
+func shellQuote(s string) string {
+	if s != "" && strings.Trim(s, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@%+=:,./-_") == "" {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // publishDevice translates a docker -p HOST:CONTAINER value into a proxy

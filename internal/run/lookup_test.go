@@ -19,6 +19,7 @@ var (
 type readFake struct {
 	incus.InstanceServer
 	volErr, aliasErr error  // what the read answers; nil means found
+	imageErr         error  // what GetImage answers
 	aliasTarget      string // what a found alias points at
 	created          []string
 	fetchedImages    []string
@@ -39,7 +40,7 @@ func (f *readFake) GetImageAlias(n string) (*api.ImageAliasesEntry, string, erro
 
 func (f *readFake) GetImage(fp string) (*api.Image, string, error) {
 	f.fetchedImages = append(f.fetchedImages, fp)
-	return &api.Image{Fingerprint: fp}, "", nil
+	return &api.Image{Fingerprint: fp}, "", f.imageErr
 }
 
 func diskOnPool() *Spec {
