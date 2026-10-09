@@ -89,6 +89,21 @@ host path uses, so the files are the same bytes.
     user.tink.ingress.port: "8080"      # default 80
   ```
 
+  **A machine Incus cannot read the address of** (a virtual machine with no guest agent, such as Home Assistant OS) is skipped with "no address yet", because the address is
+  normally read from the instance's `eth0`. Say where it is:
+
+  ```yaml
+  config:
+    user.tink.ingress.enabled: "true"
+    user.tink.ingress.domain: ha.example.com
+    user.tink.ingress.port: "8123"
+    user.tink.ingress.address: 10.0.142.176   # an IP address or a host name: no scheme, no port
+  ```
+
+  The address you set is believed over anything Incus reports, so the machine is routed whether or not Incus can see it. Because it ends up in generated Caddy configuration it
+  is held to what a host is (an IPv4 or IPv6 address, or a DNS name); a value that is not one **skips the instance with a warning** and is not replaced by the discovered
+  address, since a route to the wrong place is worse than none. A route you set an address for is yours to keep correct: if the machine's address changes, so must the key.
+
   Everything tink writes or reads on an object's metadata is under `user.tink.*`. These keys used to be `user.ingress.{enabled,domain,port}`; **the old names still
   work**, because instances in other repositories register with them and a reconciler that stopped seeing them would delete their routes. A key under the new name wins
   over the old one, key by key. An instance still on the old names is routed as before and named once: in `tink ingress status`/`reconcile`, in the daemon's log

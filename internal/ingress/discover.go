@@ -3,6 +3,7 @@ package ingress
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
@@ -12,7 +13,9 @@ import (
 // via user.tink.ingress.{domain,port,enabled} (or the old names, user.ingress.*), with its current address
 // resolved from live instance state rather than stored -- this is what
 // makes a DHCP-leased instance safe to register: the address is
-// re-resolved every pass, so a lease change heals on the next poll.
+// re-resolved every pass, so a lease change heals on the next poll. An instance that
+// cannot be asked (a virtual machine with no guest agent) says where it is with
+// user.tink.ingress.address, which is then believed over anything Incus reports.
 type Registration struct {
 	Name    string
 	Project string
@@ -48,6 +51,8 @@ func filterAndResolve(instances []api.InstanceFull) (regs []Registration, warnin
 		hasAddress                  bool
 		address                     string
 		legacy                      bool
+		// addrErr is why the address the instance set cannot be used; the instance is then skipped, not routed to a guess.
+		addrErr string
 	}
 
 	var candidates []candidate
@@ -66,6 +71,15 @@ func filterAndResolve(instances []api.InstanceFull) (regs []Registration, warnin
 		}
 
 		address, ok := firstInetAddress(inst)
+		var addrErr string
+		if set := strings.TrimSpace(inst.Config[KeyAddress]); set != "" {
+			// the instance says where it is: believe it over what Incus can see, which for some machines is nothing
+			if host, err := backendHost(set); err != nil {
+				addrErr = err.Error()
+			} else {
+				address, ok = host, true
+			}
+		}
 		candidates = append(candidates, candidate{
 			name:       inst.Name,
 			project:    inst.Project,
@@ -74,6 +88,7 @@ func filterAndResolve(instances []api.InstanceFull) (regs []Registration, warnin
 			hasAddress: ok,
 			address:    address,
 			legacy:     legacyOn || legacyDomainUsed || legacyPortUsed,
+			addrErr:    addrErr,
 		})
 	}
 
@@ -96,6 +111,11 @@ func filterAndResolve(instances []api.InstanceFull) (regs []Registration, warnin
 		}
 
 		c := claimants[0]
+		if c.addrErr != "" {
+			// not a fallback to the address Incus reports: the author asked for a different one, and a route to the wrong place is worse than none
+			warnings = append(warnings, fmt.Sprintf("%s: %s; skipping it", qualifiedName(c.project, c.name), c.addrErr))
+			continue
+		}
 		if !c.hasAddress {
 			warnings = append(warnings, fmt.Sprintf("%s has no address yet (not started?), skipping this pass", qualifiedName(c.project, c.name)))
 			continue

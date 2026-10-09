@@ -191,3 +191,70 @@ func TestLegacyNamesAndNotice(t *testing.T) {
 		t.Errorf("%s", n)
 	}
 }
+
+func TestFilterAndResolve_ANoAgentVMSaysWhereItIs(t *testing.T) {
+	// Home Assistant OS as it is on the lab host: a VM whose eth0 Incus cannot read, so nothing is discovered
+	haos := instanceFixture("haos", map[string]string{
+		KeyEnabled: "true", KeyDomain: "ha.example.com", KeyPort: "8123", KeyAddress: "10.0.142.176",
+	}) // no address in its state
+	regs, warnings := filterAndResolve([]api.InstanceFull{haos})
+	want := []Registration{{Name: "haos", Domain: "ha.example.com", Port: "8123", Address: "10.0.142.176"}}
+	if len(warnings) != 0 || !reflect.DeepEqual(regs, want) {
+		t.Fatalf("got %+v %v, want %+v", regs, warnings, want)
+	}
+	// and without the key it is still skipped, as it always was
+	noKey := instanceFixture("haos", map[string]string{KeyEnabled: "true", KeyDomain: "ha.example.com", KeyPort: "8123"})
+	if regs, warnings := filterAndResolve([]api.InstanceFull{noKey}); len(regs) != 0 || len(warnings) != 1 || !strings.Contains(warnings[0], "no address yet") {
+		t.Fatalf("%+v %v", regs, warnings)
+	}
+}
+
+func TestFilterAndResolve_TheAddressTheInstanceSetsBeatsTheOneIncusReports(t *testing.T) {
+	inst := instanceFixture("app", map[string]string{KeyEnabled: "true", KeyDomain: "a.example.com", KeyAddress: "  app.internal  "}, "10.0.0.5")
+	regs, _ := filterAndResolve([]api.InstanceFull{inst})
+	if len(regs) != 1 || regs[0].Address != "app.internal" {
+		t.Fatalf("a host name is accepted, and trimmed: %+v", regs)
+	}
+	// an empty value is no value: discovery applies
+	blank := instanceFixture("app", map[string]string{KeyEnabled: "true", KeyDomain: "a.example.com", KeyAddress: "   "}, "10.0.0.5")
+	if regs, _ := filterAndResolve([]api.InstanceFull{blank}); len(regs) != 1 || regs[0].Address != "10.0.0.5" {
+		t.Fatalf("%+v", regs)
+	}
+	v6 := instanceFixture("app", map[string]string{KeyEnabled: "true", KeyDomain: "a.example.com", KeyPort: "8123", KeyAddress: "fd00::5"})
+	regs, _ = filterAndResolve([]api.InstanceFull{v6})
+	files, _ := Render(regs)
+	if len(regs) != 1 || regs[0].Address != "[fd00::5]" || !strings.Contains(files["app.caddy"], "reverse_proxy http://[fd00::5]:8123 {") {
+		t.Fatalf("an IPv6 address needs its brackets in a URL: %+v\n%s", regs, files["app.caddy"])
+	}
+}
+
+func TestFilterAndResolve_AnAddressThatIsNotAHostIsSkippedNotGuessedAt(t *testing.T) {
+	for name, bad := range map[string]string{
+		"a scheme":         "http://10.0.0.5",
+		"a port":           "10.0.0.5:8123",
+		"a path":           "10.0.0.5/ha",
+		"a space":          "10.0.0.5 evil.example.com",
+		"a brace":          "x}",
+		"a newline":        "10.0.0.5\nrespond \"owned\"",
+		"a leading hyphen": "-bad",
+		"an underscore":    "my_host",
+	} {
+		inst := instanceFixture("app", map[string]string{KeyEnabled: "true", KeyDomain: "a.example.com", KeyAddress: bad}, "10.0.0.5")
+		regs, warnings := filterAndResolve([]api.InstanceFull{inst})
+		if len(regs) != 0 {
+			t.Errorf("%s (%q): must not fall back to the discovered address or pass the value on: %+v", name, bad, regs)
+		}
+		if len(warnings) != 1 || !strings.Contains(warnings[0], KeyAddress) || !strings.Contains(warnings[0], "app") {
+			t.Errorf("%s: say which key of which instance: %v", name, warnings)
+		}
+	}
+}
+
+func TestFilterAndResolve_ABadAddressStillCountsInADomainConflict(t *testing.T) {
+	a := instanceFixture("a", map[string]string{KeyEnabled: "true", KeyDomain: "x.example.com", KeyAddress: "http://nope"}, "10.0.0.1")
+	b := instanceFixture("b", map[string]string{KeyEnabled: "true", KeyDomain: "x.example.com"}, "10.0.0.2")
+	regs, warnings := filterAndResolve([]api.InstanceFull{a, b})
+	if len(regs) != 0 || len(warnings) != 1 || !strings.Contains(warnings[0], "claimed by multiple") {
+		t.Fatalf("a contested domain is contested whatever else is wrong with a claimant: %+v %v", regs, warnings)
+	}
+}
