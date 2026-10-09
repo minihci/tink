@@ -222,6 +222,25 @@ already-applied `environment.*`/`oci.entrypoint` changes inert on an
 already-running instance. Neither was reachable from `flags_test.go`
 alone — both needed a real daemon to surface.
 
+## Update, 2026-10-09: what standing up Uptime Kuma on the lab host found
+
+Running the README's one-line install for Uptime Kuma (`louislam/uptime-kuma:2`) through `tink run` against the lab host, then reading back every Incus object it made
+(notes: docs/explore-uptime-kuma.md), changed `run` in five ways. None changes a flag.
+
+- **Published ports with no network device are refused, before anything is created.** The lab host's `default` profile has a root disk and no NIC, so the first attempt produced
+  a RUNNING instance with no address and a proxy forwarding to nothing, which looks exactly like a broken app. `run` now looks at the NICs of the instance's own devices and of the
+  profiles it will get (Incus uses `default` when none is named); no NIC with `-p` is an error naming `--network`, no NIC without `-p` is a warning (an isolated app is legitimate).
+  A dry run cannot check (it never connects) and says so.
+- **The registry follows one rule, shared with `plan` and `plan apply`** (`run.Qualify`; the reasoning and the table are in
+  docs/docker-gap-analysis.md). A reference that names a registry host (`ghcr.io/advplyr/audiobookshelf:latest`) uses the configured OCI
+  remote for that host (`ghcr:`); one that names **no** registry (`louislam/uptime-kuma:2`, as the README writes it) is Docker Hub, with a warning that suggests `docker.io/...` or `docker-oci:...`;
+  a host with no remote is an error that says how to add one. A local alias or fingerprint, and a configured `REMOTE:REF`, are left alone. (This answers the first open question below for non-`library/`
+  names; `library/` is accepted either way, as the Mosquitto instance shows.)
+- **It says what it is doing**: lines are printed as they happen (an image pull into a new project is a silent minute otherwise), including `creating volume` / `reusing volume`.
+- **A missing project says how to make one.** `run` still does not create projects; it names `incus project create NAME -c features.profiles=false` (the project's own profiles start empty, so the
+  default profile is shared).
+- **It leaves a trace**: `user.tink.run.command` holds the command line (secret-looking values masked). Incus otherwise keeps nothing that says how an instance came to be.
+
 ## Open questions, not blocking v1
 
 - Docker Hub's bare-name-defaults-to-`library/`-namespace behavior

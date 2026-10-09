@@ -27,9 +27,20 @@ func TestBuild_Env(t *testing.T) {
 		"environment.FOO": "bar",
 		"environment.BAZ": "qux=extra", // only the first "=" splits, matching docker
 	}
-	if !reflect.DeepEqual(spec.Config, want) {
-		t.Errorf("Config = %v, want %v", spec.Config, want)
+	if got := withoutStamp(spec.Config); !reflect.DeepEqual(got, want) {
+		t.Errorf("Config = %v, want %v", got, want)
 	}
+}
+
+// withoutStamp is config minus the provenance KeyCommand records, for the tests that are about the other keys.
+func withoutStamp(config map[string]string) map[string]string {
+	out := map[string]string{}
+	for k, v := range config {
+		if k != KeyCommand {
+			out[k] = v
+		}
+	}
+	return out
 }
 
 func TestBuild_EnvMissingEquals(t *testing.T) {

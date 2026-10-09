@@ -224,10 +224,8 @@ existing convention.`,
 			opts.Image = args[0]
 			opts.Cmd = args[1:]
 
-			result, err := run.Run(opts)
-			for _, action := range result.Actions {
-				fmt.Fprintln(cmd.OutOrStdout(), action)
-			}
+			opts.Out = cmd.OutOrStdout() // lines are printed as they happen: a first image pull is a silent minute otherwise
+			_, err := run.Run(opts)
 			return err
 		},
 	}
@@ -306,13 +304,21 @@ none, and when the helper is not well. See docs/volume-backup.md and docs/helper
 			if resources, err = secretFlags.expand(resources, args); err != nil {
 				return err
 			}
-			levels, err := resolve.Levels(resources)
-			if err != nil {
-				return err
-			}
 			server, err := incusapi.Connect(socket)
 			if err != nil {
 				return fmt.Errorf("connecting to incus: %w", err)
+			}
+			// before the graph is built: it rewrites each instance's image: to the form Incus resolves
+			notices, err := resolve.QualifyImages(server, resources)
+			if err != nil {
+				return err
+			}
+			for _, n := range notices {
+				fmt.Fprintln(cmd.ErrOrStderr(), n)
+			}
+			levels, err := resolve.Levels(resources)
+			if err != nil {
+				return err
 			}
 			// Planned one dependency level at a time, but a volume's 3-2-1 check needs the
 			// backup targets from an earlier level, so hand the options the whole stack.
@@ -379,6 +385,13 @@ says on_image_change: rebuild; see docs/image-updates.md.`, resolve.DefaultFile)
 			server, cerr := incusapi.Connect(socket)
 			if cerr == nil {
 				opts = helperPolicyOptions(server, opts)
+				notices, err := resolve.QualifyImages(server, resources)
+				if err != nil {
+					return err
+				}
+				for _, n := range notices {
+					fmt.Fprintln(cmd.ErrOrStderr(), n)
+				}
 			}
 			actions, err := resolve.ApplyWithOptions(socket, resources, opts)
 			for _, a := range actions {

@@ -19,6 +19,8 @@ import (
 var Builtin = map[string]cliconfig.Remote{
 	"docker-oci": {Addrs: []string{"https://docker.io"}, Protocol: "oci", Public: true},
 	"ghcr":       {Addrs: []string{"https://ghcr.io"}, Protocol: "oci", Public: true},
+	"quay":       {Addrs: []string{"https://quay.io"}, Protocol: "oci", Public: true},
+	"lscr":       {Addrs: []string{"https://lscr.io"}, Protocol: "oci", Public: true},
 	"images":     {Addrs: []string{"https://images.linuxcontainers.org"}, Protocol: "simplestreams", Public: true},
 }
 
