@@ -348,6 +348,7 @@ func splitArgs(s string) ([]string, error) {
 type registryImage struct {
 	Fingerprint string
 	Size        int64
+	Digest      string // what the reference names ("sha256:..."), for pinning
 }
 
 type imageEnv struct {
