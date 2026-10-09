@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"io"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"time"
 
@@ -73,11 +74,11 @@ func Run(ctx context.Context, out io.Writer, opts RunOptions) error {
 			return run(ctx, out, opts.Interval, func() (*ingress.Result, error) {
 				res, err := ingress.Reconcile(opts.IngressOptions)
 				if live != nil {
-					warnings := 0
+					warnings, legacy := 0, 0
 					if res != nil {
-						warnings = len(res.Warnings)
+						warnings, legacy = len(res.Warnings), len(res.Legacy)
 					}
-					live.setIngress(err == nil, warnings, time.Now())
+					live.setIngress(err == nil, warnings, legacy, time.Now())
 				}
 				return res, err
 			})
@@ -205,6 +206,7 @@ var ingressRetryAfter = 5 * time.Second
 func run(ctx context.Context, out io.Writer, interval time.Duration, reconcileOnce func() (*ingress.Result, error)) error {
 	fmt.Fprintf(out, "tink daemon: reconciling ingress every %s\n", interval)
 
+	var lastLegacy string
 	doOnePass := func() (ok bool) {
 		result, err := reconcileOnce()
 		if err != nil {
@@ -217,6 +219,13 @@ func run(ctx context.Context, out io.Writer, interval time.Duration, reconcileOn
 		}
 		for _, w := range result.Warnings {
 			fmt.Fprintf(out, "tink daemon: WARN: %s\n", w)
+		}
+		// Said when the set of instances changes, not every pass: it is the same few names until someone renames them.
+		if key := strings.Join(result.Legacy, ","); key != lastLegacy {
+			lastLegacy = key
+			if len(result.Legacy) > 0 {
+				fmt.Fprintf(out, "tink daemon: NOTE: %s\n", ingress.LegacyNotice(result.Legacy))
+			}
 		}
 		if result.Applied {
 			fmt.Fprintf(out, "tink daemon: applied: +%d -%d ~%d\n",

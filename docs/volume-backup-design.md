@@ -188,7 +188,7 @@ Something has to run `copy --refresh` on `schedule`. The natural home is
 `tink backup run` one-shot driven by cron, like `ingress reconcile` is today. Either
 way tink stays stateless: it reads each target's live state to decide what is due, and
 records outcomes as `user.tink.backup.*` volume config keys, the same precedent as
-`user.ingress.*` (see [Verify](#verify)).
+`user.tink.ingress.*` (see [Verify](#verify)).
 
 *Built both ways:* `tink backup run --due` for cron or a timer, and `tink daemon run --jobs DIR` as a scheduler ([daemon-jobs.md](daemon-jobs.md)). The
 helper ([helper.md](helper.md)) is an Incus instance that runs that daemon, so no init system is involved. Nothing schedules `verify` yet; `plan` only

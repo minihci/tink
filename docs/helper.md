@@ -74,12 +74,26 @@ tink helper install --ingress                        # also reconcile the instan
 tink helper install --ingress --ingress-instance edge
 ```
 
-The helper can do what `tink-daemon` does on the host: discover the instances that register with `user.ingress.{domain,port,enabled}`, render their Caddy
+The helper can do what `tink-daemon` does on the host: discover the instances that register with `user.tink.ingress.{domain,port,enabled}`, render their Caddy
 routes, and reload Caddy. It does it **through the ingress instance's file API**, not through a path in the host's storage pool: it reads and writes
 `/etc/caddy/routes/generated/` *inside* the ingress instance (where the `ingress-routes` volume is mounted), then runs `caddy reload` in it. Nothing is mounted
 into the helper, and nothing depends on the machine the helper runs on, which is also what makes it work under `--remote`. The rendering is the same code the
 host path uses, so the files are the same bytes.
 
+- **Registering an app.** An app asks for a route with three keys on its own instance, in a stack's `config:`:
+
+  ```yaml
+  config:
+    user.tink.ingress.enabled: "true"
+    user.tink.ingress.domain: app.example.com
+    user.tink.ingress.port: "8080"      # default 80
+  ```
+
+  Everything tink writes or reads on an object's metadata is under `user.tink.*`. These keys used to be `user.ingress.{enabled,domain,port}`; **the old names still
+  work**, because instances in other repositories register with them and a reconciler that stopped seeing them would delete their routes. A key under the new name wins
+  over the old one, key by key. An instance still on the old names is routed as before and named once: in `tink ingress status`/`reconcile`, in the daemon's log
+  (when the set changes, not every pass), and in `tink helper status`. Rename the keys and the notice goes away. The old names will stop being read once the hosts
+  that use them have moved.
 - **The same thing is available by hand**, to try it: `tink ingress status --via-api` and `tink ingress reconcile --via-api [--ingress-instance NAME]`, from
   anywhere that can reach the server (`--remote` included). `tink daemon run --ingress-via-api` is what the helper's entrypoint uses.
 - **It is opt-in, and the host path is unchanged.** Without `--via-api` everything works as it did, on the host's filesystem.

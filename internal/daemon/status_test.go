@@ -90,7 +90,7 @@ func TestBuildStatusSaysWhatTheHelperIsAndWhatItLastDid(t *testing.T) {
 	r.runJobs(t) // the real executor: the job fails because its copy does
 
 	live := &Live{}
-	live.setIngress(true, 2, now0)
+	live.setIngress(true, 2, 1, now0)
 	st := buildStatus(StatusOptions{Version: "v1.2.3", Zone: time.UTC, Store: r.h.Store}, live, now0.Add(-time.Hour), now0)
 
 	if st.Version != "v1.2.3" || st.TZ != "UTC" || st.JobProto != jobs.Proto || st.PolicyProto != backupmeta.PolicyProto {

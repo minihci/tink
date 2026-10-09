@@ -419,6 +419,8 @@ func printHelperDetails(out io.Writer, r helper.Report, now time.Time) {
 	switch i := st.Ingress; {
 	case i == nil:
 		fmt.Fprintf(out, "  ingress:     not run by this helper\n")
+	case i.OK && i.Legacy > 0:
+		fmt.Fprintf(out, "  ingress:     ok, %s ago; %d instance(s) still register with the old user.ingress.* keys (rename them to user.tink.ingress.*)\n", roundAge(now.Sub(i.At)), i.Legacy)
 	case i.OK:
 		fmt.Fprintf(out, "  ingress:     ok, %s ago\n", roundAge(now.Sub(i.At)))
 	default:

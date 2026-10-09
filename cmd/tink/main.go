@@ -447,7 +447,7 @@ func newIngressReconcileCmd() *cobra.Command {
 		Use:   "reconcile",
 		Short: "Discover registered instances and converge ingress routes to match",
 		Long: `reconcile is tink's port of incus-host/reconciler/reconcile.sh: it
-discovers instances that opt in via user.ingress.{domain,port,enabled}
+discovers instances that opt in via user.tink.ingress.{domain,port,enabled}
 config and renders/applies the shared ingress instance's routes.
 
 Use --dry-run to compute and report what would change without writing
@@ -519,6 +519,9 @@ func printIngressResult(cmd *cobra.Command, result *ingress.Result, dryRun bool)
 	out := cmd.OutOrStdout()
 	for _, w := range result.Warnings {
 		fmt.Fprintf(cmd.ErrOrStderr(), "WARN: %s\n", w)
+	}
+	if len(result.Legacy) > 0 {
+		fmt.Fprintf(cmd.ErrOrStderr(), "NOTE: %s\n", ingress.LegacyNotice(result.Legacy))
 	}
 
 	fmt.Fprintf(out, "%d instance(s) registered:\n", len(result.Registrations))

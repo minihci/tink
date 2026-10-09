@@ -39,10 +39,10 @@ func (l *Live) backupKnown() bool {
 	return l.known
 }
 
-func (l *Live) setIngress(ok bool, warnings int, at time.Time) {
+func (l *Live) setIngress(ok bool, warnings, legacy int, at time.Time) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.ingress = &helper.IngressState{OK: ok, At: at.UTC(), Warnings: warnings}
+	l.ingress = &helper.IngressState{OK: ok, At: at.UTC(), Warnings: warnings, Legacy: legacy}
 }
 
 func (l *Live) snapshot() (skipped []helper.Skip, failing []helper.Failing, ingress *helper.IngressState) {

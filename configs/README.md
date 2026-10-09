@@ -24,7 +24,7 @@ generated on, same as before.
 | `authelia/users_database.yml.example` | shape only; the real file has a real password hash and isn't committed |
 | `ingress/ingress.profile.yaml` | Incus profile template for the shared `ingress` Caddy instance |
 | `ingress/Caddyfile` | the shared public edge — owns `:80`/`:443`, no domain logic of its own, just `import routes/*.caddy` |
-| `ingress/routes/*.caddy` | one file per public domain this host hand-maintains (`incus-ui.caddy`/`auth.caddy`) — a project like `nightscout-podman` registers its own domain at runtime instead, via `user.ingress.*` config; see `internal/ingress`'s package doc |
+| `ingress/routes/*.caddy` | one file per public domain this host hand-maintains (`incus-ui.caddy`/`auth.caddy`) — a project like `nightscout-podman` registers its own domain at runtime instead, via `user.tink.ingress.*` config; see `internal/ingress`'s package doc |
 
 **What didn't move here**: `scripts/generate-authelia-secrets.sh` (one-time
 per host, mints every secret via Authelia's own CLI) and the reconciler's
