@@ -9,7 +9,7 @@ import (
 )
 
 // Registration is one instance that opted in to ingress self-registration
-// via user.ingress.{domain,port,enabled}, with its current address
+// via user.tink.ingress.{domain,port,enabled} (or the old names, user.ingress.*), with its current address
 // resolved from live instance state rather than stored -- this is what
 // makes a DHCP-leased instance safe to register: the address is
 // re-resolved every pass, so a lease change heals on the next poll.
@@ -19,6 +19,8 @@ type Registration struct {
 	Domain  string
 	Port    string
 	Address string
+	// Legacy: at least one of its settings came from the old user.ingress.* names, and it should be renamed to user.tink.ingress.*.
+	Legacy bool
 }
 
 // Discover queries every instance on the daemon, across every project --
@@ -45,18 +47,20 @@ func filterAndResolve(instances []api.InstanceFull) (regs []Registration, warnin
 		name, project, domain, port string
 		hasAddress                  bool
 		address                     string
+		legacy                      bool
 	}
 
 	var candidates []candidate
 	for _, inst := range instances {
-		if inst.Config["user.ingress.enabled"] != "true" {
+		enabled, legacyOn := setting(inst.Config, KeyEnabled, legacyEnabled)
+		if enabled != "true" {
 			continue
 		}
-		domain := inst.Config["user.ingress.domain"]
+		domain, legacyDomainUsed := setting(inst.Config, KeyDomain, legacyDomain)
 		if domain == "" {
 			continue
 		}
-		port := inst.Config["user.ingress.port"]
+		port, legacyPortUsed := setting(inst.Config, KeyPort, legacyPort)
 		if port == "" {
 			port = "80"
 		}
@@ -69,6 +73,7 @@ func filterAndResolve(instances []api.InstanceFull) (regs []Registration, warnin
 			port:       port,
 			hasAddress: ok,
 			address:    address,
+			legacy:     legacyOn || legacyDomainUsed || legacyPortUsed,
 		})
 	}
 
@@ -102,6 +107,7 @@ func filterAndResolve(instances []api.InstanceFull) (regs []Registration, warnin
 			Domain:  c.domain,
 			Port:    c.port,
 			Address: c.address,
+			Legacy:  c.legacy,
 		})
 	}
 

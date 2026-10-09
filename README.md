@@ -69,7 +69,7 @@ themselves, with no stack for it to hold - see [`docs/daemon-jobs.md`](docs/daem
 (scheduled snapshots, or an explicit opt-out with a reason), warning about any
 that does not - see [`docs/volume-backup.md`](docs/volume-backup.md).
 `ingress reconcile` discovers instances that opt in via
-`user.ingress.{domain,port,enabled}` config and converges the shared
+`user.tink.ingress.{domain,port,enabled}` config and converges the shared
 `ingress` instance's routes to match, without a restart or a manual file
 push. `daemon run` runs that same reconcile loop as a persistent process
 instead of a cron-invoked one-shot; `daemon install` prints (doesn't

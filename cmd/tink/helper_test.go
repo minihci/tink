@@ -453,3 +453,22 @@ func TestPlanPrintsOneChangePerLine(t *testing.T) {
 		t.Errorf("%q", out.String())
 	}
 }
+
+func TestHelperStatusSaysWhenInstancesStillUseTheOldIngressKeys(t *testing.T) {
+	st := goodStatus(func(s *helper.Status) {
+		s.Ingress = &helper.IngressState{OK: true, At: helperNow.Add(-time.Minute), Legacy: 2}
+	})
+	out, err := statusRun(t, instancesServer{all: []api.Instance{helperInstance("tink-helper", "helper", "Running", st)}}, "", "", false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "2 instance(s) still register with the old user.ingress.* keys") || !strings.Contains(out, "user.tink.ingress.*") {
+		t.Errorf("%s", out)
+	}
+	// an older helper's document has no such field, and says nothing about it
+	st.Ingress.Legacy = 0
+	out, _ = statusRun(t, instancesServer{all: []api.Instance{helperInstance("tink-helper", "helper", "Running", st)}}, "", "", false, false)
+	if strings.Contains(out, "old user.ingress") {
+		t.Errorf("%s", out)
+	}
+}

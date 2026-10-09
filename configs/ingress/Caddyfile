@@ -5,7 +5,7 @@
 # aren't "a project registering," they're the platform itself, so they
 # stay on the manual path (see ../reconciler/DESIGN.md's "what v1
 # deliberately doesn't do"). Every tenant project (nightscout-podman's
-# ns-caddy today) self-registers instead: three `user.ingress.*` config
+# ns-caddy today) self-registers instead: three `user.tink.ingress.*` config
 # keys on its own instance, no file to push, no edit here. Either way,
 # routes/generated/ is the reconciler's own space -- never hand-edit files
 # there, the next reconcile pass will just overwrite them.

@@ -223,3 +223,21 @@ func TestReconcileViaTheAPIDiscoversRendersWritesAndReloads(t *testing.T) {
 		t.Errorf("%+v %v %v", res, err, f.files)
 	}
 }
+
+func TestAReconcileNamesTheInstancesStillOnTheOldKeysAndStillRoutesThem(t *testing.T) {
+	f := newFakeIngress()
+	f.instances = []api.InstanceFull{
+		instanceFixture("old", map[string]string{"user.ingress.enabled": "true", "user.ingress.domain": "old.example.test"}, "10.0.0.7"),
+		instanceFixture("new", map[string]string{KeyEnabled: "true", KeyDomain: "new.example.test"}, "10.0.0.8"),
+	}
+	res, err := reconcileOn(f, Options{IngressInstance: "ingress", RoutesDir: routes, ViaAPI: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Registrations) != 2 || strings.Join(res.Legacy, ",") != "old" {
+		t.Errorf("both are routed, and only the old one is named: %+v", res)
+	}
+	if len(res.Warnings) != 0 {
+		t.Errorf("the rename request is not a warning, which the daemon would repeat every pass: %v", res.Warnings)
+	}
+}

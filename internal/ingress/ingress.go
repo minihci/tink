@@ -1,5 +1,5 @@
 // Package ingress implements tink's ingress self-registration reconciler:
-// discovering instances that opt in via user.ingress.{domain,port,enabled}
+// discovering instances that opt in via user.tink.ingress.{domain,port,enabled}
 // config and rendering/applying the shared ingress instance's routes.
 //
 // This is a port of incus-host/reconciler/reconcile.sh and its DESIGN.md --
@@ -10,6 +10,7 @@ package ingress
 
 import (
 	"fmt"
+	"strings"
 
 	incus "github.com/lxc/incus/v7/client"
 
@@ -47,8 +48,11 @@ func DefaultOptions() Options {
 type Result struct {
 	Registrations []Registration
 	Warnings      []string
-	Diff          Diff
-	Applied       bool
+	// Legacy names the registered instances (project/name outside the default project) that still use the old user.ingress.* keys. It is not
+	// in Warnings: it is the same few instances every pass until someone renames them, so each caller says it once and in its own way.
+	Legacy  []string
+	Diff    Diff
+	Applied bool
 }
 
 // Reconcile discovers registered instances and converges the shared
@@ -87,7 +91,7 @@ func reconcileOn(server incus.InstanceServer, opts Options) (*Result, error) {
 	}
 
 	d := computeDiff(current, desired)
-	result := &Result{Registrations: regs, Warnings: warnings, Diff: d}
+	result := &Result{Registrations: regs, Warnings: warnings, Legacy: legacyNames(regs), Diff: d}
 
 	if d.Empty() || opts.DryRun {
 		return result, nil
@@ -111,4 +115,21 @@ func reconcileOn(server incus.InstanceServer, opts Options) (*Result, error) {
 func Status(opts Options) (*Result, error) {
 	opts.DryRun = true
 	return Reconcile(opts)
+}
+
+// legacyNames lists the registrations that still use the old key names.
+func legacyNames(regs []Registration) []string {
+	var out []string
+	for _, r := range regs {
+		if r.Legacy {
+			out = append(out, qualifiedName(r.Project, r.Name))
+		}
+	}
+	return out
+}
+
+// LegacyNotice is the one-line request to rename, for the places that print it.
+func LegacyNotice(names []string) string {
+	return fmt.Sprintf("%d instance(s) register with the old user.ingress.* keys and should use user.tink.ingress.* instead (the old names still work for now): %s",
+		len(names), strings.Join(names, ", "))
 }

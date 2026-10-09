@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -123,3 +124,37 @@ func TestRun_RetriesAFailedPassSoonAndKeepsTheIntervalAfterASuccess(t *testing.T
 		t.Errorf("passes = %d: the two failures were retried within milliseconds, and the success was not followed by another until the interval", passes)
 	}
 }
+
+func TestRun_SaysOnceWhichInstancesStillUseTheOldIngressKeys(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	out := &safeBuffer{}
+	var calls int32
+	go func() {
+		for atomic.LoadInt32(&calls) < 4 {
+			time.Sleep(time.Millisecond)
+		}
+		cancel()
+	}()
+	err := run(ctx, out, 2*time.Millisecond, func() (*ingress.Result, error) {
+		atomic.AddInt32(&calls, 1)
+		return &ingress.Result{Legacy: []string{"ns-caddy"}}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(out.String(), "register with the old user.ingress.* keys"); got != 1 {
+		t.Errorf("said %d times over four passes, want once:\n%s", got, out.String())
+	}
+}
+
+type safeBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *safeBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+func (s *safeBuffer) String() string { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }

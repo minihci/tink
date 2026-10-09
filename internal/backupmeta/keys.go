@@ -134,7 +134,7 @@ const StackKey = "user.tink.stack"
 
 // The state `tink backup verify` leaves on the SOURCE volume as Incus config, so
 // `plan` can see it without tink keeping a state file of its own (the same idea as
-// user.ingress.*). Written only when a verification passes: a failed one must not
+// user.tink.ingress.*). Written only when a verification passes: a failed one must not
 // look fresh.
 const (
 	StampVerifiedAt       = "user.tink.backup.verified-at"       // RFC 3339, UTC

@@ -101,6 +101,8 @@ type IngressState struct {
 	OK       bool      `json:"ok"`
 	At       time.Time `json:"at,omitzero"`
 	Warnings int       `json:"warnings,omitempty"`
+	// Legacy is how many registered instances still use the old user.ingress.* keys. Older readers ignore it.
+	Legacy int `json:"legacy_keys,omitempty"`
 }
 
 // Encode is the one-line text that is stored.
