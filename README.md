@@ -61,8 +61,9 @@ container onto a digest-pinned image - see
 A `kind: network` declares a managed bridge, so the bridge an instance's NIC names is
 in the stack and not hand-made host state; it creates and updates but never deletes,
 refuses a network Incus does not manage, and blocks a change to a bridge instances
-are using unless the resource says `allow_disruption: true` - built and unit-tested,
-not yet applied to a real server; see [`docs/network.md`](docs/network.md).
+are using unless the resource says `allow_disruption: true` - unit-tested, and run
+live once on the lab host (a bridge created with its instances, the guard and the
+adoption of a host bridge checked); see [`docs/network.md`](docs/network.md).
 If you are starting from a `docker run` line or a Compose file, [`docs/docker-to-tink.md`](docs/docker-to-tink.md) says what to change and what Docker has that Incus does not.
 `export` is the other direction: it reads live instances, with their project and volumes, back into that YAML (leaving out what Incus and the image
 wrote, pinning the image, never writing a secret) and checks the result with `plan`; see [`docs/export.md`](docs/export.md).

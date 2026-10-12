@@ -1,7 +1,9 @@
 # `kind: network`: a managed bridge in the stack
 
-**Status: built and unit-tested against a fake Incus server; not yet applied to a real one.** The first live run is the migration lab that asked for it, and this
-note is edited when that has happened. Claims are marked **[code]**, **[docs]** (upstream Incus documentation) or **[hypothesis]**.
+**Status: built, unit-tested against a fake Incus server, and run live once.** On the lab host (Incus 7.5.1, 2026-10-12) it created a bridge together with the three
+instances on it, the next `plan` said `no changes` on every resource, the disruption guard blocked a change to that bridge and named its three instances, and
+`plan` read the host's own `incusbr0` (21 instances) as `no changes` with `auto` addresses and its LAN bridge `br0` as BLOCKED. Apply of an *update* to a bridge,
+and `allow_disruption: true`, have only the fake-server tests. Claims are marked **[code]**, **[docs]** (upstream Incus documentation), **[verified]** or **[hypothesis]**.
 
 ## What it is for
 
