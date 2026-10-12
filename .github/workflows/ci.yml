@@ -28,6 +28,13 @@ jobs:
           fi
       - run: go build ./...
       - run: go vet ./...
+      # tink is a client as well as a host tool: it is run from Windows with --remote. Keep the command building there, so a unix-only
+      # import is caught on the pull request that adds it, not when someone downloads the release (a release builds these too).
+      - name: build for Windows
+        run: |
+          for arch in amd64 arm64; do
+            GOOS=windows GOARCH=$arch CGO_ENABLED=0 go build -o /dev/null ./cmd/tink
+          done
       - name: install staticcheck
         run: go install honnef.co/go/tools/cmd/staticcheck@latest
       - run: staticcheck ./...

@@ -207,7 +207,7 @@ re-deploy can't silently reinstate cron underneath it.
 go build -o tink ./cmd/tink
 ```
 
-A tag (`v*`) also builds binaries for macOS and Linux (`amd64` and `arm64`) and attaches them to its GitHub Release, next to the helper image
+A tag (`v*`) also builds binaries for macOS, Linux and Windows (`amd64` and `arm64`) and attaches them to its GitHub Release, next to the helper image
 ([`.github/workflows/release.yml`](.github/workflows/release.yml), [`docs/helper.md`](docs/helper.md#the-image-and-releasing-it)). `v0.1.1` was the first release to
 carry them and `v0.1.2` the first to name them without the version, which makes the URLs below stable ([Releases](https://github.com/minihci/tink/releases)); you can
 also build from source, as above.
@@ -220,3 +220,11 @@ tar -xzf tink_darwin_arm64.tar.gz                                               
 ```
 
 They are not signed: a binary downloaded with a browser is quarantined by macOS until `xattr -d com.apple.quarantine tink`, and one fetched with `curl` is not.
+
+On Windows the archive holds `tink.exe` and is also a `.tar.gz`, which the `tar.exe` that ships with Windows 10 and later extracts. `tink.exe` is a **client**: use it with
+`--remote` ([`docs/remote.md`](docs/remote.md#running-tink-from-windows)). The commands that provision or run on a Linux host itself (`deploy`, `daemon`, the local `helper`) are not for it.
+
+```
+curl.exe -fsSLO https://github.com/minihci/tink/releases/latest/download/tink_windows_amd64.tar.gz      # or tink_windows_arm64.tar.gz
+tar -xzf tink_windows_amd64.tar.gz                                                                       # a directory holding the one binary, tink.exe
+```
