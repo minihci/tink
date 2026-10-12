@@ -71,6 +71,9 @@ type exportDoc struct {
 	comments []string          // leading comment lines
 	trailing []string          // comment lines after the last field
 	raw      string            // pre-rendered extra fields (a backup block), written after pool/config
+	// uncompared: an OCI instance whose oci.* and environment.* could not be compared with the image (offline, or the registry could not
+	// be read), so some of the keys left in res.Config are the image's own, not a person's.
+	uncompared bool
 }
 
 // Export reads the named instances (and the project and volumes they use) from server.
@@ -267,7 +270,7 @@ func exportInstance(server, scoped incus.InstanceServer, env *imageEnv, inst *ap
 		case derived[k]:
 			dropped = append(dropped, k)
 			continue
-		case rt != nil && (k == "environment.HOME" && v == "/root" || k == "environment.TERM" && v == "xterm"):
+		case rt != nil && incusSetEnv(k, v, *rt):
 			dropped = append(dropped, k) // set by Incus at creation, not by the image or a person
 			continue
 		}
@@ -277,6 +280,7 @@ func exportInstance(server, scoped incus.InstanceServer, env *imageEnv, inst *ap
 		note("left out %d key(s) that equal what the image sets: %s", len(dropped), strings.Join(dropped, ", "))
 	} else if rt == nil && cfg["volatile.container.oci"] == "true" {
 		note("oci.* and environment.* are written as they are on the instance: they could not be compared with the image, so some are the image's own")
+		d.uncompared = true
 	}
 
 	// 3. Secrets: never write a value that looks like one.

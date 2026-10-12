@@ -38,6 +38,8 @@ type PlanOptions struct {
 	// profiles are the WHOLE stack's profile resources, by name, for the NIC devices an instance gets from a profile (ocinic.go). Set with targets,
 	// from the full stack, because a profile and the instance that uses it land in different levels.
 	profiles map[string]Resource
+	// extras: also report, for each instance that exists, what it carries that the stack does not declare (see Extras). Set by WithExtras.
+	extras bool
 	// projectNotes are warnings about resources that name no project in a stack where others do (see mixedProjectNotes), by resource
 	// name, computed from the full stack with targets.
 	projectNotes map[string]string
@@ -149,7 +151,12 @@ func planInstance(server incus.InstanceServer, r Resource, opts PlanOptions) (Pl
 	if r.onImageChangePolicy() == OnImageChangeRebuild && len(chk.Drift) > 0 && len(chk.Unverified) == 0 {
 		pre = rebuildPreflight(server, current, r, env)
 	}
-	return decideInstance(r, changes, chk, pre), nil
+	p := decideInstance(r, changes, chk, pre)
+	if opts.extras {
+		ex := instanceExtras(server, env, current, r, opts.Offline)
+		p.Extras = &ex
+	}
+	return p, nil
 }
 
 // decideInstance turns the findings into a disposition. Pure, so the policy
