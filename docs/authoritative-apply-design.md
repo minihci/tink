@@ -152,3 +152,36 @@ instance/ha-restore-b: would update
 ```
 
 The second plan reports the one declared device that differs and says nothing about the undeclared `config` device or `limits.cpu`.
+
+## Appendix: Layer 1 sizing run (2026-10-12)
+
+`UndeclaredExtras` (branch `eval/undeclared-extras`) was run, read-only, over every stack file on the evaluation host: 33 files, 104 instance
+declarations. 100 of those name an instance that exists, and 83 of the 100 repeat an instance already counted (the "mirror" files are many variants
+of the same few live instances), which leaves **17 distinct live instances**: four Immich containers, mosquitto, zigbee2mqtt, frigate, the Matter
+server, the X10 bridge, three Home Assistant lab containers, three system containers, a sandbox container and a stopped test VM.
+
+| Run | Clean | With extras | Why |
+|---|---|---|---|
+| First | 10 of 17 | 7 | three were classifier gaps (below), four were real |
+| After two classifier fixes | **13 of 17** | **4** | every remaining line is a true difference |
+
+**The three false positives, and the fixes.**
+
+- `user.tink.exec.<name>.trigger-hash`, on two instances: tink's own record that a `kind: exec` ran. It is state, not declaration, so it is excluded.
+- `environment.HOME: /home/node`, on the Matter server: Incus writes the home directory of the user an OCI process runs as. `export` knew only
+  `/root`, so for a non-root user it treated HOME as something a person wrote. Fixed in `export` itself (so `export` also stops writing it), with the
+  same rule shared by the report.
+
+**The four real ones.**
+
+- `boot.autorestart` on zigbee2mqtt and frigate, and on mosquitto together with its `config` and `data` volume devices. All were set or added after the only
+  YAML for them, a snapshot taken earlier, was written. For mosquitto a current stack exists and is clean; for the other two nothing current declares them.
+- A `proxy` device `web8123` on a stopped test VM that its stack file does not declare.
+
+**What the run cannot see.** A key or device that was *removed* from a stack and is still live: that is the case Layer 2's record exists for, and
+nothing in this sample shows how common it is. It also cannot see an instance with no stack file at all.
+
+**Reading.** Noise is low once tink's own stamps and Incus's HOME are excluded, and every line left is something a reader would want to know. That
+favours shipping Layer 1 in `plan` first, as a quiet per-instance line, and deciding Layer 2 on its own merits. Caveats: 17 instances is a small, mostly
+OCI sample; two of the mirror files could not be loaded at all (they use a field name from before it was renamed); and the registry lookups that tell
+the image's own `oci.*`/`environment.*` keys from a person's need network access, without which every such key would count as an extra.
