@@ -35,6 +35,8 @@ type PlanOptions struct {
 	// stack is the name the stack gives itself (kind: stack), stamped on the storage volumes it applies. Set with
 	// targets, from the full stack, for the same reason.
 	stack string
+	// extras: also report, for each instance that exists, what it carries that the stack does not declare (see Extras). Set by WithExtras.
+	extras bool
 	// projectNotes are warnings about resources that name no project in a stack where others do (see mixedProjectNotes), by resource
 	// name, computed from the full stack with targets.
 	projectNotes map[string]string
@@ -142,7 +144,12 @@ func planInstance(server incus.InstanceServer, r Resource, opts PlanOptions) (Pl
 	if r.onImageChangePolicy() == OnImageChangeRebuild && len(chk.Drift) > 0 && len(chk.Unverified) == 0 {
 		pre = rebuildPreflight(server, current, r, env)
 	}
-	return decideInstance(r, changes, chk, pre), nil
+	p := decideInstance(r, changes, chk, pre)
+	if opts.extras {
+		ex := instanceExtras(server, env, current, r, opts.Offline)
+		p.Extras = &ex
+	}
+	return p, nil
 }
 
 // decideInstance turns the findings into a disposition. Pure, so the policy
