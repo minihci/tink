@@ -270,8 +270,8 @@ $ incus storage volume get immich-library user.tink.backup.policy
   name: immich
   ```
 
-  So `incus storage volume show` says whose YAML to edit, and the stack can find its own volumes exactly. The declaration is only a name (lower case letters, digits, `.`, `_`,
-  `-`); it is not a resource, so it may share a name with an instance or volume in the stack, and a stack names itself once. It is optional. An unnamed stack writes no
+  So `incus storage volume show` says whose YAML to edit, and the stack can find its own volumes exactly. The declaration is a name, plus an optional default `project:` (see resolver-architecture.md); the name is lower case letters, digits, `.`, `_`,
+  `-`; the declaration is not a resource, so it may share a name with an instance or volume in the stack, and a stack names itself once. It is optional. An unnamed stack writes no
   pointer and never removes one; a named stack that applies a volume stamped by another stack takes it over and `plan` warns you first.
 - **A volume taken out of the YAML keeps being copied.** Tink never removes what it is no longer told about, and cannot tell a volume dropped from this stack from one that
   belongs to another. `plan` and `plan apply` end with a **note** (never a failure) listing the volumes that carry a policy this stack does not declare. A volume stamped with

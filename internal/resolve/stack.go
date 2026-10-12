@@ -8,7 +8,8 @@ import (
 var stackNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
 
 // validateStack rejects a `kind: stack` whose name could not be kept as a config value people read: lower case letters,
-// digits, '.', '_' and '-'. The stack declaration says nothing else; it is only a name.
+// digits, '.', '_' and '-'. The declaration is a name and, optionally, the project the stack's resources default to
+// (stackproject.go); it says nothing else.
 func validateStack(r Resource) error {
 	if r.Kind != KindStack {
 		return nil

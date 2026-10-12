@@ -166,6 +166,14 @@ const DefaultFile = "tink.yaml"
 // LoadFiles loads and concatenates every resource across paths,
 // defaulting to []string{DefaultFile} when paths is empty.
 func LoadFiles(paths []string) ([]Resource, error) {
+	resources, err := loadFiles(paths)
+	if err == nil {
+		applyStackProject(resources) // the stack's own project, if it names one, for every resource that names none
+	}
+	return resources, err
+}
+
+func loadFiles(paths []string) ([]Resource, error) {
 	if len(paths) == 0 {
 		paths = []string{DefaultFile}
 	}
