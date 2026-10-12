@@ -308,7 +308,12 @@ For now a volume that does not only gets a warning; that will become an
 error. A volume can also declare copies to kind: backup-target resources;
 plan checks them against 3-2-1 and warns. Copies are run by the helper
 (tink helper install): plan notes when a stack declares copies and there is
-none, and when the helper is not well. See docs/volume-backup.md and docs/helper.md.`, resolve.DefaultFile),
+none, and when the helper is not well. See docs/volume-backup.md and docs/helper.md.
+
+For an instance that already exists, plan also says what it carries that the
+stack does not declare (devices, config keys and profiles), on a line that
+starts "not in the stack". It changes nothing and removes nothing; Incus's and
+the image's own keys are not counted. See docs/plan-extras.md.`, resolve.DefaultFile),
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			resources, err := resolve.LoadFiles(args)
@@ -336,7 +341,9 @@ none, and when the helper is not well. See docs/volume-backup.md and docs/helper
 			}
 			// Planned one dependency level at a time, but a volume's 3-2-1 check needs the
 			// backup targets from an earlier level, so hand the options the whole stack.
-			opts := helperPolicyOptions(server, resolve.NewPlanOptions(offline).ForResources(resources))
+			opts := helperPolicyOptions(server, resolve.NewPlanOptions(offline).WithExtras().ForResources(resources))
+			withExtras := 0
+			defer func() { noteExtras(cmd.OutOrStdout(), withExtras) }()
 			for i, level := range levels {
 				fmt.Fprintf(cmd.OutOrStdout(), "level %d:\n", i)
 				plans, err := resolve.PlanWithOptions(server, level, opts)
@@ -345,6 +352,9 @@ none, and when the helper is not well. See docs/volume-backup.md and docs/helper
 				}
 				for _, p := range plans {
 					printPlanned(cmd.OutOrStdout(), p)
+					if p.Extras != nil && !p.Extras.Empty() {
+						withExtras++
+					}
 				}
 			}
 			noteUndeclaredPolicies(cmd.OutOrStdout(), backuprun.ServerEngine{Server: server}, resources)
@@ -453,6 +463,9 @@ func printPlanned(w interface{ Write([]byte) (int, error) }, p resolve.PlannedRe
 	}
 	for _, x := range p.Warnings {
 		fmt.Fprintf(w, "      warning: %s\n", x)
+	}
+	if p.Extras != nil && !p.Extras.Empty() {
+		fmt.Fprintf(w, "      %s\n", p.Extras.Describe())
 	}
 }
 

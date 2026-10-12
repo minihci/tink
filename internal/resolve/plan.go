@@ -41,6 +41,9 @@ type PlannedResource struct {
 	Drift    []string
 	Blocked  []string
 	Warnings []string
+	// Extras: for an instance that exists and was planned WithExtras, what it carries that the stack does not declare. Informational only: it
+	// never changes the action, and nothing is removed because of it. Nil when not asked for or not an instance.
+	Extras *Extras
 }
 
 // Plan computes what would happen for each resource without touching

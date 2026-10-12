@@ -72,6 +72,8 @@ themselves, with no stack for it to hold - see [`docs/daemon-jobs.md`](docs/daem
 `plan` also asks every storage volume to declare how it is backed up
 (scheduled snapshots, or an explicit opt-out with a reason), warning about any
 that does not - see [`docs/volume-backup.md`](docs/volume-backup.md).
+`plan` also says, for each instance that exists, what it carries that the stack does not declare (a line starting "not in the stack"), changing and
+removing nothing - see [`docs/plan-extras.md`](docs/plan-extras.md).
 `ingress reconcile` discovers instances that opt in via
 `user.tink.ingress.{domain,port,enabled}` config and converges the shared
 `ingress` instance's routes to match, without a restart or a manual file
