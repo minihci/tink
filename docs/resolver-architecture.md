@@ -395,3 +395,14 @@ name: mosquitto
   should not happen by omission. A stack where nothing names a project, or everything does, is not warned about.
 
 Two stacks (two `kind: stack` documents) have no single default; `Levels` already refuses that. See `internal/resolve/stackproject.go`.
+
+## Update, 2026-10-12: `depends_on` must name a resource in the stack
+
+A `depends_on` entry that names nothing declared in the stack (a typo, or a resource since renamed) used to be dropped without a word,
+which silently changed the order the author asked for. It is now a load error that names the resource and the entry, and suggests
+the nearest resource name when one is within a couple of edits. An entry that names the resource itself is an error too.
+
+Structural references stay lenient on purpose: an instance's profile, a device's volume source, or its project may already exist on
+the server without being declared here, and then there is nothing to order. `depends_on` exists only to order the resources of one
+apply, so a name that is not in the stack can only be a mistake. The stack's own name (`kind: stack`) is metadata, not a resource, and
+cannot be waited for. See `internal/resolve/dependson.go`.

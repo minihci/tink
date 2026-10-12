@@ -29,6 +29,9 @@ func Levels(resources []Resource) ([][]Resource, error) {
 		}
 		all[resources[i].Name] = &resources[i]
 	}
+	if err := validateDependsOn(resources); err != nil {
+		return nil, err
+	}
 	if err := validateBackupReferences(resources); err != nil {
 		return nil, err
 	}
