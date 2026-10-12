@@ -65,6 +65,9 @@ type Result struct {
 	Fingerprint string
 	// Verified is how the server's certificate was verified: "token", "fingerprint", "accepted" or "confirmed".
 	Verified string
+	// Others are the addresses the trust token listed besides Addr, when the address came from the token and not from the person: Add
+	// kept the first that answered, which may be one a router hands out and can change.
+	Others []string
 	// Trusted reports the server trusts this machine's client certificate now.
 	Trusted bool
 	Project string
@@ -198,7 +201,7 @@ func Add(conf *cliconfig.Config, opts AddOptions) (res Result, err error) {
 	if err := conf.SaveConfig(conf.ConfigPath("config.yml")); err != nil {
 		return res, fmt.Errorf("saving the Incus client configuration: %w", err)
 	}
-	return Result{Addr: used, Fingerprint: got, Verified: how, Trusted: true, Project: project}, nil
+	return Result{Addr: used, Others: otherAddresses(opts, target, used), Fingerprint: got, Verified: how, Trusted: true, Project: project}, nil
 }
 
 // addTarget is what Add was told about the server before it has contacted it: where it may be, and what pins its certificate.

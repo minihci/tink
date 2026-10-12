@@ -45,7 +45,7 @@ daemon's OIDC/authorization config. `run` translates a docker-run-shaped
 invocation onto real Incus primitives - see
 [`internal/run/DESIGN.md`](internal/run/DESIGN.md) for the flag-mapping
 table and its deliberate non-goals (not a Docker CLI clone). `plan`
-computes a dependency graph for a set of project/profile/storage-volume/
+computes a dependency graph for a set of project/network/profile/storage-volume/
 instance/file resources declared in YAML and reports what would change;
 `plan apply` actually converges, level by level, everything within one
 level concurrently - see
@@ -58,6 +58,12 @@ anything blocked; an instance's `on_image_change` field says whether
 image drift is reported, ignored, or converged by rebuilding an OCI app
 container onto a digest-pinned image - see
 [`docs/image-updates.md`](docs/image-updates.md).
+A `kind: network` declares a managed bridge, so the bridge an instance's NIC names is
+in the stack and not hand-made host state; it creates and updates but never deletes,
+refuses a network Incus does not manage, and blocks a change to a bridge instances
+are using unless the resource says `allow_disruption: true` - unit-tested, and run
+live once on the lab host (a bridge created with its instances, the guard and the
+adoption of a host bridge checked); see [`docs/network.md`](docs/network.md).
 If you are starting from a `docker run` line or a Compose file, [`docs/docker-to-tink.md`](docs/docker-to-tink.md) says what to change and what Docker has that Incus does not.
 `export` is the other direction: it reads live instances, with their project and volumes, back into that YAML (leaving out what Incus and the image
 wrote, pinning the image, never writing a secret) and checks the result with `plan`; see [`docs/export.md`](docs/export.md).
@@ -209,7 +215,7 @@ re-deploy can't silently reinstate cron underneath it.
 go build -o tink ./cmd/tink
 ```
 
-A tag (`v*`) also builds binaries for macOS and Linux (`amd64` and `arm64`) and attaches them to its GitHub Release, next to the helper image
+A tag (`v*`) also builds binaries for macOS, Linux and Windows (`amd64` and `arm64`) and attaches them to its GitHub Release, next to the helper image
 ([`.github/workflows/release.yml`](.github/workflows/release.yml), [`docs/helper.md`](docs/helper.md#the-image-and-releasing-it)). `v0.1.1` was the first release to
 carry them and `v0.1.2` the first to name them without the version, which makes the URLs below stable ([Releases](https://github.com/minihci/tink/releases)); you can
 also build from source, as above.
@@ -222,3 +228,11 @@ tar -xzf tink_darwin_arm64.tar.gz                                               
 ```
 
 They are not signed: a binary downloaded with a browser is quarantined by macOS until `xattr -d com.apple.quarantine tink`, and one fetched with `curl` is not.
+
+On Windows the archive holds `tink.exe` and is also a `.tar.gz`, which the `tar.exe` that ships with Windows 10 and later extracts. `tink.exe` is a **client**: use it with
+`--remote` ([`docs/remote.md`](docs/remote.md#running-tink-from-windows)). The commands that provision or run on a Linux host itself (`deploy`, `daemon`, the local `helper`) are not for it.
+
+```
+curl.exe -fsSLO https://github.com/minihci/tink/releases/latest/download/tink_windows_amd64.tar.gz      # or tink_windows_arm64.tar.gz
+tar -xzf tink_windows_amd64.tar.gz                                                                       # a directory holding the one binary, tink.exe
+```

@@ -1,7 +1,7 @@
 // Package resolve is tink's resolver: a lightweight, tink-native version of the
 // resolver half of the architecture in docs/resolver-architecture.md --
 // scoped deliberately to what this platform actually uses (project,
-// profile, storage-volume, instance, file, incus, image, exec), stateless
+// profile, storage-volume, instance, file, incus, image, exec, network), stateless
 // (diffs live Incus state directly, no separate state file to protect
 // secrets in) with one narrow, explicit exception -- an exec resource
 // with no observable Check falls back to a Triggers hash recorded on its
@@ -29,6 +29,7 @@ type Kind string
 
 const (
 	KindProject       Kind = "project"
+	KindNetwork       Kind = "network" // a managed bridge; server-global, so it never takes a project (see network.go)
 	KindProfile       Kind = "profile"
 	KindStorageVolume Kind = "storage-volume"
 	KindInstance      Kind = "instance"
@@ -55,6 +56,7 @@ const (
 // other.
 var kindPriority = map[Kind]int{
 	KindProject:       0,
+	KindNetwork:       0, // before the profiles and instances whose NICs name it
 	KindBackupTarget:  0, // pure declaration: nothing to create, but volumes refer to it
 	KindStack:         0, // metadata: kept out of the graph, only here so the kind is known
 	KindProfile:       1,
@@ -265,6 +267,11 @@ type Resource struct {
 	Architecture string
 	Properties   map[string]string
 
+	// Network-only. Description is the network's description. AllowDisruption lets apply change the configuration of a bridge that instances are
+	// already using, which can interrupt their traffic; without it such a change is BLOCKED and the instances are named. See network.go.
+	Description     string
+	AllowDisruption bool
+
 	Config  map[string]string
 	Devices map[string]map[string]string
 
@@ -311,6 +318,11 @@ func (r Resource) dependencies(all map[string]*Resource) []string {
 	for _, dev := range r.Devices {
 		if dev["type"] == "disk" && dev["source"] != "" {
 			add(dev["source"])
+		}
+		// A NIC on a network the stack declares waits for it. Naming one the stack does not declare stays lenient (it may exist on the server
+		// already, like incusbr0), the same as a profile or a volume source.
+		if dev["type"] == "nic" && dev["network"] != "" {
+			add(dev["network"])
 		}
 	}
 	if r.Backup != nil {

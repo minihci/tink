@@ -53,6 +53,13 @@ func LookupProject(s incus.InstanceServer, name string) (*api.Project, string, b
 	return lookup(o, e, err)
 }
 
+// LookupNetwork looks up a network by name. A network Incus does not manage (a host interface such as a LAN bridge) is found too, with
+// Managed false: whether it may be touched is the caller's decision.
+func LookupNetwork(s incus.InstanceServer, name string) (*api.Network, string, bool, error) {
+	o, e, err := s.GetNetwork(name)
+	return lookup(o, e, err)
+}
+
 // LookupVolume looks up a storage volume ("custom" for the volumes tink manages).
 func LookupVolume(s incus.InstanceServer, pool, volType, name string) (*api.StorageVolume, string, bool, error) {
 	o, e, err := s.GetStoragePoolVolume(pool, volType, name)
