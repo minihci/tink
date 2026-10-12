@@ -1,6 +1,6 @@
 # Networks as resources: bridges, ACLs and forwards
 
-**Status: design. Nothing here is built.** Written 2026-10-12, from a Home Assistant migration whose network decisions (a dedicated bridge, an isolating
+**Status: design, except the first slice.** `kind: network` for managed bridges (create and update, never delete, a guard on changes to a bridge in use) is built and documented in [`network.md`](network.md); network ACLs, forwards and everything else below are not. Written 2026-10-12, from a Home Assistant migration whose network decisions (a dedicated bridge, an isolating
 ACL, published ports) had to be made by hand because tink cannot declare them. It is the reasoning to be argued with, not a decision record.
 
 Claims are marked **[verified]** (tried live; see the [appendix](#appendix-how-the-claims-were-verified)), **[code]** (read in this repo), **[docs]**

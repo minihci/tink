@@ -1,6 +1,6 @@
 # Apply that knows what it owns: removals, ownership and project drift
 
-**Status: design. Nothing here is built.** Written 2026-10-12, from using `tink plan` as the phase gate of a Home Assistant migration on a
+**Status: design, except Layer 1.** The report of what an instance carries that the stack does not declare is built and documented in [`plan-extras.md`](plan-extras.md); Layer 2 (remembering what was applied) and Layer 3 (an opt-in exclusive mode) are not. Written 2026-10-12, from using `tink plan` as the phase gate of a Home Assistant migration on a
 single-host Incus server. It is the reasoning to be argued with, not a decision record.
 
 Claims are marked **[verified]** (tried live; the commands are in the [appendix](#appendix-how-the-claims-were-verified)), **[code]** (read in
