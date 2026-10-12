@@ -13,6 +13,7 @@ import (
 // name breaks the ties that are left, so the same stack always yields the
 // same levels in the same order (a plan reads the same on every run).
 func Levels(resources []Resource) ([][]Resource, error) {
+	applyStackProject(resources)
 	if _, err := StackName(resources); err != nil {
 		return nil, err
 	}
@@ -27,6 +28,9 @@ func Levels(resources []Resource) ([][]Resource, error) {
 			return nil, fmt.Errorf("duplicate resource name %q", resources[i].Name)
 		}
 		all[resources[i].Name] = &resources[i]
+	}
+	if err := validateDependsOn(resources); err != nil {
+		return nil, err
 	}
 	if err := validateBackupReferences(resources); err != nil {
 		return nil, err

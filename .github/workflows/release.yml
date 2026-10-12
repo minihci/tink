@@ -1,6 +1,6 @@
 name: release binaries
 
-# On a tag (v*) this builds the tink command-line binary for macOS and Linux (amd64 and arm64) and attaches them, with a checksums file, to the
+# On a tag (v*) this builds the tink command-line binary for macOS, Linux and Windows (amd64 and arm64) and attaches them, with a checksums file, to the
 # GitHub Release for that tag, each under its versioned name and again under a version-less one (see the build step). The helper image (helper-image.yml) is built from the same tag, and a release build of tink is what picks it:
 # `tink helper install` with no flag installs the image published for the version it reports.
 #
@@ -35,7 +35,8 @@ jobs:
           fi
 
       # One archive per platform, holding just the binary, named tink_<version>_<os>_<arch>.tar.gz, and a byte-identical copy named
-      # tink_<os>_<arch>.tar.gz: an asset is a file, not a link, so a download URL that does not name the version, such as
+      # tink_<os>_<arch>.tar.gz (Windows too: the archive holds tink.exe, and Windows 10 and later extract a .tar.gz with the tar.exe they ship):
+# an asset is a file, not a link, so a download URL that does not name the version, such as
       # releases/latest/download/tink_darwin_arm64.tar.gz, needs a file of that name. Both are in checksums.txt. The binaries are static (no
       # cgo), so one runner builds them all. They are not signed: a macOS binary downloaded with a browser is quarantined until `xattr -d
       # com.apple.quarantine tink`, and one fetched with curl is not.
@@ -44,14 +45,16 @@ jobs:
           VERSION: ${{ steps.v.outputs.version }}
         run: |
           mkdir -p dist
-          for target in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64; do
+          for target in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64 windows/arm64; do
             os=${target%/*}
             arch=${target#*/}
             name="tink_${VERSION}_${os}_${arch}"
+            bin=tink
+            if [ "$os" = windows ]; then bin=tink.exe; fi
             mkdir -p "dist/$name"
             CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath \
               -ldflags "-s -w -X main.injectedVersion=${VERSION}" \
-              -o "dist/$name/tink" ./cmd/tink
+              -o "dist/$name/$bin" ./cmd/tink
             tar -C dist -czf "dist/$name.tar.gz" "$name"
             cp "dist/$name.tar.gz" "dist/tink_${os}_${arch}.tar.gz"
             rm -r "dist/$name"
@@ -59,7 +62,7 @@ jobs:
           (cd dist && sha256sum ./*.tar.gz > checksums.txt)
           ls -l dist
 
-      # What was built is what will be published: the checksums match, there are eight archives (four platforms, each under two names) that
+      # What was built is what will be published: the checksums match, there are twelve archives (six platforms, each under two names) that
       # each hold exactly one file, each version-less archive is identical to its versioned one, and the linux/amd64 binary (the one this
       # runner can run) reports the version it was given.
       - name: check
@@ -68,13 +71,19 @@ jobs:
         run: |
           (cd dist && sha256sum --check checksums.txt)
           set -- dist/*.tar.gz
-          [ "$#" = 8 ] || { echo "$# archives, want 8"; exit 1; }
+          [ "$#" = 12 ] || { echo "$# archives, want 12"; exit 1; }
           for a in dist/*.tar.gz; do
             n=$(tar -tzf "$a" | grep -c -v '/$')
             [ "$n" = 1 ] || { echo "$a holds $n files, want 1"; exit 1; }
           done
-          for t in darwin_arm64 darwin_amd64 linux_amd64 linux_arm64; do
+          for t in darwin_arm64 darwin_amd64 linux_amd64 linux_arm64 windows_amd64 windows_arm64; do
             cmp "dist/tink_${VERSION}_${t}.tar.gz" "dist/tink_${t}.tar.gz" || { echo "tink_${t}.tar.gz differs from its versioned archive"; exit 1; }
+          done
+          # the Windows archives hold tink.exe, and it is a Windows executable (a PE file starts with "MZ"), for both architectures
+          for t in windows_amd64 windows_arm64; do
+            tar -xzf "dist/tink_${VERSION}_${t}.tar.gz" -C "$RUNNER_TEMP"
+            [ "$(tar -tzf "dist/tink_${VERSION}_${t}.tar.gz" | grep -v '/$')" = "tink_${VERSION}_${t}/tink.exe" ] || { echo "the $t archive does not hold exactly tink.exe"; exit 1; }
+            [ "$(head -c2 "$RUNNER_TEMP/tink_${VERSION}_${t}/tink.exe")" = MZ ] || { echo "$t/tink.exe is not a Windows executable"; exit 1; }
           done
           tar -xzf "dist/tink_${VERSION}_linux_amd64.tar.gz" -C "$RUNNER_TEMP"
           "$RUNNER_TEMP/tink_${VERSION}_linux_amd64/tink" version | tee /dev/stderr | grep -q "tink ${VERSION} "

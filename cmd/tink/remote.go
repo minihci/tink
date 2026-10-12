@@ -79,6 +79,13 @@ Nothing is saved unless the whole thing succeeds.`,
 				fmt.Fprintf(cmd.OutOrStdout(), "; project %s", res.Project)
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), ")")
+			if len(res.Others) > 0 {
+				// on stderr, so what scripts and the helper read from stdout does not change
+				fmt.Fprintf(cmd.ErrOrStderr(), "note: the token listed %d addresses; %s is the first that answered, so it is the one kept (also listed: %s).\n"+
+					"      An address a router hands out can change, and the remote stops working when it does. To keep another one: `tink remote remove %s`, then\n"+
+					"      `tink remote add %s ADDRESS --fingerprint %s` (this machine is already trusted, so no new token is needed).\n",
+					len(res.Others)+1, res.Addr, strings.Join(res.Others, ", "), opts.Name, opts.Name, res.Fingerprint)
+			}
 			fmt.Fprintf(cmd.OutOrStdout(), "use it with: tink --remote %s plan FILE\n", opts.Name)
 			return nil
 		},

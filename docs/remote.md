@@ -37,6 +37,10 @@ tink --remote tron plan stack.yaml
   `$TINK_REMOTE_TOKEN`. A token works once. A server that already trusts this machine's certificate (an admin ran `incus config trust
   add-certificate` with `client.crt` from the configuration directory) needs no token at all.
 - `tink remote add NAME ADDRESS --fingerprint FP` for a given address; `--project` to pick the project the remote defaults to.
+- **Which address is kept.** A trust token lists every address the server listens on, and with no ADDRESS argument tink keeps the first that answers. When
+  the token listed more than one, `remote add` says so on standard error: which it kept, which others there were, and how to keep another. It matters when the kept
+  one is handed out by a router (DHCP) and can change, which would stop the remote working without any other sign; give ADDRESS yourself, or remove the remote and add
+  it again with the address you want (this machine is already trusted by then, so no new token is needed). Standard output is unchanged.
 - Nothing is saved, and no server certificate is left behind, unless the whole thing succeeds.
 - `tink remote list` shows the remotes and the built-in image remotes; `tink remote remove NAME` forgets one and its stored certificate. It
   cannot make the server forget this machine: `incus config trust remove` on the server does that.
@@ -91,6 +95,19 @@ the remote, with what the helper said, and the registry is not then asked anonym
 laptop, and `backup run` prints a note saying so. The way around this is [the helper](helper.md), a long-running instance that does that work next to the data: scheduled
 copies already run there, and a `backup run` you start is **handed to it** when the server has a healthy one ([running a backup on the helper](helper.md#running-a-backup-on-the-helper)),
 so nothing passes through the laptop. With no helper, or with `--local`, it runs, and relays, on the machine you start it on.
+
+## Running tink from Windows
+
+Releases carry `tink.exe` for Windows (`amd64` and `arm64`), built by the same workflow as the other platforms. It is a **client**: point it at a server with `--remote`,
+exactly as in [Setting up a remote](#setting-up-a-remote). `deploy`, `daemon` and the local `helper` commands provision or run on a Linux host and are not for it.
+
+- **Status.** The binary is built and has been run natively on Windows 11 (`version`, `remote list`, `secret keygen`). `plan` and `plan apply` over `--remote` have been run from
+  Linux and from WSL; they have not yet been run from `tink.exe`. CI builds both Windows targets on every pull request, so the command at least keeps compiling there.
+- **Where the Incus client configuration is.** In `%APPDATA%\incus` (`$INCUS_CONF` overrides it): Incus's client package uses the user's configuration directory, and `tink remote`
+  writes the same files `incus remote` does. Read from that package; `tink remote add` itself has not been run on Windows.
+- **The secrets identity.** `~/.config/tink/identity.txt` means `%USERPROFILE%\.config\tink\identity.txt`, or wherever `--identity` or `$TINK_AGE_IDENTITY` says. The mode 0600 tink
+  asks for has no effect on NTFS: the file inherits the permissions of its folder. For a folder in your user profile that is you, `SYSTEM` and the Administrators (checked), which is
+  private enough on a machine you own. Keep it in a folder only you should read, and back it up somewhere else, as [secrets.md](secrets.md) says.
 
 ## Not covered yet
 
