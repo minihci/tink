@@ -121,7 +121,12 @@ func planOne(server incus.InstanceServer, r Resource, opts PlanOptions) (Planned
 		// A declaration only: there is no Incus object to create or converge.
 		return PlannedResource{Resource: r, Action: ActionNone}, nil
 	case KindInstance:
-		return planInstance(s, r, opts)
+		p, err := planInstance(s, r, opts)
+		if err != nil {
+			return p, err
+		}
+		p.Warnings = append(p.Warnings, ociNICWarnings(r, opts.imageRemotes(), opts.profiles)...)
+		return p, nil
 	case KindFile:
 		return planFile(s, r)
 	case KindIncus:
