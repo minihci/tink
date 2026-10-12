@@ -267,7 +267,7 @@ func exportInstance(server, scoped incus.InstanceServer, env *imageEnv, inst *ap
 		case derived[k]:
 			dropped = append(dropped, k)
 			continue
-		case rt != nil && (k == "environment.HOME" && v == "/root" || k == "environment.TERM" && v == "xterm"):
+		case rt != nil && incusSetEnv(k, v, *rt):
 			dropped = append(dropped, k) // set by Incus at creation, not by the image or a person
 			continue
 		}
