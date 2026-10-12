@@ -13,6 +13,7 @@ import (
 // name breaks the ties that are left, so the same stack always yields the
 // same levels in the same order (a plan reads the same on every run).
 func Levels(resources []Resource) ([][]Resource, error) {
+	applyStackProject(resources)
 	if _, err := StackName(resources); err != nil {
 		return nil, err
 	}

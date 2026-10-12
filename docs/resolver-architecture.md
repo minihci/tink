@@ -364,6 +364,38 @@ An instance can also say `ephemeral: true` (deleted by Incus when it stops, what
 reports `ephemeral: false -> true` for a live instance that should be.
 
 
+## Update, 2026-10-12: a stack can name its project once
+
+Every resource used to carry its own `project:`, and one that forgot it was created in the server's default project without a word.
+On a host where that project holds production, that is the mistake worth making impossible. The stack's own `kind: stack` document
+now takes an optional `project:`, which every resource that lives in a project and names none receives:
+
+```yaml
+kind: stack
+name: smarthome
+project: smarthome
+---
+kind: project
+name: smarthome
+---
+kind: instance            # no project: needed; it is in smarthome
+name: mosquitto
+```
+
+- **What receives it:** profiles, storage volumes, instances and images. Not a `kind: project` (a project is not inside another), the
+  stack itself, a `kind: backup-target` (it describes where copies go) or `kind: incus` (argv for the local CLI).
+- **A resource's own `project:` always wins.** A `file` or `exec` resource follows the instance it acts on (that instance's own project,
+  or the default it just received); only one whose instance is not in the stack takes the default.
+- **It is applied when the stack is loaded**, so every command that reads one sees the final project (plan, apply, backup restore and
+  verify), and again in `Levels` for callers that build resources by hand. Running it twice changes nothing.
+- **Because things now name the project, it is ordered first**, if the stack declares it, exactly as when each resource said so itself.
+- **A stack that does not use it is checked for the mistake it prevents.** If some resources that live in a project name one and others
+  do not, `plan` and `plan apply` warn on each that does not: "names no project, so it is created in the server's default project,
+  while ... are in project ...". A warning, not an error: putting some resources in the default project on purpose is legitimate, it just
+  should not happen by omission. A stack where nothing names a project, or everything does, is not warned about.
+
+Two stacks (two `kind: stack` documents) have no single default; `Levels` already refuses that. See `internal/resolve/stackproject.go`.
+
 ## Update, 2026-10-12: `depends_on` must name a resource in the stack
 
 A `depends_on` entry that names nothing declared in the stack (a typo, or a resource since renamed) used to be dropped without a word,

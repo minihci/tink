@@ -35,6 +35,9 @@ type PlanOptions struct {
 	// stack is the name the stack gives itself (kind: stack), stamped on the storage volumes it applies. Set with
 	// targets, from the full stack, for the same reason.
 	stack string
+	// projectNotes are warnings about resources that name no project in a stack where others do (see mixedProjectNotes), by resource
+	// name, computed from the full stack with targets.
+	projectNotes map[string]string
 }
 
 // ForResources returns the options carrying the backup targets of the full
@@ -43,6 +46,7 @@ type PlanOptions struct {
 func (o PlanOptions) ForResources(resources []Resource) PlanOptions {
 	o.targets = backupTargets(resources)
 	o.stack, _ = StackName(resources) // more than one is reported by Levels
+	o.projectNotes = mixedProjectNotes(resources)
 	return o
 }
 
@@ -52,6 +56,7 @@ func (o PlanOptions) withTargets(resources []Resource) PlanOptions {
 	if o.targets == nil {
 		o.targets = backupTargets(resources)
 		o.stack, _ = StackName(resources)
+		o.projectNotes = mixedProjectNotes(resources)
 	}
 	return o
 }

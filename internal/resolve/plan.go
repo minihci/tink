@@ -100,7 +100,7 @@ func scopedServer(server incus.InstanceServer, r Resource) incus.InstanceServer 
 	return server
 }
 
-func planOne(server incus.InstanceServer, r Resource, opts PlanOptions) (PlannedResource, error) {
+func planKind(server incus.InstanceServer, r Resource, opts PlanOptions) (PlannedResource, error) {
 	// A secret that cannot be resolved blocks the WHOLE resource, never part of it.
 	if len(r.SecretProblems) > 0 {
 		return PlannedResource{Resource: r, Action: ActionBlocked, Blocked: r.SecretProblems}, nil
