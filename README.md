@@ -45,7 +45,7 @@ daemon's OIDC/authorization config. `run` translates a docker-run-shaped
 invocation onto real Incus primitives - see
 [`internal/run/DESIGN.md`](internal/run/DESIGN.md) for the flag-mapping
 table and its deliberate non-goals (not a Docker CLI clone). `plan`
-computes a dependency graph for a set of project/profile/storage-volume/
+computes a dependency graph for a set of project/network/profile/storage-volume/
 instance/file resources declared in YAML and reports what would change;
 `plan apply` actually converges, level by level, everything within one
 level concurrently - see
@@ -58,6 +58,11 @@ anything blocked; an instance's `on_image_change` field says whether
 image drift is reported, ignored, or converged by rebuilding an OCI app
 container onto a digest-pinned image - see
 [`docs/image-updates.md`](docs/image-updates.md).
+A `kind: network` declares a managed bridge, so the bridge an instance's NIC names is
+in the stack and not hand-made host state; it creates and updates but never deletes,
+refuses a network Incus does not manage, and blocks a change to a bridge instances
+are using unless the resource says `allow_disruption: true` - built and unit-tested,
+not yet applied to a real server; see [`docs/network.md`](docs/network.md).
 If you are starting from a `docker run` line or a Compose file, [`docs/docker-to-tink.md`](docs/docker-to-tink.md) says what to change and what Docker has that Incus does not.
 `export` is the other direction: it reads live instances, with their project and volumes, back into that YAML (leaving out what Incus and the image
 wrote, pinning the image, never writing a secret) and checks the result with `plan`; see [`docs/export.md`](docs/export.md).

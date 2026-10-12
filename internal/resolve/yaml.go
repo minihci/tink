@@ -41,6 +41,10 @@ type yamlResource struct {
 	Address     string `yaml:"address"`
 	Fingerprint string `yaml:"fingerprint"`
 
+	// Network-only -- see Resource.Description and Resource.AllowDisruption.
+	Description     string `yaml:"description"`
+	AllowDisruption bool   `yaml:"allow_disruption"`
+
 	// Storage-volume-only -- see backupmeta.VolumeBackup.
 	Backup *yamlBackup `yaml:"backup"`
 
@@ -312,6 +316,8 @@ func (d yamlResource) toResource(dir string) (Resource, error) {
 		Address:         d.Address,
 		Fingerprint:     d.Fingerprint,
 		Backup:          d.Backup.toVolumeBackup(),
+		Description:     d.Description,
+		AllowDisruption: d.AllowDisruption,
 		Config:          d.Config,
 		Devices:         d.Devices,
 		Instance:        d.Instance,

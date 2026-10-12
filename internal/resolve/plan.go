@@ -92,9 +92,9 @@ func PlanWithOptions(server incus.InstanceServer, resources []Resource, opts Pla
 
 // scopedServer returns server scoped to r's own project, except for a
 // project resource itself -- a project is never "inside" another
-// project.
+// project -- and a network, which is server-global.
 func scopedServer(server incus.InstanceServer, r Resource) incus.InstanceServer {
-	if r.Kind != KindProject && r.Project != "" {
+	if r.Kind != KindProject && r.Kind != KindNetwork && r.Project != "" {
 		return server.UseProject(r.Project)
 	}
 	return server
@@ -113,6 +113,8 @@ func planOne(server incus.InstanceServer, r Resource, opts PlanOptions) (Planned
 	switch r.Kind {
 	case KindProject:
 		return planProject(s, r)
+	case KindNetwork:
+		return planNetwork(s, r)
 	case KindProfile:
 		return planProfile(s, r)
 	case KindStorageVolume:

@@ -23,6 +23,10 @@ func TestValidate_AllowsFieldsCommonToEveryKind(t *testing.T) {
 			DependsOn: []string{"y"},
 		}
 		switch kind {
+		case KindNetwork:
+			// The one kind that REJECTS a project instead of tolerating it: a network is server-global, and a `project:` on it would read as
+			// scoping it when it does not (network.go). TestLoadFile_NetworkRejectedForms pins the rejection.
+			r.Project = ""
 		case KindIncus:
 			r.Check = []string{"image", "list"}
 			r.Command = []string{"image", "list"}
