@@ -37,6 +37,10 @@ tink --remote tron plan stack.yaml
   `$TINK_REMOTE_TOKEN`. A token works once. A server that already trusts this machine's certificate (an admin ran `incus config trust
   add-certificate` with `client.crt` from the configuration directory) needs no token at all.
 - `tink remote add NAME ADDRESS --fingerprint FP` for a given address; `--project` to pick the project the remote defaults to.
+- **Which address is kept.** A trust token lists every address the server listens on, and with no ADDRESS argument tink keeps the first that answers. When
+  the token listed more than one, `remote add` says so on standard error: which it kept, which others there were, and how to keep another. It matters when the kept
+  one is handed out by a router (DHCP) and can change, which would stop the remote working without any other sign; give ADDRESS yourself, or remove the remote and add
+  it again with the address you want (this machine is already trusted by then, so no new token is needed). Standard output is unchanged.
 - Nothing is saved, and no server certificate is left behind, unless the whole thing succeeds.
 - `tink remote list` shows the remotes and the built-in image remotes; `tink remote remove NAME` forgets one and its stored certificate. It
   cannot make the server forget this machine: `incus config trust remove` on the server does that.
