@@ -86,7 +86,7 @@ A **platform stack** declares a site's helpers: ordinary `kind: instance` docume
   1. *A thin template, with the wiring in tink.* The stack says which container exists (image, volume, stamp); tink's reconcile does the wiring: routes, OIDC clients from offers, policy delivery. What is left rarely changes.
   2. *Visible drift.* `plan` says when a capability needs a helper the stack does not declare, and a read-only diff against the shipped recipe shows what changed.
 - **Later, if drift still hurts:** `kind: platform`, as sugar that expands to the same documents, with `tink platform eject` printing them. The alternative is a pinned include with field overrides (a resource's own fields win, as `project:` does today **[docs]**). Neither is designed. A kind that bakes in digests would make an engine's security fix wait for a tink release, would need an override syntax, and would stop the file being self-contained.
-- **Finding a helper.** A stamp such as `user.tink.helper: dns` would find "the dns helper" whatever the instance is called; ingress is found by instance name today (`--ingress-instance`) **[docs]**. The name is open.
+- **Finding a helper.** A stamp would find "the dns helper" whatever the instance is called; ingress is found by instance name today (`--ingress-instance`) **[docs]**. It cannot be `user.tink.helper`: that is the daemon helper's marker, matched by presence alone, so tink reported a CoreDNS container carrying it as a degraded daemon helper on every plan **[lab]**. `user.tink.role: dns` was accepted without a word **[lab]**; the name is still a proposal.
 
 ## Offers and grants
 
