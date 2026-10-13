@@ -1,6 +1,6 @@
 # What tink is: the loop, the roles and the engines
 
-**Status: a draft for discussion, 2026-10-12.** It records what has been decided, what has only been defaulted, and what is open. Words are explained in [the glossary](glossary.md). Claims are marked **[docs]** (this repository), **[lab]** (seen on a real host), **[proposed]** (not built) or **[to confirm]**.
+**Status: a draft for discussion, last updated 2026-10-13.** It records what has been decided, what has only been defaulted, and what is open. Words are explained in [the glossary](glossary.md). Claims are marked **[docs]** (this repository), **[lab]** (seen on a real host), **[proposed]** (not built) or **[to confirm]**.
 
 ## The idea
 
@@ -28,7 +28,7 @@ The pieces that exist, and the one being designed, share a shape: a declaration,
 | secrets | `${secret:NAME}` in an instance's `environment.*` | resolved at apply | **[to confirm]** | built, narrow **[docs]** |
 | network | `kind: network` | apply | disruption guard, unnamed-NIC warning | built **[docs]** |
 | remote access | offers on apps, grants in a site resource | a gateway container per bridge | a grant with no offer, a route wider than needed | proposed |
-| single sign-on | offers on apps, grants for groups | the identity engine | the same join | proposed |
+| identity and single sign-on | group names in grants; offers on apps | the identity engine's configuration, rendered by tink | a grant that names a group the directory does not have | proposed; the engine pair was verified in a lab |
 
 ## Roles and engines
 
@@ -47,8 +47,8 @@ The rule that keeps this contained is that tink's code talks to a role, and an e
 | reverse proxy | Caddy | defaulted | nginx, Traefik | automatic certificates and a small text config that tink renders |
 | mesh | WireGuard-based, stock Tailscale clients | decided | NetBird, ZeroTier | a common pairing for a home site plus a VPS |
 | mesh control plane | Headscale | defaulted | Tailscale's hosted service | reviewed in use: works; API keys have no scope; `policy set` works only in database mode **[lab, source]** |
-| single sign-on | Authelia | unexamined | Authentik, Kanidm, Pocket ID, Keycloak | chosen without a comparison; being examined, see [identity](#identity-candidates-examined-2026-10-12) |
-| identity store | Authelia's own file (today); LLDAP is a candidate | unexamined | LLDAP, Kanidm, Authentik | who the people are, their groups and their credentials |
+| single sign-on | Authelia | decided | Authentik, Kanidm, Pocket ID, Keycloak | compared on documentation, then verified with LLDAP in a lab ([below](#identity-what-the-lab-showed-2026-10-12-and-13)); OIDC clients are static configuration; the OIDC groups claim is still to be tested |
+| identity store | LLDAP | decided | Authelia's own user file (what runs today), Kanidm, Authentik | a directory with an API and a declarative bootstrap script; people, groups and credentials; one volume of state |
 | backup transport | an Incus remote | decided **[to confirm]** | none | copies use Incus's own copy |
 | secrets | age | decided **[to confirm]** | not compared | see the secrets design note |
 
@@ -101,46 +101,56 @@ Ingress moves first, with its existing tests as the guard. The first grant would
 
 ## People and groups
 
-**Under review (2026-10-12):** treating identity as a role of its own, with a default engine like the others, and looking at which engine fits. The direction below is the earlier one and is likely to be replaced.
+**Decision (2026-10-13):** identity is a role like the others. The default engines are LLDAP, the directory (people, groups, credentials), and Authelia on top of it (login, access rules, OIDC). They were compared on their documentation and then tried together in a lab.
 
 ### Identity: candidates examined (2026-10-12)
 
-What each one provides, and what tink could drive it with. All from the projects' own documentation, read on this date **[docs]**; nothing here was run.
+What each one provides, and what tink could drive it with. From the projects' own documentation, read on this date **[docs]**. LLDAP with Authelia was then run (next section); the others were not.
 
 | Candidate | Provides | Declarative handle | Footprint |
 |---|---|---|---|
 | LLDAP + Authelia | LLDAP: a directory (users, passwords, groups) with a web UI where users change their own details. Authelia: login portal, OIDC, access rules. LLDAP has no OIDC of its own | LLDAP: a GraphQL API, and a bootstrap script that enforces users, groups and attributes from a file. Authelia lists an `lldap` implementation preset | two small services; SQLite by default for each |
-| Authelia alone (today) | the same Authelia, with users in a file it also writes back, for example on a password reset | the file; it is not watched unless `watch` is set | one service |
+| Authelia alone (what runs today) | the same Authelia, with users in a file it also writes back, for example on a password reset | the file; it is not watched unless `watch` is set | one service |
 | Kanidm | OIDC provider, read-only LDAP gateway, RADIUS, passkeys; administered mostly through its CLI | none mentioned in its README | one service with its own database and replication |
 | Authentik | an identity provider with its own users and groups | blueprints: declarative YAML in a watched directory, an OCI registry or the database, applied in one transaction | needs PostgreSQL; at least 2 CPU cores and 2 GB RAM are stated |
 | Pocket ID | an OIDC provider, passkey-only; groups decide who may sign in to which client | its REST API and LDAP/SCIM pages exist but were not read | a single binary or Compose |
 
-What follows for tink:
-- **Where state lives.** Second factors and Authelia's logs are in Authelia's own database, not in the directory. Backups must cover both.
-- **OIDC clients are static.** Authelia defines clients in its configuration file only, with no dynamic registration or API, so registering a client means rendering configuration. The OIDC provider is described as an open beta, and also as OpenID certified.
-- **The translation layer becomes small.** If the directory is the source of truth, Authelia reads groups from it directly. Tink needs two projectors: one for Authelia's configuration (clients and access rules, from offers and grants) and one for the mesh control plane's group list.
-- **Not verified:** LLDAP's GraphQL mutations in practice, whether existing Authelia password hashes can be imported, Kanidm's provisioning options, Authentik's OIDC maturity, and Pocket ID's client-creation API.
-
 Sources: github.com/lldap/lldap; authelia.com (LDAP, file, storage and OpenID Connect provider configuration, LDAP integration); github.com/kanidm/kanidm; docs.goauthentik.io (blueprints, Docker Compose install); pocket-id.org/docs.
 
-**Direction (not settled):** tink owns people and groups, and translates them into the shape each role needs: users and groups for the identity engine, users and policy groups for the mesh control plane. Reason: one source of truth, while each engine keeps its own model. Alternative: let one engine be the source and translate outward.
+### Identity: what the lab showed (2026-10-12 and 13)
 
-Open inside this: where they are declared (a kind of their own, or a block in the stack), how a person's credentials are handled without putting them in the YAML (tink secrets), and how a person's devices are enrolled.
+LLDAP v0.6.3 and Authelia 4.39.28, pinned by digest, in a project of their own on a private bridge, on a real host, declared and applied with tink **[lab]**.
+
+- **The stack.** A project, a bridge, a profile, two volumes and two instances. The first plan said six creates, a second said `no changes`.
+- **LLDAP is scriptable.** Its API creates and deletes users, groups and memberships (groups are addressed by integer id, so a declarative layer maps names to ids). **No API call sets a password**: that is a separate OPAQUE exchange, driven by `lldap_set_password`, which the image ships and which takes a token and the password from the environment. A password hash cannot be imported from another system as a result (not tested).
+- **A declarative path exists in the image.** `bootstrap.sh`, with the tools it needs, reads one JSON file per group and user (a password can come from a `password` or a `password_file` field). It issues an update for every user on every run and sets a password on every run when the file carries one. **Removal is report-only by default** (`[WARNING] User "x" is not declared in config files`) and **deletion is opt-in per class** (users, groups, memberships), and it never touches the admin user or the built-in groups. Run with the users flag, it deleted the undeclared user and nothing else.
+- **Authelia with `implementation: lldap` worked first time.** For three users and three hostnames the decisions were the expected ones (allowed where a group matched, forbidden where it did not, unauthenticated refused), and the groups reached the proxy in a `Remote-Groups` header. **A group change in LLDAP was seen by an existing session within the refresh interval** (60 s with one minute), with no restart and no new login.
+- **State is two volumes:** LLDAP's data, and Authelia's configuration directory with its database (second-factor secrets live there, not in the directory). Both survived deleting and re-applying both instances. The new instances got new DHCP addresses and nothing broke, because Authelia reaches the directory by name.
+- **Not tested:** a registered second factor surviving a recreation, the OIDC groups claim, password import, and backups of the two volumes.
+
+### What this means for tink
+
+1. **Direction (replaces the earlier "tink owns people and groups"):** the engine owns people, groups and credentials. Tink's YAML names groups in grants, and `plan` checks that each named group exists in the directory (a read; one API call or LDAP search) **[proposed]**.
+2. **Declaring people is optional, and not built.** The engine's bootstrap script is a ready-made declarative path with the removal model tink wants. Using it needs two things tink lacks (below).
+3. **Two projectors,** not a translation layer: Authelia's configuration (clients and access rules, from offers and grants), and the mesh control plane's group list.
+4. **Two gaps the lab found.** (a) Secrets cannot be placed in files: `${secret:}` works only in `environment.*`, and `kind: file` content is world-readable, so the bootstrap `password_file`, or an OIDC signing key, cannot be expressed. Authelia itself was fine, because its template filter reads environment variables. (b) There is no resource for directory content.
+5. **Authelia's OIDC clients are static configuration** with no dynamic registration, so registering an app as a client means rendering and reloading configuration.
 
 ## Where it is strong, and where it is weak
 
 As of 2026-10-12, from the migration lab.
 
-- **Strong:** the reconcile discipline (a build with these features planned 30 real stack files identically to the previous one, apart from the lines it added **[lab]**); encoded operating knowledge, such as the warning for an OCI NIC without `name:` **[lab]**; claims that are tagged by how they were checked.
-- **Weak:** removal is report-only; cross-stack references have no clean expression (`depends_on` stays inside a stack **[docs]**); nothing tells you when something fails (no notifications **[docs]**).
+- **Strong:** the reconcile discipline (a build with these features planned 30 real stack files identically to the previous one, apart from the lines it added **[lab]**; a two-service identity stack was planned, applied, deleted, re-applied and re-planned exactly **[lab]**); encoded operating knowledge, such as the warning for an OCI NIC without `name:` **[lab]**; claims that are tagged by how they were checked.
+- **Weak:** removal is report-only (LLDAP's bootstrap script shows a better shape, see open decision 1); secrets cannot be placed in files, and nothing can declare directory content **[lab]**; cross-stack references have no clean expression (`depends_on` stays inside a stack **[docs]**); nothing tells you when something fails (no notifications **[docs]**).
 - **Possibly wrong:** a single helper that gains reach with each job it takes on, under a certificate with the reach of root **[docs]**.
 
 ## Open decisions
 
-1. **Removal.** Replace "report, never remove" with an explicit, scoped operation based on the ownership stamp.
+1. **Removal.** Replace "report, never remove" with an explicit, scoped operation based on the ownership stamp. A shape that already works in the identity engine's bootstrap script: report by default, deletion opt-in per class (users, groups, memberships), and the system's own objects excluded.
 2. **Helpers.** A helper is a tink container that does a role's work. The first one happens to be a long-running scheduler. Whether each role gets its own, and whether they share one `tink` project.
 3. **Remote access v1** supports project-private bridges only.
 4. **Name of the remote-access feature:** `overlay`, `mesh` or `vpn` (see the collisions in the glossary).
-5. **Where people and groups are declared.**
+5. **Whether tink also declares people and groups** (through the engine's bootstrap script, which needs secrets in files), or only reads them to validate grants.
 6. **Notification.** How a failure reaches a person.
 7. **Cross-stack references**, for shared infrastructure.
+8. **Secrets in files.** `${secret:}` is limited to `environment.*`; a secret that must be a file (a password file, a signing key) cannot be placed. Whether to add a file kind with a restrictive mode that accepts secrets.
