@@ -47,7 +47,7 @@ The rule that keeps this contained is that tink's code talks to a role, and an e
 | reverse proxy | Caddy | defaulted | nginx, Traefik | automatic certificates and a small text config that tink renders |
 | mesh | WireGuard-based, stock Tailscale clients | decided | NetBird, ZeroTier | a common pairing for a home site plus a VPS |
 | mesh control plane | Headscale | defaulted | Tailscale's hosted service | reviewed in use: works; API keys have no scope; `policy set` works only in database mode **[lab, source]** |
-| single sign-on | Authelia | decided | Authentik, Kanidm, Pocket ID, Keycloak | compared on documentation, then verified with LLDAP in a lab ([below](#identity-what-the-lab-showed-2026-10-12-and-13)); OIDC clients are static configuration; the OIDC groups claim is still to be tested |
+| single sign-on | Authelia | decided | Authentik, Kanidm, Pocket ID, Keycloak | compared on documentation, then verified with LLDAP in a lab ([below](#identity-what-the-lab-showed-2026-10-12-and-13)); OIDC clients are static configuration; the groups claim reaches an app through `userinfo`, or the ID token with a claims policy ([below](#identity-what-the-lab-showed-2026-10-12-and-13)) |
 | identity store | LLDAP | decided | Authelia's own user file (what runs today), Kanidm, Authentik | a directory with an API and a declarative bootstrap script; people, groups and credentials; one volume of state |
 | backup transport | an Incus remote | decided **[to confirm]** | none | copies use Incus's own copy |
 | secrets | age | decided **[to confirm]** | not compared | see the secrets design note |
@@ -126,7 +126,9 @@ LLDAP v0.6.3 and Authelia 4.39.28, pinned by digest, in a project of their own o
 - **A declarative path exists in the image.** `bootstrap.sh`, with the tools it needs, reads one JSON file per group and user (a password can come from a `password` or a `password_file` field). It issues an update for every user on every run and sets a password on every run when the file carries one. **Removal is report-only by default** (`[WARNING] User "x" is not declared in config files`) and **deletion is opt-in per class** (users, groups, memberships), and it never touches the admin user or the built-in groups. Run with the users flag, it deleted the undeclared user and nothing else.
 - **Authelia with `implementation: lldap` worked first time.** For three users and three hostnames the decisions were the expected ones (allowed where a group matched, forbidden where it did not, unauthenticated refused), and the groups reached the proxy in a `Remote-Groups` header. **A group change in LLDAP was seen by an existing session within the refresh interval** (60 s with one minute), with no restart and no new login.
 - **State is two volumes:** LLDAP's data, and Authelia's configuration directory with its database (second-factor secrets live there, not in the directory). Both survived deleting and re-applying both instances. The new instances got new DHCP addresses and nothing broke, because Authelia reaches the directory by name.
-- **Not tested:** a registered second factor surviving a recreation, the OIDC groups claim, password import, and backups of the two volumes.
+- **OIDC works with LLDAP's groups.** Two confidential clients, registered statically in Authelia's configuration. Discovery lists the `groups` scope and claim. With the default claims the ID token carries **no groups**, but `userinfo` does; with a **claims policy** on the client the ID token carries them (and the email and name claims). A user with no groups gets `groups: null`, not an empty list. The access token is opaque unless the client asks for a signed (JWT) one, which some apps need. The signing key was generated inside the container and never passed through tink; a wrong client secret is refused.
+- **tink said what it did not do.** Changing the instance's environment and its config file updated both, did not restart Authelia, and the apply output said so and named `restart: true`, which restarts on apply (not exercised).
+- **Not tested:** a registered second factor surviving a recreation, importing a password hash, `restart: true`, and backups of the two volumes.
 
 ### What this means for tink
 
@@ -134,7 +136,7 @@ LLDAP v0.6.3 and Authelia 4.39.28, pinned by digest, in a project of their own o
 2. **Declaring people is optional, and not built.** The engine's bootstrap script is a ready-made declarative path with the removal model tink wants. Using it needs two things tink lacks (below).
 3. **Two projectors,** not a translation layer: Authelia's configuration (clients and access rules, from offers and grants), and the mesh control plane's group list.
 4. **Two gaps the lab found.** (a) Secrets cannot be placed in files: `${secret:}` works only in `environment.*`, and `kind: file` content is world-readable, so the bootstrap `password_file`, or an OIDC signing key, cannot be expressed. Authelia itself was fine, because its template filter reads environment variables. (b) There is no resource for directory content.
-5. **Authelia's OIDC clients are static configuration** with no dynamic registration, so registering an app as a client means rendering and reloading configuration.
+5. **OIDC fits offers and grants.** Authelia's clients are static configuration with no dynamic registration, so registering an app means rendering configuration and restarting. What an app *offers* is its registration: redirect URIs, scopes, whether it reads claims from the ID token or from `userinfo` (a claims policy), and whether it needs a JWT access token. What the site *grants* is which groups may sign in to it (a per-client authorization policy on group membership). The client secret goes both ways: the plaintext into the app (a tink secret in its `environment.*`), a digest into the engine. The digest is salted, so it cannot be recomputed on every run; tink would have to keep it, or change it only when the secret changes.
 
 ## Where it is strong, and where it is weak
 
@@ -154,3 +156,4 @@ As of 2026-10-12, from the migration lab.
 6. **Notification.** How a failure reaches a person.
 7. **Cross-stack references**, for shared infrastructure.
 8. **Secrets in files.** `${secret:}` is limited to `environment.*`; a secret that must be a file (a password file, a signing key) cannot be placed. Whether to add a file kind with a restrictive mode that accepts secrets.
+9. **Client secrets across two sides.** Where the salted digest of an OIDC client secret is kept, so that `plan` stays stable while the plaintext is a tink secret in the app.
