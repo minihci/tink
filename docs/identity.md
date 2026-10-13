@@ -1,6 +1,6 @@
 # `tink identity groups`: the directory's people and groups
 
-**Status: built and unit-tested; run live once, against a lab LLDAP (v0.6.3, 2026-10-13), for the table and headscale formats and for each failure listed below.** It only reads. The design, with its reasoning and the experiments still to run, is in [identity-projector-design.md](identity-projector-design.md), and where it sits in tink in [what-tink-is.md](what-tink-is.md) (both on the `docs/glossary` branch until merged).
+**Status: built and unit-tested; run live once, against a lab LLDAP (v0.6.3, 2026-10-13), for the table and headscale formats and for each failure listed below; the fragment was then checked and loaded in a throwaway Headscale 0.29.4.** It only reads. The design, with its reasoning and the experiments still to run, is in [identity-projector-design.md](identity-projector-design.md), and where it sits in tink in [what-tink-is.md](what-tink-is.md) (both on the `docs/glossary` branch until merged).
 
 ## What it does
 
@@ -44,6 +44,15 @@ It does **not** connect to the directory over the network. It runs a fixed scrip
 - **Member names:** `--member-format` (default `{id}@`, which is how Headscale's documentation writes a user). `{email}` is the other placeholder. Whether the default is right for users created through OIDC login is not yet known.
 - **Findings** go to standard error. An **error** means no fragment is printed and the exit status is 1: a requested group that is not in the directory, a person with no id or no email where the format needs one, two people who would be written the same way, a group name the policy cannot use, a bad member format. A **warning** (a group with no members, nothing to emit) does not stop it.
 - `--check` runs the checks and prints no fragment; the exit status is the answer.
+
+## What Headscale does with the fragment
+
+Tried against a throwaway Headscale 0.29.4 (the image production runs) **[lab]**:
+
+- **A member with no Headscale user is accepted, silently.** `headscale policy check` calls the policy valid and a live reload completes; the member simply matches nobody. So a typo, or a person who has not got a Headscale user yet, is not caught by Headscale. Compare the members with `headscale users list` yourself for now.
+- **`headscale policy check -f FILE` is the gate:** it validates against the server's live users and rejects a real mistake (an unknown field) with exit 1. Run it before the policy goes live.
+- **Getting the policy live.** tink can place the file with `kind: file`, but it neither validates it nor tells Headscale. In `database` mode, `headscale policy set -f FILE` run inside the container is validated, applies at once, needs no API key, and leaves the previous policy in force if the file is bad. In `file` mode a SIGHUP to the `headscale serve` process reloads it, and a bad file is only logged.
+- Until the first `policy set` in database mode, Headscale is allow-all.
 
 ## A failed read is an error, never an empty list
 
