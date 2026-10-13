@@ -1,6 +1,6 @@
 # Design: put an instance's files in place before its first start
 
-**Status: a design note, 2026-10-13. Built** (#78) and measured in the lab (see "Measured"). It fixes a race found in the Headscale lab ([what-tink-is.md](what-tink-is.md), "Where it is strong, and where it is weak"). A gap found in the next lab, files under a disk-device mount, is closed by "Files under a mount" below: **built, covered by fakes only, not yet run against a server**. Claims are marked **[lab]**, **[code]**, **[proposed]** or **[verify]**.
+**Status: a design note, 2026-10-13. Built** (#78) and measured in the lab (see "Measured"). It fixes a race found in the Headscale lab ([what-tink-is.md](what-tink-is.md), "Where it is strong, and where it is weak"). A gap found in the next lab, files under a disk-device mount, is closed by "Files under a mount" below: **built, and run against a real server on 2026-10-13** (the Home Assistant stack that found it); two cases are still only covered by fakes, listed there. Claims are marked **[lab]**, **[code]**, **[proposed]** or **[verify]**.
 
 ## The problem
 
@@ -71,7 +71,7 @@ With the fix each apply said `placed 2 file(s) before its first start`, the file
 
 ## Files under a mount
 
-**Added 2026-10-13.** Status: built; `plan`, the selection, and both ways of placing are covered by tests with fakes. **Nothing here has been run against a real server yet [verify].**
+**Added 2026-10-13.** Status: built, covered by tests with fakes, and run live the same day on the lab stack that found the gap (see "Run live"). **Not yet run on a real server:** a write into a volume that *fails* (the failure sentence), and a volume that has been attached before (the owner it gets from `volatile.idmap.last`).
 
 ### The gap **[lab]**
 
@@ -96,7 +96,7 @@ Then, for a file at or below a mount path:
 
 A file that waits for a file that is not placed waits for the start too, the same as one that waits for an exec; nothing hides it, so it is not reported.
 
-### Writing into the volume **[code]**, run only against fakes
+### Writing into the volume **[code]**, **[lab]**
 
 The pinned Incus client (`github.com/lxc/incus/v7` v7.4.0) has a storage-volume file API: `GetStorageVolumeFile`, `CreateStorageVolumeFile` and `DeleteStorageVolumeFile` on `InstanceServer` (REST: `/1.0/storage-pools/{pool}/volumes/{type}/{volume}/files?path=`, path relative to the volume's root). Reading the server source: the call mounts the volume itself for as long as it runs (`Volume.FileSFTPConn` runs the work in `MountTask`, with a `forkfile` process rooted at the volume), so a volume nothing has mounted yet can be written.
 
@@ -104,11 +104,19 @@ The volume exists by then: a `storage-volume` resource the instance depends on i
 
 What is done keeps the file resource's meaning, converge and not seed: read the file in the volume, **write only when it differs** (so a file already right is left untouched, and a different one is overwritten), with the mode `0644` and the owner defaults of the instance push, **no parent directories created** (a missing one fails, and the message says tink creates none). A failure is, as before, not a new way to fail: the instance still starts, the file is written by its own turn, and the apply now says why it was not placed.
 
-**[verify]** on a real server, what the fakes cannot show:
+### Run live **[lab]**
 
-1. That `plan apply` of the lab stack ends with the file in the volume, not in the rootfs, and the second apply says `no changes` for `file/ha-yaml` (it reads through the instance's own mount).
-2. The file's owner as the container sees it. It is written as uid/gid 0 by the volume's `forkfile`, which uses the volume's `volatile.idmap.last` when it has one; a volume that has never been attached has none. The mode is `0644`, so it is readable either way.
-3. That the `forkfile` and the mount of the volume, which linger for about fifteen seconds after the write, do not get in the way of the instance's start straight afterwards.
+On the lab host (project `e2e-lab`), the instance `ha-e2e` (Home Assistant 2026.9.4, disk device `config` = the custom volume `e2e-ha-config` at `/config`) and its volume were deleted by hand, and the same stack was applied with the build of this change (`cef65d8`, darwin). What the fakes could not show, and what was seen:
+
+1. **The file lands in the volume, and the second apply is quiet.** Apply printed `instance/ha-e2e: placed 1 file(s) before its first start: file/ha-yaml (in volume default/e2e-ha-config)` and then `file/ha-yaml: no changes`; the earlier build said `created` there, the second push. The second plan said `no changes` everywhere. The file is visible in the container at `/config/configuration.yaml`, and there is **no copy in the container's rootfs** under the mount.
+2. **Owner and mode.** As the container sees it the file is mode `0644`, uid `0`, gid `0`, and Home Assistant read it.
+3. **The start straight after the write is fine.** The instance was created at 23:55:59.27 and last used at 23:55:59.80, the file's mtime is 23:55:59, Home Assistant's stable `http` config appeared at 23:56:06.8 and the config migrated from the YAML (pending, with the `server_host` / `use_x_forwarded_for` / `trusted_proxies` stanza) at 23:56:12.9. It ran and listened on the bridge address, so the lingering `forkfile` and mount of the volume did not get in the way.
+4. **Plan, a host directory (plan only, nothing applied).** For a stack with a host-directory disk device at `/media`, a file at `/media/x.conf` printed `note: file/probe-under-host-dir: not placed before the first start, because /media is a mounted host directory (device media); it is written right after the start, so the app may read its config first`, and a file at `/etc/caddy/Caddyfile` in the same stack printed no note.
+
+**[verify]** Still only covered by fakes:
+
+- A write into a volume that **fails** (a missing parent directory, say): the instance should still start, and the apply should print `... not placed before the first start, because writing /sub/x into volume default/vol failed: ...`.
+- A volume that **has been attached before**: it has a `volatile.idmap.last`, which the volume's `forkfile` applies, so the owner the file gets there is the one thing not seen. The fresh volume above gave uid/gid 0 in the container.
 
 ### What is said
 
