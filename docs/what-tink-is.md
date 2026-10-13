@@ -46,7 +46,7 @@ The rule that keeps this contained is that tink's code talks to a role, and an e
 | platform | Incus | decided | none | one API for containers and VMs; the only hard requirement |
 | reverse proxy | Caddy | defaulted | nginx, Traefik | automatic certificates and a small text config that tink renders |
 | mesh | WireGuard-based, stock Tailscale clients | decided | NetBird, ZeroTier | a common pairing for a home site plus a VPS |
-| mesh control plane | Headscale | defaulted | Tailscale's hosted service | reviewed in use: works; API keys have no scope; `policy set` works only in database mode **[lab, source]** |
+| mesh control plane | Headscale | defaulted | Tailscale's hosted service | reviewed in use: works; API keys have no scope. Policy delivery was tried on a throwaway: `policy set` inside the container in database mode needs no key, is validated and immediate, and keeps the previous policy on failure; file mode plus a SIGHUP also works **[lab, source]** |
 | single sign-on | Authelia | decided | Authentik, Kanidm, Pocket ID, Keycloak | compared on documentation, then verified with LLDAP in a lab ([below](#identity-what-the-lab-showed-2026-10-12-and-13)); OIDC clients are static configuration; the groups claim reaches an app through `userinfo`, or the ID token with a claims policy ([below](#identity-what-the-lab-showed-2026-10-12-and-13)) |
 | identity store | LLDAP | decided | Authelia's own user file (what runs today), Kanidm, Authentik | a directory with an API and a declarative bootstrap script; people, groups and credentials; one volume of state |
 | backup transport | an Incus remote | decided **[to confirm]** | none | copies use Incus's own copy |
@@ -157,3 +157,4 @@ As of 2026-10-12, from the migration lab.
 7. **Cross-stack references**, for shared infrastructure.
 8. **Secrets in files.** `${secret:}` is limited to `environment.*`; a secret that must be a file (a password file, a signing key) cannot be placed. Whether to add a file kind with a restrictive mode that accepts secrets.
 9. **Client secrets across two sides.** Where the salted digest of an OIDC client secret is kept, so that `plan` stays stable while the plaintext is a tink secret in the app.
+10. **Delivering a policy to the mesh control plane.** Database mode with `policy set` run through the exec API is the default the lab supports. It needs an exec that re-runs when a file's content changes, and a `policy check` before the set. See [the projector design](identity-projector-design.md).

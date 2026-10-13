@@ -85,11 +85,22 @@ Later, with grants: a grant that names a group the directory does not have is th
 - **Fixture:** the GraphQL reply captured from the lab's seeded directory (groups `family`, `admins`, three users, the system groups).
 - **Live, not in CI:** run against the lab LLDAP, with the read-only user, and compare with the fixture.
 
-## Experiments the lab can answer before relying on this
+## Experiments, run on 2026-10-13 against a throwaway Headscale **[lab]**
 
-1. **Does Headscale accept a group member that has no Headscale user?** If it rejects the policy, the projection has to be limited to people who exist there, or Headscale users have to be created from the directory first. **[verify]**
-2. **Does `headscale policy check` accept the fragment inside a minimal policy?** A throwaway Headscale instance in the lab can run it without touching the real control plane.
-3. **Does a SIGHUP sent from the host reload a file-mode policy?** The documentation says it does **[docs]**; the earlier attempt on the real control plane was not run. The throwaway instance can prove the delivery path.
+Headscale 0.29.4, the image digest production runs, in the lab beside the LLDAP it reads. The fragment was the real output of `tink identity groups --format headscale`.
+
+1. **Does Headscale accept a group member that has no Headscale user? Yes, silently. (The prediction was the opposite.)** `headscale policy check` said the policy was valid with `bob@` in a group and no user `bob`, and a live reload completed. The member simply matches nobody. So the projector does not have to limit itself to people who exist in Headscale, and a person without a Headscale user, or a typo, is not caught by Headscale at all.
+2. **Does `headscale policy check` accept the fragment inside a minimal policy? Yes**, and it rejects a real mistake (`unknown field: "grantz"`, exit 1). It validates against the server's live users and nodes.
+3. **Does a SIGHUP sent from the host reload a file-mode policy? Yes.** Same process, no restart. Success logs only a receipt (plus `Policy reload completed with changes` when something changed); a rejected file logs an error and Headscale keeps running.
+4. **What does tink do with the policy file? It pushes it** (`would update`, then `no changes`), and **neither signals Headscale nor checks the file**: an invalid policy was pushed and reported as converged.
+5. **Database mode (not planned; it changes the recommendation).** With `policy.mode: database`, `headscale policy set -f FILE` run *inside the container* over its local socket needs **no API key**, validates, applies at once, and on a bad file exits 1 and leaves the previous policy in force. No signal, no host access.
+
+### What this changes
+
+- **Delivery.** The default for putting a policy in place should be database mode: `kind: file` places the policy, then an exec runs `policy set` inside the instance (through the exec API, so it works under `--remote`). The failure is in the exit status of the apply, not in a log line nobody reads. File mode plus a signal works, but needs a process on the host that can signal (tink under `--remote` has none) or a restart of the control plane.
+- **Two gaps in tink that this exposes.** (a) An exec cannot be told "re-run when that file's content changed" (`triggers` are literal strings), so today the policy would need a hand-kept version string. (b) Nothing runs `policy check` before the set. Both belong to the control-plane stack, not to the projector.
+- **Cautions.** In database mode, until the first `policy set`, Headscale is **allow-all**, so the first set must come before any device is enrolled. `set` logs nothing, so `policy get` is how to see what is live.
+- **A finding worth adding to the projector (proposed):** cross-check the members against `headscale users list` and warn about a member with no Headscale user, since Headscale will not.
 
 ## Not in this slice
 
