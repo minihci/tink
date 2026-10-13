@@ -37,6 +37,7 @@ comment for the working bash it's replacing.
 | `tink secret` | verified live on the Immich stack on the lab host ([docs](docs/secrets.md)) | (new) |
 | `tink remote` / `--remote NAME` | verified live from a laptop against the lab host ([docs](docs/remote.md)) | (new) |
 | `tink helper install` / `upgrade` / `remove` / `remote` / `status` | built, and run live on the lab host: installed from the published image, it made the scheduled copies on its own, restarted after being killed, and upgraded from `v0.1.0` to `v0.1.1` with the release binary and no flags; a host reboot has not been tried ([docs](docs/helper.md)) | (new - a way to run the daemon without a unit per init system) |
+| `tink identity groups` | built and unit-tested; run live once against a lab LLDAP: reads the directory's groups through the Incus exec API with a read-only user, and can project them into a Headscale policy `groups` fragment ([docs](docs/identity.md)) | (new) |
 | `tink mongo snapshot` | not yet designed | (none yet - still under discussion) |
 
 `deploy` converges a host to its declared platform state - storage
@@ -128,6 +129,8 @@ internal/backupmeta/ what tink records on a volume (policy key, stamps, markers)
 internal/volbackup/  copy, restore and verify a storage volume - see docs/volume-backup.md
 internal/backuprun/  tink backup run: decide which copies are due, make them
 internal/ingress/    tink ingress ...
+internal/identity/   the identity role (people and groups), its LLDAP reader, and tink identity groups - see docs/identity.md
+internal/mesh/       projections into mesh policy (Headscale groups) - see docs/identity.md
 internal/daemon/     tink daemon ... (workers, the backup scheduler, the status document)
 internal/jobs/       the daemon's job queue, a directory - see docs/daemon-jobs.md
 internal/helper/     tink helper ... - see docs/helper.md
