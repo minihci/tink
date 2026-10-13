@@ -1,6 +1,6 @@
 # Design: reading groups from the directory and projecting them into the mesh policy
 
-**Status: a design note, 2026-10-13. Nothing here is built.** It is the first slice of the identity role described in [what-tink-is.md](what-tink-is.md): the smallest piece that makes "tink reads groups from the directory" real. Claims are marked **[lab]** (seen on a real host), **[docs]**, **[code]** (this repository), **[proposed]** or **[verify]**.
+**Status: a design note, 2026-10-13. The reader, the projector and the command are built** on branch `feat/identity-groups` (not yet merged; user page `docs/identity.md` there), tested, and run live against a lab LLDAP. The three experiments below are **not yet run**. It is the first slice of the identity role described in [what-tink-is.md](what-tink-is.md): the smallest piece that makes "tink reads groups from the directory" real. Claims are marked **[lab]** (seen on a real host), **[docs]**, **[code]** (this repository), **[proposed]** or **[verify]**.
 
 ## The job
 
