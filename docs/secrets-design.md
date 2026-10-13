@@ -28,7 +28,7 @@ Tink had no story for secrets, and the real stack it runs already needed one:
   the whole config it would set. **[code]** *(fixed: phase 1)*
 - Stack YAML decoding ignored fields it did not know, so a misspelled or misindented key, or a field from a newer tink, was dropped
   silently. **[code]** *(fixed: phase 1; also seen for real when a stack using a newer field loaded on an older binary and did nothing)*
-- `kind: file` always pushes with mode `0644`, after the instance has started. **[code]** *(why file content cannot carry a secret yet)*
+- `kind: file` always pushes with mode `0644`; for an instance created in the same apply it is placed before the instance's first start (see "Update, 2026-10-13: files are placed before an instance's first start" in [resolver-architecture.md](resolver-architecture.md)), otherwise after the instance has started. **[code]** *(why file content cannot carry a secret yet)*
 - `tink run --env K=V` writes the value into `environment.*`, and so passes it on a command line. **[code]**
   *(documented as not for secrets)*
 - `tink deploy` passes the image-registry token to `incus remote add --token` on a command line. **[code]**

@@ -49,7 +49,7 @@ func createOne(server incus.InstanceServer, r Resource, env volumeEnv) error {
 			ContentType:      "filesystem",
 		})
 	case KindInstance:
-		return createInstance(server, r)
+		return createInstance(server, r, env.firstStart[instanceKey(r.Project, r.Name)], env.placed)
 	case KindFile:
 		return pushFile(server, r)
 	case KindIncus:
@@ -160,7 +160,9 @@ func createImage(server incus.InstanceServer, r Resource) error {
 // Create/ApplyConfig/EnsureRunning, not a reimplementation. The
 // first-boot-config-ordering fix tink run needed for Postgres/Nextcloud
 // comes along for free.
-func createInstance(server incus.InstanceServer, r Resource) error {
+//
+// The instance's own files are placed between configuring it and starting it (see firststart.go). placed, when set, is told which were.
+func createInstance(server incus.InstanceServer, r Resource, files []Resource, placed func(instance string, files []string)) error {
 	spec := &run.Spec{
 		Name:     r.Name,
 		Image:    r.Image,
@@ -171,14 +173,17 @@ func createInstance(server incus.InstanceServer, r Resource) error {
 
 		Ephemeral: r.Ephemeral,
 	}
-	if err := run.Create(server, spec, r.Project); err != nil {
-		return err
-	}
 	s := scopedServer(server, r)
-	if err := run.ApplyConfig(s, spec); err != nil {
-		return err
+	names, err := createInOrder(instanceSteps{
+		create: func() error { return run.Create(server, spec, r.Project) },
+		config: func() error { return run.ApplyConfig(s, spec) },
+		place:  func(f Resource) error { return placeFile(server, f) },
+		start:  func() error { return run.EnsureRunning(s, spec.Name) },
+	}, files)
+	if placed != nil && len(names) > 0 {
+		placed(r.Name, names)
 	}
-	return run.EnsureRunning(s, spec.Name)
+	return err
 }
 
 // updateInstance converges an already-existing instance's config/devices
@@ -279,6 +284,18 @@ func updateOne(server incus.InstanceServer, r Resource, env volumeEnv) error {
 // found live building this same stack with Terraform: a pushed file
 // alone doesn't make a running process notice it changed.
 func pushFile(server incus.InstanceServer, r Resource) error {
+	if err := placeFile(server, r); err != nil {
+		return err
+	}
+	if !r.Restart {
+		return nil
+	}
+	return run.EnsureRunning(scopedServer(server, r), r.Instance)
+}
+
+// placeFile writes r.Content to r.Path inside r.Instance and does nothing more: no restart. It is what pushFile does first, and what creating an
+// instance does for its files before the first start (the instance is stopped then, and takes the push).
+func placeFile(server incus.InstanceServer, r Resource) error {
 	s := scopedServer(server, r)
 	err := s.CreateInstanceFile(r.Instance, r.Path, incus.InstanceFileArgs{
 		Content:   strings.NewReader(r.Content),
@@ -289,8 +306,5 @@ func pushFile(server incus.InstanceServer, r Resource) error {
 	if err != nil {
 		return fmt.Errorf("pushing %s to %s: %w", r.Path, r.Instance, err)
 	}
-	if !r.Restart {
-		return nil
-	}
-	return run.EnsureRunning(s, r.Instance)
+	return nil
 }
