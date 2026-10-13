@@ -47,7 +47,8 @@ The rule that keeps this contained is that tink's code talks to a role, and an e
 | reverse proxy | Caddy | defaulted | nginx, Traefik | automatic certificates and a small text config that tink renders |
 | mesh | WireGuard-based, stock Tailscale clients | decided | NetBird, ZeroTier | a common pairing for a home site plus a VPS |
 | mesh control plane | Headscale | defaulted | Tailscale's hosted service | reviewed in use: works; API keys have no scope; `policy set` works only in database mode **[lab, source]** |
-| single sign-on | Authelia | unexamined | Authentik, Keycloak | chosen without a comparison |
+| single sign-on | Authelia | unexamined | Authentik, Kanidm, Pocket ID, Keycloak | chosen without a comparison; being examined, see [identity](#identity-candidates-examined-2026-10-12) |
+| identity store | Authelia's own file (today); LLDAP is a candidate | unexamined | LLDAP, Kanidm, Authentik | who the people are, their groups and their credentials |
 | backup transport | an Incus remote | decided **[to confirm]** | none | copies use Incus's own copy |
 | secrets | age | decided **[to confirm]** | not compared | see the secrets design note |
 
@@ -82,7 +83,45 @@ mqtt:1883    granted to group:admin, not offered  warning: grant with no offer
 
 **Granularity.** Default: a grant names the instance and port. It is explicit, and an app cannot widen its own audience. Alternative: the app labels an offer and grants map groups to labels. It scales better, but the app classifies itself.
 
+### What exists in the code today
+
+As of 2026-10-12 the pattern is a name for something to build, not something already in the code **[code]**.
+
+- **Offers: one implementation.** `ingress.Registration` (name, project, domain, port, address) is built by `ingress.Discover` from `user.tink.ingress.{enabled,domain,port,address}` across all projects (`internal/ingress/keys.go`, `discover.go`). The old `user.ingress.*` names are still read. It is specific to ingress; there is no shared type or interface. A backup policy on a volume looks similar but is a different thing: the owner's policy for its own volume, not something offered to others.
+- **Grants: none.** Access control is written by hand. `configs/authelia/configuration.yml` holds a default-deny policy, per-domain rules and the OIDC clients; the users are in a host-owned `users_database.yml`. `tink deploy` applies them (`internal/bootstrap`), outside the resolver and its kinds.
+- **Nothing joins the two.** Ingress rendering contains no authentication, so an app that registers gets a route and no access rule.
+
+**A first step that changes no behaviour (proposed):**
+1. A shared `Offer` (role, instance, port, attributes), built per role from `user.tink.<role>.*` keys.
+2. A shared `Grant` (group, target instance, port), read from the site's declaration.
+3. One `Join` that returns the findings for `plan`: ok, offer with no grant, grant with no offer, too wide.
+4. A per-role engine interface that renders the result into the engine's own configuration.
+
+Ingress moves first, with its existing tests as the guard. The first grant would arrive with the first role that has one.
+
 ## People and groups
+
+**Under review (2026-10-12):** treating identity as a role of its own, with a default engine like the others, and looking at which engine fits. The direction below is the earlier one and is likely to be replaced.
+
+### Identity: candidates examined (2026-10-12)
+
+What each one provides, and what tink could drive it with. All from the projects' own documentation, read on this date **[docs]**; nothing here was run.
+
+| Candidate | Provides | Declarative handle | Footprint |
+|---|---|---|---|
+| LLDAP + Authelia | LLDAP: a directory (users, passwords, groups) with a web UI where users change their own details. Authelia: login portal, OIDC, access rules. LLDAP has no OIDC of its own | LLDAP: a GraphQL API, and a bootstrap script that enforces users, groups and attributes from a file. Authelia lists an `lldap` implementation preset | two small services; SQLite by default for each |
+| Authelia alone (today) | the same Authelia, with users in a file it also writes back, for example on a password reset | the file; it is not watched unless `watch` is set | one service |
+| Kanidm | OIDC provider, read-only LDAP gateway, RADIUS, passkeys; administered mostly through its CLI | none mentioned in its README | one service with its own database and replication |
+| Authentik | an identity provider with its own users and groups | blueprints: declarative YAML in a watched directory, an OCI registry or the database, applied in one transaction | needs PostgreSQL; at least 2 CPU cores and 2 GB RAM are stated |
+| Pocket ID | an OIDC provider, passkey-only; groups decide who may sign in to which client | its REST API and LDAP/SCIM pages exist but were not read | a single binary or Compose |
+
+What follows for tink:
+- **Where state lives.** Second factors and Authelia's logs are in Authelia's own database, not in the directory. Backups must cover both.
+- **OIDC clients are static.** Authelia defines clients in its configuration file only, with no dynamic registration or API, so registering a client means rendering configuration. The OIDC provider is described as an open beta, and also as OpenID certified.
+- **The translation layer becomes small.** If the directory is the source of truth, Authelia reads groups from it directly. Tink needs two projectors: one for Authelia's configuration (clients and access rules, from offers and grants) and one for the mesh control plane's group list.
+- **Not verified:** LLDAP's GraphQL mutations in practice, whether existing Authelia password hashes can be imported, Kanidm's provisioning options, Authentik's OIDC maturity, and Pocket ID's client-creation API.
+
+Sources: github.com/lldap/lldap; authelia.com (LDAP, file, storage and OpenID Connect provider configuration, LDAP integration); github.com/kanidm/kanidm; docs.goauthentik.io (blueprints, Docker Compose install); pocket-id.org/docs.
 
 **Direction (not settled):** tink owns people and groups, and translates them into the shape each role needs: users and groups for the identity engine, users and policy groups for the mesh control plane. Reason: one source of truth, while each engine keeps its own model. Alternative: let one engine be the source and translate outward.
 
