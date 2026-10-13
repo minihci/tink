@@ -143,7 +143,10 @@ func applyOne(server incus.InstanceServer, r Resource, opts PlanOptions, note fu
 		note("%s/%s: BLOCKED: %s", r.Kind, r.Name, strings.Join(plan.Blocked, "; "))
 		return outBlocked, nil
 	case ActionCreate:
-		if err := createOne(server, r, volumeEnv{targets: opts.targets, stack: opts.stack}); err != nil {
+		var placed []string
+		env := volumeEnv{targets: opts.targets, stack: opts.stack, firstStart: opts.firstStart,
+			placed: func(_ string, files []string) { placed = files }}
+		if err := createOne(server, r, env); err != nil {
 			return outConverged, err
 		}
 		if r.Kind == KindExec {
@@ -151,6 +154,9 @@ func applyOne(server incus.InstanceServer, r Resource, opts PlanOptions, note fu
 			return outChanged, nil
 		}
 		note("%s/%s: created", r.Kind, r.Name)
+		if len(placed) > 0 {
+			note("%s", placedNote(r.Name, placed))
+		}
 		return outChanged, nil
 	case ActionUpdate:
 		if err := updateOne(server, r, volumeEnv{targets: opts.targets, stack: opts.stack}); err != nil {

@@ -43,6 +43,8 @@ type PlanOptions struct {
 	// projectNotes are warnings about resources that name no project in a stack where others do (see mixedProjectNotes), by resource
 	// name, computed from the full stack with targets.
 	projectNotes map[string]string
+	// firstStart are the files to place with each instance this apply creates, before its first start (see firststart.go), from the full stack.
+	firstStart map[string][]Resource
 }
 
 // ForResources returns the options carrying the backup targets of the full
@@ -53,6 +55,7 @@ func (o PlanOptions) ForResources(resources []Resource) PlanOptions {
 	o.profiles = declaredProfiles(resources)
 	o.stack, _ = StackName(resources) // more than one is reported by Levels
 	o.projectNotes = mixedProjectNotes(resources)
+	o.firstStart = firstStartFiles(resources)
 	return o
 }
 
@@ -66,6 +69,9 @@ func (o PlanOptions) withTargets(resources []Resource) PlanOptions {
 	}
 	if o.profiles == nil {
 		o.profiles = declaredProfiles(resources)
+	}
+	if o.firstStart == nil {
+		o.firstStart = firstStartFiles(resources)
 	}
 	return o
 }

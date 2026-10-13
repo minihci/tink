@@ -408,6 +408,21 @@ apply, so a name that is not in the stack can only be a mistake. The stack's own
 cannot be waited for. See `internal/resolve/dependson.go`.
 
 
+## Update, 2026-10-13: files are placed before an instance's first start
+
+Creating an instance used to be: create it, apply its config, **start it**; and only then the `kind: file` resources that target it pushed their files. A service that needs one of those files at start (Headscale needs `/etc/headscale.yaml`) had a window in which the file was not there: the app exited at once, Incus restarted it in a loop, and tink's own calls that fell in the gaps failed (`reading current content … bad file descriptor`, `Failed to retrieve PID of executing child process`). A second apply converged; a first install should not need one. The design, with the lab evidence, is in [first-start-files-design.md](https://github.com/minihci/tink/blob/docs/glossary/docs/first-start-files-design.md) on the `docs/glossary` branch.
+
+An instance that has been created and never started takes a file push, so **creating an instance now places its eligible files after configuring it and before starting it**:
+
+- **Which files:** those that target a container instance this stack declares, whose `depends_on` names only that instance or other such files (an exec, or anything else, makes a file wait for its own turn, and so do the files that wait for it). A virtual machine keeps the old behaviour: it needs its agent running to take a file. They are placed in declaration order.
+- **Nothing else changes.** The file resources still run in their own level. Each is planned immediately before it is applied, finds its content already there, and says `no changes`: no second push and, for `restart: true`, no restart of the instance that has just started with the file. `plan` is unchanged (`would create`).
+- **It never adds a way to fail.** A push that fails (a directory that is not there) is skipped and the instance is started anyway; the file resource then fails in its own turn with the message it has always had.
+- **It is said:** `instance/headscale: created`, then `instance/headscale: placed 2 file(s) before its first start: file/headscale-policy, file/headscale-config`, naming only the files that were placed.
+- Only for an instance **created** by the apply. An existing instance, running or stopped, is handled as before.
+
+This is also the mechanism the secrets design asks for to deliver a secret as a file "after create and before first start" ([secrets-design.md](secrets-design.md)); that feature is not built.
+
+
 ## Update, 2026-10-13: an exec can compare live output with a declared file (`check_output`)
 
 A `kind: exec` declares exactly one way to tell "already done" from "needs to run": `check`, `triggers`, and now `check_output`. It is for an engine with a get/set pair, where the live state can be read back and compared with what the stack declares. The design, and the lab finding behind it (Headscale's policy), is in [exec-output-check-design.md](https://github.com/minihci/tink/blob/docs/glossary/docs/exec-output-check-design.md) on the `docs/glossary` branch.
