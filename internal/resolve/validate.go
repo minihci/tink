@@ -40,6 +40,7 @@ var fieldOwners = map[string][]Kind{
 	"Check":           {KindIncus, KindExec},
 	"Command":         {KindIncus, KindExec},
 	"Triggers":        {KindExec},
+	"CheckOutput":     {KindExec},
 	"AgentTimeout":    {KindExec},
 	"Alias":           {KindImage},
 	"Source":          {KindImage},

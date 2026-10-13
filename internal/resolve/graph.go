@@ -35,6 +35,9 @@ func Levels(resources []Resource) ([][]Resource, error) {
 	if err := validateBackupReferences(resources); err != nil {
 		return nil, err
 	}
+	if err := validateCheckOutputs(resources); err != nil {
+		return nil, err
+	}
 	inheritProject(all)
 
 	deps := make(map[string][]string, len(resources))
@@ -53,6 +56,7 @@ func Levels(resources []Resource) ([][]Resource, error) {
 	// same after-dependencies/before-levels slot inheritProject already
 	// uses for the same reason.
 	resolveImageAlias(all)
+	resolveCheckOutputs(all)
 
 	remaining := make(map[string]*Resource, len(resources))
 	for name, r := range all {

@@ -100,23 +100,36 @@ func triggerHashConfigKey(name string) string {
 // instead of the "would create" every other kind already reports
 // correctly in exactly this situation.
 func execConverged(server incus.InstanceServer, r Resource, attempts int, delay time.Duration) (bool, error) {
+	converged, _, err := execState(server, r, attempts, delay)
+	return converged, err
+}
+
+// execState is execConverged with the reason it is not converged, for the guard that has one to give (check_output). A guard that has none
+// returns an empty reason.
+func execState(server incus.InstanceServer, r Resource, attempts int, delay time.Duration) (converged bool, why string, err error) {
 	inst, _, found, err := incusapi.LookupInstance(server, r.Instance)
 	if err != nil {
-		return false, fmt.Errorf("reading %s: %w", r.Instance, err)
+		return false, "", fmt.Errorf("reading %s: %w", r.Instance, err)
 	}
 	if !found {
-		return false, nil
+		return false, "", nil
 	}
 
 	if len(r.Check) > 0 {
 		code, _, err := incusapi.ExecInGuestWithRetry(server, r.Instance, r.Check, attempts, delay)
 		if err != nil {
-			return false, err
+			return false, "", err
 		}
-		return code == 0, nil
+		return code == 0, "", nil
 	}
 
-	return inst.Config[triggerHashConfigKey(r.Name)] == triggerHash(r.Triggers), nil
+	if r.CheckOutput != nil {
+		return outputCheckConverged(func(command []string) (int, string, error) {
+			return incusapi.ExecInGuestWithRetry(server, r.Instance, command, attempts, delay)
+		}, r.CheckOutput)
+	}
+
+	return inst.Config[triggerHashConfigKey(r.Name)] == triggerHash(r.Triggers), "", nil
 }
 
 // planExec reuses ActionCreate for "needs to run," the same convention
@@ -133,7 +146,7 @@ func execConverged(server incus.InstanceServer, r Resource, attempts int, delay 
 // guest simply hasn't finished booting yet, which Apply (with the real
 // budget) is expected to wait out for real.
 func planExec(server incus.InstanceServer, r Resource) (PlannedResource, error) {
-	converged, err := execConverged(server, r, planCheckAttempts, planCheckDelay)
+	converged, why, err := execState(server, r, planCheckAttempts, planCheckDelay)
 	if err != nil {
 		if errors.Is(err, incusapi.ErrAgentNotReady) {
 			return PlannedResource{Resource: r, Action: ActionCreate, Changes: []string{fmt.Sprintf("would run: %v (guest agent not ready yet)", r.Command)}}, nil
@@ -143,7 +156,11 @@ func planExec(server incus.InstanceServer, r Resource) (PlannedResource, error) 
 	if converged {
 		return PlannedResource{Resource: r, Action: ActionNone}, nil
 	}
-	return PlannedResource{Resource: r, Action: ActionCreate, Changes: []string{fmt.Sprintf("would run: %v", r.Command)}}, nil
+	msg := fmt.Sprintf("would run: %v", r.Command)
+	if why != "" {
+		msg += " (" + why + ")"
+	}
+	return PlannedResource{Resource: r, Action: ActionCreate, Changes: []string{msg}}, nil
 }
 
 // runExec re-checks convergence rather than trusting the plan it was
@@ -170,6 +187,18 @@ func runExec(server incus.InstanceServer, r Resource) error {
 	}
 	if code != 0 {
 		return fmt.Errorf("running %v on %s: exit %d: %s", r.Command, r.Instance, code, output)
+	}
+
+	// The check_output guard can say, right away and for free, whether the command took effect; a change reported as made that did not take effect
+	// would otherwise only show up as the next plan's surprise.
+	if r.CheckOutput != nil {
+		ok, why, err := execState(s, r, attempts, delay)
+		if err != nil {
+			return fmt.Errorf("checking %s after running %v: %w", r.Instance, r.Command, err)
+		}
+		if !ok {
+			return fmt.Errorf("ran %v on %s, but it did not take effect: %s", r.Command, r.Instance, why)
+		}
 	}
 
 	if len(r.Triggers) == 0 {
