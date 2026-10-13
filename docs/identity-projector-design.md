@@ -100,7 +100,8 @@ Headscale 0.29.4, the image digest production runs, in the lab beside the LLDAP 
 - **Delivery.** The default for putting a policy in place should be database mode: `kind: file` places the policy, then an exec runs `policy set` inside the instance (through the exec API, so it works under `--remote`). The failure is in the exit status of the apply, not in a log line nobody reads. File mode plus a signal works, but needs a process on the host that can signal (tink under `--remote` has none) or a restart of the control plane.
 - **Two gaps in tink that this exposes.** (a) An exec cannot be told "re-run when that file's content changed" (`triggers` are literal strings), so today the policy would need a hand-kept version string. (b) Nothing runs `policy check` before the set. Both belong to the control-plane stack, not to the projector.
 - **Cautions.** In database mode, until the first `policy set`, Headscale is **allow-all**, so the first set must come before any device is enrolled. `set` logs nothing, so `policy get` is how to see what is live.
-- **A finding worth adding to the projector (proposed):** cross-check the members against `headscale users list` and warn about a member with no Headscale user, since Headscale will not.
+- **A finding worth adding to the projector: built** on `feat/identity-groups` (`--headscale-instance`): it runs `headscale users list -o json` inside the Headscale instance and warns about each member that matches no user. Run live against the lab Headscale.
+- **The two tink gaps** are now one, and are designed in [exec-output-check-design.md](exec-output-check-design.md): an exec guard that compares live output with a declared file. A `policy check` before the set is not needed in database mode, where the set validates.
 
 ## Not in this slice
 
