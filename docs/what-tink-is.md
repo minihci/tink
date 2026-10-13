@@ -143,7 +143,7 @@ LLDAP v0.6.3 and Authelia 4.39.28, pinned by digest, in a project of their own o
 As of 2026-10-12, from the migration lab.
 
 - **Strong:** the reconcile discipline (a build with these features planned 30 real stack files identically to the previous one, apart from the lines it added **[lab]**; a two-service identity stack was planned, applied, deleted, re-applied and re-planned exactly **[lab]**); encoded operating knowledge, such as the warning for an OCI NIC without `name:` **[lab]**; claims that are tagged by how they were checked.
-- **Weak:** removal is report-only (LLDAP's bootstrap script shows a better shape, see open decision 1); secrets cannot be placed in files, and nothing can declare directory content **[lab]**; cross-stack references have no clean expression (`depends_on` stays inside a stack **[docs]**); nothing tells you when something fails (no notifications **[docs]**).
+- **Weak:** a service that needs a file at start races tink's file push on first creation (the app exits, Incus restarts it in a loop, and tink's calls that land in a gap fail; a second apply converges) **[lab]**; removal is report-only (LLDAP's bootstrap script shows a better shape, see open decision 1); secrets cannot be placed in files, and nothing can declare directory content **[lab]**; cross-stack references have no clean expression (`depends_on` stays inside a stack **[docs]**); nothing tells you when something fails (no notifications **[docs]**).
 - **Possibly wrong:** a single helper that gains reach with each job it takes on, under a certificate with the reach of root **[docs]**.
 
 ## Open decisions
@@ -157,4 +157,4 @@ As of 2026-10-12, from the migration lab.
 7. **Cross-stack references**, for shared infrastructure.
 8. **Secrets in files.** `${secret:}` is limited to `environment.*`; a secret that must be a file (a password file, a signing key) cannot be placed. Whether to add a file kind with a restrictive mode that accepts secrets.
 9. **Client secrets across two sides.** Where the salted digest of an OIDC client secret is kept, so that `plan` stays stable while the plaintext is a tink secret in the app.
-10. **Delivering a policy to the mesh control plane.** Database mode with `policy set` run through the exec API is the default the lab supports. It needs an exec that re-runs when a file's content changes, and a `policy check` before the set. See [the projector design](identity-projector-design.md).
+10. **Delivering a policy to the mesh control plane.** Database mode with `policy set` run through the exec API is the default the lab supports. The exec guard it needed is built and verified (`check_output`, branch `feat/exec-check-output`; [design](exec-output-check-design.md)): converged when `policy get` equals the declared file, so it heals from drift and a bad policy fails the apply with the previous one kept. A separate `policy check` is not needed in database mode, where the set validates.

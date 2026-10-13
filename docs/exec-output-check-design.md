@@ -1,6 +1,6 @@
 # Design: an exec check that compares live output with a declared file
 
-**Status: a design note, 2026-10-13. Nothing here is built.** It closes the gap the Headscale lab found in getting a policy live ([identity-projector-design.md](identity-projector-design.md), "Experiments"). Claims are marked **[lab]**, **[code]**, **[proposed]** or **[verify]**.
+**Status: a design note, 2026-10-13. Built** on branch `feat/exec-check-output` (not yet merged) and **verified against a throwaway Headscale** with the four lab checks below. It closes the gap the Headscale lab found in getting a policy live ([identity-projector-design.md](identity-projector-design.md), "Experiments"). Claims are marked **[lab]**, **[code]**, **[proposed]** or **[verify]**.
 
 ## The gap
 
@@ -67,7 +67,13 @@ Rules:
 
 Table tests for the comparison (trailing whitespace, a non-zero check, output over the bound, a different byte), for the loader rules, and for planning and applying with a fake server, including the re-check failing. Then the lab, below.
 
-## Lab checks, before relying on it
+## Lab checks, run 2026-10-13 against Headscale 0.29.4 in database mode **[lab]**
+
+All four passed as written. In order: (1) a changed policy showed the file update and `would run … (the output of […policy get] differs from file/…)`, the apply made it live, the next plan was quiet; (2) a different policy set by hand was noticed by `plan` (only the exec) and put back by `apply`; (3) an invalid declared policy failed the apply (`1 failed`, exit 1) with Headscale's own `unknown field "grantz"`, and `policy get` still returned the previous policy; (4) on a Headscale rebuilt from nothing, `policy get` exited non-zero, the exec ran the first set, the re-check passed and the next plan was quiet. The exec also has to wait for the **config** file (whose restart brings Headscale up), not only the policy file: `depends_on: [headscale-config]`.
+
+The fourth needed a second apply, because of a race that is not in this change: tink starts a new OCI instance before the file it needs at start has been pushed, so the app exits and is restarted in a loop, and tink's calls that land in a gap fail. See [what-tink-is.md](what-tink-is.md).
+
+The four checks as they were planned:
 
 1. Change the policy file: `plan` shows the file update and `would run`; `apply` makes the live policy equal; the next `plan` says `no changes`.
 2. Set a different policy by hand with the CLI: `plan` says `would run`; `apply` puts the declared one back.
