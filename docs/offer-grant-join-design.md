@@ -28,6 +28,7 @@ It follows the house rules: tink holds no state of its own, so the join is deriv
 | D6 | Two directions: exposure (offer to grant) and requirement (need to provide) | decided |
 | D7 | Grants may carry levels, exclusivity, enforcement coverage and a freshness class | decided that the model carries them; details open |
 | D8 | tink stays out of what it does not manage | decided |
+| D9 | The ingress helper reaches apps through the host, behind an ACL on each app bridge | decided |
 
 ## D1. Offers are neutral facts the app states about itself (decided; spelling open)
 
@@ -112,7 +113,7 @@ accept:
 ```
 
 - **A path tink cannot close is still reported.** Frigate's WebRTC media (port 8555) goes from the browser straight to the relay inside Frigate, around the proxy and single sign-on. The mock leaves that offer commented out. Enabled, the join should say it is a path it cannot protect, and the site could record it with `accept:` **[proposed]**.
-- **Topology spans stacks, so the join reads live Incus and not one stack's file.** The ingress helper needs a leg on every app bridge it publishes from, and those bridges belong to other stacks. Routing through the host instead of a leg keeps the client's address **[lab]**: Incus accepts traffic leaving through any managed bridge before its masquerade rule. What it does not do is isolate: every managed bridge can reach every other by default, so an ACL on the app side is what makes "only the ingress helper" true.
+- **Topology spans stacks, so the join reads live Incus and not one stack's file.** The ingress helper sits on the platform bridge and the apps on bridges of their own, which belong to other stacks, so no single stack's file shows a path from one to the other. [D9](#d9-the-ingress-helper-reaches-apps-through-the-host-behind-an-acl-on-each-app-bridge-decided) records how that path is made and filtered.
 
 **Findings** (all **[proposed]**): an offer with no grant (a note: unreachable, the safe default); a grant with no offer (a warning); a grant that names a group the directory does not have (the check [identity-projector-design.md](identity-projector-design.md) already plans for `plan`); a grant for a subject kind that no hop on the path can check (nothing enforces it); a bypass; a hop whose enforcer cannot be installed here ([D7](#d7-levels-exclusivity-coverage-and-freshness-decided-that-the-model-carries-them)).
 
@@ -163,8 +164,8 @@ Reason for putting both under one join: a need with no provider and a grant with
 The intended path, as the author stated it on 2026-10-13: **LAN or mesh, then Caddy, then Authelia, then Home Assistant**, with **no public path**. The mesh reaches Caddy and not HA directly. HA's second interface, on the LAN bridge, exists only so HA can hear multicast, SSDP and zeroconf discovery (which the author decided matters for HA in general); it is not a way in for users and must not listen. The design follows the intended path. A bypass is the exception, and the join's job is to report it.
 
 ```
-client on the LAN  ---> ingress helper (Caddy) ---> sso helper (Authelia) asked by Caddy ---> ha
-client on the mesh ---> mesh helper (gateway) ---> ingress helper ---> sso helper ---> ha
+client on the LAN  ---> ingress helper (Caddy) ---> sso helper (Authelia) asked by Caddy ---> host routing ---> ACL at the app bridge ---> ha
+client on the mesh ---> mesh helper (gateway) ---> ingress helper ---> sso helper ---> host routing ---> ACL at the app bridge ---> ha
                                  ha's second leg, on br0:  discovery only, must not listen
 ```
 
@@ -176,7 +177,7 @@ client on the mesh ---> mesh helper (gateway) ---> ingress helper ---> sso helpe
 | client to ingress, from the mesh | exposure | the gateway's advertised routes, then the mesh policy | the ingress helper's address only; mesh groups (a snapshot) | after the gateway masquerades, later hops see the gateway and not the person **[to confirm]** |
 | ingress route for the host | exposure | Caddy | `cidr`; hands the person check to the next hop | rendered from the `publish` |
 | single sign-on | **authorization** | an Authelia access rule | `group`, `anyone` | the only hop that sees a person; rendered from the `publish` |
-| ingress to ha | exposure | the bridge the two share | `instance` | a leg on the app bridge, owned by another stack; on a managed bridge an ACL on the NIC can enforce it **[docs]**, and without one every other managed bridge can reach the app **[lab]** |
+| ingress to ha, through the host | exposure | a network ACL at the app bridge's boundary | `cidr` (the ingress helper's address) | no leg on the app bridge ([D9](#d9-the-ingress-helper-reaches-apps-through-the-host-behind-an-acl-on-each-app-bridge-decided)); the ACL is rendered from the `publish`, rejects every other source by default, and covers instances added to the bridge later **[lab]** |
 
 The join prints one line per path:
 
@@ -208,7 +209,7 @@ No levels appear: the mock does not use them ([D7](#d7-levels-exclusivity-covera
 | single sign-on (Authelia) | the OIDC registration | which groups may sign in to which client | the authorization hop; the access rules and the client list are rendered from offers and grants | the client secret travels both ways (plaintext into the app, a salted digest into the engine); clients are static, so a change needs a restart **[docs: what-tink-is.md]**. The mock assumes Authelia merges a static file with a generated one **[to confirm]** |
 | identity (LLDAP) | none | none | it is the source of subjects: the join checks that each named group exists | the pattern does not describe it; it supplies the join |
 | mesh | a port reachable over the mesh | which mesh groups may reach it | the gateway advertises routes to the apps that offer a port **[docs: glossary]**; in the mock it reaches the ingress helper only, so no app stack mentions the mesh | group membership is a snapshot; the gateway masquerading erases who is asking for every later hop; its control plane is a need ([D6](#d6-two-directions-exposure-and-requirement-decided)) |
-| east-west ACLs on a bridge | a port | `instance:<name>` as the subject | the one role where `instance:` is the natural subject. In the mock the message broker allows anonymous clients, so its only protection is an ACL admitting the named consumers | no ACL kind is built; ACL rules need addresses (groups and selectors are unsupported on bridges), and the mock gives HA a static one, for its own configuration to name; none on an unmanaged bridge **[docs]**. Password auth would need a secret in a file |
+| east-west ACLs on a bridge | a port | `instance:<name>` as the subject | the one role where `instance:` is the natural subject; these are ACLs on the NIC, and the bridge-boundary ACL of [D9](#d9-the-ingress-helper-reaches-apps-through-the-host-behind-an-acl-on-each-app-bridge-decided) is the other kind. In the mock the message broker allows anonymous clients, so its only protection is an ACL admitting the named consumers | no ACL kind is built; ACL rules need addresses (groups and selectors are unsupported on bridges), and the mock gives HA a static one, for its own configuration to name; none on an unmanaged bridge **[docs]**. Password auth would need a secret in a file |
 | backup | none | none | requirement ([D6](#d6-two-directions-exposure-and-requirement-decided)): a copy needs a target | nothing to authorize |
 | secrets | none | none | requirement: a reference needs a secret | whether an instance needs a grant to use a secret is not asked yet **[to confirm]**; secrets in files are open |
 | devices | a device on the host | which instance may hold it, once | the cardinality case ([D7](#d7-levels-exclusivity-coverage-and-freshness-decided-that-the-model-carries-them)); the mock also notes that two servers must never share one Matter fabric | tink has no inventory of host devices; offers come from instances and not from the host **[proposed]** |
@@ -227,6 +228,22 @@ It is thin in one respect: DNS is not an access control. Everyone who can query 
 
 Cameras, the printer, TrueNAS and the hand-written Caddy routes are not tink's. They have no offers, tink does not read their topology, and the join does not model them. Reason: the author's rule that tink fills gaps and does not take over what it did not make ([glossary](glossary.md#the-principle)); a half-model of something tink cannot enforce would be a false assurance. The cost is stated in D4: a clean join speaks only of the paths tink can see. A hand-written route that proxies the same app is exactly the kind of path it cannot report. In the mock the hand-written routes live on a volume of their own that tink never writes to, imported by the proxy next to the routes tink generates, so the two coexist and stay separate.
 
+## D9. The ingress helper reaches apps through the host, behind an ACL on each app bridge (decided)
+
+**Decision (2026-10-13).** The ingress helper has **no leg on an app bridge**. It reaches an app through the host, which routes between managed Incus bridges without NAT, so the app sees the ingress helper's own address. An ACL on each app bridge, rendered by the join from the `publish` documents, allows only the ingress helper's address to the published port. The path in the worked example is therefore: client, ingress helper (its LAN leg, or the mesh gateway), host routing, the ACL at the app bridge's boundary, the app.
+
+- **The problem.** The ingress helper sits on the platform bridge and each app on a bridge of its own. A leg on the app bridge would need that bridge to exist before the platform stack is applied, and it belongs to another stack, where `depends_on` does not cross.
+- **Reason.** The other options each cost something this one does not: tink adding the leg when it sees a `publish` changes a platform-owned instance from outside; the app stack creating the bridge and the platform stack referencing it needs an apply order across stacks. The ACL sits on the bridge the app already has, and nothing in another stack is touched **[from the mock's gap list]**.
+- **Alternatives weighed, not chosen:** a leg declared in the platform stack; tink adds the leg when it sees a `publish`; one ingress helper per bridge; apps take a second NIC on the platform bridge.
+- **Evidence [lab]** (an ACL lab on two managed lab bridges, 2026-10-13): an allowed source reached the app in 0.1 s; another source on another bridge was rejected in about 1 s; the allowed source on another port was refused; traffic inside the bridge and outbound traffic were untouched; the host's own probes were filtered too; the real source address survived, with no NAT in the connection table; and an instance added to the bridge afterwards was covered with no step taken.
+- **Corrected facts.** Routing between managed bridges keeps the client's source address, because Incus accepts traffic leaving through any managed bridge before its masquerade rule **[lab]**. It does not isolate: every managed bridge can reach every other by default, so the ACL is what makes "only the ingress helper may reach this" true. Bridge ACLs take plain CIDRs and have no name selectors **[docs]**, and they filter only at the bridge boundary, so east-west rules inside a bridge are ACLs on the NIC **[docs, lab]**.
+- **What it carries.**
+  - The ingress helper's address must be static, and the ACL names it as a CIDR. The app sees that address (HA's `trusted_proxies` is the ingress helper's own address on the platform bridge).
+  - Names do not resolve across bridges, so the ingress helper reaches an app by address, which the ingress reconcile reads from the app.
+  - The host's own probes (health checks, monitoring) hit the same boundary and need an allow rule. Which source address the host presents was not checked **[to confirm]**.
+  - The lab set the egress default to allow, so an app's cloud access kept working. Rejecting egress by default was not tried.
+  - A discovery leg on an unmanaged bridge such as `br0` takes no ACL, so a listener there is reported and not filtered ([D4](#d4-the-join-effective-access-over-hops-it-derives-from-topology-decided)).
+
 ## What exists today, and a first step
 
 As of 2026-10-13 **[code]**: one implementation of an offer (`ingress.Registration`, built by `ingress.Discover` from `user.tink.ingress.*`, with the legacy names still read); no grants; nothing that joins them. Backup targets and secrets are requirement-shaped but have no common type with the above.
@@ -235,7 +252,7 @@ As of 2026-10-13 **[code]**: one implementation of an offer (`ingress.Registrati
 1. A shared `Offer`, built per role from the final key spelling. Ingress moves to it first, directly and with no transitional keys, with its existing tests as the guard.
 2. The join with offers only, and its two cheapest findings: an offer with no grant, and a grant with no offer.
 3. The first grant arrives with the first role that has one, which is single sign-on (Authelia's access rules and OIDC clients).
-4. Topology and hops after that, beginning with the check that is worth most: the listener on a leg that must not listen.
+4. Topology and hops after that, beginning with the check that is worth most: the listener on a leg that must not listen. Rendering the ACLs of D9 comes later still, because it needs a kind for an ACL first ([open question 8](#open-questions)).
 
 ## Open questions
 
@@ -248,9 +265,10 @@ Not decided here.
 5. **Whether a generated site-wide view of grants should also be accepted as input.** tink prints the joined relation. Whether that printed form can also be read back as a declaration, so a site that prefers one file of grants (the other placement in D2) could keep one, is open.
 6. **How `accept:` expires.** A deliberate bypass should not become permanent unseen. A date, a re-ask when the topology changes, or never are all possible.
 7. **Which helper holds the credential for reconcile jobs.** Today only the daemon helper holds a certificate with the reach of root. The mock needs four renderings from the `publish` documents of every stack: the proxy's routes, the dns helper's hosts file, Authelia's access rules and OIDC clients, and the gateway's routes. Each needs the Incus API. Whether a role helper that reconciles holds its own certificate, narrowed to a project, or the daemon helper stays the one that acts, is [open decision 2](what-tink-is.md#open-decisions)(a).
+8. **A resource kind for an ACL.** tink has none, and the `kind: incus` shim is blocked under `--remote`, so the ACL lab drove `incus` directly on the host. D9 cannot be built until a kind exists that can attach an ACL to a network (for the boundary) and to a NIC (for east-west). [network-resources-design.md](network-resources-design.md) proposes `kind: network-acl` and is not built.
+9. **Stable addresses for instance subjects.** A grant that names `instance:<name>` becomes a CIDR in a NIC ACL, because bridge ACLs have no name selectors **[docs]**. In the mock HA has a static address and the other apps take DHCP, so those rules need static addresses, or an address set that tink keeps current (address sets are supported for nftables bridges **[docs]**; untried).
 
 **Raised while drafting** (the working session did not settle them) **[to confirm]**:
 - Where a grant sits when the app's stack is shared between sites (D2). The mock puts the grants in the site's own stack.
-- Whether the ingress helper's leg on an app bridge is created by the app stack, added by tink when it sees a `publish` (which changes a platform-owned instance from outside), or avoided by routing through the host (which keeps the source address **[lab]** but leaves every bridge reachable from every other until an ACL closes it). The mock now lists five options (a leg declared in the platform stack; tink adds the leg when it sees a `publish`; route through the host; one ingress helper per bridge; apps take a second NIC on the platform bridge) and picks none.
 - Whether `user.tink.ingress.*` (the current names) keeps being read once ingress moves to offers, or only the older `user.ingress.*` does. D1 says there are no transitional keys; the code constraint covers only the older names.
 - The name of the command that prints the joined relation.
