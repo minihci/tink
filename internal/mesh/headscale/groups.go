@@ -50,11 +50,19 @@ type Options struct {
 	MemberFormat string
 }
 
+// GroupMembers is one group as emitted: its directory name and its members as they are written in the policy.
+type GroupMembers struct {
+	Name    string
+	Members []string
+}
+
 // Result is the fragment and what was noticed while making it.
 type Result struct {
 	// Text is the huJSON fragment. It is empty when there is an Error finding: a partial projection is never produced.
 	Text     string
 	Findings []Finding
+	// Groups is what Text says, group by group, for checks that compare it with something else (see CrossCheck). Empty when Text is.
+	Groups []GroupMembers
 }
 
 // HasErrors reports whether any finding is an Error.
@@ -162,6 +170,9 @@ func Project(s identity.Snapshot, o Options) Result {
 		return res
 	}
 	res.Text = render(entries)
+	for _, e := range entries {
+		res.Groups = append(res.Groups, GroupMembers{Name: e.name, Members: e.members})
+	}
 	return res
 }
 

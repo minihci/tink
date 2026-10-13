@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/minihci/tink/internal/identity"
+	"github.com/minihci/tink/internal/mesh/headscale"
 )
 
 type fakeReader struct {
@@ -144,5 +145,46 @@ func TestIdentityGroups_OptionChecks(t *testing.T) {
 	}
 	if _, _, err := runGroups(t, labDirectory(), identityGroupsOptions{Format: "json", MemberFormat: "{id}@"}); err == nil {
 		t.Error("--member-format applies to headscale only")
+	}
+}
+
+func TestIdentityGroups_CrossCheckWarnsAboutAMemberHeadscaleDoesNotHave(t *testing.T) {
+	users := func() ([]headscale.User, error) { return []headscale.User{{Name: "alice"}}, nil }
+	out, errw, err := runGroups(t, labDirectory(), identityGroupsOptions{Format: "headscale", Groups: []string{"family"}, Users: users})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(errw, `warning: group "family": "bob@" matches no Headscale user`) {
+		t.Errorf("stderr = %q", errw)
+	}
+	if !strings.Contains(out, `"group:family": ["alice@", "bob@"]`) {
+		t.Errorf("a warning must not stop the fragment: %q", out)
+	}
+}
+
+func TestIdentityGroups_CrossCheckThatCannotRunIsAnErrorAndPrintsNoFragment(t *testing.T) {
+	users := func() ([]headscale.User, error) { return nil, errors.New("could not connect to the socket") }
+	out, _, err := runGroups(t, labDirectory(), identityGroupsOptions{Format: "headscale", Groups: []string{"family"}, Users: users})
+	if err == nil || !strings.Contains(err.Error(), "could not connect to the socket") {
+		t.Fatalf("err = %v, want the cause", err)
+	}
+	if out != "" {
+		t.Errorf("no fragment may be printed when the requested check could not run: %q", out)
+	}
+}
+
+func TestIdentityGroups_CrossCheckIsForTheHeadscaleFormatOnly(t *testing.T) {
+	users := func() ([]headscale.User, error) { return nil, nil }
+	if _, _, err := runGroups(t, labDirectory(), identityGroupsOptions{Format: "table", Users: users}); err == nil {
+		t.Error("--headscale-instance with --format table must be refused")
+	}
+}
+
+func TestIdentityGroups_CrossCheckIsSkippedWhenTheProjectionAlreadyFailed(t *testing.T) {
+	called := false
+	users := func() ([]headscale.User, error) { called = true; return nil, nil }
+	_, _, err := runGroups(t, labDirectory(), identityGroupsOptions{Format: "headscale", Groups: []string{"nope"}, Users: users})
+	if err == nil || called {
+		t.Errorf("err %v, users read %v: a failed projection should not go on to read users", err, called)
 	}
 }

@@ -31,11 +31,14 @@ type identityGroupsOptions struct {
 	Groups       []string // restrict to these groups (headscale: the groups to emit)
 	MemberFormat string   // headscale only
 	Check        bool     // headscale only: run the checks, print no fragment
+	// Users, when set (headscale only), lists Headscale's users so each member can be checked against them.
+	Users func() ([]headscale.User, error)
 }
 
 func newIdentityGroupsCmd() *cobra.Command {
 	var (
 		instance, project, user, passwordSecret, socket string
+		hsInstance, hsProject, hsBinary, hsConfig       string
 		o                                               identityGroupsOptions
 		sf                                              stackSecretFlags
 	)
@@ -64,6 +67,9 @@ error, never an empty list. See docs/identity.md.`,
 			if err := checkIdentityGroupsOptions(o); err != nil {
 				return err
 			}
+			if hsInstance == "" && (cmd.Flags().Changed("headscale-project") || cmd.Flags().Changed("headscale-bin") || cmd.Flags().Changed("headscale-config")) {
+				return fmt.Errorf("--headscale-project, --headscale-bin and --headscale-config need --headscale-instance")
+			}
 			pw, err := identitySecret(sf, passwordSecret)
 			if err != nil {
 				return err
@@ -75,6 +81,23 @@ error, never an empty list. See docs/identity.md.`,
 			scoped := server
 			if project != "" {
 				scoped = server.UseProject(project)
+			}
+			if hsInstance != "" {
+				if !cmd.Flags().Changed("headscale-project") {
+					hsProject = project
+				}
+				hsScoped := server
+				if hsProject != "" {
+					hsScoped = server.UseProject(hsProject)
+				}
+				o.Users = headscale.UsersReader{
+					Instance: hsInstance,
+					Binary:   hsBinary,
+					Config:   hsConfig,
+					Exec: func(command []string) (int, string, error) {
+						return incusapi.ExecInGuest(hsScoped, hsInstance, command)
+					},
+				}.Read
 			}
 			rd := lldap.Reader{
 				Instance: instance,
@@ -95,6 +118,10 @@ error, never an empty list. See docs/identity.md.`,
 	cmd.Flags().StringArrayVar(&o.Groups, "group", nil, "only this group (repeatable); with --format headscale, the groups to emit (default: every group that is not the directory's own)")
 	cmd.Flags().StringVar(&o.MemberFormat, "member-format", "", "headscale: how a person is written in the policy, {id} and {email} replaced (default "+headscale.DefaultMemberFormat+")")
 	cmd.Flags().BoolVar(&o.Check, "check", false, "headscale: run the checks and print no fragment; the exit status is the answer")
+	cmd.Flags().StringVar(&hsInstance, "headscale-instance", "", "headscale: also check each member against the users of this Headscale instance, and warn about one that matches none")
+	cmd.Flags().StringVar(&hsProject, "headscale-project", "", "headscale: the Headscale instance's project (default: --project)")
+	cmd.Flags().StringVar(&hsBinary, "headscale-bin", "", "headscale: the command inside that instance (default "+headscale.DefaultBinary+")")
+	cmd.Flags().StringVar(&hsConfig, "headscale-config", "", "headscale: its configuration file (default "+headscale.DefaultConfig+")")
 	cmd.Flags().StringVar(&socket, "socket", "", "Incus daemon unix socket path (default: Incus's own resolution)")
 	cmd.Flags().StringVar(&sf.store, "secrets", "", "the secret store (default: "+secrets.DefaultFile+" in the current directory)")
 	cmd.Flags().StringVar(&sf.identity, "identity", "", "age identity file that decrypts it (default: $TINK_AGE_IDENTITY, else ~/.config/tink/identity.txt)")
@@ -124,8 +151,8 @@ func checkIdentityGroupsOptions(o identityGroupsOptions) error {
 	default:
 		return fmt.Errorf("--format must be table, json or headscale, not %q", o.Format)
 	}
-	if o.Format != "headscale" && (o.Check || o.MemberFormat != "") {
-		return fmt.Errorf("--check and --member-format apply to --format headscale only")
+	if o.Format != "headscale" && (o.Check || o.MemberFormat != "" || o.Users != nil) {
+		return fmt.Errorf("--check, --member-format and --headscale-instance apply to --format headscale only")
 	}
 	return nil
 }
@@ -142,6 +169,14 @@ func runIdentityGroups(out, errw io.Writer, rd identity.Reader, o identityGroups
 
 	if o.Format == "headscale" {
 		res := headscale.Project(snap, headscale.Options{Groups: o.Groups, MemberFormat: o.MemberFormat})
+		if o.Users != nil && !res.HasErrors() {
+			// Asked for, so a check that cannot run is an error, not a silent pass.
+			users, err := o.Users()
+			if err != nil {
+				return fmt.Errorf("checking the members against Headscale's users: %w", err)
+			}
+			res.Findings = append(res.Findings, headscale.CrossCheck(res, users)...)
+		}
 		for _, f := range res.Findings {
 			fmt.Fprintln(errw, f)
 		}
