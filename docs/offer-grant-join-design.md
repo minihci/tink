@@ -112,7 +112,7 @@ accept:
 ```
 
 - **A path tink cannot close is still reported.** Frigate's WebRTC media (port 8555) goes from the browser straight to the relay inside Frigate, around the proxy and single sign-on. The mock leaves that offer commented out. Enabled, the join should say it is a path it cannot protect, and the site could record it with `accept:` **[proposed]**.
-- **Topology spans stacks, so the join reads live Incus and not one stack's file.** The ingress helper needs a leg on every app bridge it publishes from, and those bridges belong to other stacks. Routing through the host instead of a leg would hide the client's address, as the mesh gateway's masquerade does, and make every later hop blind **[to confirm]**.
+- **Topology spans stacks, so the join reads live Incus and not one stack's file.** The ingress helper needs a leg on every app bridge it publishes from, and those bridges belong to other stacks. Routing through the host instead of a leg keeps the client's address **[lab]**: Incus accepts traffic leaving through any managed bridge before its masquerade rule. What it does not do is isolate: every managed bridge can reach every other by default, so an ACL on the app side is what makes "only the ingress helper" true.
 
 **Findings** (all **[proposed]**): an offer with no grant (a note: unreachable, the safe default); a grant with no offer (a warning); a grant that names a group the directory does not have (the check [identity-projector-design.md](identity-projector-design.md) already plans for `plan`); a grant for a subject kind that no hop on the path can check (nothing enforces it); a bypass; a hop whose enforcer cannot be installed here ([D7](#d7-levels-exclusivity-coverage-and-freshness-decided-that-the-model-carries-them)).
 
@@ -176,7 +176,7 @@ client on the mesh ---> mesh helper (gateway) ---> ingress helper ---> sso helpe
 | client to ingress, from the mesh | exposure | the gateway's advertised routes, then the mesh policy | the ingress helper's address only; mesh groups (a snapshot) | after the gateway masquerades, later hops see the gateway and not the person **[to confirm]** |
 | ingress route for the host | exposure | Caddy | `cidr`; hands the person check to the next hop | rendered from the `publish` |
 | single sign-on | **authorization** | an Authelia access rule | `group`, `anyone` | the only hop that sees a person; rendered from the `publish` |
-| ingress to ha | exposure | the bridge the two share | `instance` | a leg on the app bridge, owned by another stack; on a managed bridge an ACL on the NIC can enforce it **[docs]** |
+| ingress to ha | exposure | the bridge the two share | `instance` | a leg on the app bridge, owned by another stack; on a managed bridge an ACL on the NIC can enforce it **[docs]**, and without one every other managed bridge can reach the app **[lab]** |
 
 The join prints one line per path:
 
@@ -251,6 +251,6 @@ Not decided here.
 
 **Raised while drafting** (the working session did not settle them) **[to confirm]**:
 - Where a grant sits when the app's stack is shared between sites (D2). The mock puts the grants in the site's own stack.
-- Whether the ingress helper's leg on an app bridge is created by the app stack, added by tink when it sees a `publish` (which changes a platform-owned instance from outside), or avoided by routing through the host (which hides the client's address). The mock lists all three and picks none.
+- Whether the ingress helper's leg on an app bridge is created by the app stack, added by tink when it sees a `publish` (which changes a platform-owned instance from outside), or avoided by routing through the host (which keeps the source address **[lab]** but leaves every bridge reachable from every other until an ACL closes it). The mock now lists five options (a leg declared in the platform stack; tink adds the leg when it sees a `publish`; route through the host; one ingress helper per bridge; apps take a second NIC on the platform bridge) and picks none.
 - Whether `user.tink.ingress.*` (the current names) keeps being read once ingress moves to offers, or only the older `user.ingress.*` does. D1 says there are no transitional keys; the code constraint covers only the older names.
 - The name of the command that prints the joined relation.
