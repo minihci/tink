@@ -1,6 +1,6 @@
 # `tink identity groups`: the directory's people and groups
 
-**Status: built and unit-tested; run live once, against a lab LLDAP (v0.6.3, 2026-10-13), for the table and headscale formats and for each failure listed below; the fragment was then checked and loaded in a throwaway Headscale 0.29.4.** It only reads. The design, with its reasoning and the experiments still to run, is in [identity-projector-design.md](identity-projector-design.md), and where it sits in tink in [what-tink-is.md](what-tink-is.md) (both on the `docs/glossary` branch until merged).
+**Status: built and unit-tested; run live once, against a lab LLDAP (v0.6.3, 2026-10-13), for the table and headscale formats and for each failure listed below; the fragment was then checked and loaded in a throwaway Headscale 0.29.4.** It only reads. The design, with its reasoning and the experiments that were run, is in [identity-projector-design.md](identity-projector-design.md), and where it sits in tink in [what-tink-is.md](what-tink-is.md).
 
 ## What it does
 

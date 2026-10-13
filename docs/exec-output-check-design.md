@@ -1,6 +1,6 @@
 # Design: an exec check that compares live output with a declared file
 
-**Status: a design note, 2026-10-13. Built** on branch `feat/exec-check-output` (not yet merged) and **verified against a throwaway Headscale** with the four lab checks below. It closes the gap the Headscale lab found in getting a policy live ([identity-projector-design.md](identity-projector-design.md), "Experiments"). Claims are marked **[lab]**, **[code]**, **[proposed]** or **[verify]**.
+**Status: a design note, 2026-10-13. Built** (#79) and **verified against a throwaway Headscale** with the four lab checks below. It closes the gap the Headscale lab found in getting a policy live ([identity-projector-design.md](identity-projector-design.md), "Experiments"). Claims are marked **[lab]**, **[code]**, **[proposed]** or **[verify]**.
 
 ## The gap
 

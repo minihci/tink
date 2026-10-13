@@ -1,6 +1,6 @@
 # Design: put an instance's files in place before its first start
 
-**Status: a design note, 2026-10-13. Built** on branch `fix/first-start-files` (not yet merged) and measured in the lab (see "Measured"). It fixes a race found in the Headscale lab ([what-tink-is.md](what-tink-is.md), "Where it is strong, and where it is weak"). Claims are marked **[lab]**, **[code]**, **[proposed]** or **[verify]**.
+**Status: a design note, 2026-10-13. Built** (#78) and measured in the lab (see "Measured"). It fixes a race found in the Headscale lab ([what-tink-is.md](what-tink-is.md), "Where it is strong, and where it is weak"). Claims are marked **[lab]**, **[code]**, **[proposed]** or **[verify]**.
 
 ## The problem
 
