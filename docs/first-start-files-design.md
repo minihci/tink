@@ -1,6 +1,6 @@
 # Design: put an instance's files in place before its first start
 
-**Status: a design note, 2026-10-13. Built** (#78) and measured in the lab (see "Measured"). It fixes a race found in the Headscale lab ([what-tink-is.md](what-tink-is.md), "Where it is strong, and where it is weak"). Claims are marked **[lab]**, **[code]**, **[proposed]** or **[verify]**.
+**Status: a design note, 2026-10-13. Built** (#78) and measured in the lab (see "Measured"). It fixes a race found in the Headscale lab ([what-tink-is.md](what-tink-is.md), "Where it is strong, and where it is weak"). A gap found in the next lab, files under a disk-device mount, is closed by "Files under a mount" below: **built, covered by fakes only, not yet run against a server**. Claims are marked **[lab]**, **[code]**, **[proposed]** or **[verify]**.
 
 ## The problem
 
@@ -30,7 +30,8 @@ A file is placed with its instance when:
 
 1. its `instance:` is an instance this stack declares, **and that instance is a container**. A virtual machine needs its agent running to take a file **[code]**, so it keeps today's behaviour;
 2. its declared content is known now (`content` or `source_path`, read at load): always true for `kind: file`;
-3. everything it waits for is the instance or another such file. A file that `depends_on` an exec, or on anything else that must have happened first, is left to its own turn. This is worked out to a fixed point: removing one file can make another ineligible.
+3. everything it waits for is the instance or another such file. A file that `depends_on` an exec, or on anything else that must have happened first, is left to its own turn. This is worked out to a fixed point: removing one file can make another ineligible;
+4. (added later) its path is not under a disk-device mount, or the mount is a custom volume it can be written into. See "Files under a mount".
 
 Files are placed in declaration order.
 
@@ -40,7 +41,7 @@ Files are placed in declaration order.
 
 ### What is said
 
-`instance/headscale: created; placed 2 file(s) before the first start (headscale-policy, headscale-config)`, and only for files that were placed. `plan` is unchanged: it still says `would create` for each.
+`instance/headscale: created; placed 2 file(s) before the first start (headscale-policy, headscale-config)`, and only for files that were placed. `plan` still says `would create` for each; the one thing it adds is a note for a file a mount keeps from the first start (see "Files under a mount").
 
 ## Alternatives considered
 
@@ -68,11 +69,63 @@ The lab Headscale was rebuilt from nothing (instance and volume deleted, one `pl
 
 With the fix each apply said `placed 2 file(s) before its first start`, the files then planned `no changes`, the exec set the first policy, and the plan afterwards was clean. If the true failure rate without the fix were a third, 11 successes in a row would happen about one time in 80. Caveats: one control batch passed 4 of 4 and the next 4 of 8, so a handful of runs misleads; one host and one service; and the check "no error in the application's log" was dropped because `incus console --show-log` keeps only recent lines.
 
+## Files under a mount
+
+**Added 2026-10-13.** Status: built; `plan`, the selection, and both ways of placing are covered by tests with fakes. **Nothing here has been run against a real server yet [verify].**
+
+### The gap **[lab]**
+
+Found by accident in the end-to-end lab (tron repo, `e2e-lab/e2e-lab.md`, scorecard E1b and finding 2). The instance `ha-e2e` had a disk device `config` (a custom volume `e2e-ha-config`, at `/config`) and a `kind: file` for `/config/configuration.yaml` that depended only on the instance. tink said `placed 1 file(s) before its first start: file/ha-yaml`. But the file was found in the container's own root filesystem (`<pool>/containers/<project>_<instance>/rootfs/config/configuration.yaml`, modified 17:16:22), underneath the mount, and the running container saw the volume. The file the application read was the file resource's own push after the start, at 17:16:31 (`file/ha-yaml: created`), and Home Assistant read its YAML about two seconds after that: a race it happened to lose to tink. A file on the instance's own filesystem (a Caddyfile at `/etc/caddy/Caddyfile`) behaved as designed and then planned `no changes`.
+
+The cause is the order of events, not the push: a disk device is mounted when the instance starts, and whatever the root filesystem holds at that path is hidden from then on. Pushing into the stopped instance puts the file in the hidden place.
+
+### The rule **[code]**
+
+Each candidate file (chosen by the rules above) is checked against the disk devices the instance will have:
+
+- the instance's own `devices:`, plus those of its profiles. A profile the stack declares is read from the stack, any other from the server. A profile that cannot be read adds nothing, so the file is placed exactly as before: this check never makes a placement fail. An instance that names no profile gets Incus's `default`. A device of the same name on the instance replaces a profile's whole device, as in Incus;
+- only `type: disk` devices with a `path`. The root disk (`path: /`) is not a mount: it is the filesystem. Paths are cleaned and compared by whole components, so `/config` holds `/config` and `/config/x` but not `/configuration`; when mounts are nested the deepest decides.
+
+Then, for a file at or below a mount path:
+
+| the mount is | the file |
+|---|---|
+| not any (the file is not under a mount) | pushed into the stopped instance, as before |
+| a custom storage volume (`pool` and a plain volume name as `source`) | **written into the volume** before the start (below) |
+| a host directory (`source: /srv/...`), a disk that is not a plain volume, or the file *is* the mount path | **not placed** before the start; it is written by its own turn right after, as it always was |
+
+A file that waits for a file that is not placed waits for the start too, the same as one that waits for an exec; nothing hides it, so it is not reported.
+
+### Writing into the volume **[code]**, run only against fakes
+
+The pinned Incus client (`github.com/lxc/incus/v7` v7.4.0) has a storage-volume file API: `GetStorageVolumeFile`, `CreateStorageVolumeFile` and `DeleteStorageVolumeFile` on `InstanceServer` (REST: `/1.0/storage-pools/{pool}/volumes/{type}/{volume}/files?path=`, path relative to the volume's root). Reading the server source: the call mounts the volume itself for as long as it runs (`Volume.FileSFTPConn` runs the work in `MountTask`, with a `forkfile` process rooted at the volume), so a volume nothing has mounted yet can be written.
+
+The volume exists by then: a `storage-volume` resource the instance depends on is created before the instance, and a managed volume named by the instance's own devices is created by the instance's config step in any case.
+
+What is done keeps the file resource's meaning, converge and not seed: read the file in the volume, **write only when it differs** (so a file already right is left untouched, and a different one is overwritten), with the mode `0644` and the owner defaults of the instance push, **no parent directories created** (a missing one fails, and the message says tink creates none). A failure is, as before, not a new way to fail: the instance still starts, the file is written by its own turn, and the apply now says why it was not placed.
+
+**[verify]** on a real server, what the fakes cannot show:
+
+1. That `plan apply` of the lab stack ends with the file in the volume, not in the rootfs, and the second apply says `no changes` for `file/ha-yaml` (it reads through the instance's own mount).
+2. The file's owner as the container sees it. It is written as uid/gid 0 by the volume's `forkfile`, which uses the volume's `volatile.idmap.last` when it has one; a volume that has never been attached has none. The mode is `0644`, so it is readable either way.
+3. That the `forkfile` and the mount of the volume, which linger for about fifteen seconds after the write, do not get in the way of the instance's start straight afterwards.
+
+### What is said
+
+- Apply, after `instance/ha-e2e: created`: `instance/ha-e2e: placed 1 file(s) before its first start: file/ha-yaml (in volume default/e2e-ha-config)`, for a file that went into a volume; and for each file that was left for after the start:
+  `file/ha-yaml: not placed before the first start, because /media is a mounted host directory (device media); it is written right after the start, so the app may read its config first`.
+  The count is of files in place, and a skipped file is never in it. A write into a volume that failed is said the same way, with its cause: `... not placed before the first start, because writing /sub/x into volume default/vol failed: ...`.
+- Plan, under the `would create` line of the instance: the same sentence for each such file, as a `note:`. Plan can know what a mount hides; whether a write into a volume works it finds out when it happens. A file that will be written into a volume gets no note.
+
+### Tests
+
+The selection against a table (a file under a volume mount, the mount path itself, `/etc/caddy/Caddyfile` next to a `/config` mount, the root disk, a device from a declared profile, a profile that cannot be read, `/configuration` against `/config`, nested mounts, a host directory, a virtual machine, a file that waits for an exec, a file that waits for a skipped one); the profile lookup (declared first, then the server, a failing server is "cannot be read"); `placeVolumeFile` against a fake server (absent, already right, different, a read that fails, a directory in the way, a missing parent); the sequence with the steps `createInstance` uses; the apply and plan sentences; the `note:` line of `plan`.
+
 ## Not in this slice
 
 A virtual machine's files; files that wait for an exec; an option to leave an instance stopped; changing when an existing instance is started.
 
 ## Open questions
 
-1. Whether `plan` should say that a file will be placed with its instance. It says `would create` today, which is true; the difference is only in the apply.
+1. Whether `plan` should say that a file will be placed with its instance. It says `would create` today, which is true; the difference is only in the apply. It does now say it for a file a mount keeps from the first start, because there the plan and the old behaviour part ways.
 2. Whether the same placing should apply when an existing but *stopped* instance is started by an apply. Today that case already works, since a stopped instance takes the push.

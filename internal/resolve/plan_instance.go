@@ -139,7 +139,7 @@ func planInstance(server incus.InstanceServer, r Resource, opts PlanOptions) (Pl
 		return PlannedResource{}, fmt.Errorf("reading the live instance: %w", err)
 	}
 	if !found {
-		return PlannedResource{Resource: r, Action: ActionCreate}, nil
+		return PlannedResource{Resource: r, Action: ActionCreate, Notes: firstStartNotes(server, r, opts)}, nil
 	}
 	changes := diffConfig(current.Config, r.Config, r.SecretKeys)
 	changes = append(changes, diffDevices(current.Devices, r.Devices)...)

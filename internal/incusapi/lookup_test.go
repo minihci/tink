@@ -44,6 +44,13 @@ func (s answerServer) GetInstanceFile(string, string) (io.ReadCloser, *incus.Ins
 	return io.NopCloser(strings.NewReader("x")), &incus.InstanceFileResponse{}, nil
 }
 
+func (s answerServer) GetStorageVolumeFile(string, string, string, string) (io.ReadCloser, *incus.InstanceFileResponse, error) {
+	if s.err != nil {
+		return nil, nil, s.err
+	}
+	return io.NopCloser(strings.NewReader("x")), &incus.InstanceFileResponse{}, nil
+}
+
 // result is what a lookup said, reduced to the three things a caller acts on.
 type result struct {
 	found bool
@@ -69,6 +76,11 @@ func lookups(s answerServer) map[string]result {
 		rc.Close()
 	}
 	r["instance file"] = result{f, err}
+	rc, _, f, err = LookupVolumeFile(s, "p", "v", "/p")
+	if rc != nil {
+		rc.Close()
+	}
+	r["volume file"] = result{f, err}
 	return r
 }
 

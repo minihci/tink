@@ -56,10 +56,12 @@ type volumeEnv struct {
 	// helperRemotes are the remotes the helper can reach (nil: it has not said, so none is checked).
 	helperRemotes map[string]bool
 	policyProto   int
-	// firstStart maps an instance (instanceKey) to the files to place before its first start; placed, when set, is told which were. Both are used by
-	// creating an instance, not by a volume: this struct is simply what createOne is handed about the rest of the stack.
+	// firstStart maps an instance (instanceKey) to the files that are candidates to place before its first start, profiles are the stack's profiles
+	// (for the disks they give an instance), and report, when set, is told what was done with them. All three are used by creating an instance, not by a
+	// volume: this struct is simply what createOne is handed about the rest of the stack.
 	firstStart map[string][]Resource
-	placed     func(instance string, files []string)
+	profiles   map[string]Resource
+	report     func(instance string, o firstStartOutcome)
 }
 
 func (e volumeEnv) writes() int {

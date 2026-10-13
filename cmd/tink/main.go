@@ -465,6 +465,9 @@ func printPlanned(w interface{ Write([]byte) (int, error) }, p resolve.PlannedRe
 	for _, x := range p.Warnings {
 		fmt.Fprintf(w, "      warning: %s\n", x)
 	}
+	for _, n := range p.Notes {
+		fmt.Fprintf(w, "      note: %s\n", n)
+	}
 	if p.Extras != nil && !p.Extras.Empty() {
 		fmt.Fprintf(w, "      %s\n", p.Extras.Describe())
 	}

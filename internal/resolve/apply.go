@@ -49,7 +49,7 @@ func createOne(server incus.InstanceServer, r Resource, env volumeEnv) error {
 			ContentType:      "filesystem",
 		})
 	case KindInstance:
-		return createInstance(server, r, env.firstStart[instanceKey(r.Project, r.Name)], env.placed)
+		return createInstance(server, r, env)
 	case KindFile:
 		return pushFile(server, r)
 	case KindIncus:
@@ -161,8 +161,9 @@ func createImage(server incus.InstanceServer, r Resource) error {
 // first-boot-config-ordering fix tink run needed for Postgres/Nextcloud
 // comes along for free.
 //
-// The instance's own files are placed between configuring it and starting it (see firststart.go). placed, when set, is told which were.
-func createInstance(server incus.InstanceServer, r Resource, files []Resource, placed func(instance string, files []string)) error {
+// The instance's own files are placed between configuring it and starting it (see firststart.go, and firststartmount.go for the ones a mount would
+// hide). env.report, when set, is told what was done with them.
+func createInstance(server incus.InstanceServer, r Resource, env volumeEnv) error {
 	spec := &run.Spec{
 		Name:     r.Name,
 		Image:    r.Image,
@@ -174,14 +175,19 @@ func createInstance(server incus.InstanceServer, r Resource, files []Resource, p
 		Ephemeral: r.Ephemeral,
 	}
 	s := scopedServer(server, r)
+	var pl placement
+	if candidates := env.firstStart[instanceKey(r.Project, r.Name)]; len(candidates) > 0 {
+		pl = placeBy(r, candidates, profileLookup(s, env.profiles))
+	}
+	pr := newPlacer(server, pl)
 	names, err := createInOrder(instanceSteps{
 		create: func() error { return run.Create(server, spec, r.Project) },
 		config: func() error { return run.ApplyConfig(s, spec) },
-		place:  func(f Resource) error { return placeFile(server, f) },
+		place:  pr.place,
 		start:  func() error { return run.EnsureRunning(s, spec.Name) },
-	}, files)
-	if placed != nil && len(names) > 0 {
-		placed(r.Name, names)
+	}, pl.files())
+	if out := pr.outcome(names); env.report != nil && (len(out.Placed) > 0 || len(out.Skipped) > 0) {
+		env.report(r.Name, out)
 	}
 	return err
 }
@@ -294,7 +300,8 @@ func pushFile(server incus.InstanceServer, r Resource) error {
 }
 
 // placeFile writes r.Content to r.Path inside r.Instance and does nothing more: no restart. It is what pushFile does first, and what creating an
-// instance does for its files before the first start (the instance is stopped then, and takes the push).
+// instance does for its files before the first start (the instance is stopped then, and takes the push) -- except the files a disk-device mount would
+// hide, which go into the volume (placeVolumeFile) or wait for the start.
 func placeFile(server incus.InstanceServer, r Resource) error {
 	s := scopedServer(server, r)
 	err := s.CreateInstanceFile(r.Instance, r.Path, incus.InstanceFileArgs{

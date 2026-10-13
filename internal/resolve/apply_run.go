@@ -143,9 +143,9 @@ func applyOne(server incus.InstanceServer, r Resource, opts PlanOptions, note fu
 		note("%s/%s: BLOCKED: %s", r.Kind, r.Name, strings.Join(plan.Blocked, "; "))
 		return outBlocked, nil
 	case ActionCreate:
-		var placed []string
-		env := volumeEnv{targets: opts.targets, stack: opts.stack, firstStart: opts.firstStart,
-			placed: func(_ string, files []string) { placed = files }}
+		var first firstStartOutcome
+		env := volumeEnv{targets: opts.targets, stack: opts.stack, firstStart: opts.firstStart, profiles: opts.profiles,
+			report: func(_ string, o firstStartOutcome) { first = o }}
 		if err := createOne(server, r, env); err != nil {
 			return outConverged, err
 		}
@@ -154,8 +154,8 @@ func applyOne(server incus.InstanceServer, r Resource, opts PlanOptions, note fu
 			return outChanged, nil
 		}
 		note("%s/%s: created", r.Kind, r.Name)
-		if len(placed) > 0 {
-			note("%s", placedNote(r.Name, placed))
+		for _, line := range first.lines(r.Name) {
+			note("%s", line)
 		}
 		return outChanged, nil
 	case ActionUpdate:
