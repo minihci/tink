@@ -422,3 +422,30 @@ An instance that has been created and never started takes a file push, so **crea
 
 This is also the mechanism the secrets design asks for to deliver a secret as a file "after create and before first start" ([secrets-design.md](secrets-design.md)); that feature is not built.
 
+
+## Update, 2026-10-13: an exec can compare live output with a declared file (`check_output`)
+
+A `kind: exec` declares exactly one way to tell "already done" from "needs to run": `check`, `triggers`, and now `check_output`. It is for an engine with a get/set pair, where the live state can be read back and compared with what the stack declares. The design, and the lab finding behind it (Headscale's policy), is in [exec-output-check-design.md](https://github.com/minihci/tink/blob/docs/glossary/docs/exec-output-check-design.md) on the `docs/glossary` branch.
+
+```yaml
+kind: file
+name: headscale-policy
+instance: headscale
+path: /etc/headscale-policy.hujson
+source_path: policy.hujson
+---
+kind: exec
+name: headscale-policy-set
+instance: headscale
+command: [/ko-app/headscale, -c, /etc/headscale.yaml, policy, set, -f, /etc/headscale-policy.hujson]
+check_output:
+  command: [/ko-app/headscale, -c, /etc/headscale.yaml, policy, get]
+  equals: headscale-policy
+```
+
+- **Converged** when the check command exits 0 and its output equals the declared content of the file resource `equals` names, ignoring trailing whitespace on both (`policy get` prints one more newline than the file has). Anything else, including a non-zero exit, is "not done": `policy get` before any policy is set exits non-zero, and that is the first set. The output is the command's standard output and error together, as for every exec, so the command should print nothing else on success. Output over 1 MiB is an error.
+- **`equals` must name a `kind: file` resource** in the stack, on the same instance, with a declared `content` or `source_path`; anything else is a load error (with a "did you mean" for a near miss). It also **implies the ordering edge**: the exec runs after the file is placed.
+- **After the command runs, the check runs again.** If the output still differs, the apply fails and says so, instead of reporting a change that did not take effect. A command that fails (Headscale rejecting a bad policy: exit 1, and it keeps the previous policy) fails the apply with its own message.
+- **`plan` says why, never what:** `would run: [...] (the output of [...] differs from file/headscale-policy)` or `(the check [...] exited 1)`. It does not print the content.
+- **It heals from drift.** A policy set by hand is noticed by the next `plan` and put back by the next `apply`, which a remembered trigger hash cannot do. That is why a live check stays the preferred guard.
+- `check`, `check_output` and `triggers` are mutually exclusive, and `check_output` is exec-only.

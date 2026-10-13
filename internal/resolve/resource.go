@@ -216,6 +216,10 @@ type Resource struct {
 	// stayed wrongly confident about.
 	Triggers []string
 
+	// Exec-only, and the third of three guards (exactly one of Check, CheckOutput and Triggers). The work is done when CheckOutput.Command's
+	// output equals the declared content of the file resource CheckOutput.Equals names. See OutputCheck, and docs/exec-output-check-design.md.
+	CheckOutput *OutputCheck
+
 	// Exec-only. Overrides incusapi's own default agent-boot-readiness
 	// retry budget (see DefaultAgentRetryAttempts/DefaultAgentRetryDelay's
 	// own doc comment) for this specific instance -- zero means "use the
@@ -312,6 +316,9 @@ func (r Resource) dependencies(all map[string]*Resource) []string {
 	add(r.Project)
 	add(r.Instance)
 	add(r.Image)
+	if r.CheckOutput != nil {
+		add(r.CheckOutput.Equals) // the exec compares with that file, so it waits for it
+	}
 	for _, p := range r.Profiles {
 		add(p)
 	}

@@ -73,6 +73,12 @@ type yamlResource struct {
 	Command  []string `yaml:"command"`
 	Triggers []string `yaml:"triggers"`
 
+	// Exec-only, the third guard: see Resource.CheckOutput.
+	CheckOutput *struct {
+		Command []string `yaml:"command"`
+		Equals  string   `yaml:"equals"`
+	} `yaml:"check_output"`
+
 	// Exec-only. A duration string (e.g. "45s"), parsed below -- see
 	// Resource.AgentTimeout's own doc comment for why this is one
 	// duration rather than separate attempts/delay fields.
@@ -270,11 +276,20 @@ func (d yamlResource) toResource(dir string) (Resource, error) {
 		if len(d.Command) == 0 {
 			return Resource{}, fmt.Errorf("resource %q: kind exec requires command", d.Name)
 		}
-		if len(d.Check) == 0 && len(d.Triggers) == 0 {
-			return Resource{}, fmt.Errorf("resource %q: kind exec requires either check or triggers, to answer \"was this already done\" -- see Resource.Check's and Resource.Triggers' own doc comments", d.Name)
+		guards := 0
+		for _, set := range []bool{len(d.Check) > 0, d.CheckOutput != nil, len(d.Triggers) > 0} {
+			if set {
+				guards++
+			}
 		}
-		if len(d.Check) > 0 && len(d.Triggers) > 0 {
-			return Resource{}, fmt.Errorf("resource %q: kind exec check and triggers are mutually exclusive -- check re-derives convergence from live reality every time, triggers only when no such check can be written at all", d.Name)
+		if guards == 0 {
+			return Resource{}, fmt.Errorf("resource %q: kind exec requires one of check, check_output or triggers, to answer \"was this already done\" -- see Resource.Check's, Resource.CheckOutput's and Resource.Triggers' own doc comments", d.Name)
+		}
+		if guards > 1 {
+			return Resource{}, fmt.Errorf("resource %q: kind exec check, check_output and triggers are mutually exclusive -- a check re-derives convergence from live reality every time, triggers only when no such check can be written at all", d.Name)
+		}
+		if d.CheckOutput != nil && (len(d.CheckOutput.Command) == 0 || d.CheckOutput.Equals == "") {
+			return Resource{}, fmt.Errorf("resource %q: check_output requires both command and equals", d.Name)
 		}
 		if d.AgentTimeout != "" {
 			var err error
@@ -337,10 +352,22 @@ func (d yamlResource) toResource(dir string) (Resource, error) {
 		Check:           d.Check,
 		Command:         d.Command,
 		Triggers:        d.Triggers,
+		CheckOutput:     checkOutputOf(d.CheckOutput),
 		AgentTimeout:    agentTimeout,
 		Alias:           d.Alias,
 		Source:          source,
 		Architecture:    architecture,
 		Properties:      d.Properties,
 	}, nil
+}
+
+// checkOutputOf turns the parsed check_output block into the Resource's OutputCheck, or nil when there is none.
+func checkOutputOf(c *struct {
+	Command []string `yaml:"command"`
+	Equals  string   `yaml:"equals"`
+}) *OutputCheck {
+	if c == nil {
+		return nil
+	}
+	return &OutputCheck{Command: c.Command, Equals: c.Equals}
 }
