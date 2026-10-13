@@ -35,8 +35,8 @@ type PlanOptions struct {
 	// stack is the name the stack gives itself (kind: stack), stamped on the storage volumes it applies. Set with
 	// targets, from the full stack, for the same reason.
 	stack string
-	// profiles are the WHOLE stack's profile resources, by name, for the NIC devices an instance gets from a profile (ocinic.go). Set with targets,
-	// from the full stack, because a profile and the instance that uses it land in different levels.
+	// profiles are the WHOLE stack's profile resources, by name, for the devices an instance gets from a profile (the NIC check in ocinic.go, the
+	// root-disk check in rootdisk.go). Set with targets, from the full stack, because a profile and the instance that uses it land in different levels.
 	profiles map[string]Resource
 	// extras: also report, for each instance that exists, what it carries that the stack does not declare (see Extras). Set by WithExtras.
 	extras bool

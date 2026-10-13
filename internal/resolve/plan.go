@@ -131,6 +131,7 @@ func planKind(server incus.InstanceServer, r Resource, opts PlanOptions) (Planne
 			return p, err
 		}
 		p.Warnings = append(p.Warnings, ociNICWarnings(r, opts.imageRemotes(), opts.profiles)...)
+		p.Warnings = append(p.Warnings, rootDiskWarnings(s, r, opts.profiles)...)
 		return p, nil
 	case KindFile:
 		return planFile(s, r)
