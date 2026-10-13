@@ -410,7 +410,7 @@ cannot be waited for. See `internal/resolve/dependson.go`.
 
 ## Update, 2026-10-13: files are placed before an instance's first start
 
-Creating an instance used to be: create it, apply its config, **start it**; and only then the `kind: file` resources that target it pushed their files. A service that needs one of those files at start (Headscale needs `/etc/headscale.yaml`) had a window in which the file was not there: the app exited at once, Incus restarted it in a loop, and tink's own calls that fell in the gaps failed (`reading current content … bad file descriptor`, `Failed to retrieve PID of executing child process`). A second apply converged; a first install should not need one. The design, with the lab evidence, is in [first-start-files-design.md](https://github.com/minihci/tink/blob/docs/glossary/docs/first-start-files-design.md) on the `docs/glossary` branch.
+Creating an instance used to be: create it, apply its config, **start it**; and only then the `kind: file` resources that target it pushed their files. A service that needs one of those files at start (Headscale needs `/etc/headscale.yaml`) had a window in which the file was not there: the app exited at once, Incus restarted it in a loop, and tink's own calls that fell in the gaps failed (`reading current content … bad file descriptor`, `Failed to retrieve PID of executing child process`). A second apply converged; a first install should not need one. The design, with the lab evidence, is in [first-start-files-design.md](first-start-files-design.md).
 
 An instance that has been created and never started takes a file push, so **creating an instance now places its eligible files after configuring it and before starting it**:
 
@@ -425,7 +425,7 @@ This is also the mechanism the secrets design asks for to deliver a secret as a 
 
 ## Update, 2026-10-13: an exec can compare live output with a declared file (`check_output`)
 
-A `kind: exec` declares exactly one way to tell "already done" from "needs to run": `check`, `triggers`, and now `check_output`. It is for an engine with a get/set pair, where the live state can be read back and compared with what the stack declares. The design, and the lab finding behind it (Headscale's policy), is in [exec-output-check-design.md](https://github.com/minihci/tink/blob/docs/glossary/docs/exec-output-check-design.md) on the `docs/glossary` branch.
+A `kind: exec` declares exactly one way to tell "already done" from "needs to run": `check`, `triggers`, and now `check_output`. It is for an engine with a get/set pair, where the live state can be read back and compared with what the stack declares. The design, and the lab finding behind it (Headscale's policy), is in [exec-output-check-design.md](exec-output-check-design.md).
 
 ```yaml
 kind: file
