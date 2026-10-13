@@ -1,6 +1,6 @@
 # Networks as resources: bridges, ACLs and forwards
 
-**Status: design, except the first slice.** `kind: network` for managed bridges (create and update, never delete, a guard on changes to a bridge in use) is built and documented in [`network.md`](network.md); network ACLs, forwards and everything else below are not. Written 2026-10-12, from a Home Assistant migration whose network decisions (a dedicated bridge, an isolating
+**Status: design, except the first two slices.** `kind: network` for managed bridges (create and update, never delete, a guard on changes to a bridge in use) is built and documented in [`network.md`](network.md), and `kind: network-acl` is built and documented in [`network-acl.md`](network-acl.md) (where it differs from this note: rules are compared as an ordered list, not a set); forwards and everything else below are not. Written 2026-10-12, from a Home Assistant migration whose network decisions (a dedicated bridge, an isolating
 ACL, published ports) had to be made by hand because tink cannot declare them. It is the reasoning to be argued with, not a decision record.
 
 Claims are marked **[verified]** (tried live; see the [appendix](#appendix-how-the-claims-were-verified)), **[code]** (read in this repo), **[docs]**
@@ -30,7 +30,7 @@ applied from a laptop cannot carry it. The consequences:
 | Fact | Where |
 |---|---|
 | The Incus client has create, update and delete calls for networks, ACLs, forwards, load balancers, peers and zones (and `GetNetworks`, `GetNetworkACLs`, ...), all over the API, so all work under `--remote` | **[code]** `client/interfaces.go`, Incus v7.4.0 |
-| The dependency graph infers edges from a resource's project, profiles, `disk` device sources, instance, image, backup targets and `depends_on`. It does **not** infer an edge from a NIC's `network:` or `security.acls:` | **[code]** `Resource.dependencies` in `internal/resolve/resource.go` |
+| The dependency graph infers edges from a resource's project, profiles, `disk` device sources, instance, image, backup targets and `depends_on`, and, when the stack declares the named resource, from a NIC's `network:` and from `security.acls` (a network's, a NIC's, a profile NIC's) | **[code]** `Resource.dependencies` in `internal/resolve/resource.go` |
 | Networks and ACLs are **server-global** unless a project has `features.networks`, which requires OVN | **[docs]** Incus project reference, ACL how-to |
 | An ACL on a bridge acts at the bridge-to-host boundary; filtering between instances on one bridge needs the ACL on the NIC. Once an ACL applies, unmatched traffic is rejected. DHCP and DNS baseline rules are evaluated before ACL rules. ACL groups and `@internal` selectors are not supported on bridges | **[docs]** Incus network ACL how-to |
 | Incus applies an ACL's `reject` rules **before** an `allow`-everything rule, whatever order they are listed in | **[verified]** |
@@ -45,7 +45,7 @@ applied from a laptop cannot carry it. The consequences:
 | Kind | Fields | Notes |
 |---|---|---|
 | `kind: network` | `config`, `description` (bridge networks only at first) | Name is the network name. Not project-scoped: a `project:` on it is a load error |
-| `kind: network-acl` | `ingress`, `egress` (lists of rules: `action`, `source`, `destination`, `protocol`, `source_port`, `destination_port`, `icmp_type`, `icmp_code`, `description`), `description` | Rules compared as a **set**, since Incus orders them by action |
+| `kind: network-acl` | `ingress`, `egress` (lists of rules: `action`, `source`, `destination`, `protocol`, `source_port`, `destination_port`, `icmp_type`, `icmp_code`, `description`, `state`), `description`, `config` | Built. Rules compared as an **ordered list** (the decision at build time, against the "set" first proposed here): Incus orders them by action anyway, so a reorder never changes filtering, but the stored list stays equal to the YAML and a diff reads the same. See [`network-acl.md`](network-acl.md) |
 | `kind: network-forward` | `network`, `listen_address`, `target_address`, `ports` (protocol, listen/target port, target address), `snat` | Depends on its network |
 
 Why three flat kinds and not one with nested ACLs and forwards: it matches how every other kind is declared, dependencies infer by name, an ACL is shared by
@@ -99,8 +99,8 @@ peers, load balancers, zones, address sets and integrations. Deleting anything.
 
 ## Smallest first step
 
-1. **`kind: network-acl` alone.** Create and update, rules as a set, dependency edges from NIC `security.acls`, export. It is safe (an unattached ACL does
-   nothing), pure API, and it is exactly what the migration lab needed and hand-made twice.
+1. **`kind: network-acl` alone.** Create and update, rules as a list, dependency edges from `security.acls`, export. It is safe (an unattached ACL does
+   nothing), pure API, and it is exactly what the migration lab needed and hand-made twice. **Built**, without export ([`network-acl.md`](network-acl.md)).
 2. **`kind: network` read-only:** export and plan ("no changes" on `incusbr0`), no apply. Prove adoption on the real bridge before it can change anything.
 3. Apply for non-disruptive network keys, then the disruption guard.
 4. `kind: network-forward`.

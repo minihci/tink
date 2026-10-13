@@ -46,12 +46,24 @@ func validateSecretRefs(r Resource) error {
 				return err
 			}
 		case reflect.Slice:
-			if f.Type().Elem().Kind() != reflect.String {
-				continue
-			}
-			for j := 0; j < f.Len(); j++ {
-				if err := reject(name, f.Index(j).String()); err != nil {
-					return err
+			switch f.Type().Elem().Kind() {
+			case reflect.String:
+				for j := 0; j < f.Len(); j++ {
+					if err := reject(name, f.Index(j).String()); err != nil {
+						return err
+					}
+				}
+			case reflect.Struct: // a list of records, such as a network ACL's rules: every string in each one
+				for j := 0; j < f.Len(); j++ {
+					rec := f.Index(j)
+					for k := 0; k < rec.NumField(); k++ {
+						if rec.Field(k).Kind() != reflect.String {
+							continue
+						}
+						if err := reject(fmt.Sprintf("%s[%d].%s", name, j, rec.Type().Field(k).Name), rec.Field(k).String()); err != nil {
+							return err
+						}
+					}
 				}
 			}
 		case reflect.Map:

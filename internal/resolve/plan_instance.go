@@ -38,6 +38,10 @@ type PlanOptions struct {
 	// profiles are the WHOLE stack's profile resources, by name, for the NIC devices an instance gets from a profile (ocinic.go). Set with targets,
 	// from the full stack, because a profile and the instance that uses it land in different levels.
 	profiles map[string]Resource
+	// acls are the names of the WHOLE stack's network-acl resources, so a network, profile or instance that names an ACL is only warned about
+	// when the stack does not declare it (networkacl.go). Set with targets, from the full stack, because an ACL and what names it land in
+	// different levels.
+	acls map[string]bool
 	// extras: also report, for each instance that exists, what it carries that the stack does not declare (see Extras). Set by WithExtras.
 	extras bool
 	// projectNotes are warnings about resources that name no project in a stack where others do (see mixedProjectNotes), by resource
@@ -53,6 +57,7 @@ type PlanOptions struct {
 func (o PlanOptions) ForResources(resources []Resource) PlanOptions {
 	o.targets = backupTargets(resources)
 	o.profiles = declaredProfiles(resources)
+	o.acls = declaredACLs(resources)
 	o.stack, _ = StackName(resources) // more than one is reported by Levels
 	o.projectNotes = mixedProjectNotes(resources)
 	o.firstStart = firstStartFiles(resources)
@@ -69,6 +74,9 @@ func (o PlanOptions) withTargets(resources []Resource) PlanOptions {
 	}
 	if o.profiles == nil {
 		o.profiles = declaredProfiles(resources)
+	}
+	if o.acls == nil {
+		o.acls = declaredACLs(resources)
 	}
 	if o.firstStart == nil {
 		o.firstStart = firstStartFiles(resources)

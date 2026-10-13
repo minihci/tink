@@ -22,6 +22,7 @@ tink fills gaps; it does not replace what it builds on. It gives a home or self-
 | profile | `kind: profile` | reusable config and devices | **means an optional group of services** (a collision) |
 | storage-volume | `kind: storage-volume`; `-v name:/path` in `tink run` | a volume in a storage pool | *volume* |
 | network | `kind: network`: a managed bridge, server-global, so never in a project | managed network (bridge, OVN, ...) | *network* |
+| network-acl | `kind: network-acl`: a named list of firewall rules, with Incus's rule fields, attached by `security.acls` on a network or a NIC. Server-global like a network ([docs](network-acl.md)) | network ACL | none |
 | image | `kind: image`, and `image:` on an instance | image or OCI image | *image* |
 | remote | `--remote NAME`, and `remote:` on a backup target | a named server in the client config | none |
 | trust token | used to enrol the helper | a single-use token that adds a client certificate | none |
@@ -36,7 +37,7 @@ tink fills gaps; it does not replace what it builds on. It gives a home or self-
 | resource, kind | one document in a stack, and its type | yes |
 | plan, apply | `tink plan` shows what would change; `tink plan apply` does it | yes |
 | BLOCKED | a plan result for something tink refuses to touch, with the reason | yes |
-| disruption guard | a change that could interrupt running instances is blocked unless the resource says `allow_disruption: true` | yes (networks) |
+| disruption guard | a change that could interrupt running instances is blocked unless the resource says `allow_disruption: true`. Attaching or changing an ACL (`security.acls*` on a network) is not counted | yes (networks) |
 | extras | things in the project that the stack does not declare; reported, never deleted | yes |
 | helper | an Incus instance that runs `tink daemon run` (backup scheduler, job executor, optional ingress reconcile); its certificate has the reach of root on the host | yes |
 | ingress | the reverse proxy in front of apps, and the routes tink renders for it from `user.tink.ingress.*` on the apps (the Kubernetes sense of the word) | yes |
@@ -65,7 +66,7 @@ These come from a design discussion; there is no design note yet, and the names 
 
 | Word | The clash | What to do |
 |---|---|---|
-| ingress | tink: the reverse proxy. Incus network ACLs also have `ingress` and `egress` rules (a direction of traffic). tink's design notes already plan ACLs | keep `ingress` for the proxy, and in any ACL kind use Incus's meaning only; say which one in the documentation of each |
+| ingress | tink: the reverse proxy. Incus network ACLs also have `ingress` and `egress` rules (a direction of traffic, from the NIC's point of view) | `kind: network-acl` uses Incus's meaning only, and says so ([network-acl.md](network-acl.md)); `ingress` on its own means the proxy everywhere else |
 | overlay | in Incus and Docker an *overlay network* is OVN or VXLAN networking. tink says it does not manage OVN | decide before the kind is built; `mesh` and `vpn` do not clash |
 | project | Compose's project is tink's stack; Incus's project is Incus's | use *stack* for the tink unit (already the case) and never *project* for it |
 | profile | Compose profiles are optional service groups; Incus profiles are reusable config | tink follows Incus; mention Compose's meaning where Compose users arrive |

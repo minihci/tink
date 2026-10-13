@@ -47,7 +47,7 @@ A `project:` is a load error: networks are server-global unless a project has `f
 - **Present and equal:** `no changes`. Keys Incus added itself (`volatile.*`, the concrete subnet it picked) are never drift; the comparison is one-directional, as for profiles.
 - **`auto` addresses:** Incus stores the address it picked, not the word `auto`. So a declared `auto` is satisfied by any real address and is never written over one, because writing it would ask Incus to pick a new subnet and move every instance on the bridge. If the network has no address (or `none`) a declared `auto` is a change.
 - **Present and different, nothing on it:** `would update`; apply merges the declared keys into the live config.
-- **Present and different, instances on it:** `BLOCKED`, naming the instances, and nothing is written. Changing a bridge's address, NAT or DNS can interrupt every instance on it **[hypothesis: which keys; the guard treats every config change alike to stay safe]**. `allow_disruption: true` on the resource turns the block into an update with an `affects N instance(s): ...` warning. A description-only change is harmless and is never blocked. This is the network version of `on_image_change: report`: the default is to say, not to do.
+- **Present and different, instances on it:** `BLOCKED`, naming the instances, and nothing is written. Changing a bridge's address, NAT or DNS can interrupt every instance on it **[hypothesis: which keys; the guard treats every config change alike to stay safe]**. `allow_disruption: true` on the resource turns the block into an update with an `affects N instance(s): ...` warning. A description-only change is harmless and is never blocked. The ACL keys (`security.acls` and `security.acls.default.*`) are the exception: attaching or changing an ACL is a live firewall change and is not counted, see [`network-acl.md`](network-acl.md). This is the network version of `on_image_change: report`: the default is to say, not to do.
 - **Never deletes**, like every other kind. Removing a key from the YAML leaves it on the bridge.
 
 ## What it refuses to touch
@@ -61,7 +61,7 @@ A `project:` is a load error: networks are server-global unless a project has `f
 
 ## Ordering
 
-A NIC's `network:` (on an instance or on a profile) is an ordering edge **when the network is in the stack**: the bridge is created before the profile or instance that names it. A NIC naming a network the stack does not declare (`incusbr0`) stays lenient, because it may exist on the server already, the same as a profile or a volume source.
+A NIC's `network:` (on an instance or on a profile) is an ordering edge **when the network is in the stack**: the bridge is created before the profile or instance that names it. A NIC naming a network the stack does not declare (`incusbr0`) stays lenient, because it may exist on the server already, the same as a profile or a volume source. The same holds for an ACL named in a bridge's `security.acls`: the ACL is created first ([`network-acl.md`](network-acl.md)).
 
 ## Adopting a bridge you already have
 
@@ -69,4 +69,4 @@ Declare it with the keys you care about and run `plan`: it should say `no change
 
 ## Not in this kind
 
-ACLs, forwards, zones and peers (the design note `docs/network-resources-design.md`, on branch `eval/design-notes`, covers how they would follow), `tink export` of networks, OVN, and deleting anything. Two things the design note raises are left open on purpose: whether `export` should learn networks by default or only by name, and whether a typo in an `ipv4.address` should be caught at load. Today a malformed value is rejected by Incus at apply.
+Forwards, zones and peers (the design note [`network-resources-design.md`](network-resources-design.md) covers how they would follow), `tink export` of networks, OVN, and deleting anything. ACLs are their own kind: [`kind: network-acl`](network-acl.md) declares the rules, and a bridge attaches them with `security.acls` in the `config:` above. Two things the design note raises are left open on purpose: whether `export` should learn networks by default or only by name, and whether a typo in an `ipv4.address` should be caught at load. Today a malformed value is rejected by Incus at apply.

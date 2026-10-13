@@ -8,8 +8,8 @@ import (
 // fieldOwners names, for each Resource field that isn't common to every
 // kind, which Kinds are allowed to set it. Kind, Name, Project, and
 // DependsOn aren't listed here -- every kind uses those, so they're
-// never flagged. (One exception, checked in validateNetwork: a network is
-// server-global and rejects a Project rather than silently ignoring it.) This is the single place that answers "does kind X use
+// never flagged. (One exception, checked in validateNetwork and validateNetworkACL: a network and a network ACL are
+// server-global and reject a Project rather than silently ignoring it.) This is the single place that answers "does kind X use
 // field Y," replacing what today is only spelled out in doc comments
 // above each field in resource.go -- kept alongside kindPriority as
 // another small table rather than a typed struct per kind, matching
@@ -27,9 +27,11 @@ var fieldOwners = map[string][]Kind{
 	"Address":         {KindBackupTarget},
 	"Fingerprint":     {KindBackupTarget},
 	"Backup":          {KindStorageVolume},
-	"Config":          {KindProject, KindProfile, KindInstance, KindStorageVolume, KindNetwork},
-	"Description":     {KindNetwork},
+	"Config":          {KindProject, KindProfile, KindInstance, KindStorageVolume, KindNetwork, KindNetworkACL},
+	"Description":     {KindNetwork, KindNetworkACL},
 	"AllowDisruption": {KindNetwork},
+	"Ingress":         {KindNetworkACL},
+	"Egress":          {KindNetworkACL},
 	"Devices":         {KindProfile, KindInstance},
 	"Instance":        {KindFile, KindExec},
 	"Path":            {KindFile},
@@ -88,6 +90,9 @@ func Validate(r Resource) error {
 		return err
 	}
 	if err := validateNetwork(r); err != nil {
+		return err
+	}
+	if err := validateNetworkACL(r); err != nil {
 		return err
 	}
 	return validateOnImageChange(r)

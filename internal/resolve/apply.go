@@ -28,6 +28,8 @@ func createOne(server incus.InstanceServer, r Resource, env volumeEnv) error {
 		})
 	case KindNetwork:
 		return createNetwork(server, r)
+	case KindNetworkACL:
+		return createNetworkACL(server, r)
 	case KindProfile:
 		return scopedServer(server, r).CreateProfile(api.ProfilesPost{
 			Name:       r.Name,
@@ -217,6 +219,8 @@ func updateOne(server incus.InstanceServer, r Resource, env volumeEnv) error {
 	switch r.Kind {
 	case KindNetwork:
 		return updateNetwork(s, r)
+	case KindNetworkACL:
+		return updateNetworkACL(s, r)
 	case KindProfile:
 		current, etag, err := s.GetProfile(r.Name)
 		if err != nil {
