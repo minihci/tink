@@ -142,8 +142,9 @@ LLDAP v0.6.3 and Authelia 4.39.28, pinned by digest, in a project of their own o
 
 As of 2026-10-12, from the migration lab.
 
+- **Found and fixed:** a service that needs a file at start raced tink's file push on first creation (the app exits, Incus restarts it in a loop, and tink's calls that land in a gap fail): 4 of 12 first applies failed in the lab. Fixed by placing an instance's files before its first start (branch `fix/first-start-files`, [design](first-start-files-design.md)): 11 of 11 converged **[lab]**.
 - **Strong:** the reconcile discipline (a build with these features planned 30 real stack files identically to the previous one, apart from the lines it added **[lab]**; a two-service identity stack was planned, applied, deleted, re-applied and re-planned exactly **[lab]**); encoded operating knowledge, such as the warning for an OCI NIC without `name:` **[lab]**; claims that are tagged by how they were checked.
-- **Weak:** a service that needs a file at start races tink's file push on first creation (the app exits, Incus restarts it in a loop, and tink's calls that land in a gap fail; a second apply converges) **[lab]**; removal is report-only (LLDAP's bootstrap script shows a better shape, see open decision 1); secrets cannot be placed in files, and nothing can declare directory content **[lab]**; cross-stack references have no clean expression (`depends_on` stays inside a stack **[docs]**); nothing tells you when something fails (no notifications **[docs]**).
+- **Weak:** removal is report-only (LLDAP's bootstrap script shows a better shape, see open decision 1); secrets cannot be placed in files, and nothing can declare directory content **[lab]**; cross-stack references have no clean expression (`depends_on` stays inside a stack **[docs]**); nothing tells you when something fails (no notifications **[docs]**).
 - **Possibly wrong:** a single helper that gains reach with each job it takes on, under a certificate with the reach of root **[docs]**.
 
 ## Open decisions

@@ -1,6 +1,6 @@
 # Design: put an instance's files in place before its first start
 
-**Status: a design note, 2026-10-13. Nothing here is built.** It fixes a race found in the Headscale lab ([what-tink-is.md](what-tink-is.md), "Where it is strong, and where it is weak"). Claims are marked **[lab]**, **[code]**, **[proposed]** or **[verify]**.
+**Status: a design note, 2026-10-13. Built** on branch `fix/first-start-files` (not yet merged) and measured in the lab (see "Measured"). It fixes a race found in the Headscale lab ([what-tink-is.md](what-tink-is.md), "Where it is strong, and where it is weak"). Claims are marked **[lab]**, **[code]**, **[proposed]** or **[verify]**.
 
 ## The problem
 
@@ -56,6 +56,17 @@ Files are placed in declaration order.
 - The reporting: the instance says which files were placed; a file that failed to place is not named.
 - The existing file planning already covers "content equal means `no changes`"; one test pins that a file placed at creation then plans as `no changes`.
 - Live: rebuild the lab Headscale from nothing. The first apply must converge with no failures, the log must not contain `error loading config file`, and the process must have started once.
+
+## Measured, 2026-10-13 **[lab]**
+
+The lab Headscale was rebuilt from nothing (instance and volume deleted, one `plan apply`), counting the first applies that converge:
+
+| Build | Converged on the first apply | Failed |
+|---|---|---|
+| without the fix | 8 of 12 | 4 (the same message every time: `file/headscale-policy: reading current content of /etc/headscale-policy.hujson on headscale: bad file descriptor`) |
+| with the fix | 11 of 11 | 0 |
+
+With the fix each apply said `placed 2 file(s) before its first start`, the files then planned `no changes`, the exec set the first policy, and the plan afterwards was clean. If the true failure rate without the fix were a third, 11 successes in a row would happen about one time in 80. Caveats: one control batch passed 4 of 4 and the next 4 of 8, so a handful of runs misleads; one host and one service; and the check "no error in the application's log" was dropped because `incus console --show-log` keeps only recent lines.
 
 ## Not in this slice
 
