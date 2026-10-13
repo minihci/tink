@@ -66,7 +66,7 @@ do it on a branch with nothing else in flight, or expect a conflict if two branc
 Only in the **value of an instance's `environment.*` config**. Anywhere else, `${secret:` is an error at load time, with the
 reason. That is deliberate: it keeps a secret out of places that print or expose it (command lines in `exec`/`incus`
 resources and verify checks, instance names, profile and project config, `user.*` keys the guest can read, `kind: file`
-content, which is pushed with mode 0644 and after the instance has started).
+content, which is pushed with mode 0644, and for an instance that already exists after it has started).
 
 A `$` directly before the opener makes it literal: `$${secret:not-a-secret}` is the text `${secret:not-a-secret}`.
 
