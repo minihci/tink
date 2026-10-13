@@ -57,7 +57,7 @@ These come from a design discussion; there is no design note yet, and the names 
 | control plane | the coordination server (Headscale by default): who is in the network, their keys, the policy. It carries no traffic. Its own stack, on a host with a public name |
 | gateway | a container tink creates on a bridge that joins that bridge to the network and advertises routes to the apps that offer a port |
 | offer | an app says it can be reached: `user.tink.<name>.expose: "8123"`. It grants nothing |
-| grant | the site says who may reach an offer: `allow: group:family`. This is what is reviewed |
+| grant | the site says who may reach an offer: `allow: group:family`. This is what is reviewed. It is also Tailscale's and Headscale's word for the same idea (who may reach what), which is deliberate: Headscale recommends grants over the older ACLs |
 | relay | an optional component of the control plane that carries encrypted packets when two peers cannot connect directly. Off by default; the public relays are used |
 | `<name>` | **the word for the feature is undecided**: `overlay` (engine-neutral), `mesh` or `vpn`. See the first collision below |
 
