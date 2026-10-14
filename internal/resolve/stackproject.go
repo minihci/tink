@@ -10,12 +10,12 @@ import (
 
 // takesDefaultProject says which kinds live inside an Incus project and so receive the stack's default one. A project is not inside
 // another project, a network and a network ACL are server-global (Incus keeps them in the default project unless a project has
-// features.networks, which tink does not manage; a `project:` on either is a load error), the stack declaration is metadata, a backup
+// features.networks, which tink does not manage; a `project:` on either is a load error), the stack declaration is metadata, a publish follows its instance's project (it is a declaration, so it takes the stack's default and is never created), a backup
 // target describes where copies go (a server or pool, not a project), and kind: incus is argv for the local CLI. File and exec resources
 // are handled separately: they follow the instance they act on.
 func takesDefaultProject(k Kind) bool {
 	switch k {
-	case KindProfile, KindStorageVolume, KindInstance, KindImage:
+	case KindProfile, KindStorageVolume, KindInstance, KindImage, KindPublish:
 		return true
 	}
 	return false
@@ -51,7 +51,7 @@ func applyStackProject(resources []Resource) {
 	}
 	byName := make(map[string]*Resource, len(resources))
 	for i := range resources {
-		if resources[i].Kind != KindStack {
+		if inGraph(resources[i].Kind) {
 			byName[resources[i].Name] = &resources[i]
 		}
 		if resources[i].Project == "" && takesDefaultProject(resources[i].Kind) {

@@ -1,0 +1,43 @@
+# A trimmed copy of the canary app stack (tron's canary/canary.yaml) as it is written once publish exists: the app states its offer, two publish
+# documents give it two names and a group each, and the ACL on its bridge declares no rule of its own (the join derives it).
+kind: stack
+name: canary
+project: canary
+---
+kind: network-acl
+name: canary0-in
+description: only the ingress helper may reach the canary app
+---
+kind: network
+name: canary0
+config:
+  ipv4.address: 10.10.60.1/24
+  ipv4.nat: "false"
+  security.acls: canary0-in
+---
+kind: profile
+name: canary-base
+devices:
+  root: {path: /, pool: default, type: disk}
+---
+kind: instance
+name: whoami
+image: docker-oci:traefik/whoami:v1.12.0
+profiles: [canary-base]
+config:
+  user.tink.offer.web.port: "80"
+  user.tink.offer.web.proto: http
+devices:
+  eth0: {name: eth0, type: nic, network: canary0, ipv4.address: 10.10.60.10}
+---
+kind: publish
+name: whoami
+instance: whoami
+offer: web
+allow: [family]
+---
+kind: publish
+name: whoami-admin
+instance: whoami
+offer: web
+allow: [admins]

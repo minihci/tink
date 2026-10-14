@@ -254,12 +254,36 @@ As of 2026-10-13 **[code]**: one implementation of an offer (`ingress.Registrati
 3. The first grant arrives with the first role that has one, which is single sign-on (Authelia's access rules and OIDC clients).
 4. Topology and hops after that, beginning with the check that is worth most: the listener on a leg that must not listen. Rendering the ACLs of D9 comes later still, because it needs a kind for an ACL first ([open question 8](#open-questions)).
 
+## Built 2026-10-14: the print-only join
+
+**[code, live]** `kind: publish` and `tink join` exist ([join.md](join.md) is the user page). It is the first step above, narrowed to what one app could prove: web offers only, no `access`, nothing applied. The decisions it fixed:
+
+| Decision | Result |
+|---|---|
+| the kind | `publish` |
+| the document's identity | `name:` is the host label; the published name is the label plus the dns helper's zone |
+| which offer | two fields, `instance:` and `offer:` (the same `instance:` field `kind: file` uses), not one `instance/offer` string |
+| who | `allow:` takes plain group names; typed subjects (`group:`, `instance:`) belong to `access` and are refused here |
+| the NIC's purpose | `user.tink.leg.<nic>`: `serves` (LAN clients), `mesh` (mesh clients, and the source the apps' ACLs admit), `discovery` |
+| the command | `tink join` |
+
+What it taught that the design had not said:
+
+1. **A publish must be kept out of the resolver's graph.** The resolver's names are one flat namespace per stack and it rejects two resources of one name, but a host label and the instance it publishes are very often the same word (`whoami` and `whoami`). A publish has nothing to create and nothing waits for it, so it is left out of the graph exactly as `kind: stack` is, and its uniqueness (a name is unique in the zone) is checked on its own.
+2. **A published offer's NIC must have a static address.** The proxy reaches an app by address, because names do not resolve across bridges, and the ACL names it. The join says "cannot render: this NIC takes DHCP" instead of guessing (mock gap 15, made concrete).
+3. **Routes are `handle` fragments for the wildcard site**, not site blocks, so one wildcard certificate serves every name **[docs, from memory]**. Two snippets the platform defines by hand carry the policy: `sso` (the forward-auth call) and `no_portal_cookie` (the portal's session cookie is zone-wide, so without it every app could replay a user's portal session; tested nine ways on a throwaway Caddy before it was applied). The join only imports them, so a route cannot be rendered without either.
+4. **The ACL has two potential writers.** The `network-acl` kind treats a direction it is given as the whole list and leaves an omitted direction unmanaged, so once the join applies rules, the app's ACL document must omit `ingress:` (and then plan cannot see drift in it) or the kind must learn to mark a list as derived. Printing is unaffected.
+5. **The listener check cannot run on every image.** The canary is `FROM scratch` with no shell, so "is it listening only where meant" is unverifiable there; the join must say so, never *ok*. Not built.
+6. **Several groups render as an OR of single-group lists**, `[['group:a'], ['group:b']]`; Authelia's own offline policy checker confirmed `family` and `admins` each get the rule and `kids` get the default deny **[live]**.
+
+Fails closed: any error means nothing is printed, because a partial rendering looks exactly like a complete one.
+
 ## Open questions
 
 Not decided here.
 
-1. **Key spellings.** `user.tink.offer.<name>.*` is a sketch. Also how an offer's attributes are spelled (protocol, where it listens, OIDC registration), the key that says why a NIC exists (`user.tink.leg.<nic>`, with `discovery` and `serves` as the two values in the mock), the role stamp (`user.tink.role`), and how a grant refers to an offer (`ha/web` is a sketch).
-2. **Kind names.** `access`, `publish` and `mesh` are sketches, and so is every field name in the YAML above. The mock's `place:` and `seed:` on a file (put it before the first start; create it and never compare it again) are sketches too and are not part of this design.
+1. **Key spellings.** `user.tink.offer.<name>.*` is a sketch. Also how an offer's attributes are spelled (protocol, where it listens, OIDC registration), the key that says why a NIC exists (`user.tink.leg.<nic>`, with `discovery` and `serves` as the two values in the mock), the role stamp (`user.tink.role`), and how a grant refers to an offer (`ha/web` is a sketch). **Decided 2026-10-14 for web offers:** `user.tink.offer.<offer>.port|proto|listen` on the instance (read strictly: an unknown attribute is an error), `user.tink.leg.<nic>: serves|mesh|discovery` on the ingress helper, `user.tink.dns.zone` on the dns helper, and no role stamp on apps (roles name helpers). The OIDC attributes are still open.
+2. **Kind names.** `access`, `publish` and `mesh` are sketches, and so is every field name in the YAML above. The mock's `place:` and `seed:` on a file (put it before the first start; create it and never compare it again) are sketches too and are not part of this design. **Decided 2026-10-14:** the kind is `publish`, built as a declaration (see below). `access` and `mesh` are still sketches. A check against the glossary's rule for borrowed words found one clash: Docker's `--publish`, and `tink run -p`, mean a host port forward. It was kept because it reads well and the docs already say a name is "published"; the alternative was `route`, which hides that the document also writes the sign-on rule and the DNS record.
 3. **The removal model.** This is where report-never-remove is most dangerous. Removing a grant must remove the access it gave, but today a key removed from a stack is left behind (the dns lab saw a stale marker keep a warning alive **[lab]**) and an ACL rule removed from the YAML stays until removed by hand **[docs: network-resources-design.md]**. A rendered file such as Authelia's is rewritten whole, so removal there is natural; an Incus ACL or a policy delivered by exec is not. See [open decision 1](what-tink-is.md#open-decisions).
 4. **Secrets in files.** An OIDC signing key or a bootstrap password file cannot be placed today, because `${secret:}` works only in `environment.*` ([open decision 8](what-tink-is.md#open-decisions)). Single sign-on offers and grants will need it, and so does the rest of the mock: the directory's password file, Authelia's OIDC keys, a camera's credentials inside Frigate's config, and a message broker's password file.
 5. **Whether a generated site-wide view of grants should also be accepted as input.** tink prints the joined relation. Whether that printed form can also be read back as a declaration, so a site that prefers one file of grants (the other placement in D2) could keep one, is open.

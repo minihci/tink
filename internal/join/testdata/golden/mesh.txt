@@ -1,0 +1,12 @@
+[
+  {
+    "name": "whoami.home.xlii.co",
+    "type": "A",
+    "value": "10.10.50.3"
+  },
+  {
+    "name": "whoami-admin.home.xlii.co",
+    "type": "A",
+    "value": "10.10.50.3"
+  }
+]

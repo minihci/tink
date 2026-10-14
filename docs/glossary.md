@@ -52,6 +52,10 @@ tink fills gaps; it does not replace what it builds on. It gives a home or self-
 | `kind: incus` | the escape hatch: arguments for the local `incus` command | yes |
 | stamp | a `user.tink.*` key tink writes on an object to remember something (which stack owns a volume, when a copy was made) | yes |
 | `on_image_change` | the policy for when a pinned image's digest moves: update, or report | yes |
+| offer | what an instance provides, stated as keys on it: `user.tink.offer.<offer>.port` and `.proto`. A fact about the app; it says nothing about who may use it | yes (read by `tink join`; web offers) |
+| `kind: publish` | a declaration: a name in the site's zone (the document's `name:`, plus the dns helper's zone) shows one offer of an instance to named groups. tink converges nothing for it and `plan` leaves it out of the graph; `tink join` reads it ([join.md](join.md)) | yes (print-only) |
+| join | the step that looks across the offers, the publishes and the helpers' own facts and derives what each helper needs to match: dns records, mesh records, proxy routes, sign-on rules, ACL rules. `tink join` prints them | yes (print-only) |
+| leg | why an instance has a NIC where it does: `user.tink.leg.<nic>` is `serves` (LAN clients reach it here), `mesh` (mesh clients reach it here) or `discovery` (it is not a way in for users) | yes (read by `tink join`) |
 
 ## Proposed: remote access (not built)
 
@@ -61,8 +65,8 @@ These come from a design discussion; there is no design note yet, and the names 
 |---|---|
 | control plane | the coordination server (Headscale by default): who is in the network, their keys, the policy. It carries no traffic. It is something the gateway *needs*, not part of the gateway: tink's default is a Headscale helper, but the gateway needs only the server's address and a key, so Tailscale's hosted service or someone else's Headscale also works. Its own stack, on a host with a public name |
 | gateway | the mesh helper: a container tink creates on a bridge that joins that bridge to the network and advertises routes to the apps that offer a port |
-| offer | an app says it can be reached: `user.tink.<name>.expose: "8123"`. It grants nothing |
-| grant | the site says who may reach an offer: `allow: group:family`. This is what is reviewed. It is also Tailscale's and Headscale's word for the same idea (who may reach what), which is deliberate: Headscale recommends grants over the older ACLs |
+| offer | an app says it can be reached. **Built** for web apps as `user.tink.offer.<offer>.port` and `.proto` on the instance (see the table above); an offer grants nothing |
+| grant | the site says who may reach an offer: `allow: [family]`. For a web offer a grant is a `kind: publish` document (built as a declaration); `kind: access`, one instance using another's offer, is not built. This is what is reviewed. It is also Tailscale's and Headscale's word for the same idea (who may reach what), which is deliberate: Headscale recommends grants over the older ACLs |
 | relay | an optional component of the control plane that carries encrypted packets when two peers cannot connect directly. Off by default; the public relays are used |
 | `<name>` | **the word for the feature is undecided**: `overlay` (engine-neutral), `mesh` or `vpn`. See the first collision below |
 
@@ -75,4 +79,5 @@ These come from a design discussion; there is no design note yet, and the names 
 | helper | ordinary English, and other tools use it for other things (Docker's credential helpers, Helm's helper templates) | always say *\<role\> helper*: *ingress helper*, *daemon helper*. The bare "the helper" is ambiguous |
 | project | Compose's project is tink's stack; Incus's project is Incus's | use *stack* for the tink unit (already the case) and never *project* for it |
 | profile | Compose profiles are optional service groups; Incus profiles are reusable config | tink follows Incus; mention Compose's meaning where Compose users arrive |
+| publish | Docker's `--publish` (and `tink run -p`) forwards a host port to a container; tink's `kind: publish` gives an offer a name in the site's zone and says who may open it. Both put something where outsiders can reach it | kept, decided 2026-10-14; the alternative was `route`. Say "publish a name" and "forward a port" |
 | volume | Compose's *volume* is tink's `storage-volume` | the kind is spelled `storage-volume`, as in Incus |

@@ -15,12 +15,12 @@ import (
 func validateDependsOn(resources []Resource) error {
 	names := map[string]bool{}
 	for _, r := range resources {
-		if r.Kind != KindStack { // the stack's own name is metadata, not a resource (see StackName)
+		if inGraph(r.Kind) { // the stack's own name is metadata and a publish is a declaration: neither is a resource to order (see StackName, publish.go)
 			names[r.Name] = true
 		}
 	}
 	for _, r := range resources {
-		if r.Kind == KindStack {
+		if !inGraph(r.Kind) {
 			continue
 		}
 		for _, d := range r.DependsOn {

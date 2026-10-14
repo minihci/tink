@@ -127,6 +127,8 @@ As of 2026-10-12 the pattern is a name for something to build, not something alr
 - **Grants: none.** Access control is written by hand. `configs/authelia/configuration.yml` holds a default-deny policy, per-domain rules and the OIDC clients; the users are in a host-owned `users_database.yml`. `tink deploy` applies them (`internal/bootstrap`), outside the resolver and its kinds.
 - **Nothing joins the two.** Ingress rendering contains no authentication, so an app that registers gets a route and no access rule.
 
+**Update 2026-10-14 [code, live]:** a print-only first step is built for web apps: `user.tink.offer.<offer>.port|proto` on an instance is an offer, `kind: publish` is the grant (a name and the groups that may open it), and `tink join` joins them to the helpers' own facts and prints the dns records, mesh records, proxy routes, sign-on rules and ACL rules. It applies nothing and ingress has not moved to the shared offer yet. See [join.md](join.md) and the [design note](offer-grant-join-design.md#built-2026-10-14-the-print-only-join).
+
 **A first step that changes no behaviour (proposed):**
 1. A shared `Offer` (role, instance, port, attributes), built per role from `user.tink.<role>.*` keys.
 2. A shared `Grant` (group, target instance, port), read from the site's declaration.

@@ -1,7 +1,7 @@
 // Package resolve is tink's resolver: a lightweight, tink-native version of the
 // resolver half of the architecture in docs/resolver-architecture.md --
 // scoped deliberately to what this platform actually uses (project,
-// profile, storage-volume, instance, file, incus, image, exec, network, network-acl), stateless
+// profile, storage-volume, instance, file, incus, image, exec, network, network-acl, and the declaration-only backup-target and publish), stateless
 // (diffs live Incus state directly, no separate state file to protect
 // secrets in) with one narrow, explicit exception -- an exec resource
 // with no observable Check falls back to a Triggers hash recorded on its
@@ -41,7 +41,8 @@ const (
 	KindImage         Kind = "image"
 	KindExec          Kind = "exec"
 	KindBackupTarget  Kind = "backup-target"
-	KindStack         Kind = "stack" // the stack's own name; metadata, not a resource (see StackName)
+	KindStack         Kind = "stack"   // the stack's own name; metadata, not a resource (see StackName)
+	KindPublish       Kind = "publish" // a name in the site's zone that shows one offer of an instance to named groups; a declaration `tink join` reads, never converged (see publish.go)
 )
 
 // kindPriority orders resource creation by type, matching the same
@@ -63,6 +64,7 @@ var kindPriority = map[Kind]int{
 	KindNetworkACL:    0, // before the networks, profiles and instances whose security.acls name it
 	KindBackupTarget:  0, // pure declaration: nothing to create, but volumes refer to it
 	KindStack:         0, // metadata: kept out of the graph, only here so the kind is known
+	KindPublish:       0, // a declaration read by `tink join`: kept out of the graph like the stack, only here so the kind is known
 	KindProfile:       1,
 	KindStorageVolume: 1,
 	KindIncus:         1,
@@ -113,6 +115,11 @@ type Resource struct {
 	// Backup (storage-volume-only) is the volume's mandatory answer to "how is
 	// this backed up?". Nil means unanswered, which plan BLOCKS. See backupmeta.VolumeBackup.
 	Backup *backupmeta.VolumeBackup
+
+	// Publish-only (see publish.go): Instance is the instance that makes the offer, Offer is which of its offers is shown, and Allow lists the GROUPS
+	// that may use it. Name is the host label: the published name is Name plus the dns helper's zone.
+	Offer string
+	Allow []string
 
 	// File-only: push Content to Path inside the named Instance.
 	Instance string

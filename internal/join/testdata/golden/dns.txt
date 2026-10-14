@@ -1,0 +1,2 @@
+10.0.142.231 whoami.home.xlii.co
+10.0.142.231 whoami-admin.home.xlii.co

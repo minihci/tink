@@ -43,11 +43,16 @@ several files to see are below.
   only make sense on the host itself (anything reading a storage-pool path, `daemon run`'s ingress half) refuse a remote in
   `cmd/tink/main.go`.
 - **The resolver (`internal/resolve`) is the core.** A stack is YAML documents of kinds project, profile, storage-volume,
-  instance, file, exec and `stack` (a name only, not a resource). `graph.go` computes dependency levels (resources within a level
+  instance, file, exec, and two that are not resources to converge: `stack` (a name only) and `publish` (a declaration that
+  `tink join` reads; `publish.go`). Both are kept out of the graph, which is why a publish may share a name with its instance. `graph.go` computes dependency levels (resources within a level
   apply concurrently; ties are broken by kind then name so a plan reads the same on every run). Dependencies come from
   name-matching (an instance's project, profiles and volume-backed devices) plus explicit `DependsOn`; deliberately not a
   Terraform-style expression language. `Plan` is pure reads; `apply*.go` converges. Design and rationale are in
   `docs/resolver-architecture.md`.
+- **`tink join` is a pure function of the stack files it is given** (`internal/join`): it reads no server and writes nothing, and prints
+  the dns records, mesh records, proxy routes, sign-on rules and ACL rules a site's `kind: publish` documents imply. Any error means
+  nothing is printed (a partial rendering looks like a complete one). Its golden outputs in `internal/join/testdata/golden` are written
+  by hand, not generated. See `docs/join.md`.
 - **Plan also judges drift and policy**, not just existence: image drift by fingerprint (`volatile.base_image`, not `image.id`,
   see `imagedrift.go`) driven by an instance's `on_image_change`, and each storage volume's declared backup policy
   (`policy.go`, `volumebackup.go`).
