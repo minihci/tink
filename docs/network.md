@@ -69,4 +69,4 @@ Declare it with the keys you care about and run `plan`: it should say `no change
 
 ## Not in this kind
 
-ACLs, forwards, zones and peers (the design note `docs/network-resources-design.md`, on branch `eval/design-notes`, covers how they would follow), `tink export` of networks, OVN, and deleting anything. Two things the design note raises are left open on purpose: whether `export` should learn networks by default or only by name, and whether a typo in an `ipv4.address` should be caught at load. Today a malformed value is rejected by Incus at apply.
+ACLs, forwards, zones and peers (the design note [network-resources-design.md](network-resources-design.md) covers how they would follow), `tink export` of networks, OVN, and deleting anything. Two things the design note raises are left open on purpose: whether `export` should learn networks by default or only by name, and whether a typo in an `ipv4.address` should be caught at load. Today a malformed value is rejected by Incus at apply.

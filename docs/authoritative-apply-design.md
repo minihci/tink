@@ -155,7 +155,7 @@ The second plan reports the one declared device that differs and says nothing ab
 
 ## Appendix: Layer 1 sizing run (2026-10-12)
 
-`UndeclaredExtras` (branch `eval/undeclared-extras`) was run, read-only, over every stack file on the evaluation host: 33 files, 104 instance
+`UndeclaredExtras` (#75) was run, read-only, over every stack file on the evaluation host: 33 files, 104 instance
 declarations. 100 of those name an instance that exists, and 83 of the 100 repeat an instance already counted (the "mirror" files are many variants
 of the same few live instances), which leaves **17 distinct live instances**: four Immich containers, mosquitto, zigbee2mqtt, frigate, the Matter
 server, the X10 bridge, three Home Assistant lab containers, three system containers, a sandbox container and a stopped test VM.
