@@ -278,6 +278,20 @@ What it taught that the design had not said:
 
 Fails closed: any error means nothing is printed, because a partial rendering looks exactly like a complete one.
 
+## Built 2026-10-14 (second step): the first renderer that writes, the dns records
+
+**[code, lab, live]** `tink join apply dns` ([join.md](join.md#applying-dns)). It was chosen because its mistake is cheap (a wrong record breaks a name, and the file reloads in seconds) and because it needs the least from Incus. Decided with it: the daemon helper is the actor that will run renderers on a timer, the role helpers only serve and hold no credential; this step is the same code run by hand, so the verbs it needs can be listed. Credentials and the authorization lab are a separate piece that this feeds ([what-tink-is.md](what-tink-is.md#open-decisions), decision 2(a)).
+
+What the lab and the build taught:
+
+1. **CoreDNS accepts one `hosts` plugin per server block.** A second one makes it refuse to start (`this plugin can only be used once per Server Block`); the lab instance crashed on it, and a crashed init looks like a hung restart. So generated and hand-written records cannot be two hosts files.
+2. **The layout that works:** the generated records are the whole of `/hosts` (hot reload, about 5 s), the platform's own static names are in the zone file (`file`, read at start), and `hosts` falls through to it. An empty generated file leaves the static names answering.
+3. **Where a name is in both, the generated one wins**, so a publish named like a platform record would take it over silently. The applier refuses a label that is already an owner name in the zone file. The same hole exists for the other renderers (an app published as `auth` would also collide in Caddy's matchers and Authelia's rules); each must learn which names are the platform's own, probably as a stamp, before it is applied.
+4. **The first run on a real platform meets a hand-written file.** The applier writes a note at the top of the file and refuses to overwrite one that lacks it unless `--adopt` is given once, so migrating cannot wipe records by accident.
+5. **A failed read is an error, never an empty file**, and the file is read back after the write; both are pinned by tests that fail when the rule is broken.
+
+Not built: stamping the declarations onto the instances (so the daemon can join from the server instead of from files), the daemon loop, and the other four renderers.
+
 ## Open questions
 
 Not decided here.

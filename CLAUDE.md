@@ -51,7 +51,9 @@ several files to see are below.
   `docs/resolver-architecture.md`.
 - **`tink join` is a pure function of the stack files it is given** (`internal/join`): it reads no server and writes nothing, and prints
   the dns records, mesh records, proxy routes, sign-on rules and ACL rules a site's `kind: publish` documents imply. Any error means
-  nothing is printed (a partial rendering looks like a complete one). Its golden outputs in `internal/join/testdata/golden` are written
+  nothing is printed (a partial rendering looks like a complete one). `tink join apply dns` (`internal/join/apply.go`) is the one thing
+  that writes: the dns helper's generated `/hosts`, through an injected `Files` interface, with refusals instead of guesses (errors,
+  zero publishes, a clash with the zone file, a file tink did not write, a failed read) and a read-back. Its golden outputs in `internal/join/testdata/golden` are written
   by hand, not generated. See `docs/join.md`.
 - **Plan also judges drift and policy**, not just existence: image drift by fingerprint (`volatile.base_image`, not `image.id`,
   see `imagedrift.go`) driven by an instance's `on_image_change`, and each storage volume's declared backup policy
