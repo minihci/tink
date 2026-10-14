@@ -346,7 +346,8 @@ func (in *Installer) spec(o InstallOptions, apiAddr, network string) *run.Spec {
 	if network != "" {
 		dev["eth0"] = map[string]string{"type": "nic", "network": network, "name": "eth0"}
 	}
-	return &run.Spec{Name: o.Name, Image: o.Image, Config: cfg, Devices: dev}
+	// The helper is created with the project's `default` profile only; its root disk goes in the creation request, so it does not depend on that profile having one.
+	return &run.Spec{Name: o.Name, Image: o.Image, Config: cfg, Devices: dev, RootDiskAtCreate: true}
 }
 
 // enrol makes the host trust the helper's own certificate. The key pair is generated inside the instance, so the private key never

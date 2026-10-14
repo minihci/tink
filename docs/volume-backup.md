@@ -343,6 +343,15 @@ backup:
 `verify: weekly` on its own is still accepted. The throwaway instance has no network and its entrypoint is
 replaced by a `sleep` so it can be exec'd into, which is why the image must be an OCI image with `sleep`.
 
+**Verify does not need a root disk in the project's `default` profile.** The throwaway instance is created with only the volume's project's `default`
+profile, and Incus needs a root disk the moment it writes the instance record. A project made with `features.profiles=true` starts with an **empty**
+`default` profile, and the first `verify` of `identity-data` in such a project failed with `No root device could be found` (2026-10-13) **[lab]**.
+Verify now reads that profile, and only if it has no root disk (a disk at `path: /`, under any device name) puts one in the creation request, on the
+pool of the volume being checked; a profile that has one is left to supply it, and nothing is added. The progress line says when the instance got its
+own. Incus takes a root disk from the creation request, as `incus init --storage` does **[code]** (`createFromImage` and the instance driver read the
+request's devices together with the profiles'). Covered by tests against a fake server that refuses an instance with no root disk as Incus does; **not
+yet run against a real server**. `tink helper install` makes its instance with the `default` profile too and now sends its root disk the same way.
+
 **The stamp.** A passing verify records `user.tink.backup.verified-at` (UTC), `verified-snapshot` and
 `verified-with` (`check` or `restore`) on the source volume, as ordinary Incus volume config. There is no
 state file of tink's own; `plan` reads these. A failed check leaves the stamp untouched, so a failed

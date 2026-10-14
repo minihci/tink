@@ -26,6 +26,26 @@ type Spec struct {
 
 	// VolumeConfig is the config a managed storage volume gets when this run has to CREATE it (one that exists is not changed). From --user.
 	VolumeConfig map[string]string
+
+	// RootDiskAtCreate sends the root disk in Devices (the disk at path /) in the creation request itself, as `incus init --storage` does, instead of
+	// leaving it for ApplyConfig. Incus needs a root disk when it writes the instance record, and by default it is sent only the profiles, so profiles that
+	// carry none (a project's empty `default`) fail with "No root device could be found". It is for instances tink makes for its own purposes (the
+	// check instance of `backup verify`, the helper). A stack's instances leave it off: `plan` warns about their profiles instead (resolve/rootdisk.go).
+	RootDiskAtCreate bool
+}
+
+// HasRootDisk reports whether devices holds a root disk: Incus's own test (a disk with path / and no source, whatever the device is called).
+func HasRootDisk(devices map[string]map[string]string) bool {
+	for _, d := range devices {
+		if isRootDisk(d) {
+			return true
+		}
+	}
+	return false
+}
+
+func isRootDisk(dev map[string]string) bool {
+	return dev["type"] == "disk" && dev["path"] == "/" && dev["source"] == ""
 }
 
 // Build translates already-parsed docker-run-style flag values (Options,
