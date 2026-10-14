@@ -135,7 +135,7 @@ Why this is the right first engine:
 on the NAS, reached over iSCSI **[docs]**; a NAS-backed pool is a different failure
 domain from Tron's own disk, but **not** off-site unless the NAS is.
 
-Tested against a TrueNAS SCALE 25.10.7 VM on Tron (stable at the time; 26 was beta),
+Tested against a TrueNAS SCALE 25.10.7 VM on Tron (stable at the time; the beta then called 26 is now 27),
 first on Incus 7.2 and then on 7.5.1 (the newest stable; 7.4 builds had already been
 removed from the package repo), with the Incus pool created by `incus storage create nas truenas source=tank/incus ...`:
 
@@ -156,14 +156,23 @@ removed from the package repo), with the Incus pool created by `incus storage cr
 3. 25.10 rewrote the query (`plugins/pool_/dataset_query_utils.py`, commit `65b75f946`, "Use truenas_pylibzfs in pool.dataset.query", present in the first 25.10 release `TS-25.10.0`). It first **renames** internal properties to bare names (`org.truenas:managedby` to `managedby`, `org.freenas:description` to `comments`, ...) and **then** filters out "internal" properties by comparing against the *original* namespaced names, so the filter matches nothing. It returned `['comments', 'incus:content_type', 'managedby']` for the same volume.
 4. The update therefore asks to `INHERIT` the bare keys `managedby` and `comments`, which ZFS does not have (it only knows the namespaced names), and `zfs_.dataset.update_zfs_object_props` rejects them with `properties.<key>: Property does not exist and cannot be inherited`.
 
-This explains every observation: it fails on originals as well as clones, it fails whether or not `--managedby`/`--comments` are passed, `dataset update --comments x` works (it does not send `user_properties`), and 25.04 is unaffected. The rename-before-filter code is **identical on `master` (checked 2026-10-06)** and on the `stable/goldeye` branch, so as far as the source shows it is unfixed. A fix would be to filter before renaming, or to filter against both name sets; it has not been tried against a patched TrueNAS. No bisecting is needed: the rewrite is in 25.10.0, so every 25.10.x is affected.
+This explains every observation: it fails on originals as well as clones, it fails whether or not `--managedby`/`--comments` are passed, `dataset update --comments x` works (it does not send `user_properties`), and 25.04 is unaffected. The rename-before-filter code was **identical on `master` (checked 2026-10-06)** and on the `stable/goldeye` branch. No bisecting is needed: the rewrite is in 25.10.0, so every 25.10.x is affected.
+
+**Upstream's answer (checked 2026-10-13): there will be no fix for 25.10.** A patch that moves the renamed properties out of `user_properties` fixed the failure on a live 25.10.7, and was proposed for `stable/goldeye` (truenas/middleware#19962) and `master` (#19963). Both were closed on 2026-10-07, unmerged:
+
+- `stable/goldeye` takes no more commits, and a change like this does not justify a new 25.10.X release.
+- `master` is not affected **[code, checked 2026-10-13]**: its `pool.dataset.update` already skips the TrueNAS-managed keys when it works out what to remove, and create skips `INHERIT`. A maintainer called the original changes intentional.
+- `stable/27` was affected and was fixed the other way round, in the update, by the same two changes (#19964, merged 2026-10-07). The create change matters: a literal `comments=INHERIT` written on create is why nearly every dataset carried a `comments` property and hit this. **No release has it yet [code, checked 2026-10-13]:** `TS-27.0.0-RC.1` (6 October) was tagged the day before the merge and still has the old code, so the fix is on the branch and expected in a later 27 build (not confirmed). TrueNAS says 27.0 final is early December 2026. Tink has not run it on a 27 host.
+- **There is no 26 line to wait for.** TrueNAS renamed the release it had been testing as 26 to 27 (RC.1, 2026-10-06). `stable/26` is a frozen branch (last commit 2026-09-30) that `stable/27` contains in full, fix included. The three 26 betas (April to August 2026) have the same unfixed code as 25.10 **[code, checked 2026-10-13]**.
+- The newest 25.10 branch, `release/25.10.8` (2026-10-10), has the same code, so a point release does not change it.
 
 What this means for the design: **the replicate and restore legs work on a NAS pool
 today; the job engine's clone-then-attach step does not**, so on a NAS pool the engine
 would have to read from a *local* clone and push to the NAS, not the other way round.
 That fits the direction anyway (copy first, engine later). It was re-checked on Incus
-7.5.1 and still fails, so treat NAS-pool cloning as unavailable until the driver or the
-ctl tool changes.
+7.5.1 and still fails, so treat NAS-pool cloning as unavailable on TrueNAS 25.10 for good:
+upstream will not fix that branch (above), so only a change in the Incus driver or the ctl
+tool, or a move to TrueNAS 27 once a build with the fix ships, changes it.
 
 Setup facts that a real deployment has to account for, all hit while building the test:
 
@@ -324,10 +333,10 @@ All **[verified]** on Tron, in a throwaway Incus project, since deleted:
 1. Tier 1's behaviour is verified end to end (snapshot taken by the Incus scheduler
    from tink-set config, correct expiry).
 2. The `truenas` driver works as a copy and restore target on a current Incus
-   **[verified]**; snapshot cloning on it does not yet.
+   **[verified]**; snapshot cloning on it does not on TrueNAS 25.10, and upstream will not fix that branch.
 3. A disk device cannot attach a snapshot: `source=<vol>/<x>` is a subpath of the live
    volume (and silently creates it). Read-only access to a point in time needs a clone
-   of the snapshot, which works on btrfs but currently fails on the `truenas` driver
+   of the snapshot, which works on btrfs but fails on the `truenas` driver on TrueNAS 25.10
    (see above).
 
 ## Phasing
@@ -369,7 +378,7 @@ Ordered so each step is useful alone, and the Incus-supported path comes first.
    - **No scheduler at this step.** `tink backup run --due` was meant to be called from cron or a timer, and `plan` warned when a copy had never run or
      was overdue, which made the missing scheduler visible instead of silent. A scheduler was built afterwards: the daemon's ([daemon-jobs.md](daemon-jobs.md)),
      which [the helper](helper.md) runs. The `--due` route and the warnings are still there.
-   **TrueNAS pools, stock 25.10.7 [verified]** (a pristine install, none of the middleware fix applied; a control confirmed it still
+   **TrueNAS pools, stock 25.10.7 [verified]** (a pristine install, without the patch proposed in truenas/middleware#19962; a control confirmed it still
    fails Incus's same-pool snapshot clone with `properties.managedby: Property does not exist and cannot be inherited`, which a patched
    25.10.7 does not):
    - Everything tink does across pools works: `backup run` from a local pool into the stock TrueNAS pool (including the Incus volume
@@ -401,10 +410,11 @@ Ordered so each step is useful alone, and the Incus-supported path comes first.
 
 - **TrueNAS target:** copy, refresh, restore and snapshot preservation work (above), and the
   clone failure has a known cause (TrueNAS 25.10's `pool.dataset.query` leaks internal user
-  properties; see the root cause above). Still open: is `--refresh` truly incremental at
-  realistic sizes; do copied snapshots carry the source's expiry; will TrueNAS fix the
-  query (or Incus work around it); and how does Incus behave at boot or mid-copy when the
-  NAS is unreachable (not tested).
+  properties; see the root cause above). TrueNAS has answered its side: no fix for 25.10, a
+  fix on its 27 branch. Still open: is `--refresh` truly incremental at realistic sizes; do
+  copied snapshots carry the source's expiry; does the clone work on TrueNAS 27 (fixed on its
+  branch, in no release yet); will Incus or `truenas_incus_ctl` work around it on 25.10; and how does Incus
+  behave at boot or mid-copy when the NAS is unreachable (not tested).
 - **Remote targets:** *resolved*: tink holds no credentials; it opens the remote from the Incus client configuration of the user
   running it (`incus remote add` did the trust). For the helper that configuration is its own, on its config volume, filled by `tink helper remote add`
   ([helper.md](helper.md#copying-to-another-incus-server)). Still open: a way to keep a tunnel up, and declaring remotes in the stack instead of by hand on
