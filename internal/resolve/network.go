@@ -85,11 +85,11 @@ func networkWanted(current, desired map[string]string) map[string]string {
 // Why: Incus applies them as a live change to its own nftables chains (acl.<bridge> and friends), not a reconfiguration of the bridge, so nothing is
 // restarted and no address, NAT or DNS moves. [lab] On 2026-10-13 an ACL was created, given a rule and attached to a bridge with running instances, and
 // its default egress action was set, with no instance restarted; the allowed path, same-bridge and outbound traffic were open afterwards and a new
-// instance on the bridge was covered with no further step (tron repo, acl-lab/acl-lab.md). Not shown by the lab, so not claimed: that no packet is
-// dropped during the change (it probed before and after), and editing the rules of an ACL that is already attached (Incus re-applies the chains of
-// every network that uses it on update, which should be the same kind of change). What an ACL does change is which traffic may cross the bridge's
-// boundary, and that is its purpose, declared in the stack, and printed by plan as a config.security.acls line; it is not a surprise side effect of
-// changing something else, which is what the guard is for. Every other key stays counted, as before.
+// instance on the bridge was covered with no further step (tron repo, acl-lab/acl-lab.md). A second run through tink added and removed rules of the
+// attached ACL, also live. Not shown, so not claimed: that no packet is dropped during a change (the lab probed before and after). What an ACL does
+// change is which traffic may cross the bridge's boundary, and that is its purpose, declared in the stack, and printed by plan as a
+// config.security.acls line; it is not a surprise side effect of changing something else, which is what the guard is for. Every other key stays
+// counted, as before.
 func isACLKey(k string) bool {
 	return k == "security.acls" || strings.HasPrefix(k, "security.acls.")
 }

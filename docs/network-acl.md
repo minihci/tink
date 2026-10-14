@@ -1,6 +1,6 @@
 # `kind: network-acl`: the firewall rules of a bridge, in the stack
 
-**Status: built and unit-tested against a fake Incus server; not yet applied by tink to a real server.** The recipe it reproduces was proven on 2026-10-13 with raw `incus` commands in a lab (the tron repo's `acl-lab/acl-lab.md`); this kind has not yet been run against that bridge. Claims are marked **[code]** (read in this repo, or in the Incus 7.4.0 source), **[docs]** (upstream Incus documentation), **[lab]** (seen live, with raw `incus`) or **[hypothesis]**.
+**Status: built, unit-tested against a fake Incus server, and run live once.** On 2026-10-13 the recipe below was first proven with raw `incus` commands in a lab, and then declared as a stack and applied by this kind from a Mac with `--remote` to the same lab bridge: plan, apply, a second plan of `no changes`, the same behaviour as the hand-run recipe, and rule drift found and converged (see [What has been run](#what-has-been-run)). The tron repo's `acl-lab/acl-lab.md` has both runs. Not yet run live: a default of `reject`, an ACL on a NIC, and the warning for an ACL that exists nowhere. Claims are marked **[code]** (read in this repo, or in the Incus 7.4.0 source), **[docs]** (upstream Incus documentation), **[lab]** (seen live) or **[hypothesis]**.
 
 ## What it is for
 
@@ -97,7 +97,7 @@ A name the stack does **not** declare is allowed, since it may exist on the serv
 
 Changing `security.acls` or `security.acls.default.*` on a bridge that instances use is **not counted as disruption**: it needs no `allow_disruption: true`, and does not make the plan BLOCKED. Every other key of a bridge is counted as before, and an edit that changes both is still blocked for the other key.
 
-The reason: Incus applies these as a live change to its own firewall chains, not a reconfiguration of the bridge, so no address, NAT or DNS moves and nothing restarts. **[lab]** An ACL was created, given a rule, attached to a bridge that had running instances, and the default egress action was set, all with the instances running and none restarted; afterwards the allowed path was open, same-bridge and outbound traffic were open, and an instance added later was covered with no step taken for it. The same keys were unset at the end, also live. Two things the lab did not do: it probed before and after each change and not during it, so that no packet is dropped *while* the change is made is **[hypothesis]**; and it did not edit the rules of an ACL that was already attached (Incus re-applies the chains of every network that uses an ACL when the ACL is updated **[code]**, so this should be the same kind of change, untried). What an ACL *does* change is which traffic may cross the bridge, and that is its purpose: it is in the stack, and `plan` prints it as a `config.security.acls` line. A default of `reject` on a bridge whose callers were never listed will cut them off; that is the policy working, and `plan` is where to read it **[hypothesis: the lab set the default egress to allow, and rejecting by default was not tried]**.
+The reason: Incus applies these as a live change to its own firewall chains, not a reconfiguration of the bridge, so no address, NAT or DNS moves and nothing restarts. **[lab]** An ACL was created, given a rule, attached to a bridge that had running instances, and the default egress action was set, all with the instances running and none restarted; afterwards the allowed path was open, same-bridge and outbound traffic were open, and an instance added later was covered with no step taken for it. The same keys were unset at the end, also live. The second run, through this kind, also added and removed rules of the ACL while it was attached to the bridge, all live, and the blocked and allowed paths behaved as the rules said straight after each apply **[lab]** (Incus re-applies the chains of every network that uses an ACL when the ACL is updated **[code]**). Still not shown: the runs probed before and after each change and not during it, so that no packet is dropped *while* a change is made is **[hypothesis]**. What an ACL *does* change is which traffic may cross the bridge, and that is its purpose: it is in the stack, and `plan` prints it as a `config.security.acls` line. A default of `reject` on a bridge whose callers were never listed will cut them off; that is the policy working, and `plan` is where to read it **[hypothesis: the lab set the default egress to allow, and rejecting by default was not tried]**.
 
 ## What `plan` and `plan apply` do
 
@@ -114,13 +114,13 @@ The reason: Incus applies these as a live change to its own firewall chains, not
   ```
 
   A rule is *added* (its index in your list), *removed* (its index in the live list), or *changed* (the fields that differ, at its index in your list). Rules that match are found as a longest common subsequence, so inserting one rule in the middle is one `add`, and not a change to every rule after it. Indices count from 0, as Incus's own error messages do.
-- **Never deletes an ACL.** An ACL the stack no longer declares stays, and the extras report ([`plan-extras.md`](plan-extras.md)) covers instances only, so it is not mentioned either.
+- **Never deletes an ACL, but does converge its rules.** Two different things. The ACL *object* is never deleted: one the stack no longer declares stays, and the extras report ([`plan-extras.md`](plan-extras.md)) covers instances only, so it is not mentioned either. The *rules inside* an ACL the stack declares are converged, not just reported: a rule you add is added, and a rule that is live and not in the stack, or that you drop from the stack, is **removed** on apply **[lab]**. Removing a rule from the YAML therefore removes it from the firewall.
 
 ### Rules are a list, in order
 
 - **The order you write is the order sent and stored**, and it is compared as an ordered list. The same rules in another order are one `update`, reported as `ingress: rules reordered (the same 2; ...)`.
 - **A reorder does not change filtering.** Incus applies `drop` rules, then `reject`, then `allow`, whatever the list order, and then the default for the direction **[docs]**; reject rules still came before an allow-everything rule when it was listed last **[verified]** ([`network-resources-design.md`](network-resources-design.md) appendix). The order is kept because the stored list is what `incus network acl show` prints, and a diff against the YAML should read the same; and because a rule in state `logged` takes its log name from its index **[code]**.
-- **A direction you declare is the whole list for it.** A live rule the stack does not list is removed on apply: a stale `allow` left in a firewall is the drift this kind exists to catch. A direction you leave out (no `ingress:` at all) is **not managed** and its live rules are untouched; `ingress: []` declares "none". This is a different thing from deleting an ACL, which tink does not do.
+- **A direction you declare is the whole list for it.** A live rule the stack does not list is removed on apply: a stale `allow` left in a firewall is the drift this kind exists to catch. A direction you leave out (no `ingress:` at all) is **not managed** and its live rules are untouched; `ingress: []` declares "none". This is a different thing from deleting an ACL, which tink does not do. **[lab]** A rule added to a live ACL by hand was named by `plan` as `remove`, apply removed it, and the next plan said `no changes`.
 - **A rule has no identity of its own** in Incus, so there is no "this rule changed" beyond the fields that differ at a position.
 
 ## Checked when the file is loaded
@@ -144,6 +144,22 @@ Addresses and ports are **not** checked: a typo in a CIDR is reported by Incus w
 An ACL is a **server-global** object here, exactly like `kind: network`. **[code]** Incus resolves the project an ACL lives in the way it does for a network: the default project, unless the project asked about has `features.networks`, which tink does not manage. So the ACL for a bridge is in the default project whatever project its instances are in, and an instance in any project can name it.
 
 So `project:` on a `kind: network-acl` is a load error, not something silently ignored, and the stack's default project (`project:` on `kind: stack`) is never given to an ACL (nor to a network).
+
+## What has been run
+
+**[lab]** 2026-10-13, tink `df6b15c` run from a Mac against the lab host with `--remote`, on the lab bridge `svclab0` (which had running instances on it), with the stack in the recipe section (the allowed source was the lab's ingress helper). The checks and the stack are in the tron repo (`acl-lab/acl-kind.yaml`, `acl-kind-checks.sh`; the scorecard is `acl-lab.md`, "Second run").
+
+| Check | Observed |
+|---|---|
+| `plan` | `network-acl/svclab0-in: would create` at level 0, `network/svclab0: would update` (the two `security.acls*` keys) at level 1; no BLOCKED, no `allow_disruption` |
+| `plan apply` | created the ACL, then updated the bridge; 0 blocked, 0 failed |
+| `plan` again | `no changes` on both |
+| behaviour | the same as the hand-run recipe: the allowed source open, two sources on another bridge blocked after about 1.1 s, a source on the same bridge open, and the path through the reverse proxy and the sign-in service kept working |
+| drift: a rule added by hand | `plan` named it (`ingress rule 1 (in the live list): remove (...)`); apply removed it; the blocked source was blocked again; `plan` said `no changes` |
+| a rule added to the stack | `plan`: `ingress rule 1: add (...)`; apply added it, in order; `plan` said `no changes` |
+| that rule dropped again | apply removed it: **the ACL's rule list is converged, and the ACL object is not deleted** |
+
+The lab cleaned up by hand afterwards (unset the two keys on the bridge, deleted the ACL), because tink does not delete.
 
 ## Not in this kind
 
