@@ -454,6 +454,22 @@ func TestPlanPrintsOneChangePerLine(t *testing.T) {
 	}
 }
 
+// A note is a fact about what apply will do, printed after the changes and the warnings, and as a note: nothing here is wrong.
+func TestPlanPrintsNotesAfterWarnings(t *testing.T) {
+	var out bytes.Buffer
+	printPlanned(&out, resolve.PlannedResource{
+		Resource: resolve.Resource{Kind: resolve.KindInstance, Name: "ha"}, Action: resolve.ActionCreate,
+		Warnings: []string{"w"},
+		Notes:    []string{"file/ha-yaml: not placed before the first start, because /media is a mounted host directory (device media); it is written right after the start, so the app may read its config first"},
+	})
+	want := "  instance/ha: would create\n" +
+		"      warning: w\n" +
+		"      note: file/ha-yaml: not placed before the first start, because /media is a mounted host directory (device media); it is written right after the start, so the app may read its config first\n"
+	if out.String() != want {
+		t.Errorf("got:\n%s\nwant:\n%s", out.String(), want)
+	}
+}
+
 func TestHelperStatusSaysWhenInstancesStillUseTheOldIngressKeys(t *testing.T) {
 	st := goodStatus(func(s *helper.Status) {
 		s.Ingress = &helper.IngressState{OK: true, At: helperNow.Add(-time.Minute), Legacy: 2}

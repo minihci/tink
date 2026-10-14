@@ -415,7 +415,8 @@ Creating an instance used to be: create it, apply its config, **start it**; and 
 An instance that has been created and never started takes a file push, so **creating an instance now places its eligible files after configuring it and before starting it**:
 
 - **Which files:** those that target a container instance this stack declares, whose `depends_on` names only that instance or other such files (an exec, or anything else, makes a file wait for its own turn, and so do the files that wait for it). A virtual machine keeps the old behaviour: it needs its agent running to take a file. They are placed in declaration order.
-- **Nothing else changes.** The file resources still run in their own level. Each is planned immediately before it is applied, finds its content already there, and says `no changes`: no second push and, for `restart: true`, no restart of the instance that has just started with the file. `plan` is unchanged (`would create`).
+- **Nothing else changes.** The file resources still run in their own level. Each is planned immediately before it is applied, finds its content already there, and says `no changes`: no second push and, for `restart: true`, no restart of the instance that has just started with the file. `plan` still says `would create`, plus a note for a file a mount keeps from the first start (next bullet).
+- **A mount hides the rootfs.** A file at or below the mount path of a disk device (a volume at `/config`, a host directory) would land underneath the mount and be hidden from the first start. One under a custom volume's mount is written into the volume instead; one under a host directory, or at the mount path itself, is left for after the start, and the apply and the plan say so: `file/ha-yaml: not placed before the first start, because /media is a mounted host directory (device media); it is written right after the start, so the app may read its config first`. See "Files under a mount" in [first-start-files-design.md](first-start-files-design.md); the volume write was run live on 2026-10-13 (a failing write, and a volume attached before, are still only covered by fakes).
 - **It never adds a way to fail.** A push that fails (a directory that is not there) is skipped and the instance is started anyway; the file resource then fails in its own turn with the message it has always had.
 - **It is said:** `instance/headscale: created`, then `instance/headscale: placed 2 file(s) before its first start: file/headscale-policy, file/headscale-config`, naming only the files that were placed.
 - Only for an instance **created** by the apply. An existing instance, running or stopped, is handled as before.
@@ -449,3 +450,31 @@ check_output:
 - **`plan` says why, never what:** `would run: [...] (the output of [...] differs from file/headscale-policy)` or `(the check [...] exited 1)`. It does not print the content.
 - **It heals from drift.** A policy set by hand is noticed by the next `plan` and put back by the next `apply`, which a remembered trigger hash cannot do. That is why a live check stays the preferred guard.
 - `check`, `check_output` and `triggers` are mutually exclusive, and `check_output` is exec-only.
+
+
+## Update, 2026-10-13: `plan` warns when an instance's profiles give it no root disk
+
+Creating an instance sends Incus only its profiles and the ephemeral flag; its own config and devices are applied after it exists (`run.Create`, then `createInstance`). Incus needs a root disk to write the instance record and can take one only from the profiles, so an instance whose profiles carry no `disk` device at `path: /` cannot be created, and a root disk declared on the instance itself comes too late to help. A project made with `features.profiles=true` has an **empty** `default` profile, so an instance that lists no `profiles:` fails the same way. The error names none of this (`Failed getting root disk: No root device could be found`), and the DNS lab met it on 2026-10-13, where the first two applies of a one-container stack failed until a `kind: profile` with a root disk was declared and listed under `profiles:`.
+
+`plan` and `plan apply` now warn on the instance, saying what is missing, why declaring it on the instance does not work, and the fix:
+
+```yaml
+kind: profile
+name: base
+devices:
+  root:
+    type: disk
+    path: /
+    pool: default
+---
+kind: instance
+name: dns
+profiles: [base]       # without a profile like this, apply fails with "No root device could be found"
+```
+
+- **Which profiles:** the instance's `profiles:` list, or the project's `default` when it lists none (Incus's own rule). Each is read from the stack's declaration and from the server, since applying a declared profile only adds the devices it names. One profile with a root disk, under any device name, is enough.
+- **Conservative:** a profile that cannot be read, or that exists neither in the stack nor on the server (Incus reports that on its own), means no warning. A later profile that overrides an earlier root device is not modelled, so that case is not warned about either.
+- **A warning, not an error**, for containers and virtual machines alike, and, like the [OCI NIC warning](oci-network.md), about the stack: it appears whether or not the instance exists yet.
+- **Not covered:** `tink run` creates an instance the same way and has no such check.
+
+See `internal/resolve/rootdisk.go`.

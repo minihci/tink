@@ -86,6 +86,10 @@ func (s *exportServer) GetInstance(name string) (*api.Instance, string, error) {
 	return s.inst, "", nil
 }
 
+func (s *exportServer) GetProfile(name string) (*api.Profile, string, error) {
+	return rootProfile(name), "", nil
+}
+
 func (s *exportServer) GetProject(name string) (*api.Project, string, error) {
 	return &api.Project{Name: name, ProjectPut: api.ProjectPut{Config: map[string]string{"features.profiles": "false"}}}, "", nil
 }

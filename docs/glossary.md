@@ -39,7 +39,11 @@ tink fills gaps; it does not replace what it builds on. It gives a home or self-
 | BLOCKED | a plan result for something tink refuses to touch, with the reason | yes |
 | disruption guard | a change that could interrupt running instances is blocked unless the resource says `allow_disruption: true`. Attaching or changing an ACL (`security.acls*` on a network) is not counted | yes (networks) |
 | extras | things in the project that the stack does not declare; reported, never deleted | yes |
-| helper | an Incus instance that runs `tink daemon run` (backup scheduler, job executor, optional ingress reconcile); its certificate has the reach of root on the host | yes |
+| role | a job tink needs done that more than one technology can do (ingress, identity, single sign-on, mesh, backup) | design word; not a field in the YAML |
+| engine | the technology that does a role's job today (Caddy, LLDAP, Authelia, Headscale) | design word |
+| helper | a container Incus keeps running for tink that provides one role's capability. Always named by its role: *ingress helper*, *dns helper*. Incus starts it at boot, so tink writes no init scripts. One container per role ([helpers](what-tink-is.md#helpers)) | partly: only the daemon helper exists |
+| daemon helper | the helper whose engine is tink itself: it runs `tink daemon run` (backup scheduler, job executor, optional ingress reconcile). Its certificate has the reach of root on the host. `tink helper ...` and [helper.md](helper.md) call it "the helper" | yes |
+| platform stack | a stack that declares a site's helpers, each from its upstream image pinned by digest. One per Incus server. Starts as a template you copy and own | no (proposed) |
 | ingress | the reverse proxy in front of apps, and the routes tink renders for it from `user.tink.ingress.*` on the apps (the Kubernetes sense of the word) | yes |
 | backup target, copy, restore point | where copies go, a copy made there, a verified copy you can restore from | yes |
 | secret | `${secret:NAME}` in an instance's `environment.*`, encrypted with an age identity | yes |
@@ -55,8 +59,8 @@ These come from a design discussion; there is no design note yet, and the names 
 
 | Word | Meaning |
 |---|---|
-| control plane | the coordination server (Headscale by default): who is in the network, their keys, the policy. It carries no traffic. Its own stack, on a host with a public name |
-| gateway | a container tink creates on a bridge that joins that bridge to the network and advertises routes to the apps that offer a port |
+| control plane | the coordination server (Headscale by default): who is in the network, their keys, the policy. It carries no traffic. It is something the gateway *needs*, not part of the gateway: tink's default is a Headscale helper, but the gateway needs only the server's address and a key, so Tailscale's hosted service or someone else's Headscale also works. Its own stack, on a host with a public name |
+| gateway | the mesh helper: a container tink creates on a bridge that joins that bridge to the network and advertises routes to the apps that offer a port |
 | offer | an app says it can be reached: `user.tink.<name>.expose: "8123"`. It grants nothing |
 | grant | the site says who may reach an offer: `allow: group:family`. This is what is reviewed. It is also Tailscale's and Headscale's word for the same idea (who may reach what), which is deliberate: Headscale recommends grants over the older ACLs |
 | relay | an optional component of the control plane that carries encrypted packets when two peers cannot connect directly. Off by default; the public relays are used |
@@ -68,6 +72,7 @@ These come from a design discussion; there is no design note yet, and the names 
 |---|---|---|
 | ingress | tink: the reverse proxy. Incus network ACLs also have `ingress` and `egress` rules (a direction of traffic, from the NIC's point of view) | `kind: network-acl` uses Incus's meaning only, and says so ([network-acl.md](network-acl.md)); `ingress` on its own means the proxy everywhere else |
 | overlay | in Incus and Docker an *overlay network* is OVN or VXLAN networking. tink says it does not manage OVN | decide before the kind is built; `mesh` and `vpn` do not clash |
+| helper | ordinary English, and other tools use it for other things (Docker's credential helpers, Helm's helper templates) | always say *\<role\> helper*: *ingress helper*, *daemon helper*. The bare "the helper" is ambiguous |
 | project | Compose's project is tink's stack; Incus's project is Incus's | use *stack* for the tink unit (already the case) and never *project* for it |
 | profile | Compose profiles are optional service groups; Incus profiles are reusable config | tink follows Incus; mention Compose's meaning where Compose users arrive |
 | volume | Compose's *volume* is tink's `storage-volume` | the kind is spelled `storage-volume`, as in Incus |

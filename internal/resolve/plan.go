@@ -41,6 +41,8 @@ type PlannedResource struct {
 	Drift    []string
 	Blocked  []string
 	Warnings []string
+	// Notes: facts about what apply will do that are not problems, such as a file a mount hides from the instance's first start. Informational only.
+	Notes []string
 	// Extras: for an instance that exists and was planned WithExtras, what it carries that the stack does not declare. Informational only: it
 	// never changes the action, and nothing is removed because of it. Nil when not asked for or not an instance.
 	Extras *Extras
@@ -143,6 +145,7 @@ func planKind(server incus.InstanceServer, r Resource, opts PlanOptions) (Planne
 			return p, err
 		}
 		p.Warnings = append(p.Warnings, ociNICWarnings(r, opts.imageRemotes(), opts.profiles)...)
+		p.Warnings = append(p.Warnings, rootDiskWarnings(s, r, opts.profiles)...)
 		p.Warnings = append(p.Warnings, aclReferenceWarnings(s, r, opts.acls)...)
 		return p, nil
 	case KindFile:

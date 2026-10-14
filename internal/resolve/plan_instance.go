@@ -35,8 +35,8 @@ type PlanOptions struct {
 	// stack is the name the stack gives itself (kind: stack), stamped on the storage volumes it applies. Set with
 	// targets, from the full stack, for the same reason.
 	stack string
-	// profiles are the WHOLE stack's profile resources, by name, for the NIC devices an instance gets from a profile (ocinic.go). Set with targets,
-	// from the full stack, because a profile and the instance that uses it land in different levels.
+	// profiles are the WHOLE stack's profile resources, by name, for the devices an instance gets from a profile (the NIC check in ocinic.go, the
+	// root-disk check in rootdisk.go). Set with targets, from the full stack, because a profile and the instance that uses it land in different levels.
 	profiles map[string]Resource
 	// acls are the names of the WHOLE stack's network-acl resources, so a network, profile or instance that names an ACL is only warned about
 	// when the stack does not declare it (networkacl.go). Set with targets, from the full stack, because an ACL and what names it land in
@@ -147,7 +147,7 @@ func planInstance(server incus.InstanceServer, r Resource, opts PlanOptions) (Pl
 		return PlannedResource{}, fmt.Errorf("reading the live instance: %w", err)
 	}
 	if !found {
-		return PlannedResource{Resource: r, Action: ActionCreate}, nil
+		return PlannedResource{Resource: r, Action: ActionCreate, Notes: firstStartNotes(server, r, opts)}, nil
 	}
 	changes := diffConfig(current.Config, r.Config, r.SecretKeys)
 	changes = append(changes, diffDevices(current.Devices, r.Devices)...)
