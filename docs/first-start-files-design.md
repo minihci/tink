@@ -1,6 +1,6 @@
 # Design: put an instance's files in place before its first start
 
-**Status: a design note, 2026-10-13. Built** (#78) and measured in the lab (see "Measured"). It fixes a race found in the Headscale lab ([what-tink-is.md](what-tink-is.md), "Where it is strong, and where it is weak"). A gap found in the next lab, files under a disk-device mount, is closed by "Files under a mount" below: **built, and run against a real server on 2026-10-13** (the Home Assistant stack that found it); two cases are still only covered by fakes, listed there. Claims are marked **[lab]**, **[code]**, **[proposed]** or **[verify]**.
+**Status: a design note, 2026-10-13. Built** (#78) and measured in the lab (see "Measured"). It fixes a race found in the Headscale lab ([what-tink-is.md](what-tink-is.md), "Where it is strong, and where it is weak"). A gap found in the next lab, files under a disk-device mount, is closed by "Files under a mount" below: **built, and run against a real server on 2026-10-13** (the Home Assistant stack that found it); two cases are still only covered by fakes, listed there. The same hazard on a later *update*, while the instance is not running, was found in a third lab and is handled by "Later applies: the instance is not running" below: **built, and so far run only against fakes**. Claims are marked **[lab]**, **[code]**, **[proposed]** or **[verify]**.
 
 ## The problem
 
@@ -71,7 +71,7 @@ With the fix each apply said `placed 2 file(s) before its first start`, the file
 
 ## Files under a mount
 
-**Added 2026-10-13.** Status: built, covered by tests with fakes, and run live the same day on the lab stack that found the gap (see "Run live"). **Not yet run on a real server:** a write into a volume that *fails* (the failure sentence), and a volume that has been attached before (the owner it gets from `volatile.idmap.last`).
+**Added 2026-10-13.** Status: built, covered by tests with fakes, and run live the same day on the lab stack that found the gap (see "Run live"). **Not yet run on a real server:** a write into a volume that *fails* (the failure sentence), and a volume that has been attached before (the owner it gets from `volatile.idmap.last`). Everything from here to "Later applies" is about an instance's *first* start; a file's later updates are the next section.
 
 ### The gap **[lab]**
 
@@ -125,6 +125,66 @@ On the lab host (project `e2e-lab`), the instance `ha-e2e` (Home Assistant 2026.
   The count is of files in place, and a skipped file is never in it. A write into a volume that failed is said the same way, with its cause: `... not placed before the first start, because writing /sub/x into volume default/vol failed: ...`.
 - Plan, under the `would create` line of the instance: the same sentence for each such file, as a `note:`. Plan can know what a mount hides; whether a write into a volume works it finds out when it happens. A file that will be written into a volume gets no note.
 
+### Later applies: the instance is not running
+
+**Added 2026-10-13.** Status: **built and covered by tests with fakes only; not yet run against a real server.** What is read from the server's source is marked **[code]**; the build to verify it with is named in the pull request.
+
+#### The gap **[lab]**
+
+Found in the platform lab (tron repo, `platform/LOG.md`, section P2b, "Found" items 2 and 3). The sign-on helper's Authelia crash-looped on a bad config. Incus listed the container as `Running`, with a dead init (`Invalid PID -1`), and would not stop it. tink's corrected `configuration.yml` was pushed to the container and landed in `containers/tink_sso/rootfs/config/` (mtime 19:50:23), **under** the `/config` volume mount; the volume kept the old file (mtime 19:46:05). tink printed `file/sso-config: created`, the application kept reading the old file, and the way out was deleting the stateless instance by hand and letting tink recreate it with the file written into the volume first. It is the first-start hazard again: the instance's file API writes the root filesystem beneath the mount path whenever the mount is not in place, and it is not in place whenever the instance has no init, not only before the first start. The same applies to reading: `plan` compared the declared content with the copy beneath the mount, so it could say `no changes` about a file the application never sees.
+
+#### What "not running" means **[code]**
+
+Decided from the instance's *state* (`GET /1.0/instances/NAME/state`, `incusapi.InstanceRunning`), not the status string, which is what the lab showed to be wrong. The instance is **not running** when:
+
+| the state says | counts as |
+|---|---|
+| a status other than `Running` (or `Ready`, which is `Running` plus the ready signal): `Stopped`, `Frozen`, `Error`, `Starting`, … | not running |
+| `Running` with a pid of 0 or less | not running: no usable init |
+| the call itself fails with a 500 whose message says `Invalid PID` | not running: no usable init |
+| `Running` with a pid above 0 | **running** |
+| any other failure (403, another 500, a dropped connection) | **an error**: the plan or the apply of that file fails with the cause, nothing is guessed |
+
+The third row is the one the lab actually hit. The pinned server source (`incus` v7.4.0, `driver_lxc.go` `renderState`) asks for the init's start time of a `Running` container, and `driver_common.go` `processStartedAt` fails with `Invalid PID %d` for a pid below 1; the state handler turns that into a 500. So for a container whose init has died the state call *fails*, rather than returning a document with `pid: -1`; the second row is there for a server that does answer with one. **[verify]** that the real daemon answers that way (the lab log only has the message).
+
+The state is asked **only for a file under a mount**. A file outside every mount is read and written through the instance's own file API without any extra call but one read of the instance, and a virtual machine keeps the instance's own file API in every case (it takes no push before its agent runs anyway, so this change adds nothing for it). The mounts are those of the **live** instance (its expanded devices, which include its profiles' disks), picked by the same code as the first start (`mountsFromDevices`, shared with `mountsOf`): `type: disk` with a `path`, the root disk excluded, the deepest mount deciding, a custom volume told from a host directory by its `source`. An instance that does not exist yet is not under any mount; the file plans as a create as before.
+
+#### What is done
+
+| the file is | the instance is running | the instance is **not** running |
+|---|---|---|
+| outside every mount | its own file API | its own file API (unchanged) |
+| under a **custom volume** mount | its own file API (it sees the mount) | **read from, compared in, and written into the volume**: the same read-compare-write-if-different as the first start, mode `0644`, the owner the client defaults give, no parent directories created |
+| under a **host directory** mount, a disk that is not a plain volume, or *is* the mount path | its own file API | **not pushed**: `DEFERRED`, with a warning; the next apply that finds the instance running writes it |
+
+`plan` reads where `apply` will write, so it no longer says `no changes` or `would update` from a place the application never sees: for a volume file it reads the volume's copy, and for a deferred file it says it did not look. The file's `no changes` in an apply is therefore a statement about the volume when the instance is not running, and the line below it says so.
+
+#### What is said
+
+- Volume, plan (a `note:` under the file) and apply (a line after `created`, `updated (...)` or `no changes`):
+  `instance sso is not running (its status is Stopped), so /config/configuration.yml is read from and written into volume default/sso-data, where the app finds it once the instance runs; pushed into the instance it would land beneath the /config mount (device config)`.
+  For the dead init the parenthesis reads `Incus lists it as Running but cannot find its init process: Invalid PID -1` (or `... reports no init process (pid -1)` when the server answers with a document).
+- Host directory, plan (`file/NAME: DEFERRED`, then a `warning:`) and apply (the same warning, then `file/NAME: deferred until the instance is running (see the warning above)`):
+  `not written, because instance ha is not running (its status is Stopped) and /media/list.txt is at or under /media, a mounted host directory (device media): pushed now it would land beneath the mount, where the app never sees it, so it is left for the next apply that finds the instance running`.
+- A deferred file **does not fail the apply** and is not `BLOCKED`: the exit status is unchanged and the summary line gets `, N deferred` at its end, only when there is one. This is deliberate, and a decision to revisit: the apply's promise that an exit status of 0 means converged does not hold for a deferred file. Making it count as blocked is one line (`outDeferred` to `outBlocked` in `applyOne`).
+- If the instance's state changes between the plan and the push of one file, so that the push finds a mount it must not push beneath, it fails with that cause and the advice to run the apply again. It never pushes beneath the mount.
+
+#### `restart: true` is unchanged **[code]**
+
+`restart` fires after a write that was made, exactly as after a push: `run.EnsureRunning` asks for a *restart* when Incus lists the instance as `Running` and a *start* otherwise. So after a write into the volume of a **stopped** instance the instance is **started** (as today, after a push into a stopped instance), and for the **dead-init** instance a restart is asked for, which the lab says Incus may refuse ("would not stop it even with `boot.autorestart` off"); `EnsureRunning` then gives up after five attempts and the apply fails, with the file already in the volume. Nothing about when a restart happens was changed, and a file that was already right in the volume plans as `no changes` and restarts nothing.
+
+#### Tests
+
+Against fakes (`filemount_test.go`, `state_test.go` in `incusapi`): the state decision (stopped, frozen, `Running` with pid -1, the state call failing with `Invalid PID -1`, `Ready`, running, and every other failure as an error); the target of a file for each (a volume mount, a host directory, the mount path itself, nested mounts, a root-filesystem file, a name that only starts like the mount path, a virtual machine, an instance that does not exist) with how often the state is asked; `plan` reading the volume when not running (update, create and no changes, with a stale copy beneath the mount that would give the wrong answer) and the instance when running; the deferred warning with the file, the device, the mount and why; `pushFile` writing where the decision says, and its restart; the whole `applyOne` output; the summary. Each was checked to fail with its piece of the change taken out.
+
+**[verify]** against a real server, none of it yet run:
+
+- that Incus answers the state call of a `Running` container with a dead init with a 500 `Invalid PID -1` (read from the source, seen in the lab only as the message);
+- that the volume file API writes into a volume that a `Running` container with a dead init still has attached, and that the application then reads the new file after a start;
+- the owner a file overwritten that way gets (the first-start section's open case of a volume attached before, `volatile.idmap.last`, applies here too);
+- what `restart: true` does on such an instance (above);
+- the wording, in a real plan and a real apply.
+
 ### Tests
 
 The selection against a table (a file under a volume mount, the mount path itself, `/etc/caddy/Caddyfile` next to a `/config` mount, the root disk, a device from a declared profile, a profile that cannot be read, `/configuration` against `/config`, nested mounts, a host directory, a virtual machine, a file that waits for an exec, a file that waits for a skipped one); the profile lookup (declared first, then the server, a failing server is "cannot be read"); `placeVolumeFile` against a fake server (absent, already right, different, a read that fails, a directory in the way, a missing parent); the sequence with the steps `createInstance` uses; the apply and plan sentences; the `note:` line of `plan`.
@@ -136,4 +196,5 @@ A virtual machine's files; files that wait for an exec; an option to leave an in
 ## Open questions
 
 1. Whether `plan` should say that a file will be placed with its instance. It says `would create` today, which is true; the difference is only in the apply. It does now say it for a file a mount keeps from the first start, because there the plan and the old behaviour part ways.
-2. Whether the same placing should apply when an existing but *stopped* instance is started by an apply. Today that case already works, since a stopped instance takes the push.
+2. ~~Whether the same placing should apply when an existing but *stopped* instance is started by an apply. Today that case already works, since a stopped instance takes the push.~~ It did not work for a file under a mount, and the platform lab showed it: see "Later applies: the instance is not running". A stopped instance still takes a push for a file outside every mount.
+3. Whether a deferred file should count as not converged (exit status, `BLOCKED`) rather than as a warning. See "Later applies".

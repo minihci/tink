@@ -12,6 +12,9 @@ package resolve
 // the rootfs. If the mount is a custom storage volume, the file is written into the volume itself instead (Incus has a file API for volumes, and the
 // volume exists by then: the instance waits for it), which is exactly where the started instance finds it. Any other mount (a host directory, a disk that
 // is not a plain volume) is left to the file's own turn after the start, and the apply and the plan say so.
+//
+// This file is about the first start. The same hazard returns on a later update while the instance is not running; filemount.go deals with that, with the
+// helpers here (mountsFromDevices, readVolumeFile, placeVolumeFile).
 
 import (
 	"fmt"
@@ -94,7 +97,12 @@ func mountsOf(inst Resource, profiles profileDevices) []mount {
 	for name, d := range inst.Devices {
 		devices[name] = d
 	}
+	return mountsFromDevices(devices)
+}
 
+// mountsFromDevices lists the mounts among the devices an instance has, deepest path first. mountsOf works the devices out for an instance that is not
+// there yet; for one that is, the server has already done it (its expanded devices), and updating a file under a mount (filemount.go) takes them from there.
+func mountsFromDevices(devices map[string]map[string]string) []mount {
 	var out []mount
 	for name, d := range devices {
 		if d["type"] != "disk" {
@@ -286,6 +294,28 @@ func (p *placer) outcome(placed []string) firstStartOutcome {
 	return out
 }
 
+// readVolumeFile reads the file at rel (relative to the volume's root, with its leading slash) in the custom volume m names, on a server already scoped to
+// the volume's project. found is false when the volume has no such file; a directory in its place, or any failure other than absence, is an error.
+func readVolumeFile(s incus.InstanceServer, m mount, rel string) (content string, found bool, err error) {
+	vol := m.Pool + "/" + m.Volume
+	rc, _, found, err := incusapi.LookupVolumeFile(s, m.Pool, m.Volume, rel)
+	if err != nil {
+		return "", false, fmt.Errorf("reading %s in volume %s failed: %w", rel, vol, err)
+	}
+	if !found {
+		return "", false, nil
+	}
+	if rc == nil {
+		return "", false, fmt.Errorf("%s in volume %s is a directory", rel, vol)
+	}
+	b, err := io.ReadAll(rc)
+	_ = rc.Close()
+	if err != nil {
+		return "", false, fmt.Errorf("reading %s in volume %s failed: %w", rel, vol, err)
+	}
+	return string(b), true, nil
+}
+
 // placeVolumeFile writes f's content to its path inside the custom volume mounted over it: the same file resource, converged, not a seed. It reads what
 // the volume holds and writes only when that differs, so a file already right is left untouched. It writes as placeFile does (mode 0644, owner as the
 // client's defaults give) and creates no directories: the parent must be in the volume already. The path is relative to the volume's root.
@@ -294,22 +324,12 @@ func placeVolumeFile(server incus.InstanceServer, f Resource, m mount) error {
 	rel := m.inVolume(path.Clean(f.Path))
 	vol := m.Pool + "/" + m.Volume
 
-	rc, _, found, err := incusapi.LookupVolumeFile(s, m.Pool, m.Volume, rel)
+	current, found, err := readVolumeFile(s, m, rel)
 	if err != nil {
-		return fmt.Errorf("reading %s in volume %s failed: %w", rel, vol, err)
+		return err
 	}
-	if found {
-		if rc == nil {
-			return fmt.Errorf("%s in volume %s is a directory", rel, vol)
-		}
-		current, err := io.ReadAll(rc)
-		_ = rc.Close()
-		if err != nil {
-			return fmt.Errorf("reading %s in volume %s failed: %w", rel, vol, err)
-		}
-		if string(current) == f.Content {
-			return nil
-		}
+	if found && current == f.Content {
+		return nil
 	}
 
 	err = s.CreateStorageVolumeFile(m.Pool, "custom", m.Volume, rel, incus.InstanceFileArgs{

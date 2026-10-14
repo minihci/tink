@@ -27,6 +27,10 @@ const (
 	ActionRebuild
 	// ActionBlocked: differences exist that apply will deliberately not fix.
 	ActionBlocked
+	// ActionDeferred: apply leaves this resource alone this time, on purpose, and that is not a failure. It is a file whose instance is not running and
+	// whose place is a mount that only a running instance can take it into (filemount.go). Its warning says why; the next apply that finds the
+	// instance running writes it. Neither "no changes" (nobody looked in the right place) nor blocked (it does not fail the apply).
+	ActionDeferred
 )
 
 // PlannedResource is one resource's computed action, with human-readable
@@ -149,7 +153,7 @@ func planKind(server incus.InstanceServer, r Resource, opts PlanOptions) (Planne
 		p.Warnings = append(p.Warnings, aclReferenceWarnings(s, r, opts.acls)...)
 		return p, nil
 	case KindFile:
-		return planFile(s, r)
+		return planPlacedFile(s, r)
 	case KindIncus:
 		return planIncus(r)
 	case KindImage:
@@ -218,7 +222,8 @@ func planStorageVolume(server incus.InstanceServer, r Resource, env volumeEnv) (
 // planFile reads the file's actual current byte content from inside the
 // target instance and compares it directly -- the same live-diff
 // principle as every other kind here, just against instance-file
-// content instead of instance/profile config.
+// content instead of instance/profile config. A file under a mount of an
+// instance that is not running is not read from here (planPlacedFile).
 func planFile(server incus.InstanceServer, r Resource) (PlannedResource, error) {
 	rc, _, found, err := incusapi.LookupInstanceFile(server, r.Instance, r.Path)
 	if err != nil {

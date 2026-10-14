@@ -446,6 +446,8 @@ func actionLabel(a resolve.Action) string {
 		return "would REBUILD"
 	case resolve.ActionBlocked:
 		return "BLOCKED"
+	case resolve.ActionDeferred:
+		return "DEFERRED"
 	default:
 		return "no changes"
 	}

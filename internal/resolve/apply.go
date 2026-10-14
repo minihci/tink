@@ -293,8 +293,11 @@ func updateOne(server incus.InstanceServer, r Resource, env volumeEnv) error {
 // "instance is busy" rejection). This is the actual fix for the one gap
 // found live building this same stack with Terraform: a pushed file
 // alone doesn't make a running process notice it changed.
+//
+// Where the file goes follows the instance (filemount.go): a file under a disk-device mount of an instance that is not running goes into the volume
+// behind the mount, never into the root filesystem beneath it. Whether the instance is restarted afterwards is not affected by that.
 func pushFile(server incus.InstanceServer, r Resource) error {
-	if err := placeFile(server, r); err != nil {
+	if err := placeFileAt(server, r); err != nil {
 		return err
 	}
 	if !r.Restart {
@@ -303,9 +306,9 @@ func pushFile(server incus.InstanceServer, r Resource) error {
 	return run.EnsureRunning(scopedServer(server, r), r.Instance)
 }
 
-// placeFile writes r.Content to r.Path inside r.Instance and does nothing more: no restart. It is what pushFile does first, and what creating an
-// instance does for its files before the first start (the instance is stopped then, and takes the push) -- except the files a disk-device mount would
-// hide, which go into the volume (placeVolumeFile) or wait for the start.
+// placeFile writes r.Content to r.Path inside r.Instance and does nothing more: no restart. It is what pushFile does first (through placeFileAt), and
+// what creating an instance does for its files before the first start (the instance is stopped then, and takes the push) -- except the files a
+// disk-device mount would hide, which go into the volume (placeVolumeFile) or wait for the start.
 func placeFile(server incus.InstanceServer, r Resource) error {
 	s := scopedServer(server, r)
 	err := s.CreateInstanceFile(r.Instance, r.Path, incus.InstanceFileArgs{
