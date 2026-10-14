@@ -46,7 +46,7 @@ daemon's OIDC/authorization config. `run` translates a docker-run-shaped
 invocation onto real Incus primitives - see
 [`internal/run/DESIGN.md`](internal/run/DESIGN.md) for the flag-mapping
 table and its deliberate non-goals (not a Docker CLI clone). `plan`
-computes a dependency graph for a set of project/network/profile/storage-volume/
+computes a dependency graph for a set of project/network/network-acl/profile/storage-volume/
 instance/file resources declared in YAML and reports what would change;
 `plan apply` actually converges, level by level, everything within one
 level concurrently - see
@@ -65,6 +65,11 @@ refuses a network Incus does not manage, and blocks a change to a bridge instanc
 are using unless the resource says `allow_disruption: true` - unit-tested, and run
 live once on the lab host (a bridge created with its instances, the guard and the
 adoption of a host bridge checked); see [`docs/network.md`](docs/network.md).
+A `kind: network-acl` declares an Incus network ACL (a list of firewall rules, in order, with Incus's own field names) so the rule that isolates a bridge is in the
+stack too; a network or a NIC attaches it with `security.acls`, the ACL is created first, and attaching one is not counted as disruption. It is server-global like a
+network, creates and updates but never deletes an ACL (the rules inside a declared ACL are converged, so a rule dropped from the stack is removed), and works under
+`--remote` - unit-tested against a fake server, and run live once from a Mac against a lab bridge (created, attached, `no changes` on the second plan, a hand-added rule found and
+removed); see [`docs/network-acl.md`](docs/network-acl.md).
 If you are starting from a `docker run` line or a Compose file, [`docs/docker-to-tink.md`](docs/docker-to-tink.md) says what to change and what Docker has that Incus does not.
 `export` is the other direction: it reads live instances, with their project and volumes, back into that YAML (leaving out what Incus and the image
 wrote, pinning the image, never writing a secret) and checks the result with `plan`; see [`docs/export.md`](docs/export.md).

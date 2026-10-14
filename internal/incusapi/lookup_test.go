@@ -28,6 +28,9 @@ func (s answerServer) GetProfile(n string) (*api.Profile, string, error) {
 func (s answerServer) GetProject(n string) (*api.Project, string, error) {
 	return &api.Project{Name: n}, "etag-j", s.err
 }
+func (s answerServer) GetNetworkACL(n string) (*api.NetworkACL, string, error) {
+	return &api.NetworkACL{NetworkACLPost: api.NetworkACLPost{Name: n}}, "etag-a", s.err
+}
 func (s answerServer) GetStoragePoolVolume(_, _, n string) (*api.StorageVolume, string, error) {
 	return &api.StorageVolume{Name: n}, "etag-v", s.err
 }
@@ -65,6 +68,8 @@ func lookups(s answerServer) map[string]result {
 	r["profile"] = result{f, err}
 	_, _, f, err = LookupProject(s, "x")
 	r["project"] = result{f, err}
+	_, _, f, err = LookupNetworkACL(s, "x")
+	r["network ACL"] = result{f, err}
 	_, _, f, err = LookupVolume(s, "p", "custom", "x")
 	r["volume"] = result{f, err}
 	_, _, f, err = LookupImageAlias(s, "x")

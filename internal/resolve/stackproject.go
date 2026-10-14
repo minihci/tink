@@ -9,8 +9,10 @@ import (
 )
 
 // takesDefaultProject says which kinds live inside an Incus project and so receive the stack's default one. A project is not inside
-// another project, the stack declaration is metadata, a backup target describes where copies go (a server or pool, not a project), and
-// kind: incus is argv for the local CLI. File and exec resources are handled separately: they follow the instance they act on.
+// another project, a network and a network ACL are server-global (Incus keeps them in the default project unless a project has
+// features.networks, which tink does not manage; a `project:` on either is a load error), the stack declaration is metadata, a backup
+// target describes where copies go (a server or pool, not a project), and kind: incus is argv for the local CLI. File and exec resources
+// are handled separately: they follow the instance they act on.
 func takesDefaultProject(k Kind) bool {
 	switch k {
 	case KindProfile, KindStorageVolume, KindInstance, KindImage:

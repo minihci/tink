@@ -97,9 +97,9 @@ func PlanWithOptions(server incus.InstanceServer, resources []Resource, opts Pla
 
 // scopedServer returns server scoped to r's own project, except for a
 // project resource itself -- a project is never "inside" another
-// project -- and a network, which is server-global.
+// project -- and a network or a network ACL, which are server-global.
 func scopedServer(server incus.InstanceServer, r Resource) incus.InstanceServer {
-	if r.Kind != KindProject && r.Kind != KindNetwork && r.Project != "" {
+	if r.Kind != KindProject && r.Kind != KindNetwork && r.Kind != KindNetworkACL && r.Project != "" {
 		return server.UseProject(r.Project)
 	}
 	return server
@@ -119,9 +119,21 @@ func planKind(server incus.InstanceServer, r Resource, opts PlanOptions) (Planne
 	case KindProject:
 		return planProject(s, r)
 	case KindNetwork:
-		return planNetwork(s, r)
+		p, err := planNetwork(s, r)
+		if err != nil {
+			return p, err
+		}
+		p.Warnings = append(p.Warnings, aclReferenceWarnings(s, r, opts.acls)...)
+		return p, nil
+	case KindNetworkACL:
+		return planNetworkACL(s, r)
 	case KindProfile:
-		return planProfile(s, r)
+		p, err := planProfile(s, r)
+		if err != nil {
+			return p, err
+		}
+		p.Warnings = append(p.Warnings, aclReferenceWarnings(s, r, opts.acls)...)
+		return p, nil
 	case KindStorageVolume:
 		return planStorageVolume(s, r, volumeEnv{targets: opts.targets, stack: opts.stack, helperReads: opts.helperReads, helperLabel: opts.helperLabel, helperRemotes: opts.helperRemotes})
 	case KindBackupTarget:
@@ -134,6 +146,7 @@ func planKind(server incus.InstanceServer, r Resource, opts PlanOptions) (Planne
 		}
 		p.Warnings = append(p.Warnings, ociNICWarnings(r, opts.imageRemotes(), opts.profiles)...)
 		p.Warnings = append(p.Warnings, rootDiskWarnings(s, r, opts.profiles)...)
+		p.Warnings = append(p.Warnings, aclReferenceWarnings(s, r, opts.acls)...)
 		return p, nil
 	case KindFile:
 		return planFile(s, r)

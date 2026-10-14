@@ -60,6 +60,13 @@ func LookupNetwork(s incus.InstanceServer, name string) (*api.Network, string, b
 	return lookup(o, e, err)
 }
 
+// LookupNetworkACL looks up a network ACL by name, in the project the server is scoped to (the default project unless that project has
+// features.networks, see Incus's NetworkProject).
+func LookupNetworkACL(s incus.InstanceServer, name string) (*api.NetworkACL, string, bool, error) {
+	o, e, err := s.GetNetworkACL(name)
+	return lookup(o, e, err)
+}
+
 // LookupVolume looks up a storage volume ("custom" for the volumes tink manages).
 func LookupVolume(s incus.InstanceServer, pool, volType, name string) (*api.StorageVolume, string, bool, error) {
 	o, e, err := s.GetStoragePoolVolume(pool, volType, name)

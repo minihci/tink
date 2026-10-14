@@ -1,7 +1,7 @@
 // Package resolve is tink's resolver: a lightweight, tink-native version of the
 // resolver half of the architecture in docs/resolver-architecture.md --
 // scoped deliberately to what this platform actually uses (project,
-// profile, storage-volume, instance, file, incus, image, exec, network), stateless
+// profile, storage-volume, instance, file, incus, image, exec, network, network-acl), stateless
 // (diffs live Incus state directly, no separate state file to protect
 // secrets in) with one narrow, explicit exception -- an exec resource
 // with no observable Check falls back to a Triggers hash recorded on its
@@ -19,6 +19,8 @@ package resolve
 import (
 	"time"
 
+	"github.com/lxc/incus/v7/shared/api"
+
 	"github.com/minihci/tink/internal/backupmeta"
 )
 
@@ -29,7 +31,8 @@ type Kind string
 
 const (
 	KindProject       Kind = "project"
-	KindNetwork       Kind = "network" // a managed bridge; server-global, so it never takes a project (see network.go)
+	KindNetwork       Kind = "network"     // a managed bridge; server-global, so it never takes a project (see network.go)
+	KindNetworkACL    Kind = "network-acl" // an Incus network ACL; lives in the default project like a network, so it never takes a project (see networkacl.go)
 	KindProfile       Kind = "profile"
 	KindStorageVolume Kind = "storage-volume"
 	KindInstance      Kind = "instance"
@@ -57,6 +60,7 @@ const (
 var kindPriority = map[Kind]int{
 	KindProject:       0,
 	KindNetwork:       0, // before the profiles and instances whose NICs name it
+	KindNetworkACL:    0, // before the networks, profiles and instances whose security.acls name it
 	KindBackupTarget:  0, // pure declaration: nothing to create, but volumes refer to it
 	KindStack:         0, // metadata: kept out of the graph, only here so the kind is known
 	KindProfile:       1,
@@ -271,10 +275,16 @@ type Resource struct {
 	Architecture string
 	Properties   map[string]string
 
-	// Network-only. Description is the network's description. AllowDisruption lets apply change the configuration of a bridge that instances are
-	// already using, which can interrupt their traffic; without it such a change is BLOCKED and the instances are named. See network.go.
+	// Description is the description of a network or a network ACL. AllowDisruption (network-only) lets apply change the configuration of a bridge
+	// that instances are already using, which can interrupt their traffic; without it such a change is BLOCKED and the instances are named. See network.go.
 	Description     string
 	AllowDisruption bool
+
+	// Network-ACL-only: the rules, in the order they were declared, with Incus's own field names. A nil list is "not declared" and leaves the
+	// live rules of that direction alone; an empty one is "declared, and there are none". See networkacl.go. The direction is from the NIC's
+	// point of view, which is Incus's meaning and not tink's ingress proxy.
+	Ingress []api.NetworkACLRule
+	Egress  []api.NetworkACLRule
 
 	Config  map[string]string
 	Devices map[string]map[string]string
@@ -335,6 +345,13 @@ func (r Resource) dependencies(all map[string]*Resource) []string {
 	if r.Backup != nil {
 		for _, c := range r.Backup.Copies {
 			add(c.Target)
+		}
+	}
+	// A network, profile or instance NIC that names an ACL the stack declares waits for it: Incus refuses to attach an ACL that does not exist.
+	// Matched by kind, so a name that happens to belong to another resource is not an edge. An ACL the stack does not declare stays lenient.
+	for _, ref := range r.aclRefs() {
+		if other, ok := all[ref.name]; ok && other.Kind == KindNetworkACL {
+			add(ref.name)
 		}
 	}
 	for _, d := range r.DependsOn {

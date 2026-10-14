@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lxc/incus/v7/shared/api"
 	yaml "go.yaml.in/yaml/v4"
 
 	"github.com/minihci/tink/internal/backupmeta"
@@ -41,9 +42,14 @@ type yamlResource struct {
 	Address     string `yaml:"address"`
 	Fingerprint string `yaml:"fingerprint"`
 
-	// Network-only -- see Resource.Description and Resource.AllowDisruption.
+	// Network and network-ACL (Description), network-only (AllowDisruption) -- see Resource.Description and Resource.AllowDisruption.
 	Description     string `yaml:"description"`
 	AllowDisruption bool   `yaml:"allow_disruption"`
+
+	// Network-ACL-only -- see Resource.Ingress. Incus's own rule type, so a rule pastes in from `incus network acl show` unchanged and an unknown
+	// rule field is as much a load error as an unknown resource field.
+	Ingress []api.NetworkACLRule `yaml:"ingress"`
+	Egress  []api.NetworkACLRule `yaml:"egress"`
 
 	// Storage-volume-only -- see backupmeta.VolumeBackup.
 	Backup *yamlBackup `yaml:"backup"`
@@ -341,6 +347,8 @@ func (d yamlResource) toResource(dir string) (Resource, error) {
 		Backup:          d.Backup.toVolumeBackup(),
 		Description:     d.Description,
 		AllowDisruption: d.AllowDisruption,
+		Ingress:         d.Ingress,
+		Egress:          d.Egress,
 		Config:          d.Config,
 		Devices:         d.Devices,
 		Instance:        d.Instance,

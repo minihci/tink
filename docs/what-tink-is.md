@@ -26,7 +26,7 @@ The pieces that exist, and the one being designed, share a shape: a declaration,
 | backup | `backup:` on a volume | the daemon helper's scheduler | no daemon helper, missing remote, a 3-2-1 note | built **[docs]** |
 | ingress | `user.tink.ingress.*` on an instance | the daemon helper (or the host daemon) renders routes | bad address skipped with a warning | built **[docs]** |
 | secrets | `${secret:NAME}` in an instance's `environment.*` | resolved at apply | **[to confirm]** | built, narrow **[docs]** |
-| network | `kind: network` | apply | disruption guard, unnamed-NIC warning | built **[docs]** |
+| network | `kind: network`, `kind: network-acl` | apply | disruption guard, unnamed-NIC warning, an attached ACL that exists nowhere | built **[docs]**; the ACL kind run live once on a lab bridge **[lab]** |
 | remote access | offers on apps, grants in a site resource | a mesh helper (the gateway) per bridge | a grant with no offer, a route wider than needed | proposed |
 | identity and single sign-on (two roles, a helper each) | group names in grants; offers on apps | the engines' configuration, rendered by tink | a grant that names a group the directory does not have | proposed; the engine pair was verified in a lab |
 

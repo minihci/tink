@@ -30,7 +30,8 @@ import (
 //   - Compares only the keys the stack declares (diffConfig), so the keys Incus generated (volatile.*, a concrete address where `auto` was asked
 //     for) are never drift. The one exception is spelled out in networkWanted.
 //
-// Not here: ACLs, forwards, zones, OVN, `tink export` of networks, and anything that deletes.
+// Not here: forwards, zones, OVN, `tink export` of networks, and anything that deletes. (ACLs are their own kind, networkacl.go; a network attaches
+// them through its config, and isACLKey says why that is not counted as disruption.)
 
 // networkNameRE is deliberately a little looser than Incus's own rule (a valid interface name) so tink never rejects a name Incus would accept.
 // What it does enforce is what makes a bridge name unusable anywhere: too long for an interface, or containing a separator.
@@ -73,6 +74,33 @@ func networkWanted(current, desired map[string]string) map[string]string {
 			}
 		}
 		out[k] = v
+	}
+	return out
+}
+
+// isACLKey says whether a network config key attaches ACLs (security.acls) or sets what happens to traffic no ACL rule matched
+// (security.acls.default.{ingress,egress}.{action,logged}). The disruption guard does not count a change to them as disruption, so attaching or
+// changing an ACL on a bridge that instances are using needs no allow_disruption: true.
+//
+// Why: Incus applies them as a live change to its own nftables chains (acl.<bridge> and friends), not a reconfiguration of the bridge, so nothing is
+// restarted and no address, NAT or DNS moves. [lab] On 2026-10-13 an ACL was created, given a rule and attached to a bridge with running instances, and
+// its default egress action was set, with no instance restarted; the allowed path, same-bridge and outbound traffic were open afterwards and a new
+// instance on the bridge was covered with no further step (tron repo, acl-lab/acl-lab.md). A second run through tink added and removed rules of the
+// attached ACL, also live. Not shown, so not claimed: that no packet is dropped during a change (the lab probed before and after). What an ACL does
+// change is which traffic may cross the bridge's boundary, and that is its purpose, declared in the stack, and printed by plan as a
+// config.security.acls line; it is not a surprise side effect of changing something else, which is what the guard is for. Every other key stays
+// counted, as before.
+func isACLKey(k string) bool {
+	return k == "security.acls" || strings.HasPrefix(k, "security.acls.")
+}
+
+// withoutACLKeys returns config without the keys isACLKey names.
+func withoutACLKeys(config map[string]string) map[string]string {
+	out := make(map[string]string, len(config))
+	for k, v := range config {
+		if !isACLKey(k) {
+			out[k] = v
+		}
 	}
 	return out
 }
@@ -121,8 +149,10 @@ func planNetwork(server incus.InstanceServer, r Resource) (PlannedResource, erro
 		return blocked(fmt.Sprintf("%q has status %q, not Created, so it is not safe to change", r.Name, current.Status))
 	}
 
-	changes := diffConfig(current.Config, networkWanted(current.Config, r.Config), nil)
-	configChanged := len(changes) > 0
+	wanted := networkWanted(current.Config, r.Config)
+	changes := diffConfig(current.Config, wanted, nil)
+	// The guard counts a change only if it touches something other than the ACL keys (see isACLKey for why those are not disruption).
+	configChanged := len(diffConfig(current.Config, withoutACLKeys(wanted), nil)) > 0
 	if r.Description != "" && r.Description != current.Description {
 		changes = append(changes, fmt.Sprintf("description: %q -> %q", current.Description, r.Description))
 	}
