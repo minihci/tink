@@ -20,14 +20,23 @@ certificate and its job history. **Not yet tried:** a host reboot or an Incus re
 
 | Drift | What the helper does | Built? |
 |---|---|---|
-| a backup copy is overdue (time) | **heals**: makes the copy, verifies restores on schedule | yes: this is all it does for the platform today **[live]** |
+| a backup copy is overdue (time) | **heals**: takes the snapshot, makes the copy, prunes old ones. It does **not** verify restores: that is `tink backup verify`, run by hand, and a policy's `verify: weekly` only sets how stale a verification may get before `plan` warns | yes: this is all it does for the platform today **[live]** |
+| a restore has not been checked for too long (time) | would **heal**: run the restore check on its schedule | **not built.** It needs rights the copying does not: creating and running a throwaway instance. See [the credential note below](#what-the-helper-needs-from-incus) |
 | a published name's dns record, route, sign-on rule or ACL rule is wrong (derived state) | **heals**: renders from the declarations and rewrites the file | the dns records, by hand (`tink join apply dns`, [join.md](join.md#applying-dns)); not yet on a timer |
 | an instance's config, image or volume was changed by hand (declared state) | **reports**, and a human decides; healing it automatically is an opt-in per resource later, like `on_image_change` | not built |
 | the helper itself stops, or a copy keeps failing | says so in its status document, which `tink helper status` judges | yes; nothing yet *delivers* the message (open decision 6) |
 
 **The rule that falls out: derived state heals, declared state reports.** A file that says "do not edit" (the generated `/hosts`, generated routes, rules) is the helper's to keep right. Something a person wrote in a stack is theirs to change, so a difference there is told, not undone. This is the same shape as `on_image_change: report | ignore | rebuild`, which already is a per-resource choice between telling and healing.
 
-**It also gives a least-privilege shape [lab, partly]:** detecting needs only read access; healing derived files needs a few narrow writes (the dns records are two file reads and one file write on one instance); healing declared state is the broad case. The always-on loop should not need more than it uses (see the authorization lab in the author's platform repository, `authz-lab/`: a restricted certificate in a restricted project is a real boundary against the host, and anything finer than a project needs Incus's authorization scriptlet or OpenFGA).
+**It also gives a least-privilege shape [lab, partly]:** detecting needs only read access; healing derived files needs a few narrow writes (the dns records are two file reads and one file write on one instance); healing declared state is the broad case.
+
+### What the helper needs from Incus
+
+Measured on a nested server by running the helper's real work under a restricted certificate with a scriptlet that allows only what the work asks for **[lab]**:
+
+- **Copying needs no instance rights at all.** The scheduler and executor (snapshots, copies to a target pool, pruning, the status document) passed with 10 rules: `server:incus can_view`, `can_view_operations` and `can_create_storage_volumes` on the project, `can_edit` and `can_manage_snapshots` on each source volume, `can_edit` on the copies it makes (by name prefix), and `can_view` by object type for the listings. No instance is created, started, executed in or edited; the only instance it touched was its own, for the status document, and that is to move to a volume (an edit right on its own instance covers its devices, and its instance has a `proxy` device, so it is a route to the Incus unix socket).
+- **A restore check needs more:** a throwaway instance (create, start, exec, delete), a scratch volume and the default profile. `tink backup verify` under the copying rules is refused. If the helper is ever given the job of running restore checks on a schedule, that is the right it would take on, and it argues for a separate identity (and a project of its own, with no network) rather than adding instance rights to the credential that also writes derived files.
+ The always-on loop should not need more than it uses (see the authorization lab in the author's platform repository, `authz-lab/`: a restricted certificate in a restricted project is a real boundary against the host, and anything finer than a project needs Incus's authorization scriptlet or OpenFGA).
 
 **Two gaps stand between here and that picture:**
 1. **Desired state for general drift.** The helper has no copy of the declarations. It finds its work in stamps on objects (the backup policy on a volume today; the publish declarations next). Detecting drift in *declared* state needs the declarations themselves, either a checkout of the stack repository or stamps for everything, and the age identity for any resource that holds a secret.
