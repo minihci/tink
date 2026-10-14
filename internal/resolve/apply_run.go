@@ -18,6 +18,7 @@ const (
 	outConverged outcome = iota // already matched
 	outChanged                  // differences found and fixed
 	outBlocked                  // differences found, deliberately not fixed
+	outDeferred                 // left alone on purpose until the next apply, and not a failure (ActionDeferred)
 )
 
 // NotConvergedError is returned when apply finished but left resources
@@ -68,9 +69,13 @@ func applyLevels(levels [][]Resource, do applyFunc) ([]string, error) {
 		mu.Unlock()
 	}
 
-	var converged, changed, blocked int
+	var converged, changed, blocked, deferred int
 	summary := func(failed int) string {
-		return fmt.Sprintf("summary: %d converged, %d changed, %d blocked, %d failed", converged, changed, blocked, failed)
+		line := fmt.Sprintf("summary: %d converged, %d changed, %d blocked, %d failed", converged, changed, blocked, failed)
+		if deferred > 0 {
+			line += fmt.Sprintf(", %d deferred", deferred)
+		}
+		return line
 	}
 	// Instances left blocked. Resources that live INSIDE one (files, execs) are
 	// skipped; a mere depends_on is not, since that only means "must exist first".
@@ -110,6 +115,8 @@ func applyLevels(levels [][]Resource, do applyFunc) ([]string, error) {
 				if r.Kind == KindInstance {
 					blockedInstances[r.Name] = true
 				}
+			case outDeferred:
+				deferred++
 			}
 		}
 		for i, err := range errs {
@@ -135,10 +142,22 @@ func applyOne(server incus.InstanceServer, r Resource, opts PlanOptions, note fu
 	for _, w := range plan.Warnings {
 		note("%s/%s: warning: %s", r.Kind, r.Name, w)
 	}
+	// A file read from, or written into, a volume says so: "no changes" and "updated" are claims about a place, and the place is not the instance's.
+	fileNotes := func() {
+		if r.Kind == KindFile {
+			for _, n := range plan.Notes {
+				note("%s/%s: %s", r.Kind, r.Name, n)
+			}
+		}
+	}
 	switch plan.Action {
 	case ActionNone:
 		note("%s/%s: no changes", r.Kind, r.Name)
+		fileNotes()
 		return outConverged, nil
+	case ActionDeferred:
+		note("%s/%s: deferred until the instance is running (see the warning above)", r.Kind, r.Name)
+		return outDeferred, nil
 	case ActionBlocked:
 		note("%s/%s: BLOCKED: %s", r.Kind, r.Name, strings.Join(plan.Blocked, "; "))
 		return outBlocked, nil
@@ -154,6 +173,7 @@ func applyOne(server incus.InstanceServer, r Resource, opts PlanOptions, note fu
 			return outChanged, nil
 		}
 		note("%s/%s: created", r.Kind, r.Name)
+		fileNotes()
 		for _, line := range first.lines(r.Name) {
 			note("%s", line)
 		}
@@ -171,6 +191,7 @@ func applyOne(server incus.InstanceServer, r Resource, opts PlanOptions, note fu
 			return outChanged, nil
 		}
 		note("%s/%s: updated (%s)", r.Kind, r.Name, strings.Join(plan.Changes, "; "))
+		fileNotes()
 		return outChanged, nil
 	case ActionRebuild:
 		rebuildMu.Lock()
