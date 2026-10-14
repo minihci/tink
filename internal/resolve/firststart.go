@@ -7,6 +7,9 @@ package resolve
 // An instance that was created and never started takes a file push (found live), so createInstance now places the instance's eligible files after
 // creating it and before starting it. The file resources then find their content already in place and plan as "no changes" (applyOne plans each
 // resource right before acting on it): no second push, and no restart for a file with restart: true.
+//
+// One exception: a file at or below the mount path of a disk device would be pushed into the rootfs underneath the mount and hidden once the device is
+// mounted at the start. Those files go into the volume, or wait for the start; see firststartmount.go.
 
 import (
 	"strconv"
@@ -20,6 +23,10 @@ func instanceKey(project, name string) string { return project + "/" + name }
 // order. A file is chosen when it targets such an instance and everything it waits for (depends_on) is that instance or another chosen file of it.
 // A file that waits for anything else, an exec for one, is left to its own turn: it may need something that has not happened yet. A virtual machine
 // has no entry: it needs its agent running to take a file.
+//
+// These are the candidates. Whether a candidate can be pushed into the stopped instance at all depends on the instance's disk devices, which only
+// creating (or planning) it can see in full, so placeBy (firststartmount.go) takes it from here: a file a mount would hide is written into the volume
+// or left for after the start.
 //
 // The rule is worked out to a fixed point, since leaving out one file makes any file that waits for it ineligible too. resources must already have
 // their projects inherited (Levels does that), so a file and its instance agree on a project.

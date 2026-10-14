@@ -90,3 +90,17 @@ func LookupInstanceFile(s incus.InstanceServer, instance, path string) (io.ReadC
 		return nil, nil, false, err
 	}
 }
+
+// LookupVolumeFile opens a file in a custom storage volume; path is relative to the volume's root. When found the caller must close the reader, except
+// for a directory, which comes back found with no reader and a response whose Type is "directory" (the client's own shape for it).
+func LookupVolumeFile(s incus.InstanceServer, pool, volume, path string) (io.ReadCloser, *incus.InstanceFileResponse, bool, error) {
+	rc, resp, err := s.GetStorageVolumeFile(pool, "custom", volume, path)
+	switch {
+	case err == nil:
+		return rc, resp, true, nil
+	case IsNotFound(err):
+		return nil, nil, false, nil
+	default:
+		return nil, nil, false, err
+	}
+}
