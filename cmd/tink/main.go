@@ -102,6 +102,7 @@ made executable instead of just documented.`,
 	root.AddCommand(newHelperCmd())
 	root.AddCommand(newIngressCmd())
 	root.AddCommand(newIdentityCmd())
+	root.AddCommand(newJoinCmd())
 	root.AddCommand(newMongoCmd())
 	root.AddCommand(newDaemonCmd())
 	root.AddCommand(newVersionCmd())

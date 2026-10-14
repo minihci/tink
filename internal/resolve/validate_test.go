@@ -38,6 +38,13 @@ func TestValidate_AllowsFieldsCommonToEveryKind(t *testing.T) {
 		case KindImage:
 			r.Alias = "a"
 			r.Source = "s"
+		case KindPublish:
+			// A declaration that is outside the graph, so a depends_on on it could never order anything: it is REJECTED rather than silently
+			// ignored (TestAMalformedPublishIsRejectedAtLoad pins that), and it has required fields of its own.
+			r.DependsOn = nil
+			r.Instance = "i"
+			r.Offer = "web"
+			r.Allow = []string{"family"}
 		case KindExec:
 			r.Instance = "i"
 			r.Check = []string{"true"}

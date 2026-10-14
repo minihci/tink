@@ -52,7 +52,7 @@ func validateCheckOutputs(resources []Resource) error {
 	byName := map[string]Resource{}
 	names := map[string]bool{}
 	for _, r := range resources {
-		if r.Kind != KindStack {
+		if inGraph(r.Kind) {
 			byName[r.Name] = r
 			names[r.Name] = true
 		}

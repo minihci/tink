@@ -17,11 +17,14 @@ func Levels(resources []Resource) ([][]Resource, error) {
 	if _, err := StackName(resources); err != nil {
 		return nil, err
 	}
+	if err := validatePublishNames(resources); err != nil {
+		return nil, err
+	}
 	// The stack's name is metadata, not something to plan: it is skipped below, in place, because the passes after this
 	// one update the caller's resources (project inheritance, image aliases) and callers rely on that.
 	all := make(map[string]*Resource, len(resources))
 	for i := range resources {
-		if resources[i].Kind == KindStack {
+		if !inGraph(resources[i].Kind) {
 			continue
 		}
 		if _, dup := all[resources[i].Name]; dup {
@@ -42,7 +45,7 @@ func Levels(resources []Resource) ([][]Resource, error) {
 
 	deps := make(map[string][]string, len(resources))
 	for _, r := range resources {
-		if r.Kind == KindStack {
+		if !inGraph(r.Kind) {
 			continue
 		}
 		deps[r.Name] = r.dependencies(all)
