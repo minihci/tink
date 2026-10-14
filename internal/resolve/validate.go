@@ -16,11 +16,11 @@ import (
 // this package's existing "deliberately small substitute" approach
 // (see resource.go's own package doc comment).
 var fieldOwners = map[string][]Kind{
-	"Image":           {KindInstance},
+	"Image":           {KindInstance, KindHelper},
 	"Profiles":        {KindInstance},
 	"VM":              {KindInstance},
 	"Ephemeral":       {KindInstance},
-	"Pool":            {KindStorageVolume, KindBackupTarget},
+	"Pool":            {KindStorageVolume, KindBackupTarget, KindHelper},
 	"Location":        {KindBackupTarget},
 	"Engine":          {KindBackupTarget},
 	"Remote":          {KindBackupTarget},
@@ -35,6 +35,9 @@ var fieldOwners = map[string][]Kind{
 	"Devices":         {KindProfile, KindInstance},
 	"Instance":        {KindFile, KindExec, KindPublish},
 	"Offer":           {KindPublish},
+	"Network":         {KindHelper},
+	"Timezone":        {KindHelper},
+	"Remotes":         {KindHelper},
 	"Allow":           {KindPublish},
 	"Path":            {KindFile},
 	"Content":         {KindFile},
@@ -98,6 +101,9 @@ func Validate(r Resource) error {
 		return err
 	}
 	if err := validatePublish(r); err != nil {
+		return err
+	}
+	if err := validateHelper(r); err != nil {
 		return err
 	}
 	return validateOnImageChange(r)

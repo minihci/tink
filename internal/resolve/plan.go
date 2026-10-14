@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	incus "github.com/lxc/incus/v7/client"
 
@@ -120,6 +121,9 @@ func planKind(server incus.InstanceServer, r Resource, opts PlanOptions) (Planne
 	}
 	s := scopedServer(server, r)
 	switch r.Kind {
+	case KindHelper:
+		// the helper is found in every project, so it is read with the unscoped server
+		return planHelper(server, r, time.Now())
 	case KindProject:
 		return planProject(s, r)
 	case KindNetwork:

@@ -1,6 +1,6 @@
 # `tink join`: what a published name needs from the site's helpers
 
-**Status: built, print-only.** `tink join` and `kind: publish` are unit-tested, and have been run on the author's own platform and canary stacks, where all five renderings below matched the pieces that were written by hand, including the control plane's live file **[live]**. Nothing is applied from them yet: `join` reads the files you name and prints. The design is in [offer-grant-join-design.md](offer-grant-join-design.md).
+**Status: built. `tink join` prints; `tink join apply dns` is the first renderer that writes.** Both are unit-tested and have been run on the author's own platform and canary stacks, where all five renderings below matched the pieces that were written by hand, including the control plane's live file **[live]**. Only the dns records can be applied so far (see [Applying: dns](#applying-dns)); `join` itself reads the files you name and prints. The design is in [offer-grant-join-design.md](offer-grant-join-design.md).
 
 ## The idea
 
@@ -93,6 +93,36 @@ What each section is shaped for, and what it assumes:
 - **sso**: one Authelia rule per name, `one_factor` (a publish does not choose; a field for it arrives when something needs two factors). Several groups render as an OR of single-group lists, `[['group:a'], ['group:b']]`, which Authelia's own policy checker confirmed means "either" **[live]**.
 - **acl**: one rule per port per ACL: the ingress helper (on its `mesh` leg) may reach it. Several publishes of one port collapse into one rule whose description names them. The ACL is found from the network the app's NIC is on (`security.acls` on the `kind: network`).
 
+## Applying: dns
+
+```
+tink join apply dns platform/platform.yaml canary/canary.yaml
+tink join apply dns --dry-run platform/platform.yaml canary/canary.yaml      # show the change, write nothing
+```
+
+It makes the dns helper's record file equal to the `dns` rendering and nothing else, through the Incus API with the certificate of whoever runs it (`--remote` works); the same code is meant to be run by the daemon helper on a timer.
+
+**The layout it needs on the dns helper** (measured against CoreDNS 1.14.7 **[lab]**):
+
+- **`/hosts` is the generated file and holds nothing else.** CoreDNS's `hosts` plugin answers from it first and re-reads it every few seconds, so a change needs no restart: a new name answered in about 5 s and a removed one stopped in about 6 s. The file is rewritten whole, so a name that is no longer published disappears.
+- **The platform's own static names go in the zone file, `/db.<zone>`** (the sign-on portal, the directory's UI, the helper itself). `hosts` falls through to it for a name it does not have. An empty `/hosts` therefore takes down no platform name.
+- **The two cannot be two hosts files.** CoreDNS refuses to start with a second `hosts` plugin in a server block (`this plugin can only be used once per Server Block`): found when a lab instance crashed on it.
+- **Where a name is in both, `/hosts` wins.** An app published as `auth` would silently take the portal's name.
+
+**What it refuses, writing nothing:**
+
+| Refusal | Why |
+|---|---|
+| the join has any error | a partial rendering looks like a complete one |
+| the files name no published name | applying would replace every record with none, which usually means the wrong files were given (`--allow-empty` says it is meant) |
+| a published name is already a record in the zone file | the generated record would answer first and take the name over |
+| `/hosts` exists and does not begin with the note the join writes | it may hold hand-written records; move the platform's own to the zone file, then give `--adopt` once |
+| the zone file is missing, or any read fails | a failed read is an error, never an empty file |
+
+After a write it reads the file back and fails if it does not hold what was written. A second run reports `no changes`. The author's platform was moved over in three steps: the static names into the zone file (one planned restart of the dns helper, about 7 s), a dry run, then `--adopt` once.
+
+**What it needs from Incus** (so the credential it runs under can be judged): it reads two files and writes one, all in the dns helper instance and its project: `/db.<zone>`, `/hosts` and `/hosts` again to check. No instance, profile, network, volume or trust object is read or changed **[code]**. The entitlement is the instance file access one (`can_access_files` on that instance **[docs, from memory; to be measured]**).
+
 ## Findings
 
 Findings go to standard error. **Any error means nothing is printed and the exit status is 1**: a partial rendering (a mesh view missing one name) looks exactly like a complete one. Warnings are printed beside a complete rendering.
@@ -115,6 +145,6 @@ Findings go to standard error. **Any error means nothing is printed and the exit
 
 ## What it does not do
 
-- **It applies nothing and reads no server.** It is a pure function of the files. Applying the renderings needs a decision on who holds the credential for reconcile jobs ([open question 7](offer-grant-join-design.md#open-questions)), and a way for the `network-acl` kind to mark a rule list as derived: that kind treats a direction it is given as the whole list, so a declared `ingress:` would erase a derived rule on the next plan.
+- **`join` itself reads no server and writes nothing**: it is a pure function of the files. Only the dns rendering can be applied. The others need a decision on who holds the credential for reconcile jobs ([open question 7](offer-grant-join-design.md#open-questions)) when the daemon helper runs them, and the ACL rules need a way for the `network-acl` kind to mark a rule list as derived: that kind treats a direction it is given as the whole list, so a declared `ingress:` would erase a derived rule on the next plan. The mesh records are written on the control plane's host, which is its own decision. The declarations are not yet stamped onto the instances, so nothing reads them from the server: applying is run by hand from the files.
 - **It does not check the listener.** Whether an app listens only where it should (the bypass on a discovery leg) is the next check; an image with no shell, like `whoami`'s, will have to answer *unverifiable*, never *ok*.
 - **Only web.** An `access` document (one instance using another's offer, an MQTT broker, say), paths that bypass sign-on (Home Assistant's companion app), names that are LAN-only, and a per-name authentication strength are not modelled. The platform's own routes (the sign-on portal, the directory's UI) are not published apps and stay hand-written.

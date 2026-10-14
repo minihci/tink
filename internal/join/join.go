@@ -70,6 +70,8 @@ type Published struct {
 // Result is what the join found and what it would render.
 type Result struct {
 	Zone        string
+	DNSProject  string // where the dns helper lives, so the DNS applier knows where to write
+	DNSInstance string
 	LANAddress  string // the ingress helper's address on its `serves` leg: what the dns records answer with
 	MeshAddress string // the ingress helper's address on its `mesh` leg: what the mesh view answers with, and the source the apps' ACLs admit
 	HasMesh     bool   // a helper with role mesh is declared
@@ -180,6 +182,10 @@ func Build(stacks []Stack) Result {
 
 	if len(publishes) == 0 {
 		add(Warning, "", "no publish is declared in the files given, so there is nothing to render")
+		if len(roles["dns"]) == 1 { // no error either way: a site with no publishes need not have a dns helper; this only tells an explicit empty apply where to write
+			d := roles["dns"][0]
+			res.DNSProject, res.DNSInstance, res.Zone = projectOf(d), d.Name, strings.TrimSpace(d.Config[zoneKey])
+		}
 		sortFindings(res.Findings)
 		return res
 	}
@@ -197,6 +203,7 @@ func Build(stacks []Stack) Result {
 		return resolve.Resource{}, false
 	}
 	if dns, ok := only("dns"); ok {
+		res.DNSProject, res.DNSInstance = projectOf(dns), dns.Name
 		res.Zone = strings.TrimSpace(dns.Config[zoneKey])
 		if !zonePattern.MatchString(res.Zone) {
 			add(Error, "instance/"+dns.Name, "%s is %q: the dns helper must state the zone it serves (for example home.example.org), the part every published name ends with", zoneKey, res.Zone)

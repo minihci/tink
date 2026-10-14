@@ -59,10 +59,16 @@ type yamlResource struct {
 	Path     string `yaml:"path"`
 
 	// Publish-only (see publish.go).
-	Offer      string   `yaml:"offer"`
-	Allow      []string `yaml:"allow"`
-	Content    string   `yaml:"content"`
-	SourcePath string   `yaml:"source_path"` // read at load time, relative to this YAML file's own directory
+	Offer string   `yaml:"offer"`
+	Allow []string `yaml:"allow"`
+
+	// Helper-only (see helperkind.go).
+	Network  string   `yaml:"network"`
+	Timezone string   `yaml:"timezone"`
+	Remotes  []string `yaml:"remotes"`
+
+	Content    string `yaml:"content"`
+	SourcePath string `yaml:"source_path"` // read at load time, relative to this YAML file's own directory
 
 	// Shared between File and Instance -- see Resource.Restart's own doc
 	// comment.
@@ -358,6 +364,9 @@ func (d yamlResource) toResource(dir string) (Resource, error) {
 		Instance:        d.Instance,
 		Offer:           d.Offer,
 		Allow:           d.Allow,
+		Network:         d.Network,
+		Timezone:        d.Timezone,
+		Remotes:         d.Remotes,
 		Path:            d.Path,
 		Content:         content,
 		Restart:         d.Restart,

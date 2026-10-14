@@ -42,6 +42,7 @@ const (
 	KindExec          Kind = "exec"
 	KindBackupTarget  Kind = "backup-target"
 	KindStack         Kind = "stack"   // the stack's own name; metadata, not a resource (see StackName)
+	KindHelper        Kind = "helper"  // the daemon helper (an Incus instance running `tink daemon run`): adopted when present, installed when not (see helperkind.go)
 	KindPublish       Kind = "publish" // a name in the site's zone that shows one offer of an instance to named groups; a declaration `tink join` reads, never converged (see publish.go)
 )
 
@@ -64,6 +65,7 @@ var kindPriority = map[Kind]int{
 	KindNetworkACL:    0, // before the networks, profiles and instances whose security.acls name it
 	KindBackupTarget:  0, // pure declaration: nothing to create, but volumes refer to it
 	KindStack:         0, // metadata: kept out of the graph, only here so the kind is known
+	KindHelper:        2,
 	KindPublish:       0, // a declaration read by `tink join`: kept out of the graph like the stack, only here so the kind is known
 	KindProfile:       1,
 	KindStorageVolume: 1,
@@ -120,6 +122,12 @@ type Resource struct {
 	// that may use it. Name is the host label: the published name is Name plus the dns helper's zone.
 	Offer string
 	Allow []string
+
+	// Helper-only (see helperkind.go): the network the helper's NIC joins, the time zone its schedules are evaluated in, and the Incus remotes the stack says it
+	// must be able to reach. Image and Pool are shared with other kinds; the helper's instance name is Name, and its project defaults to helper.DefaultProject.
+	Network  string
+	Timezone string
+	Remotes  []string
 
 	// File-only: push Content to Path inside the named Instance.
 	Instance string
