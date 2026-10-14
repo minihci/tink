@@ -475,6 +475,6 @@ profiles: [base]       # without a profile like this, apply fails with "No root 
 - **Which profiles:** the instance's `profiles:` list, or the project's `default` when it lists none (Incus's own rule). Each is read from the stack's declaration and from the server, since applying a declared profile only adds the devices it names. One profile with a root disk, under any device name, is enough.
 - **Conservative:** a profile that cannot be read, or that exists neither in the stack nor on the server (Incus reports that on its own), means no warning. A later profile that overrides an earlier root device is not modelled, so that case is not warned about either.
 - **A warning, not an error**, for containers and virtual machines alike, and, like the [OCI NIC warning](oci-network.md), about the stack: it appears whether or not the instance exists yet.
-- **Not covered:** `tink run` creates an instance the same way and has no such check.
+- **Not covered:** `tink run` creates an instance the same way and has no such check. The instances tink makes for itself do not depend on the profile: `backup verify`'s check instance and the helper set `Spec.RootDiskAtCreate`, which puts their root disk in the creation request (see [volume-backup.md](volume-backup.md)). A stack's instances do not, so the warning stands.
 
 See `internal/resolve/rootdisk.go`.

@@ -701,6 +701,34 @@ func TestReleaseImageIsOnlyForAReleaseBuild(t *testing.T) {
 	}
 }
 
+// The helper is made with the project's `default` profile only, and Incus needs a root disk when it writes the instance record: so the helper's own
+// root disk, on the pool it was asked for, goes in the creation request, and installing does not depend on that profile having one.
+func TestInstallSendsTheRootDiskInTheCreationRequest(t *testing.T) {
+	for _, pool := range []string{"", "nas"} {
+		t.Run("pool "+pool, func(t *testing.T) {
+			h := newHost()
+			var specs []*run.Spec
+			in, _ := installer(h, &specs)
+			if err := in.Install(InstallOptions{Image: "ghcr:minihci/tink-helper:v1.2.3", Pool: pool, Wait: -1}); err != nil {
+				t.Fatal(err)
+			}
+			if len(specs) != 1 || !specs[0].RootDiskAtCreate {
+				t.Fatalf("the spec must ask for its root disk to be sent at creation: %+v", specs)
+			}
+			wantPool := pool
+			if wantPool == "" {
+				wantPool = "default"
+			}
+			if root := specs[0].Devices["root"]; !run.HasRootDisk(specs[0].Devices) || root["pool"] != wantPool {
+				t.Errorf("a root disk on pool %s: %v", wantPool, specs[0].Devices)
+			}
+			if len(specs[0].Profiles) != 0 {
+				t.Errorf("the helper is made with the default profile, not a list of its own: %v", specs[0].Profiles)
+			}
+		})
+	}
+}
+
 func TestInstallRecordsTheExactImageSoAnUpgradeCanTellWhichItIs(t *testing.T) {
 	h := newHost()
 	var specs []*run.Spec

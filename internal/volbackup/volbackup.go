@@ -210,6 +210,18 @@ func Verify(server incus.InstanceServer, v Volume, opts VerifyOptions) (res Veri
 		if mount == "" {
 			mount = backupmeta.DefaultVerifyMount
 		}
+		devices := map[string]map[string]string{"data": {"type": "disk", "pool": v.pool(), "source": scratch, "path": mount, "readonly": "true"}}
+		// The instance gets only the project's `default` profile, and Incus needs a root disk when it writes the instance record. A project made
+		// with features.profiles=true starts with an EMPTY `default`, so the instance then brings its own, on the pool of the volume being checked.
+		// A profile that has one is left to supply it: a second root device would be an error or an override.
+		hasRoot, err := profileHasRootDisk(s, checkProfile)
+		if err != nil {
+			return res, fmt.Errorf("reading the %q profile%s to see whether the check instance needs a root disk: %w", checkProfile, inProject(v), err)
+		}
+		if !hasRoot {
+			say("the %q profile%s has no root disk, so the check instance gets one on pool %s", checkProfile, inProject(v), v.pool())
+			devices["root"] = map[string]string{"type": "disk", "path": "/", "pool": v.pool()}
+		}
 		say("running the check in throwaway instance %s (%s), volume mounted read-only at %s", instName, opts.Check.Image, mount)
 
 		// Registered BEFORE creating, so a half-created instance is still cleaned up.
@@ -218,10 +230,12 @@ func Verify(server incus.InstanceServer, v Volume, opts VerifyOptions) (res Veri
 		spec := &run.Spec{
 			Name:     instName,
 			Image:    opts.Check.Image,
-			Profiles: []string{"default"},
+			Profiles: []string{checkProfile},
 			// An OCI container exits when its entrypoint does; keep it alive to exec into.
 			Config:  map[string]string{"oci.entrypoint": "sleep 3600"},
-			Devices: map[string]map[string]string{"data": {"type": "disk", "pool": v.pool(), "source": scratch, "path": mount, "readonly": "true"}},
+			Devices: devices,
+			// Only the root disk goes in the creation request: the data device names the scratch volume, which ApplyConfig attaches.
+			RootDiskAtCreate: true,
 		}
 		if err := run.Create(server, spec, v.Project); err != nil {
 			return res, err
@@ -256,6 +270,27 @@ func Verify(server incus.InstanceServer, v Volume, opts VerifyOptions) (res Veri
 	}
 	res.Duration = now().Sub(start)
 	return res, nil
+}
+
+// checkProfile is the one profile the check instance is created with.
+const checkProfile = "default"
+
+// profileHasRootDisk says whether the named profile, in the project s is scoped to, has a root disk. A profile that is not there has none (Incus then
+// refuses the instance in its own words); a look-up that failed is an error, never "none", because adding a second root disk is an error or an override.
+func profileHasRootDisk(s incus.InstanceServer, name string) (bool, error) {
+	p, _, found, err := incusapi.LookupProfile(s, name)
+	if err != nil || !found {
+		return false, err
+	}
+	return run.HasRootDisk(p.Devices), nil
+}
+
+// inProject says which project a message is about, when the volume names one.
+func inProject(v Volume) string {
+	if v.Project == "" {
+		return ""
+	}
+	return " of project " + v.Project
 }
 
 func stamp(s incus.InstanceServer, v Volume, snap, with, from string, at time.Time) error {

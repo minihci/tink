@@ -235,6 +235,10 @@ func Run(opts Options) (*Result, error) {
 // cliconfig.LoadConfig, a real Go API for the same file `incus remote`
 // itself reads and writes -- see internal/bootstrap/registries.go for
 // the same reasoning applied to a read-only remote lookup.
+//
+// The creation request carries the profiles, the ephemeral flag and, when
+// spec.RootDiskAtCreate is set, the root disk; config and every other
+// device come afterwards, from ApplyConfig.
 func Create(server incus.InstanceServer, spec *Spec, project string) error {
 	scoped := server
 	if project != "" {
@@ -262,12 +266,32 @@ func Create(server incus.InstanceServer, spec *Spec, project string) error {
 		InstancePut: api.InstancePut{
 			Profiles:  spec.Profiles,
 			Ephemeral: spec.Ephemeral,
+			Devices:   creationDevices(spec),
 		},
 	})
 	if err != nil {
 		return fmt.Errorf("creating %s: %w", spec.Name, err)
 	}
 	return op.Wait()
+}
+
+// creationDevices is what a creation request carries besides the profiles: the spec's root disk when it asks for one (Spec.RootDiskAtCreate), else
+// nothing. Every other device waits for ApplyConfig, because it may name a volume that does not exist yet, and Incus checks that when it writes the
+// record. The root disk is applied again by ApplyConfig, which changes nothing.
+func creationDevices(spec *Spec) api.DevicesMap {
+	if !spec.RootDiskAtCreate {
+		return nil
+	}
+	var devices api.DevicesMap
+	for name, dev := range spec.Devices {
+		if isRootDisk(dev) {
+			if devices == nil {
+				devices = api.DevicesMap{}
+			}
+			devices[name] = dev
+		}
+	}
+	return devices
 }
 
 // resolveImage splits image the same way incus's own CLI parses a
