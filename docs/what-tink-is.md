@@ -11,7 +11,7 @@ tink is declarative. You describe a site in YAML, `plan` shows what would change
 1. **Declare** in a stack: documents of different kinds, applied together.
 2. **Plan**: compare the declaration with what Incus reports. Say what would change, what is blocked and why, and what looks wrong.
 3. **Apply**: make the change. Anything that could interrupt running work is blocked unless the declaration allows it.
-4. **Keep and verify**: a helper runs the work that must keep happening (copies, route reconciliation) and says when it cannot.
+4. **Keep and verify**: the daemon helper runs the work that must keep happening (copies, route reconciliation) and says when it cannot. See [helpers](#helpers).
 
 What tink must remember it writes on the objects themselves, under `user.tink.*`, so the state stays with the thing it describes **[docs]**.
 
@@ -23,12 +23,12 @@ The pieces that exist, and the one being designed, share a shape: a declaration,
 
 | Capability | Declaration | Acts | Checks | Status |
 |---|---|---|---|---|
-| backup | `backup:` on a volume | the helper's scheduler | no helper, missing remote, a 3-2-1 note | built **[docs]** |
-| ingress | `user.tink.ingress.*` on an instance | the helper (or the host daemon) renders routes | bad address skipped with a warning | built **[docs]** |
+| backup | `backup:` on a volume | the daemon helper's scheduler | no daemon helper, missing remote, a 3-2-1 note | built **[docs]** |
+| ingress | `user.tink.ingress.*` on an instance | the daemon helper (or the host daemon) renders routes | bad address skipped with a warning | built **[docs]** |
 | secrets | `${secret:NAME}` in an instance's `environment.*` | resolved at apply | **[to confirm]** | built, narrow **[docs]** |
 | network | `kind: network` | apply | disruption guard, unnamed-NIC warning | built **[docs]** |
-| remote access | offers on apps, grants in a site resource | a gateway container per bridge | a grant with no offer, a route wider than needed | proposed |
-| identity and single sign-on | group names in grants; offers on apps | the identity engine's configuration, rendered by tink | a grant that names a group the directory does not have | proposed; the engine pair was verified in a lab |
+| remote access | offers on apps, grants in a site resource | a mesh helper (the gateway) per bridge | a grant with no offer, a route wider than needed | proposed |
+| identity and single sign-on (two roles, a helper each) | group names in grants; offers on apps | the engines' configuration, rendered by tink | a grant that names a group the directory does not have | proposed; the engine pair was verified in a lab |
 
 ## Roles and engines
 
@@ -45,12 +45,48 @@ The rule that keeps this contained is that tink's code talks to a role, and an e
 |---|---|---|---|---|
 | platform | Incus | decided | none | one API for containers and VMs; the only hard requirement |
 | reverse proxy | Caddy | defaulted | nginx, Traefik | automatic certificates and a small text config that tink renders |
-| mesh | WireGuard-based, stock Tailscale clients | decided | NetBird, ZeroTier | a common pairing for a home site plus a VPS |
-| mesh control plane | Headscale | defaulted | Tailscale's hosted service | reviewed in use: works; API keys have no scope. Policy delivery was tried on a throwaway: `policy set` inside the container in database mode needs no key, is validated and immediate, and keeps the previous policy on failure; file mode plus a SIGHUP also works **[lab, source]** |
+| mesh | WireGuard-based, stock Tailscale clients | decided | NetBird, ZeroTier | a common pairing for a home site plus a VPS; the gateway is this role's helper |
+| mesh control plane | Headscale | defaulted | Tailscale's hosted service | provided, not dictated: the gateway needs only the server's address and a key. Reviewed in use: works; API keys have no scope. Policy delivery was tried on a throwaway: `policy set` inside the container in database mode needs no key, is validated and immediate, and keeps the previous policy on failure; file mode plus a SIGHUP also works **[lab, source]** |
 | single sign-on | Authelia | decided | Authentik, Kanidm, Pocket ID, Keycloak | compared on documentation, then verified with LLDAP in a lab ([below](#identity-what-the-lab-showed-2026-10-12-and-13)); OIDC clients are static configuration; the groups claim reaches an app through `userinfo`, or the ID token with a claims policy ([below](#identity-what-the-lab-showed-2026-10-12-and-13)) |
 | identity store | LLDAP | decided | Authelia's own user file (what runs today), Kanidm, Authentik | a directory with an API and a declarative bootstrap script; people, groups and credentials; one volume of state |
 | backup transport | an Incus remote | decided **[to confirm]** | none | copies use Incus's own copy |
 | secrets | age | decided **[to confirm]** | not compared | see the secrets design note |
+
+## Helpers
+
+**Decision (2026-10-13):** a **helper** is a container Incus keeps running for tink, and it provides one role's capability. It is named by its role: an *ingress helper*, a *dns helper*, an *identity helper*. The bare "the helper" is ambiguous and is not used; what the rest of the documentation calls "the helper" is the **daemon helper**.
+
+**Where the idea came from.** The first job was backups, which need something long-running to schedule them. Writing init scripts for each init system was not something tink wanted to take on. Incus is already started at boot, so a container that runs `cron` is a supervised long-running process with nothing for tink to install. That is still the whole mechanism.
+
+**One container per role (decided).** A role with two engines is two roles. That is why identity and single sign-on are separate: LLDAP (people, groups, credentials) and Authelia (login, access rules, OIDC) keep separate state, refresh differently (Authelia reads groups from the directory live, but its own configuration is static until a restart) and have different consumers **[lab]**. It is a choice, not a rule inherited from Incus: nothing in Incus requires one engine per container, and the engines tried so far happen to ship as one-app OCI images **[docs]**. Two cases push on it:
+- An engine that does two jobs (a provider with its own user store) would be one container filling two roles **[to confirm]**.
+- Mesh. The gateway (one per bridge, on the home host) and the control plane (one, on a host with a public name) differ in host and lifetime. The gateway is the mesh role. The control plane is something the gateway *needs*, as a backup target is something a volume needs: tink's default is a Headscale helper, and pointing at Tailscale's hosted service or someone else's Headscale is allowed. The part that depends on the controller is policy delivery, which is Headscale-specific today.
+
+**Not an "ecosystem container."** Putting every engine in one tink-built image was considered and set aside. It needs a process supervisor inside, ties the engines' restarts and upgrades together, stops Incus network ACLs from separating them, and makes tink follow every upstream's security fixes instead of pinning upstream images by digest. The "one thing to apply" it would give comes from a platform stack instead.
+
+**The daemon helper** is the one that exists **[docs]**: the scheduler, the job executor and the ingress reconcile, under a certificate with the reach of root. Its first job was backup, but it is a generic periodic runner, and more jobs of the same kind are coming (refreshing the mesh policy, re-rendering a dns zone). So the runner stays, and each role's job definitions belong with that role. What is open is credentials (decision 2 below).
+
+| Helper | Engine | Status |
+|---|---|---|
+| daemon | tink | built **[docs]** |
+| ingress | Caddy | the engine runs by hand today; the daemon helper renders its routes **[docs]** |
+| identity | LLDAP | lab only **[lab]** |
+| single sign-on | Authelia | lab only **[lab]** |
+| mesh (the gateway) | a Tailscale client | proposed |
+| mesh control plane | Headscale | by hand today; policy delivery verified on a throwaway **[lab]** |
+| dns | CoreDNS | proposed, under discussion: a small authoritative zone for the names apps publish |
+
+### The platform stack (proposed)
+
+A **platform stack** declares a site's helpers: ordinary `kind: instance` documents, each from its upstream image pinned by digest, in a `tink` project. The identity lab had this shape with three of them (LLDAP, Authelia, Headscale) **[lab]**.
+
+- **No cross-stack references.** Apps carry offers as `user.tink.*` keys and helpers discover them across projects, as the ingress reconcile does today **[docs]**. The platform stack applies without the app stacks, and the reverse.
+- **One per Incus server.** A stack applies to the one server `--remote` names **[docs]**, so a VPS gets its own small platform stack for the control plane.
+- **A template you copy and own (decided).** Nothing undeclared changes. A copy can fall behind tink, so two levers, in order:
+  1. *A thin template, with the wiring in tink.* The stack says which container exists (image, volume, stamp); tink's reconcile does the wiring: routes, OIDC clients from offers, policy delivery. What is left rarely changes.
+  2. *Visible drift.* `plan` says when a capability needs a helper the stack does not declare, and a read-only diff against the shipped recipe shows what changed.
+- **Later, if drift still hurts:** `kind: platform`, as sugar that expands to the same documents, with `tink platform eject` printing them. The alternative is a pinned include with field overrides (a resource's own fields win, as `project:` does today **[docs]**). Neither is designed. A kind that bakes in digests would make an engine's security fix wait for a tink release, would need an override syntax, and would stop the file being self-contained.
+- **Finding a helper.** A stamp would find "the dns helper" whatever the instance is called; ingress is found by instance name today (`--ingress-instance`) **[docs]**. It cannot be `user.tink.helper`: that is the daemon helper's marker, matched by presence alone, so tink reported a CoreDNS container carrying it as a degraded daemon helper on every plan **[lab]**. `user.tink.role: dns` was accepted without a word **[lab]**; the name is still a proposal.
 
 ## Offers and grants
 
@@ -101,7 +137,7 @@ Ingress moves first, with its existing tests as the guard. The first grant would
 
 ## People and groups
 
-**Decision (2026-10-13):** identity is a role like the others. The default engines are LLDAP, the directory (people, groups, credentials), and Authelia on top of it (login, access rules, OIDC). They were compared on their documentation and then tried together in a lab.
+**Decision (2026-10-13):** identity is a role like the others, and it is two roles: **identity** (the directory: people, groups, credentials) and **single sign-on** (login, access rules, OIDC). The default engines are LLDAP and Authelia on top of it, each in a helper of its own ([helpers](#helpers)). They were compared on their documentation and then tried together in a lab.
 
 ### Identity: candidates examined (2026-10-12)
 
@@ -150,7 +186,7 @@ As of 2026-10-12, from the migration lab.
 ## Open decisions
 
 1. **Removal.** Replace "report, never remove" with an explicit, scoped operation based on the ownership stamp. A shape that already works in the identity engine's bootstrap script: report by default, deletion opt-in per class (users, groups, memberships), and the system's own objects excluded.
-2. **Helpers.** A helper is a tink container that does a role's work. The first one happens to be a long-running scheduler. Whether each role gets its own, and whether they share one `tink` project.
+2. **Helpers.** Settled on 2026-10-13 ([above](#helpers)): a helper is a container Incus keeps running for one role, named by the role; one container per role; the platform stack starts as a template. Still open: (a) **credentials.** Today the daemon helper holds the only certificate with the reach of root. Whether role helpers that reconcile hold their own (narrowed to a project) or the daemon helper stays the one that acts **[to confirm]**; (b) whether the platform stack can declare the daemon helper, which needs a trust token; (c) the stamp that finds a helper by role; (d) whether all helpers share one `tink` project (the working assumption is yes).
 3. **Remote access v1** supports project-private bridges only.
 4. **Name of the remote-access feature:** `overlay`, `mesh` or `vpn` (see the collisions in the glossary).
 5. **Whether tink also declares people and groups** (through the engine's bootstrap script, which needs secrets in files), or only reads them to validate grants.
