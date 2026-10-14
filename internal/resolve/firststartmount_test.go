@@ -193,15 +193,15 @@ func TestMountsOf_AnInstanceThatNamesNoProfileGetsDefault(t *testing.T) {
 	}
 }
 
-// profileServer answers GetProfile from a table and counts the asks; any other call panics (nil embedded interface).
-type profileServer struct {
+// mountProfileServer answers GetProfile from a table and counts the asks; any other call panics (nil embedded interface).
+type mountProfileServer struct {
 	incus.InstanceServer
 	profiles map[string]map[string]map[string]string
 	err      error
 	asked    []string
 }
 
-func (s *profileServer) GetProfile(name string) (*api.Profile, string, error) {
+func (s *mountProfileServer) GetProfile(name string) (*api.Profile, string, error) {
 	s.asked = append(s.asked, name)
 	if s.err != nil {
 		return nil, "", s.err
@@ -221,17 +221,17 @@ func TestProfileLookup(t *testing.T) {
 	}
 	cases := []struct {
 		name       string
-		server     *profileServer
+		server     *mountProfileServer
 		profile    string
 		wantOK     bool
 		wantDevice string
 		wantAsked  []string
 	}{
-		{"a profile the stack declares is read from the stack, not the server", &profileServer{profiles: onServer}, "stack", true, "a", nil},
-		{"any other profile is read from the server", &profileServer{profiles: onServer}, "live", true, "b", []string{"live"}},
-		{"a profile that is nowhere cannot be read", &profileServer{profiles: onServer}, "gone", false, "", []string{"gone"}},
-		{"a server that fails cannot be read from: unreadable, not absent, and not an error", &profileServer{err: api.StatusErrorf(http.StatusForbidden, "no")}, "live", false, "", []string{"live"}},
-		{"a dropped connection is unreadable too", &profileServer{err: errors.New("connection reset")}, "live", false, "", []string{"live"}},
+		{"a profile the stack declares is read from the stack, not the server", &mountProfileServer{profiles: onServer}, "stack", true, "a", nil},
+		{"any other profile is read from the server", &mountProfileServer{profiles: onServer}, "live", true, "b", []string{"live"}},
+		{"a profile that is nowhere cannot be read", &mountProfileServer{profiles: onServer}, "gone", false, "", []string{"gone"}},
+		{"a server that fails cannot be read from: unreadable, not absent, and not an error", &mountProfileServer{err: api.StatusErrorf(http.StatusForbidden, "no")}, "live", false, "", []string{"live"}},
+		{"a dropped connection is unreadable too", &mountProfileServer{err: errors.New("connection reset")}, "live", false, "", []string{"live"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -254,7 +254,7 @@ func TestProfileLookup(t *testing.T) {
 
 // A profile that exists only on the server, and mounts a host directory, hides the file as well.
 func TestPlaceBy_AServerSideProfileCounts(t *testing.T) {
-	srv := &profileServer{profiles: map[string]map[string]map[string]string{"media": {"m": disk("/media", "/srv/media", "")}}}
+	srv := &mountProfileServer{profiles: map[string]map[string]map[string]string{"media": {"m": disk("/media", "/srv/media", "")}}}
 	inst := instanceWith(nil, "media")
 	pl := placeBy(inst, []Resource{fileAt("f", "/media/x"), fileAt("g", "/etc/x")}, profileLookup(srv, nil))
 	if got := show(pl); !reflect.DeepEqual(got, []string{"g", "skip:f"}) {
