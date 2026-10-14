@@ -14,6 +14,27 @@ on its own, and the restore point it made verifies; a helper whose process was k
 its job history; and `upgrade` with no flags, from the `v0.1.1` release binary, drained it, moved it from the `v0.1.0` image to the `v0.1.1` one, and kept its
 certificate and its job history. **Not yet tried:** a host reboot or an Incus restart, and the helper copying to a second physical server.
 
+## What the helper is for
+
+**Decided 2026-10-14.** The helper is tink's long-running self: `tink plan` on a loop, with a choice, per thing, of what to do when the live state has drifted from what was declared. The helpers in a platform stack (dns, ingress, sso, mesh, identity) **serve**: they are stock engines from registries and handle users' traffic. This one **tends** them. It handles no user traffic, it is the only helper that calls the Incus API with a certificate of its own, and what it does is keep the site matching its declarations between the times someone runs `plan apply`. Cron is only its trigger; there is no broker in front of Incus in this design.
+
+| Drift | What the helper does | Built? |
+|---|---|---|
+| a backup copy is overdue (time) | **heals**: makes the copy, verifies restores on schedule | yes: this is all it does for the platform today **[live]** |
+| a published name's dns record, route, sign-on rule or ACL rule is wrong (derived state) | **heals**: renders from the declarations and rewrites the file | the dns records, by hand (`tink join apply dns`, [join.md](join.md#applying-dns)); not yet on a timer |
+| an instance's config, image or volume was changed by hand (declared state) | **reports**, and a human decides; healing it automatically is an opt-in per resource later, like `on_image_change` | not built |
+| the helper itself stops, or a copy keeps failing | says so in its status document, which `tink helper status` judges | yes; nothing yet *delivers* the message (open decision 6) |
+
+**The rule that falls out: derived state heals, declared state reports.** A file that says "do not edit" (the generated `/hosts`, generated routes, rules) is the helper's to keep right. Something a person wrote in a stack is theirs to change, so a difference there is told, not undone. This is the same shape as `on_image_change: report | ignore | rebuild`, which already is a per-resource choice between telling and healing.
+
+**It also gives a least-privilege shape [lab, partly]:** detecting needs only read access; healing derived files needs a few narrow writes (the dns records are two file reads and one file write on one instance); healing declared state is the broad case. The always-on loop should not need more than it uses (see the authorization lab in the author's platform repository, `authz-lab/`: a restricted certificate in a restricted project is a real boundary against the host, and anything finer than a project needs Incus's authorization scriptlet or OpenFGA).
+
+**Two gaps stand between here and that picture:**
+1. **Desired state for general drift.** The helper has no copy of the declarations. It finds its work in stamps on objects (the backup policy on a volume today; the publish declarations next). Detecting drift in *declared* state needs the declarations themselves, either a checkout of the stack repository or stamps for everything, and the age identity for any resource that holds a secret.
+2. **Somewhere to send an alert.** There is no delivery channel yet.
+
+One container is enough: backups and reconcile are the same binary, and splitting them would isolate nothing unless their credentials were scoped separately.
+
 ## Installing it
 
 ```
