@@ -21,6 +21,8 @@ import (
 
 func createOne(server incus.InstanceServer, r Resource, env volumeEnv) error {
 	switch r.Kind {
+	case KindHelper:
+		return createHelper(server, r)
 	case KindProject:
 		return server.CreateProject(api.ProjectsPost{
 			Name:       r.Name,

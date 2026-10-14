@@ -35,6 +35,26 @@ certificate and its job history. **Not yet tried:** a host reboot or an Incus re
 
 One container is enough: backups and reconcile are the same binary, and splitting them would isolate nothing unless their credentials were scoped separately.
 
+## Declaring it in a stack
+
+The helper can be part of a platform stack, so the stack that brings up the helpers (dns, ingress, sign-on, mesh) also names the one that tends them:
+
+```yaml
+kind: helper
+name: helper                  # the helper's instance name (default: helper)
+project: tink-helper          # where it lives (default: tink-helper; the stack's default project is not used, the helper is not an app of the stack)
+timezone: America/Denver      # the zone its schedules are evaluated in (UTC when omitted: plan says so)
+network: incusbr0             # the network its NIC joins (optional)
+pool: default                 # the pool for its root disk and volumes (optional)
+image: ghcr:minihci/tink-helper:v0.1.4    # the OCI image it is installed from (optional: the image published for this tink)
+remotes: [host, vps]          # the Incus servers it must be able to reach, for plan to check (optional)
+```
+
+- **A helper that is there is adopted, and nothing about it is changed.** `plan` says how it is (`healthy`, `degraded`, `down`, with the reasons), which tink version it runs, and warns when a remote the stack says it needs is not among the remotes it reports (naming `tink helper remote add`). It never upgrades, restarts or re-enrols it: an upgrade drains the helper first, and a declaration is not the place to start one by surprise (`tink helper upgrade`).
+- **When there is none, `apply` installs it,** exactly as `tink helper install` does: it mints a single-use trust token with the certificate of whoever runs the apply, and the helper enrols with a certificate of its own. So a platform stack brings up its own controller. Remotes other than the host's cannot be added this way (they need a token or fingerprint from the other server, which is for its owner to give), and `plan` warns about each.
+- **It is BLOCKED if an instance of that name exists in that project and is not a helper** (it lacks the marker), instead of failing half way through an install.
+- **Not here:** a version policy (an `on_version_change: report | upgrade`, like `on_image_change`), the ingress half, and removal (a stack never deletes: `tink helper remove`).
+
 ## Installing it
 
 ```
@@ -226,6 +246,7 @@ either way. `Ctrl-C` stops following and leaves the job running.
   `tink helper install`. (Something else may be running them, `tink backup run --due` from cron or a `tink daemon run --jobs DIR` unit, which tink cannot see from here;
   the note says so.) With a helper there, that note is not shown, and the next point applies. This replaced a warning that was printed for every volume with copies
   whether or not anything ran them, which is to say a warning nobody read.
+- **A `kind: helper` document makes all of this part of the plan** ([above](#declaring-it-in-a-stack)): the helper's health is reported on its own line, not only as a closing note.
 - **They tell you when the helper is not well.** `tink plan` and `tink plan apply` end with a note when the server has a helper that is degraded or down
   (skipping a volume, failing a copy, stopped, silent, or without its certificate), the same judgement `tink helper status` makes. A note, never a
   failure, and nothing is said when there is no helper or it is healthy.

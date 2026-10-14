@@ -44,7 +44,8 @@ several files to see are below.
   `cmd/tink/main.go`.
 - **The resolver (`internal/resolve`) is the core.** A stack is YAML documents of kinds project, profile, storage-volume,
   instance, file, exec, and two that are not resources to converge: `stack` (a name only) and `publish` (a declaration that
-  `tink join` reads; `publish.go`). Both are kept out of the graph, which is why a publish may share a name with its instance. `graph.go` computes dependency levels (resources within a level
+  `tink join` reads; `publish.go`). Both are kept out of the graph, which is why a publish may share a name with its instance. `helper` (`helperkind.go`)
+  declares the daemon helper: adopted and only reported on when present, installed (through `internal/helper`) when absent, never upgraded or removed. `graph.go` computes dependency levels (resources within a level
   apply concurrently; ties are broken by kind then name so a plan reads the same on every run). Dependencies come from
   name-matching (an instance's project, profiles and volume-backed devices) plus explicit `DependsOn`; deliberately not a
   Terraform-style expression language. `Plan` is pure reads; `apply*.go` converges. Design and rationale are in
