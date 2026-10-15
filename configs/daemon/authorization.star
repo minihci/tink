@@ -1,33 +1,58 @@
-# Incus has no built-in fine-grained permission/identity groups system (that's
-# an LXD-only feature the web UI's "Permissions" pages assume but Incus never
-# implemented — see README.md). This is the whole authorization policy: trust
-# anyone who made it through the OIDC login (Authelia), or who holds a trusted
-# TLS client certificate (added via `incus config trust add`). Neither
-# introduces a new class of access -- both require someone with existing
-# admin access to have already deliberately granted that trust, so this just
-# extends the same "trust anyone already trusted" principle to TLS clients
-# too. This is deliberately the coarse version: any trusted TLS cert gets the
-# same broad access OIDC users already get. A `--restricted` cert is still
-# bounded by Incus's own built-in project restriction regardless of what this
-# returns -- that enforcement happens independently of this scriptlet, not
-# through it. The finer, per-identity/per-object version (see
-# incus-host/reconciler/DESIGN.md's "Open question") stays undone until
-# something actually needs narrower-than-project scoping.
+# Authorization scriptlet for the Incus server. `tink deploy` splices this
+# file under the authorization.scriptlet key of the server-config template,
+# configs/daemon/server-config.yaml (internal/bootstrap/render.go).
 #
-# Fine for a single-admin host; if that stops being true, look at OpenFGA
-# instead of growing this script — see https://linuxcontainers.org/incus/docs/main/authorization/
-#
-# `details.RequestDetails.Protocol` is confirmed correct on Incus 7.4 only —
-# Incus changed this internal shape once already between 6.0 and 7.x with no
-# changelog entry (it used to be the flatter `details.Protocol`). If this
-# stops working on a different host's Incus version, it fails quietly on
-# list endpoints (empty results, no error) but loudly on a direct fetch:
+# VALIDATED ON INCUS 7.5.1 ONLY. The shape of `details` has moved between
+# Incus versions with no changelog entry. This file used to read
+# `details.RequestDetails.Protocol` (recorded as correct on 7.4); on 7.5.1
+# `details` is flat (fields Certificate, Chain, Claims, IsAllProjectsRequest,
+# ProjectName, Protocol, Username) and `RequestDetails` does not exist, so
+# that read fails with `Invalid field "RequestDetails"`. Re-test on a
+# throwaway server at every Incus upgrade, with a real request: `incus config
+# set authorization.scriptlet=...` rejects syntax errors but NOT unknown
+# fields, so a wrong field path only shows when a request is made. On an
+# earlier version it showed as empty lists (no error) on list endpoints and
+# as the real Starlark error on a direct fetch:
 #   incus query /1.0/projects/default
-# will show the real Starlark error ("Invalid field ..."), which tells you
-# the new field path to use.
+#
+# THIS ONLY RUNS FOR CLIENT CLASSES ROUTED TO IT. Since Incus 7.x each class
+# of client has its own server key, authorization.client.unix | tls |
+# tls-restricted | oidc | default, with values allow, deny, tls (tls-restricted
+# only: the certificate's project list), openfga or scriptlet. For example:
+#   incus config set authorization.client.oidc=scriptlet
+# The built-in routing is unix=allow, tls=allow, tls-restricted=tls, oidc=allow,
+# default=deny, and with it this script is never called: OIDC and unrestricted
+# certificates are already allowed, and a restricted certificate is held to its
+# project list. `tink deploy`'s template routes oidc and tls here (Incus 7.3+),
+# so on a deployed host it is called for those two; it sets tls-restricted to
+# the built-in tls value, so a restricted certificate keeps its project list.
+#
+# THE POLICY, which is the coarse version: trust anyone who made it through
+# the OIDC login (Authelia) or who holds a trusted TLS client certificate
+# (added with `incus config trust add`). Neither is a new class of access:
+# someone with admin access had to grant that trust deliberately. Anything
+# that is neither oidc nor tls is denied, so do not route a class here whose
+# clients must be allowed otherwise (the local unix socket, for one).
+#
+# DO NOT route authorization.client.tls-restricted here. A restricted
+# certificate would no longer be held to its project list: this script only
+# looks at the protocol, which is tls for any certificate, so it answers True.
+# docs/volume-backup-design.md measured a restricted certificate seeing every
+# project through a scriptlet that returned True; this script's answer for
+# that class has not been re-measured on 7.5.1. The deploy template keeps that
+# class on Incus's own check:
+#   authorization.client.tls-restricted: tls
+# A host that wants a restricted certificate held to something narrower than its
+# project list routes that class to a script of its own, one that tells
+# certificates apart by details.Username (the certificate's fingerprint).
+#
+# The routing values above are the whole menu on 7.5.1: none of them is a
+# per-identity permission-group model. For narrower than this, look at
+# OpenFGA instead of growing this script:
+#   https://linuxcontainers.org/incus/docs/main/authorization/
 def authorize(details, object, entitlement):
-    if details.RequestDetails.Protocol == "oidc":
+    if details.Protocol == "oidc":
         return True
-    if details.RequestDetails.Protocol == "tls":
+    if details.Protocol == "tls":
         return True
     return False

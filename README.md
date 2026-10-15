@@ -209,6 +209,23 @@ Confirmed idempotent: running `deploy` twice in a row against the same
 host, back to back, produced identical results both times with no
 manual intervention needed on the second run.
 
+`deploy`'s authorization (the scriptlet under `configs/daemon`) is
+**validated on Incus 7.5.1 only** and is easy to misread, so plainly: on
+Incus 7.x a scriptlet runs only for a client class routed to it with an
+`authorization.client.*` key. With Incus's built-in routing it is never
+called, and OIDC logins and unrestricted certificates are allowed anyway.
+`deploy`'s template routes the `oidc` and `tls` classes to it, so on a
+deployed host it is called for those two and allows both. It sets
+`tls-restricted` to Incus's own `tls` check on purpose: routed to this
+script, a *restricted* certificate would get the script's `True` instead
+of its project list (measured once, on another server,
+[not re-measured](configs/README.md#host-authorization) with this
+script). An earlier template did route it there, and a host deployed from
+it changes at its next `deploy`. The shape
+of the data Incus passes to the script changes between versions, so it is
+to be re-tested on a throwaway server at every Incus upgrade. Details:
+[`configs/README.md`](configs/README.md#host-authorization).
+
 `daemon` is implemented, smoke-tested on a disposable VPS, and **now the
 live mechanism running the reconciler on `incus.xlii.co`** -- supervised
 by a real, `systemd-analyze verify`-passed unit (`systemctl enable --now
