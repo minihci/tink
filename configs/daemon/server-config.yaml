@@ -23,12 +23,12 @@
 # authorization.client.* key (the classes are unix, tls, tls-restricted,
 # oidc and default). Incus's built-in routing is unix=allow, tls=allow,
 # tls-restricted=tls (the certificate's project list), oidc=allow and
-# default=deny, and with it the scriptlet is never called. The three keys
-# below are what make this host use it. Two things to know about them:
-#   - tls-restricted routed to the scriptlet gives a restricted certificate
-#     the scriptlet's answer, which is True for every tls client, not its
-#     project list. To hold restricted certificates to their projects,
-#     change that one line's value to "tls" (the built-in routing).
+# default=deny, and with it the scriptlet is never called. The oidc and tls
+# keys below are what make this host use it. Two things to know about them:
+#   - tls-restricted is deliberately NOT routed to the scriptlet: it keeps
+#     the built-in "tls" value, so a restricted certificate is held to its
+#     project list. Routing it to the scriptlet would give it the scriptlet's
+#     answer, which is True for every tls client, i.e. full access.
 #   - the scriptlet was validated on Incus 7.5.1 only and reads a field
 #     path that changes between Incus versions; see its own header.
 config:
@@ -45,6 +45,6 @@ config:
   oidc.scopes: "openid,profile,email,groups,offline_access"
   authorization.client.oidc: scriptlet
   authorization.client.tls: scriptlet
-  authorization.client.tls-restricted: scriptlet
+  authorization.client.tls-restricted: tls
   authorization.scriptlet: |
 __AUTHORIZATION_SCRIPTLET__

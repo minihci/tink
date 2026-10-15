@@ -36,16 +36,17 @@ What `tink deploy` sets on the Incus server, and what that does and does not do.
   `oidc=allow`, `default=deny`. Under it `authorization.scriptlet` is never called, and OIDC logins and unrestricted certificates are
   already allowed. On such a host the script is inert; to use it you route a class to it, for example
   `incus config set authorization.client.oidc=scriptlet`.
-- **`daemon/server-config.yaml` routes three classes to it:** `oidc`, `tls` and `tls-restricted` (Incus 7.3+; an older Incus rejects the
-  whole document over those keys). So on a deployed host the script is called for those three. It allows `oidc` and `tls` and denies
-  anything else, which for `oidc` and `tls` is what the built-in routing already did. The routing leaves `unix` and `default` on the
+- **`daemon/server-config.yaml` routes two classes to it:** `oidc` and `tls`, and sets `tls-restricted` to the built-in `tls` value (Incus
+  7.3+; an older Incus rejects the whole document over those keys). So on a deployed host the script is called for `oidc` and `tls`. It allows
+  both and denies anything else, which is what the built-in routing already did for those two. The routing leaves `unix` and `default` on the
   built-in values.
-- **A restricted certificate is not held to its projects by that routing.** `tls-restricted` routed to the scriptlet gives it the
-  scriptlet's answer, which is `True` for every `tls` client, in place of the project list the built-in `tls` routing applies. Measured on
-  another server with a scriptlet that returned `True` ([volume-backup-design.md](../docs/volume-backup-design.md), step 3b), not re-measured
-  with this script. A setup that wants restricted certificates scoped to their projects needs `authorization.client.tls-restricted: tls`:
-  change that line in the template. (`incus config set` on the host is lost at the next `tink deploy`, which applies the template with
-  `incus config edit` and replaces the server's whole config.)
+- **A restricted certificate is held to its projects, because that class is not routed to the script.** `tls-restricted: tls` is Incus's own
+  check, the certificate's project list. Routing that class to the scriptlet would give it the scriptlet's answer, which is `True` for every
+  `tls` client: full access. That was measured on another server with a scriptlet that returned `True`
+  ([volume-backup-design.md](../docs/volume-backup-design.md), step 3b), and not re-measured with this script. An earlier version of the
+  template did route it there; a host deployed with that version keeps it until the next `tink deploy`, which applies the template with
+  `incus config edit` and replaces the server's whole config (so it also loses any `incus config set` made by hand). A host that wants
+  restricted certificates held to something narrower than their project list routes that class to a script of its own.
 - **The script is validated on Incus 7.5.1 only.** The shape of `details` moves between Incus versions: the script used to read
   `details.RequestDetails.Protocol`, which is not a field on 7.5.1 (it reads `details.Protocol`). A wrong field name is not caught by
   `incus config set authorization.scriptlet=...`, only by a request. Re-test on a throwaway server at every Incus upgrade, with a client of

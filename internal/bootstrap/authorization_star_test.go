@@ -150,10 +150,11 @@ func TestAuthorizationStar_LooksLikeStarlark(t *testing.T) {
 
 // What `tink deploy` really writes: the shipped template with the shipped
 // script spliced in must be valid YAML whose scriptlet is the script, and it
-// routes the three client classes to the scriptlet. The docs (README.md,
+// routes the oidc and tls classes to the scriptlet and keeps tls-restricted on
+// Incus's own check (the certificate's project list). The docs (README.md,
 // configs/README.md) and the comments in both files describe exactly this
 // routing, so changing it means changing them in the same commit.
-func TestShippedServerConfig_RoutesThreeClassesToTheScriptlet(t *testing.T) {
+func TestShippedServerConfig_RoutesOIDCAndTLSToTheScriptletAndKeepsRestrictedOnTheProjectList(t *testing.T) {
 	script := readShipped(t, "authorization.star")
 
 	rendered, err := renderServerConfig(
@@ -175,10 +176,15 @@ func TestShippedServerConfig_RoutesThreeClassesToTheScriptlet(t *testing.T) {
 	if got := doc.Config["authorization.scriptlet"]; got != script {
 		t.Errorf("the spliced scriptlet differs from authorization.star:\n got: %q\nwant: %q", got, script)
 	}
-	for _, class := range []string{"oidc", "tls", "tls-restricted"} {
+	for _, class := range []string{"oidc", "tls"} {
 		if got := doc.Config["authorization.client."+class]; got != "scriptlet" {
 			t.Errorf("authorization.client.%s = %q, want \"scriptlet\" (update the docs if this is deliberate)", class, got)
 		}
+	}
+	// The script answers True for every tls client, so a restricted certificate routed to it would see every project; "tls" is Incus's own
+	// check, the certificate's project list.
+	if got := doc.Config["authorization.client.tls-restricted"]; got != "tls" {
+		t.Errorf("authorization.client.tls-restricted = %q, want \"tls\": routed to the scriptlet, a restricted certificate gets full access instead of its project list (update the docs if this is deliberate)", got)
 	}
 	for _, class := range []string{"unix", "default"} {
 		if got, set := doc.Config["authorization.client."+class]; set {

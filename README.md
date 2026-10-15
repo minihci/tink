@@ -214,14 +214,14 @@ manual intervention needed on the second run.
 Incus 7.x a scriptlet runs only for a client class routed to it with an
 `authorization.client.*` key. With Incus's built-in routing it is never
 called, and OIDC logins and unrestricted certificates are allowed anyway.
-`deploy`'s template routes the `oidc`, `tls` and `tls-restricted` classes
-to it, so on a deployed host it is called for those, allows `oidc` and
-`tls`, and as a side effect gives a *restricted* certificate the same
-answer instead of its project list (measured once, on another server,
+`deploy`'s template routes the `oidc` and `tls` classes to it, so on a
+deployed host it is called for those two and allows both. It sets
+`tls-restricted` to Incus's own `tls` check on purpose: routed to this
+script, a *restricted* certificate would get the script's `True` instead
+of its project list (measured once, on another server,
 [not re-measured](configs/README.md#host-authorization) with this
-script). A setup that wants restricted
-certificates scoped to their projects needs
-`authorization.client.tls-restricted` routed to `tls` instead. The shape
+script). An earlier template did route it there, and a host deployed from
+it changes at its next `deploy`. The shape
 of the data Incus passes to the script changes between versions, so it is
 to be re-tested on a throwaway server at every Incus upgrade. Details:
 [`configs/README.md`](configs/README.md#host-authorization).

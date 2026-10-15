@@ -23,8 +23,9 @@
 # The built-in routing is unix=allow, tls=allow, tls-restricted=tls, oidc=allow,
 # default=deny, and with it this script is never called: OIDC and unrestricted
 # certificates are already allowed, and a restricted certificate is held to its
-# project list. `tink deploy`'s template routes oidc, tls and tls-restricted
-# here (Incus 7.3+), so on a deployed host it is called for those three.
+# project list. `tink deploy`'s template routes oidc and tls here (Incus 7.3+),
+# so on a deployed host it is called for those two; it sets tls-restricted to
+# the built-in tls value, so a restricted certificate keeps its project list.
 #
 # THE POLICY, which is the coarse version: trust anyone who made it through
 # the OIDC login (Authelia) or who holds a trusted TLS client certificate
@@ -33,14 +34,17 @@
 # that is neither oidc nor tls is denied, so do not route a class here whose
 # clients must be allowed otherwise (the local unix socket, for one).
 #
-# A restricted certificate is NOT held to its project list when
-# authorization.client.tls-restricted is routed here: this script only looks
-# at the protocol, which is tls for any certificate, so it answers True.
+# DO NOT route authorization.client.tls-restricted here. A restricted
+# certificate would no longer be held to its project list: this script only
+# looks at the protocol, which is tls for any certificate, so it answers True.
 # docs/volume-backup-design.md measured a restricted certificate seeing every
 # project through a scriptlet that returned True; this script's answer for
-# that class has not been re-measured on 7.5.1. To keep the project list,
-# route that class to Incus's own check:
-#   incus config set authorization.client.tls-restricted=tls
+# that class has not been re-measured on 7.5.1. The deploy template keeps that
+# class on Incus's own check:
+#   authorization.client.tls-restricted: tls
+# A host that wants a restricted certificate held to something narrower than its
+# project list routes that class to a script of its own, one that tells
+# certificates apart by details.Username (the certificate's fingerprint).
 #
 # The routing values above are the whole menu on 7.5.1: none of them is a
 # per-identity permission-group model. For narrower than this, look at

@@ -138,10 +138,10 @@ incus remote add homelabvps https://127.0.0.1:18444 --project tink-backup   # as
 - **Restore and verify `--from` a remote** pull the restore point back through tink the same way, and need nothing but the remote.
 - **Trust scoped to a project may not be enforced.** An Incus *restricted* client certificate is limited to its projects only if the
   server's authorization lets Incus's own check run. A server that routes `authorization.client.tls-restricted` through a custom
-  scriptlet that returns `True` gives that certificate full access. `tink deploy`'s own server-config template routes
-  `tls-restricted` to its scriptlet, which returns `True` for every `tls` client ([configs/README.md](../configs/README.md#host-authorization)),
-  so a host set up that way is such a server. Check what the remote lets the certificate see (`incus project list REMOTE:`) before
-  relying on it.
+  scriptlet that returns `True` gives that certificate full access. `tink deploy`'s own server-config template keeps `tls-restricted` on
+  Incus's built-in `tls` check ([configs/README.md](../configs/README.md#host-authorization)), but an earlier template routed it to its
+  scriptlet, which returns `True` for every `tls` client, so a host deployed from that version is such a server until its next `deploy`.
+  Check what the remote lets the certificate see (`incus project list REMOTE:`) before relying on it.
 
 #### Saying where the server is (optional)
 
