@@ -329,6 +329,9 @@ is left to you.
    error names what to delete by hand),
 4. if it all passed, stamp the source volume.
 
+All of that happens in the volume's own project unless you say otherwise: `--check-project NAME` makes the scratch volume and the throwaway instance in another one
+([below](#running-the-check-in-a-project-of-its-own)).
+
 ```yaml
 backup:
   snapshots: {schedule: "0 3 * * *", retain: 14d}
@@ -340,11 +343,12 @@ backup:
       mount: /data                       # where the restored volume appears (default /data)
 ```
 
-`verify: weekly` on its own is still accepted. The throwaway instance has no network and its entrypoint is
-replaced by a `sleep` so it can be exec'd into, which is why the image must be an OCI image with `sleep`.
+`verify: weekly` on its own is still accepted. The throwaway instance gets only the `default` profile of the project it runs in, so it has a network exactly when that
+profile carries a NIC (`--check-project`, below, is how to be sure it does not). Its entrypoint is replaced by a `sleep` so it can be exec'd into, which is why the image
+must be an OCI image with `sleep`.
 
-**Verify does not need a root disk in the project's `default` profile.** The throwaway instance is created with only the volume's project's `default`
-profile, and Incus needs a root disk the moment it writes the instance record. A project made with `features.profiles=true` starts with an **empty**
+**Verify does not need a root disk in the project's `default` profile.** The throwaway instance is created with only the `default` profile of the project it runs in (the
+volume's, or the check project's), and Incus needs a root disk the moment it writes the instance record. A project made with `features.profiles=true` starts with an **empty**
 `default` profile, and the first `verify` of `identity-data` in such a project failed with `No root device could be found` (2026-10-13) **[lab]**.
 Verify now reads that profile, and only if it has no root disk (a disk at `path: /`, under any device name) puts one in the creation request, on the
 pool of the volume being checked; a profile that has one is left to supply it, and nothing is added. The progress line says when the instance got its
@@ -373,6 +377,68 @@ passes against the restored data, which is only as good as the check. Without on
 snapshot can be restored to a volume, and says so in its output. Neither proves the application would
 start on it; a check that does the real thing (e.g. `pg_controldata`, or opening the database) is the way
 to get closer. Verification reads a crash-consistent snapshot, like everything here.
+
+### Running the check in a project of its own
+
+```
+tink backup verify VOLUME --check-project tink-verify
+```
+
+By default the scratch volume and the throwaway instance are made in the volume's own project, and the instance gets that project's `default` profile.
+`--check-project NAME` makes them in project NAME instead, and removes them from there. Everything else stays where it was: the snapshot is read from the volume's own
+project (and a `--from` restore point is found where it always was), and the result is stamped on the volume **in its own project**, because that is where `plan` looks
+for it. Naming the volume's own project changes nothing. The project has to exist, and `verify` says so before it restores anything:
+`project tink-verify does not exist: create it, see docs/volume-backup.md`. The progress lines say which project the scratch volume and the instance are in, and if a
+cleanup cannot finish, the error names the project to look in:
+
+```
+restoring snap0 (local) to scratch volume identity-data-verify-20261014-120000 in project tink-verify
+running the check in throwaway instance tink-verify-identity-data-20261014-120000 in project tink-verify (docker-oci:library/alpine:3), volume mounted read-only at /data
+```
+
+**It is a flag, not part of a volume's policy**, and `restore` has no such flag (it makes its volume in the volume's own project, as before). The policy is what the daemon
+reads, and **the daemon does not run restore checks**: only `tink backup verify` does, so the setting has no reader but the person running the command.
+
+**Why a project of its own.** A restore check runs an image the stack did not build, with the restored data mounted in it. Two things follow from that:
+
+- *No network.* In the volume's project the instance gets that project's `default` profile, which may carry a NIC, so the image, and anything in a restored copy of an
+  app's data that starts on its own, can reach the network. A check project's `default` profile with a root disk and **no NIC** gives the instance only `lo`: a restored
+  copy cannot phone home.
+- *No way up.* The right to create instances in a project is a wide one: any image, any device the project allows. In a project with `restricted=true` Incus refuses by
+  default what would reach past the project (host paths and other unmanaged devices, privileged containers, raw low-level config, nesting), so a certificate that may only
+  work in the check project cannot turn "may create instances" into more.
+
+The recipe, in a stack file of its own (or in your platform stack):
+
+```yaml
+kind: project
+name: tink-verify
+config:
+  features.profiles: "true"   # its own profiles: Incus refuses restricted=true on a project without them
+  restricted: "true"
+---
+kind: profile
+name: default
+project: tink-verify
+devices:
+  root:
+    type: disk
+    path: /
+    pool: default             # one root disk, and deliberately no nic
+```
+
+`features.profiles` is not decoration: Incus refuses `restricted: "true"` on a project that does not have profiles of its own. `tink plan apply -f FILE` creates the
+project, whose `default` profile starts empty, and puts the root disk in it. Leave `features.storage.volumes` at its default (true): with it off the project shares the
+default project's volumes and the scratch volume would be made there, which is the thing this avoids. Each project with `features.images` (the default) has its own image
+cache, so the first check in the new project fetches the check image again.
+
+**What it was checked with, and what it was not.** With the plain `incus` client, copying a volume's snapshot from an unrestricted project into a restricted project with
+this `default` profile (`incus storage volume copy POOL/VOL/SNAP POOL/SCRATCH --project SRC --target-project tink-verify`) works, and an instance there mounts the scratch
+volume read-only and has only `lo` **[lab]**. The tink command itself is covered by tests against a fake server (the scratch volume, the instance and every
+cleanup in the check project, the stamp in the source project, `--from` restoring into the check project) and **has not yet been run against a real server**.
+
+**Permissions.** The certificate that runs `verify --check-project` needs the volume's project (read the volume and its snapshots, write the stamp) and the check project
+(create and delete volumes and instances, read its `default` profile). An unrestricted client certificate has both; a restricted one has to list both projects.
 
 ## What tink does with it
 
@@ -430,6 +496,6 @@ The direction for everything below is in [`volume-backup-design.md`](volume-back
   from TrueNAS pools are not affected.
 - **Each run is a full copy**, over the network for a remote target; there is no incremental transfer yet.
 - **Copies do not schedule themselves.** Install the helper ([helper.md](helper.md)), run `tink daemon run --jobs DIR` ([daemon-jobs.md](daemon-jobs.md)), or call
-  `tink backup run --due` from cron or a timer. **Nothing runs `verify` on a schedule yet**: `plan` warns when one is overdue, and you run `tink backup verify`.
+  `tink backup run --due` from cron or a timer. **Nothing runs `verify` on a schedule yet**: `plan` warns when one is overdue, and you run `tink backup verify` (the daemon never does).
 - **A restore point is crash-consistent**, like the snapshot it is copied from.
 - **Verify is only as strong as its check**, and an unchecked verify only proves the snapshot restores.
