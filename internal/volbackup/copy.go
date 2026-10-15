@@ -468,8 +468,10 @@ func pickRestorePoint(points []RestorePoint, wanted string) (RestorePoint, error
 }
 
 // copyFromTarget materialises a restore point as a new volume in the volume's own pool. The new volume
-// is scrubbed of the copy markers, so it can never be mistaken for a restore point.
-func copyFromTarget(s incus.InstanceServer, v Volume, t Target, rp RestorePoint, newName string) error {
+// is scrubbed of the copy markers, so it can never be mistaken for a restore point. s is the volume's own project, where a
+// pool target keeps its restore points; into is the project the new volume is made in (s itself, unless a verification
+// works in a project of its own), and is where a partial copy is looked for and the markers are scrubbed.
+func copyFromTarget(s, into incus.InstanceServer, v Volume, t Target, rp RestorePoint, newName string) error {
 	dst, err := t.dest(s, v)
 	if err != nil {
 		return err
@@ -479,22 +481,22 @@ func copyFromTarget(s incus.InstanceServer, v Volume, t Target, rp RestorePoint,
 		return fmt.Errorf("restore point %s/%s: %w", t.where(), rp.Volume, err)
 	}
 	from := api.StorageVolume{Name: rp.Volume, Type: "custom", ContentType: src.ContentType}
-	op, err := s.CopyStoragePoolVolume(v.pool(), dst, t.pool(), from, &incus.StoragePoolVolumeCopyArgs{Name: newName, Mode: t.transferMode()})
+	op, err := into.CopyStoragePoolVolume(v.pool(), dst, t.pool(), from, &incus.StoragePoolVolumeCopyArgs{Name: newName, Mode: t.transferMode()})
 	if err == nil {
 		err = op.Wait()
 	}
 	if err != nil {
 		note := ""
-		if left, lerr := volumeExists(s, v.pool(), newName); lerr != nil {
+		if left, lerr := volumeExists(into, v.pool(), newName); lerr != nil {
 			note = fmt.Sprintf(" (and could not check whether a partial volume %s/%s was left: %v; delete it by hand if it exists)", v.pool(), newName, lerr)
 		} else if left {
-			if derr := s.DeleteStoragePoolVolume(v.pool(), "custom", newName); derr != nil {
+			if derr := into.DeleteStoragePoolVolume(v.pool(), "custom", newName); derr != nil {
 				note = fmt.Sprintf(" (and the partial volume %s/%s could not be removed: %v; delete it by hand)", v.pool(), newName, derr)
 			}
 		}
 		return fmt.Errorf("copying %s/%s to %s/%s: %w%s", t.where(), rp.Volume, v.pool(), newName, err, note)
 	}
-	return scrubMarkers(s, v.pool(), newName)
+	return scrubMarkers(into, v.pool(), newName)
 }
 
 // scrubMarkers removes the copy markers, and the copy policy, from a volume made from a restore point.

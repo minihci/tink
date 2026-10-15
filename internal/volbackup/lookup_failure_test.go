@@ -94,11 +94,11 @@ func (s instanceOnly) GetInstance(n string) (*api.Instance, string, error) {
 }
 
 func TestDeleteInstanceDoesNotSilentlySkipWhenItCannotLook(t *testing.T) {
-	if err := deleteInstance(instanceOnly{err: api.StatusErrorf(http.StatusNotFound, "gone")}, "verify-1"); err != nil {
+	if err := deleteInstance(instanceOnly{err: api.StatusErrorf(http.StatusNotFound, "gone")}, "verify-1", ""); err != nil {
 		t.Errorf("an instance that was never created is fine: %v", err)
 	}
-	err := deleteInstance(instanceOnly{err: forbidden}, "verify-1")
-	if err == nil || !strings.Contains(err.Error(), "verify-1") || !strings.Contains(err.Error(), "not removed") {
+	err := deleteInstance(instanceOnly{err: forbidden}, "verify-1", " (project tink-verify)")
+	if err == nil || !strings.Contains(err.Error(), "verify-1 (project tink-verify)") || !strings.Contains(err.Error(), "not removed") {
 		t.Errorf("a failed look-up leaves the throwaway instance behind, and must say which one: %v", err)
 	}
 }

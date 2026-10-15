@@ -20,7 +20,11 @@ import (
 
 // verifyFake is a server Verify can run its check on: fakeIncus supplies the volumes and snapshots, and on top of that it keeps profiles per project and the
 // throwaway instances. It holds Incus to the rule this file is about: an instance is refused unless its profiles and the creation request, together,
-// carry exactly one root disk ("No root device could be found", in Incus's own words). Other calls panic through the nil embedded interface.
+// carry exactly one root disk ("No root device could be found", in Incus's own words). An instance is found only in the project it was made in, as in
+// Incus. Other calls panic through the nil embedded interface.
+//
+// Volumes are one flat namespace per pool, whichever project a handle is scoped to, until a test sets perProject (see verify_project_test.go): then they
+// belong to the project of the handle they are reached through, which is what a test of a verification that works in another project needs.
 type verifyFake struct {
 	*fakeIncus
 	devices    map[string]map[string]map[string]string // "project/name" of a profile -> its devices
@@ -32,9 +36,19 @@ type verifyFake struct {
 	removed   []madeInstance // every instance deleted, as it was then
 
 	createErr, updateErr, execErr error
+	deleteInstErr                 error // deleting an instance fails
 	execCode                      int
 	execOut                       string
 	commands                      [][]string
+
+	projects     map[string]bool // the projects that exist, for the ones a test asks about; the volume's own project is never looked up
+	projectErr   error           // looking a project up fails
+	projectReads []string        // every project looked up
+
+	perProject    bool
+	copyLog       []string                     // each volume copy: "source -> destination", as project/pool/name
+	updateLog     []string                     // each volume update: "project/pool/name"
+	deletedConfig map[string]map[string]string // the config a volume had when it was deleted, by "project~pool/name" (perProject only)
 }
 
 type madeInstance struct {
@@ -66,6 +80,17 @@ type projectView struct {
 }
 
 func (f *verifyFake) UseProject(p string) incus.InstanceServer { return &projectView{f, p} }
+
+func (f *verifyFake) GetProject(name string) (*api.Project, string, error) {
+	f.projectReads = append(f.projectReads, name)
+	if f.projectErr != nil {
+		return nil, "", f.projectErr
+	}
+	if !f.projects[name] {
+		return nil, "", api.StatusErrorf(http.StatusNotFound, "Project not found")
+	}
+	return &api.Project{Name: name}, "", nil
+}
 
 func (f *verifyFake) getProfile(project, name string) (*api.Profile, string, error) {
 	k := project + "/" + name
@@ -151,10 +176,19 @@ func (p *projectView) CreateInstanceFromImage(_ incus.ImageServer, _ api.Image, 
 	return p.create(p.project, req)
 }
 
-func (f *verifyFake) GetInstance(name string) (*api.Instance, string, error) {
+// instanceIn finds a throwaway instance the way Incus does: in the project the handle is scoped to, and nowhere else.
+func (f *verifyFake) instanceIn(project, name string) (*madeInstance, error) {
 	m, ok := f.instances[name]
-	if !ok {
-		return nil, "", api.StatusErrorf(http.StatusNotFound, "instance not found")
+	if !ok || m.project != project {
+		return nil, api.StatusErrorf(http.StatusNotFound, "instance not found")
+	}
+	return m, nil
+}
+
+func (f *verifyFake) getInstance(project, name string) (*api.Instance, string, error) {
+	m, err := f.instanceIn(project, name)
+	if err != nil {
+		return nil, "", err
 	}
 	devices, config := api.DevicesMap{}, map[string]string{}
 	for k, v := range m.devices {
@@ -166,10 +200,10 @@ func (f *verifyFake) GetInstance(name string) (*api.Instance, string, error) {
 	return &api.Instance{Name: name, Status: m.status, InstancePut: api.InstancePut{Devices: devices, Config: config, Profiles: m.req.Profiles}}, "etag", nil
 }
 
-func (f *verifyFake) UpdateInstance(name string, put api.InstancePut, _ string) (incus.Operation, error) {
-	m, ok := f.instances[name]
-	if !ok {
-		return nil, api.StatusErrorf(http.StatusNotFound, "instance not found")
+func (f *verifyFake) updateInstance(project, name string, put api.InstancePut) (incus.Operation, error) {
+	m, err := f.instanceIn(project, name)
+	if err != nil {
+		return nil, err
 	}
 	if f.updateErr != nil {
 		return nil, f.updateErr
@@ -181,10 +215,10 @@ func (f *verifyFake) UpdateInstance(name string, put api.InstancePut, _ string) 
 	return localOp{}, nil
 }
 
-func (f *verifyFake) UpdateInstanceState(name string, put api.InstanceStatePut, _ string) (incus.Operation, error) {
-	m, ok := f.instances[name]
-	if !ok {
-		return nil, api.StatusErrorf(http.StatusNotFound, "instance not found")
+func (f *verifyFake) updateInstanceState(project, name string, put api.InstanceStatePut) (incus.Operation, error) {
+	m, err := f.instanceIn(project, name)
+	if err != nil {
+		return nil, err
 	}
 	switch put.Action {
 	case "start", "restart":
@@ -195,10 +229,13 @@ func (f *verifyFake) UpdateInstanceState(name string, put api.InstanceStatePut, 
 	return localOp{}, nil
 }
 
-func (f *verifyFake) DeleteInstance(name string) (incus.Operation, error) {
-	m, ok := f.instances[name]
-	if !ok {
-		return nil, api.StatusErrorf(http.StatusNotFound, "instance not found")
+func (f *verifyFake) deleteInstance(project, name string) (incus.Operation, error) {
+	m, err := f.instanceIn(project, name)
+	if err != nil {
+		return nil, err
+	}
+	if f.deleteInstErr != nil {
+		return nil, f.deleteInstErr
 	}
 	f.removed = append(f.removed, *m)
 	delete(f.instances, name)
@@ -215,7 +252,10 @@ func (o execOp) Get() api.Operation {
 	return api.Operation{Metadata: map[string]any{"return": float64(o.code)}}
 }
 
-func (f *verifyFake) ExecInstance(_ string, post api.InstanceExecPost, args *incus.InstanceExecArgs) (incus.Operation, error) {
+func (f *verifyFake) execInstance(project, name string, post api.InstanceExecPost, args *incus.InstanceExecArgs) (incus.Operation, error) {
+	if _, err := f.instanceIn(project, name); err != nil {
+		return nil, err
+	}
 	f.commands = append(f.commands, post.Command)
 	if f.execErr != nil {
 		return nil, f.execErr
@@ -223,6 +263,38 @@ func (f *verifyFake) ExecInstance(_ string, post api.InstanceExecPost, args *inc
 	io.WriteString(args.Stdout, f.execOut)
 	close(args.DataDone)
 	return execOp{code: f.execCode}, nil
+}
+
+// The host's own handle is the daemon's default project; a handle from UseProject is that project.
+func (f *verifyFake) GetInstance(name string) (*api.Instance, string, error) {
+	return f.getInstance(hostProject, name)
+}
+func (p *projectView) GetInstance(name string) (*api.Instance, string, error) {
+	return p.getInstance(p.project, name)
+}
+func (f *verifyFake) UpdateInstance(name string, put api.InstancePut, _ string) (incus.Operation, error) {
+	return f.updateInstance(hostProject, name, put)
+}
+func (p *projectView) UpdateInstance(name string, put api.InstancePut, _ string) (incus.Operation, error) {
+	return p.updateInstance(p.project, name, put)
+}
+func (f *verifyFake) UpdateInstanceState(name string, put api.InstanceStatePut, _ string) (incus.Operation, error) {
+	return f.updateInstanceState(hostProject, name, put)
+}
+func (p *projectView) UpdateInstanceState(name string, put api.InstanceStatePut, _ string) (incus.Operation, error) {
+	return p.updateInstanceState(p.project, name, put)
+}
+func (f *verifyFake) DeleteInstance(name string) (incus.Operation, error) {
+	return f.deleteInstance(hostProject, name)
+}
+func (p *projectView) DeleteInstance(name string) (incus.Operation, error) {
+	return p.deleteInstance(p.project, name)
+}
+func (f *verifyFake) ExecInstance(name string, post api.InstanceExecPost, args *incus.InstanceExecArgs) (incus.Operation, error) {
+	return f.execInstance(hostProject, name, post, args)
+}
+func (p *projectView) ExecInstance(name string, post api.InstanceExecPost, args *incus.InstanceExecArgs) (incus.Operation, error) {
+	return p.execInstance(p.project, name, post, args)
 }
 
 var (
