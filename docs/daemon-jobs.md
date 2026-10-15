@@ -76,7 +76,7 @@ carries one is **refused** (the job fails and says so), not run as an ordinary j
 
 Each worker is **isolated and supervised**: one that crashes or panics is logged and restarted (after 5 seconds, doubling to a minute), and does not stop the
 others. The scheduler writes a **heartbeat** (`<jobs>/heartbeat`: time, pid, tink version, time zone) every tick, which `daemon jobs` shows, so a daemon that
-stopped can be told from one with nothing to do even when its logs are gone. A helper also publishes a **status document** on its own instance, which is
+stopped can be told from one with nothing to do even when its logs are gone. A helper also publishes a **status document** on a volume of its own (older helpers: on their instance), which is
 what `tink plan` and `tink helper status` read ([helper.md](helper.md#the-status-document)); the heartbeat file is the daemon's own liveness, on the machine
 that has the directory.
 

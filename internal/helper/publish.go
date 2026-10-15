@@ -10,8 +10,12 @@ import (
 // due. Every write is a lifecycle event in the log of anything listening and about 90 ms of the daemon's CPU (measured on the lab
 // host), so writing on every tick would cost 1,440 events a day, and on change plus a 10-minute heartbeat about 150.
 type Publisher struct {
-	// Patch sets keys on the helper's own instance config, and nothing else (incusapi.PatchInstanceConfig).
+	// Patch sets keys on whatever holds the document, and nothing else: the helper's own instance config (incusapi.PatchInstanceConfig)
+	// or its status volume's (incusapi.MergeVolumeConfig).
 	Patch func(config map[string]string) error
+	// NoMarker leaves the helper marker out of what is written: the document is on a volume, and the marker belongs on the instance,
+	// where `helper install` put it. The helper holds no right to write the instance.
+	NoMarker bool
 	// Heartbeat is how often to write when nothing changed (default DefaultHeartbeat).
 	Heartbeat time.Duration
 	// Now is a test seam.
@@ -42,7 +46,8 @@ func (p *Publisher) now() time.Time {
 
 // Publish stamps s (its protocol, its tick and its heartbeat) and writes it if it differs from the last one written or the
 // heartbeat is due. It reports whether it wrote. A failed write is returned and is not remembered as done, so the next call tries
-// again; the first successful write also marks the instance as a helper (MarkerKey), so a helper started by hand is found too.
+// again; the first successful write also marks the instance as a helper (MarkerKey), so a helper started by hand is found too (unless
+// NoMarker: with the document on a volume, the instance is marked by whoever made it).
 func (p *Publisher) Publish(s Status) (wrote bool, err error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -60,7 +65,7 @@ func (p *Publisher) Publish(s Status) (wrote bool, err error) {
 		return false, err
 	}
 	cfg := map[string]string{StatusKey: text}
-	if !p.marked {
+	if !p.marked && !p.NoMarker {
 		cfg[MarkerKey] = fmt.Sprint(s.JobProto)
 	}
 	if err := p.Patch(cfg); err != nil {

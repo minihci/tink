@@ -2,8 +2,11 @@
 // itself, and how to read it back and judge whether the helper is well. It is in a package of its own because the daemon writes
 // it and `plan` and `tink helper status` read it, and neither side should need the other's code.
 //
-// The document lives on the helper's own instance config (docs/helper-design.md, "The status document"), where it can be read with
-// one API call, costs no lifecycle event to read, and is still there when the helper has stopped.
+// The document is a config key (StatusKey), where it can be read with one API call, costs no lifecycle event to read, and is still
+// there when the helper has stopped (docs/helper-design.md, "The status document"). It is kept on a custom storage volume that the
+// helper's instance points at (statusvol.go), because the permission to write it must not be an edit right on an instance: that also
+// covers the instance's devices, and is a route to root. A helper installed before that keeps it on its own instance config, and is
+// read as it was.
 package helper
 
 import (
@@ -14,7 +17,8 @@ import (
 )
 
 const (
-	// StatusKey is the instance config key the helper publishes its status document under.
+	// StatusKey is the config key the helper publishes its status document under: on its status volume, or, for a helper installed
+	// before there was one, on its own instance.
 	StatusKey = "user.tink.helper.status"
 	// MarkerKey marks an instance as a helper and says which job protocol it speaks. `helper install` sets it, so a helper is
 	// found even before it has ever published anything.

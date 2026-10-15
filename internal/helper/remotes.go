@@ -149,6 +149,9 @@ func (in *Installer) Remotes(project, name string, now time.Time) (list []Remote
 	if err != nil {
 		return nil, 0, "", err
 	}
+	if target.StatusProblem != "" {
+		return nil, 0, target.Label(), fmt.Errorf("the helper %s: cannot read its status volume %s, so its remotes are not known: %s", target.Label(), target.StatusVolume, target.StatusProblem)
+	}
 	text := target.Config[StatusKey]
 	if text == "" {
 		return nil, 0, target.Label(), fmt.Errorf("the helper %s has not reported yet, so its remotes are not known (see `tink helper status`)", target.Label())

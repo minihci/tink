@@ -65,7 +65,9 @@ several files to see are below.
   `docs/volume-backup.md`.
 - **The helper is an Incus instance, not a service.** `tink helper install` creates an instance running `tink daemon run`.
   `internal/jobs` is its work queue, a directory where `READY` is written last so a half-pushed job is never read. The helper
-  publishes a status document on its own instance config (`user.tink.helper.status`), read back by `internal/helper`. See
+  publishes a status document as a config key (`user.tink.helper.status`) on a custom volume that its instance points at
+  (`user.tink.helper.status-volume`, `POOL/VOLUME`; a volume has no devices, so the helper needs no edit right on any instance), read back by
+  `internal/helper` (helpers installed before that keep it on their instance). See
   `docs/helper.md` and `docs/daemon-jobs.md`.
 - **Secrets never reach a place that prints them.** `${secret:NAME}` is accepted only in an instance's `environment.*` values
   (`resolve/secretrefs.go`); anywhere else it is a load-time error. Values are age-encrypted in a committable `secrets.yaml`

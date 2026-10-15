@@ -12,7 +12,8 @@ document is `docs/helper-design.md` on the `helper-design` branch, not yet on `m
 **Run live so far**, on one host (the lab server): a release build of tink installed the `v0.1.0` image with no flags; the scheduler queues and makes the copies
 on its own, and the restore point it made verifies; a helper whose process was killed is running again in about six seconds, with a fresh status document and
 its job history; and `upgrade` with no flags, from the `v0.1.1` release binary, drained it, moved it from the `v0.1.0` image to the `v0.1.1` one, and kept its
-certificate and its job history. **Not yet tried:** a host reboot or an Incus restart, and the helper copying to a second physical server.
+certificate and its job history. **Not yet tried:** a host reboot or an Incus restart, and the helper copying to a second physical server. **Unit-tested, not yet run live:** the
+status document on a volume of its own, which is the default since [the helper stopped needing a right to edit its instance](#the-status-document).
 
 ## What the helper is for
 
@@ -61,6 +62,7 @@ remotes: [host, vps]          # the Incus servers it must be able to reach, for 
 tink helper install                                                       # a release build: the image published for its own version
 tink helper install --image ghcr:minihci/tink-helper:v0.1.0               # a particular image (tink at /usr/local/bin/tink): how any other build installs the published one
 tink helper install --binary ./tink-linux --timezone America/Denver      # the escape hatch: a linux tink binary, in a stock alpine image
+tink helper install --status-on-instance                                  # the status document on the helper's own instance, as before the status volume
 ```
 
 `--binary` is the escape hatch. It runs a binary you built (a development build, or a branch you are trying) in a stock alpine image, so it also works on a
@@ -71,7 +73,8 @@ tag. A development build has no image that matches it, and says so: give `--imag
 image's digest) on itself, `user.tink.helper.image-fingerprint`, because a tag can move and a fingerprint cannot.
 
 It creates, in a project of its own (`tink-helper`): an OCI app container named `helper` that runs `tink daemon run --remote host ...`; two volumes,
-`tink-helper-config` (its Incus client configuration, mounted where the client looks for it) and `tink-helper-data` (its jobs); a NIC; and a **proxy
+`tink-helper-config` (its Incus client configuration, mounted where the client looks for it) and `tink-helper-data` (its jobs); a third volume, `<name>-status`
+(`helper-status`), that holds only the helper's status document ([below](#the-status-document); `--status-on-instance` leaves it out); a NIC; and a **proxy
 device** that gives it the host's HTTPS API on its own loopback (`127.0.0.1:8443` inside the container), so the API is not exposed to anything it was
 not already exposed to. It starts the instance, enrols it, and waits for the first status document.
 
@@ -82,9 +85,11 @@ The host verifies nothing secret until the helper has verified the host, by the 
 
 - **Revocable:** `tink helper remove`, or `incus config trust remove` on the `tink-helper` entry, ends its access at once.
 - **Auditable:** what the helper does to your data reaches Incus as `tls` with the certificate's fingerprint as the user, not as `unix`/`root`:
-  checked on Incus 7.5.1 for a volume update (a copy stamp), a snapshot create and delete, and an instance update. **One exception:** the helper's
-  status write is an instance PATCH, and the lifecycle event for a PATCH carries no requestor at all, so those writes (one on change and one
-  per heartbeat) are not attributed. They are bookkeeping on the helper's own instance; the operations that move data are attributed.
+  checked on Incus 7.5.1 for a volume update (a copy stamp), a snapshot create and delete, and an instance update. **One exception, for a helper that
+  publishes on its own instance** (`--status-on-instance`, or one installed before the status volume): its status write is an instance PATCH, and the
+  lifecycle event for a PATCH carries no requestor at all, so those writes (one on change and one per heartbeat) are not attributed. They are
+  bookkeeping on the helper's own instance; the operations that move data are attributed. With the status volume the write is a volume update, the
+  same call as a copy stamp, so it should be attributed the same way **[inferred; not yet measured for this key]**.
 - **Not confined.** The certificate is unrestricted: it has the reach of root on the host. A restricted certificate is not a boundary on current Incus
   (see "Security" in [the helper design](https://github.com/minihci/tink/pull/16)), and nothing here claims one.
 
@@ -106,7 +111,9 @@ over is restarted a limited number of times and then left stopped (ten quick res
 status` reports as down.
 
 **Running it again** is safe: what exists is left alone, and an enrolled helper is not enrolled twice. `--reissue` enrols it again with a fresh key pair
-and removes the old certificate. `--binary` puts the binary in the instance, which is also how a helper runs where an image cannot be pulled.
+and removes the old certificate. `--binary` puts the binary in the instance, which is also how a helper runs where an image cannot be pulled. The
+status volume is made again if the instance points at one that is gone; a helper installed before the status volume is left publishing on its instance
+(install says so, and migrates nothing).
 
 ## The ingress half
 
@@ -274,6 +281,9 @@ file removed (it lives on the data volume, so it would survive the replacement),
 
 - **No new enrolment.** An image upgrade recreates the instance with the same configuration and devices and **keeps its volumes**, so the certificate and key
   (on the config volume) are still there, and the host still trusts them. A binary upgrade only replaces the file.
+- **Either shape.** The recreated instance has the same configuration, so a helper with a status volume keeps its pointer and its `--status-volume`
+  entrypoint, and one installed with the document on its instance keeps publishing there. Upgrading does not migrate one to the other. **Do not go back
+  to an image older than the one that added `--status-volume`** on a helper that uses it: that tink does not know the flag and the helper will not start.
 - **A job that will not finish.** After `--drain-timeout` (15 minutes) the upgrade gives up and **lifts the drain** instead of interrupting the job.
   `--force` goes on anyway: the job is marked `failed (interrupted)` and its schedule retries the work.
 - **A helper that says nothing** cannot be seen to be idle; after 30 seconds without a document the upgrade goes on and says so.
@@ -286,19 +296,35 @@ tink helper remove [--purge]
 ```
 
 Revokes the certificate, stops and deletes the instance. The volumes stay (the job history; the client configuration, which holds the keys for any
-remote backup target) unless `--purge`, which removes them and the project if that leaves it empty.
+remote backup target; the status volume) unless `--purge`, which removes them and the project if that leaves it empty. `--purge` finds the status
+volume through the pointer on the instance, and deletes it only if it is the `<name>-status` that install makes: a pointer someone edited to name another
+volume is not followed.
 
 ## The status document
 
-A daemon started with `--status-instance NAME` (and `--status-project` if that instance is not in the connection's project) publishes what it
-is doing on that instance's own config, under `user.tink.helper.status`:
+A daemon started with `--status-volume NAME` (and `--status-pool`, default `default`, and `--status-project` if the volume is not in the connection's
+project) publishes what it is doing on that custom volume's config, under `user.tink.helper.status`:
 
 ```
-tink daemon run --jobs /var/lib/tink/jobs --status-instance helper --status-project tink-helper
+tink daemon run --jobs /var/lib/tink/jobs --status-volume helper-status --status-pool default --status-project tink-helper
 ```
 
-It is one line of JSON, written by a PATCH of just that key (so it cannot conflict with, or overwrite, anything an operator edits on the
-instance):
+This is what `tink helper install` sets up. The helper's **instance**, which `install` creates and the helper never writes, carries two keys:
+
+| Key on the helper's instance | |
+|---|---|
+| `user.tink.helper` | the marker: this instance is a helper, and the job protocol it speaks |
+| `user.tink.helper.status-volume` | the pointer: `POOL/VOLUME`, where its status document is. The volume is in the instance's own project |
+
+`tink helper status`, `plan`, `kind: helper` and the rest find the helper by the marker, follow the pointer, and read the document from the volume. They see the
+same document wherever it was kept; nothing downstream of that read knows the difference.
+
+**A helper installed before the status volume** (`--status-instance NAME`, which `install --status-on-instance` still makes) publishes on its own instance's
+config instead (by a PATCH of just that key, as it always did) and has no pointer. It is read exactly as it was, and nothing migrates it: `tink helper remove` and `install` again gives a new one the new
+shape.
+
+The document is one line of JSON, written whole under that one key. On a volume the write is a read of the volume and a write of its config with the ETag that
+was read, **keeping every other key as it was**; if the volume changed in between, Incus refuses the write and it is read and written again (up to three times).
 
 | Field | Meaning |
 |---|---|
@@ -316,11 +342,24 @@ phrases, and the detail stays in the job's log.
 
 **When it is written.** When something in it changes, and every `--status-heartbeat` (default 10 minutes) when nothing has. Every write is
 one lifecycle event in the log of anything listening and about 90 ms of the Incus daemon's CPU, so it is not written on every tick. The daemon
-offers it to the publisher every 10 seconds; the publisher compares and usually does nothing. It marks the instance with `user.tink.helper` on
-the first write, so a daemon started by hand is found by the commands below as well.
+offers it to the publisher every 10 seconds; the publisher compares and usually does nothing. With `--status-instance` it also marks the instance with
+`user.tink.helper` on the first write, so a daemon started by hand is found by the commands below as well. With `--status-volume` it does not: the
+marker and the pointer are `install`'s, because the helper holds no right to write its instance. A daemon started by hand with `--status-volume` is found
+once its instance carries both (`incus config set INSTANCE user.tink.helper=1 user.tink.helper.status-volume=POOL/VOLUME`).
 
-**Why instance config.** Reading it costs no event (reading a file out of an instance does), and it is still there when the helper has
-stopped, which is the case that matters.
+**Why config on a volume.** Reading it costs no event (reading a file out of an instance does), and it is still there when the helper has
+stopped, which is the case that matters. That would also be true of the instance's own config; it is on a volume because of what the write needs.
+
+**What the write needs from Incus.** One edit right, on **one volume** (the status volume): a read of it, and an update of its config. It used to be an
+edit right on the helper's **own instance**, and an edit right on an instance also covers its devices. A measured lab showed that is a route to root: the
+helper could give itself a `proxy` device to the Incus unix socket and drive Incus as root through it **[lab; the authorization lab in the author's platform
+repository, `authz-lab/`]**. A volume has no devices, so an edit right on it reaches nothing else. The point of the move is that the credential the helper runs
+under need hold **no edit right on any instance**. Nothing here restricts the certificate yet (it is unrestricted, see "Not confined" above): this takes away
+the one reason a restricted one would have had to be given an instance right.
+
+**A status volume that cannot be read** is not "healthy" and not "no status yet". The helper is listed all the same, and judged **degraded** with the reason
+`cannot read its status volume POOL/NAME: <why>` (or **down**, with that as an added reason, if its instance is stopped). A document left on the instance
+itself is ignored once the instance points at a volume, so a stale one cannot stand in for it.
 
 ## `tink helper status`
 
@@ -328,13 +367,13 @@ stopped, which is the case that matters.
 tink helper status [--check] [--json] [--instance NAME] [--project P]
 ```
 
-Finds the helper (any instance marked `user.tink.helper`, in any project), reads its document, and judges it from that and from the state of
-its instance:
+Finds the helper (any instance marked `user.tink.helper`, in any project), reads its document (from the volume the instance points at, or from the
+instance for an older helper), and judges it from that and from the state of its instance:
 
 | | |
 |---|---|
 | **healthy** (exit 0) | running, heard from recently, nothing skipped, nothing failing |
-| **degraded** (exit 1) | running and heard from, but skipping a volume, failing a copy, failing an ingress reconcile, or saying nothing useful (no document yet, or one it cannot read) |
+| **degraded** (exit 1) | running and heard from, but skipping a volume, failing a copy, failing an ingress reconcile, or saying nothing useful (no document yet, one it cannot read, or a status volume that cannot be read) |
 | **down** (exit 2) | the instance is stopped, there is no helper, or it has been silent for more than **2.5 heartbeats** |
 
 `--check` prints one line per helper and sets the exit status, so cron, a monitor or Home Assistant can poll it. Without `--check` it prints the
@@ -347,10 +386,10 @@ $ echo $?
 1
 ```
 
-**"Down" is the one the helper cannot report for itself**, which is why it is judged from outside, from a document that is still on the instance
+**"Down" is the one the helper cannot report for itself**, which is why it is judged from outside, from a document that is still on its volume
 after the helper has gone. Nothing here sends a notification: this is what a notifier would run. Nothing in tink does that yet.
 
-**Under `--remote`.** It works from anywhere that can reach the server: it reads instance config. `daemon run` itself accepts a remote (the
+**Under `--remote`.** It works from anywhere that can reach the server: it reads instance config, and the status volume's. `daemon run` itself accepts a remote (the
 helper runs as a client of its own host): see `docs/remote.md` for what it needs for its ingress half.
 
 ## The image, and releasing it

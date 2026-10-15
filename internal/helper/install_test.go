@@ -26,8 +26,11 @@ type fakeHost struct {
 	networks   map[string]bool
 
 	projects  map[string]bool
-	instances map[string]*api.Instance // name -> instance (the project is on it)
-	volumes   map[string]bool          // "pool/name"
+	instances map[string]*api.Instance     // name -> instance (the project is on it)
+	volumes   map[string]bool              // "pool/name"
+	volCfg    map[string]map[string]string // "pool/name" -> the volume's config (the status document, on a status volume)
+	volErr    map[string]error             // "pool/name" -> why reading that volume fails
+	volPosts  map[string]api.StorageVolumesPost
 	certs     []api.Certificate
 	files     map[string]string // path -> content
 	execs     []execCall
@@ -53,6 +56,7 @@ func newHost() *fakeHost {
 		serverCfg: map[string]string{"core.https_address": ":8443"},
 		networks:  map[string]bool{"incusbr0": true},
 		projects:  map[string]bool{}, instances: map[string]*api.Instance{}, volumes: map[string]bool{}, files: map[string]string{},
+		volCfg: map[string]map[string]string{}, volErr: map[string]error{}, volPosts: map[string]api.StorageVolumesPost{},
 	}
 }
 
@@ -170,18 +174,31 @@ func (h *fakeHost) DeleteInstanceFile(_, path string) error {
 }
 
 func (h *fakeHost) GetStoragePoolVolume(pool, _, n string) (*api.StorageVolume, string, error) {
+	if err := h.volErr[pool+"/"+n]; err != nil {
+		return nil, "", err
+	}
 	if !h.volumes[pool+"/"+n] {
 		return nil, "", notFound
 	}
-	return &api.StorageVolume{Name: n}, "", nil
+	vol := &api.StorageVolume{Name: n}
+	vol.Config = map[string]string{}
+	for k, v := range h.volCfg[pool+"/"+n] {
+		vol.Config[k] = v
+	}
+	return vol, "", nil
 }
 
 func (h *fakeHost) CreateStoragePoolVolume(pool string, v api.StorageVolumesPost) error {
 	h.volumes[pool+"/"+v.Name] = true
+	h.volPosts[pool+"/"+v.Name] = v
+	h.log = append(h.log, "create volume "+v.Name)
 	return nil
 }
 
 func (h *fakeHost) DeleteStoragePoolVolume(pool, _, n string) error {
+	if !h.volumes[pool+"/"+n] {
+		return notFound
+	}
 	delete(h.volumes, pool+"/"+n)
 	h.log = append(h.log, "delete volume "+n)
 	return nil
@@ -289,10 +306,13 @@ func TestInstallCreatesTheHelperAndEnrolsItWithTheTokenOnStandardInput(t *testin
 		}
 	}
 	entry := s.Config["oci.entrypoint"]
-	for _, want := range []string{"/usr/local/bin/tink daemon run", "--remote host", "--jobs /data/jobs", "--status-instance helper", "--status-project tink-helper", "--timezone America/Denver"} {
+	for _, want := range []string{"/usr/local/bin/tink daemon run", "--remote host", "--jobs /data/jobs", "--status-volume helper-status", "--status-pool default", "--status-project tink-helper", "--timezone America/Denver"} {
 		if !strings.Contains(entry, want) {
 			t.Errorf("the entrypoint must contain %q: %s", want, entry)
 		}
+	}
+	if strings.Contains(entry, "--status-instance") {
+		t.Errorf("the helper holds no right to edit its instance, so it does not publish on it: %s", entry)
 	}
 	if strings.Contains(entry, "INCUS_SOCKET") || strings.Contains(s.Config["environment.HOME"], "INCUS") {
 		t.Error("the instance must never set INCUS_SOCKET or INCUS_DIR: Incus's own start hook inherits them and the instance fails to start")
@@ -486,45 +506,63 @@ func TestAnEnrolmentThatFailsSaysWhy(t *testing.T) {
 }
 
 func TestInstallWaitsForTheFirstStatusAndSaysWhatItSaw(t *testing.T) {
-	h := newHost()
-	var specs []*run.Spec
-	in, out := installer(h, &specs)
-	clock := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
-	in.Now = func() time.Time { return clock }
-	sleeps := 0
-	in.Sleep = func(d time.Duration) {
-		sleeps++
-		clock = clock.Add(d)
-		if sleeps == 1 { // a document from BEFORE the enrolment: a helper that was revoked and enrolled again still has one
-			st := Status{Proto: 1, Tick: clock.Add(-time.Hour), HeartbeatSeconds: 7200}
-			text, _ := Encode(st)
-			h.instances["helper"].Config[StatusKey] = text
-		}
-		if sleeps == 3 { // the helper's first status document since the enrolment arrives
-			st := Status{Proto: 1, Tick: clock, HeartbeatSeconds: 600}
-			text, _ := Encode(st)
-			h.instances["helper"].Config[StatusKey] = text
-		}
-	}
-	if err := in.Install(InstallOptions{Image: "x", Wait: time.Minute}); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out.String(), "healthy: tink-helper/helper") || sleeps != 3 || strings.Count(out.String(), "healthy") != 1 {
-		t.Errorf("sleeps %d:\n%s", sleeps, out.String())
-	}
+	// the default shape keeps the document on the status volume, the old one on the instance: the wait reads either
+	for name, onInstance := range map[string]bool{"on the status volume": false, "on the instance": true} {
+		t.Run(name, func(t *testing.T) {
+			h := newHost()
+			var specs []*run.Spec
+			in, out := installer(h, &specs)
+			clock := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+			in.Now = func() time.Time { return clock }
+			sleeps := 0
+			in.Sleep = func(d time.Duration) {
+				sleeps++
+				clock = clock.Add(d)
+				if sleeps == 1 { // a document from BEFORE the enrolment: a helper that was revoked and enrolled again still has one
+					st := Status{Proto: 1, Tick: clock.Add(-time.Hour), HeartbeatSeconds: 7200}
+					text, _ := Encode(st)
+					setStatus(h, text)
+				}
+				if sleeps == 3 { // the helper's first status document since the enrolment arrives
+					st := Status{Proto: 1, Tick: clock, HeartbeatSeconds: 600}
+					text, _ := Encode(st)
+					setStatus(h, text)
+				}
+			}
+			if err := in.Install(InstallOptions{Image: "x", StatusOnInstance: onInstance, Wait: time.Minute}); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(out.String(), "healthy: tink-helper/helper") || sleeps != 3 || strings.Count(out.String(), "healthy") != 1 {
+				t.Errorf("sleeps %d:\n%s", sleeps, out.String())
+			}
 
-	// and when it never reports, the install is not a failure: it says what to run
-	h = newHost()
-	in, out = installer(h, &specs)
-	clock = time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
-	in.Now = func() time.Time { return clock }
-	in.Sleep = func(d time.Duration) { clock = clock.Add(d) }
-	if err := in.Install(InstallOptions{Image: "x", Wait: 10 * time.Second}); err != nil {
-		t.Fatal(err)
+			// and when it never reports, the install is not a failure: it says what to run
+			h = newHost()
+			in, out = installer(h, &specs)
+			clock = time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+			in.Now = func() time.Time { return clock }
+			in.Sleep = func(d time.Duration) { clock = clock.Add(d) }
+			if err := in.Install(InstallOptions{Image: "x", StatusOnInstance: onInstance, Wait: 10 * time.Second}); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(out.String(), "has not published a status document since, within 10s") || !strings.Contains(out.String(), "tink helper status") {
+				t.Errorf("%s", out.String())
+			}
+		})
 	}
-	if !strings.Contains(out.String(), "has not published a status document since, within 10s") || !strings.Contains(out.String(), "tink helper status") {
-		t.Errorf("%s", out.String())
+}
+
+// setStatus is where the helper publishes its document: on the volume its instance points at, or, with no pointer, on the instance.
+func setStatus(h *fakeHost, text string) {
+	inst := h.instances["helper"]
+	if ref, has := inst.Config[StatusVolumeKey]; has {
+		if h.volCfg[ref] == nil {
+			h.volCfg[ref] = map[string]string{}
+		}
+		h.volCfg[ref][StatusKey] = text
+		return
 	}
+	inst.Config[StatusKey] = text
 }
 
 func helperRunning(h *fakeHost) {
@@ -780,7 +818,7 @@ func publish(h *fakeHost, at time.Time, mut func(*Status)) {
 		mut(&st)
 	}
 	text, _ := Encode(st)
-	h.instances["helper"].Config[StatusKey] = text
+	setStatus(h, text)
 }
 
 // clocked gives the installer a clock the test controls, and calls step(n, now) on the nth sleep: where the helper "publishes".
