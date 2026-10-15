@@ -150,6 +150,11 @@ func planInstance(server incus.InstanceServer, r Resource, opts PlanOptions) (Pl
 		return PlannedResource{Resource: r, Action: ActionCreate, Notes: firstStartNotes(server, r, opts)}, nil
 	}
 	changes := diffConfig(current.Config, r.Config, r.SecretKeys)
+	// The stamps of kind: publish are the one owned prefix: a live stamp the stack no longer derives is removed, not left (publishstamp.go).
+	if stale := staleOwnedChanges(current.Config, r.Config); len(stale) > 0 {
+		changes = append(changes, stale...)
+		sort.Strings(changes)
+	}
 	changes = append(changes, diffDevices(current.Devices, r.Devices)...)
 	if r.Ephemeral && !current.Ephemeral {
 		changes = append(changes, "ephemeral: false -> true")

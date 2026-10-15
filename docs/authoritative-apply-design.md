@@ -42,7 +42,8 @@ Concrete costs seen:
 From the project's own text: no state file of tink's own; manage only what you are told to manage and leave the rest (`opinion-as-code.md`); opinions
 warn and do not block, except where proceeding loses data; and tink "never removes what it is no longer told about" (`volume-backup.md`), which is the
 sentence this note asks to refine, because for *devices and keys that tink itself applied* it is the wrong default. Removal is destructive, so it is
-shown before it is done.
+shown before it is done. (One case is built already, narrowly: the `user.tink.publish.` stamps of `kind: publish` are a prefix tink owns, and a stale one is
+a planned removal and is removed on apply; nothing else is. See [join.md](join.md#the-owned-prefix-and-the-one-place-tink-removes-a-key).)
 
 ## Proposal: three layers, each useful alone
 

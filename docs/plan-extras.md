@@ -29,7 +29,7 @@ The instance is first reduced to what a person set, the same way `tink export` d
   image drift.
 - `environment.TERM` and `environment.HOME` when Incus wrote them (the home directory of the user the process runs as).
 - Devices a **profile** supplies (only the instance's own devices count).
-- tink's own state under `user.tink.helper.`, `user.tink.run.` and `user.tink.exec.`.
+- tink's own state under `user.tink.helper.`, `user.tink.run.` and `user.tink.exec.`, and the stamps of `kind: publish` under `user.tink.publish.` (a stamp the stack derives is declared; one it no longer derives is a planned removal, the one case where `plan apply` removes a key: see [join.md](join.md#the-owned-prefix-and-the-one-place-tink-removes-a-key)).
 
 A key or device the stack **does** declare is never listed, even if its value differs; that difference is an ordinary change `plan` already shows. Profiles are
 compared only when the stack lists some.

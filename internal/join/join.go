@@ -6,9 +6,11 @@
 //
 // What it does, and deliberately no more:
 //
-//   - It is a pure function of the documents it is given. It reads no server, holds no credential and writes nothing: `tink join` prints, and its
-//     output is compared by eye or by diff with the hand-written pieces it will one day replace. Applying any of it is later work, and needs the
-//     decisions about who holds the credential for reconcile jobs (docs/offer-grant-join-design.md, open question 7).
+//   - Build is a pure function of the documents it is given. It reads no server, holds no credential and writes nothing: `tink join` prints, and its
+//     output is compared by eye or by diff with the hand-written pieces it will one day replace. The documents come from stack files (resolve.LoadFiles)
+//     or from a live server (FromServer, server.go: the instances, profiles and networks as they are, and the publishes as the stamps `plan apply` put on
+//     the instances), and Build cannot tell which. Applying any of it is later work, and needs the decisions about who holds the credential for
+//     reconcile jobs (docs/offer-grant-join-design.md, open question 7).
 //   - It fails closed. If any finding is an error it renders nothing, because a partial rendering (a mesh view missing one name) looks exactly like a
 //     complete one. Warnings are reported beside a complete rendering.
 //   - It knows no engine. The helpers are found by `user.tink.role`, the addresses by `user.tink.leg.<nic>`, the zone by `user.tink.dns.zone`; what

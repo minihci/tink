@@ -20,6 +20,11 @@ func Levels(resources []Resource) ([][]Resource, error) {
 	if err := validatePublishNames(resources); err != nil {
 		return nil, err
 	}
+	// A publish is stamped onto its instance's desired config, so the instance plan converges it (publishstamp.go). Before the graph below is built from the
+	// resources, because it hands out copies of them.
+	if err := derivePublishStamps(resources); err != nil {
+		return nil, err
+	}
 	// The stack's name is metadata, not something to plan: it is skipped below, in place, because the passes after this
 	// one update the caller's resources (project inheritance, image aliases) and callers rely on that.
 	all := make(map[string]*Resource, len(resources))

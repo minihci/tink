@@ -15,11 +15,14 @@ import (
 //	offer: web                 # which of its offers (user.tink.offer.web.* on the instance)
 //	allow: [family]            # groups, never people
 //
-// tink converges nothing for it. `tink plan` leaves it out of the dependency graph exactly as it leaves out the `kind: stack` document, and for the same
+// tink converges nothing FOR it. `tink plan` leaves it out of the dependency graph exactly as it leaves out the `kind: stack` document, and for the same
 // reason: it has nothing to create, nothing waits for it, and it must be allowed to share its name with the instance it publishes (the host label and
 // the instance are very often one word, and the resolver's names are one flat namespace per stack). What reads it is the join (internal/join, `tink join`),
 // which prints what the site's other helpers would need to match it: the dns records, the mesh view, the proxy's routes, the sign-on rules and the
-// ACL on the app's bridge. Nothing is applied from it yet.
+// ACL on the app's bridge. Only the dns records can be applied so far.
+//
+// It is also stamped onto the instance it names, as the config key user.tink.publish.<name>, so that the join can be built from the server and not only from
+// these files (publishstamp.go, which also says why that prefix is the one tink owns).
 //
 // Load-time checks only, because a publish is judged against other documents (the offer must exist, the helpers must be declared) by the join, which can
 // see more than one stack. docs/join.md and docs/offer-grant-join-design.md have the reasoning.
