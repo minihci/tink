@@ -26,6 +26,7 @@ An Incus instance carries about twenty-five config keys for every one a person s
 | `ephemeral` | `ephemeral: true` |
 | the instance's own `devices`, `profiles`, every other `config` key | kept (`root` comes from the profile and is not the instance's) |
 | `user.tink.run.command` | not config: written as a `# created by:` comment |
+| `user.tink.publish.<name>` (a stamp of a `kind: publish`) | not config: written as a `kind: publish` document (`name`, `instance`, `offer`, `allow`) after the instances, because `plan` derives the stamps back from it and removes any it does not derive. A stamp that cannot be read is left out with a note, and the export then does not verify |
 | a custom volume an instance's disk device attaches | a `kind: storage-volume`, in the same project and pool |
 | a volume's other config (`initial.uid`, `size`...) | the volume's `config:` ([resolver-architecture.md](resolver-architecture.md#update-2026-10-09-a-volumes-own-settings)); tink's own keys and `volatile.*` stay out |
 | a volume's `snapshots.schedule` / `snapshots.expiry` | a `backup: {snapshots: ...}` block |
