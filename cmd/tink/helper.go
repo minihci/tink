@@ -34,20 +34,30 @@ itself), and these commands read that back. See docs/helper.md.`,
 func newHelperInstallCmd() *cobra.Command {
 	var socket string
 	var opts helper.InstallOptions
+	var apiVia string
 	cmd := &cobra.Command{
 		Use:   "install",
 		Short: "Create the helper instance, start it, and enrol it with its own certificate",
 		Long: `install creates the helper: a project of its own (tink-helper), an OCI app container in it that runs "tink daemon run", two volumes
-(its client configuration, and its jobs), a NIC, and a proxy device that gives it the host's HTTPS API on its own loopback. It starts it,
-and enrols it: the host is told to trust a certificate that the helper generates INSIDE the instance, so the private key never leaves it, using
-a single-use token handed over on standard input (never on a command line, never on disk). The helper then publishes a status document, which
-install waits for and reports.
+(its client configuration, and its jobs) and a NIC. It starts it, and enrols it: the host is told to trust a certificate that the helper generates
+INSIDE the instance, so the private key never leaves it, using a single-use token handed over on standard input (never on a command line, never on
+disk). The helper then publishes a status document, which install waits for and reports.
 
 The status document is kept on a volume of its own (<name>-status), which install makes and the instance points at, so the helper's
 credential needs no right to edit an instance (that would cover the instance's devices, which is a route to root). --status-on-instance
 makes the older shape instead: the document on the helper's own instance config.
 
-It needs the host's API to be listening (core.https_address); the loopback address is enough, and tink deploy sets one.
+It needs the host's API to be listening (core.https_address). How the helper reaches it is --api-via:
+
+  auto     (the default) over the network when the helper's NIC is on a managed bridge that has an IPv4 address and the host's API listens there
+           (a wildcard such as ":8443", or exactly the bridge's address, which is what tink deploy sets); otherwise through a proxy device, with a note
+           saying why. Over the network the instance has no proxy device, and the "host" remote is registered at https://<bridge address>:<port>.
+  network  as above, and an error saying what to change when it is not possible.
+  proxy    a proxy device gives the helper the host's API on its own loopback (127.0.0.1:<port> in the instance), so the remote is registered there.
+           A restricted project refuses proxy devices unless it allows them.
+
+Over the network, every container on the bridge can reach the API port (it still needs a trusted certificate to do anything there): an egress ACL
+rule on the other instances' NICs is how to limit it. An installed helper keeps the way it has. See docs/helper.md.
 
 With no flag, a release build installs the helper image published for its own version (ghcr:minihci/tink-helper:vX.Y.Z), the same binary built from the
 same tag. A development build has no such image: give --image (an OCI image that has tink at /usr/local/bin/tink), or --binary FILE to put a linux tink
@@ -67,6 +77,10 @@ confined: it has the reach of root on the host, and nothing here claims otherwis
 			if opts.TZ == "" {
 				opts.TZ = os.Getenv("TZ")
 			}
+			var err error
+			if opts.APIVia, err = helper.ParseAPIVia(apiVia); err != nil {
+				return err
+			}
 			server, err := incusapi.Connect(socket)
 			if err != nil {
 				return fmt.Errorf("connecting to incus: %w", err)
@@ -83,6 +97,7 @@ confined: it has the reach of root on the host, and nothing here claims otherwis
 	cmd.Flags().StringVar(&opts.Name, "name", helper.DefaultName, "the helper instance's name")
 	cmd.Flags().StringVar(&opts.Pool, "pool", "default", "the storage pool for its root disk and volumes")
 	cmd.Flags().StringVar(&opts.Network, "network", "", "the network its NIC joins (default: the default profile's, else incusbr0)")
+	cmd.Flags().StringVar(&apiVia, "api-via", "auto", "how the helper reaches the host's API: auto (over the network when its bridge allows it, else a proxy device), network (or an error), proxy")
 	cmd.Flags().StringVar(&opts.Image, "image", "", "the OCI image it runs (with tink at /usr/local/bin/tink)")
 	cmd.Flags().StringVar(&opts.Binary, "binary", "", "a linux tink binary to put in the instance; with no --image, a stock alpine image is used")
 	cmd.Flags().BoolVar(&opts.Ingress, "ingress", false, "also run the ingress reconcile (through the ingress instance's file API): the helper then does what tink-daemon does on the host, and deploy stops installing that")

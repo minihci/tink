@@ -23,6 +23,8 @@ type Found struct {
 	// StatusProblem is why that volume could not be read, when it could not. Find does not fail the listing for it: Evaluate says it,
 	// and the helper is degraded, neither healthy nor merely "not yet heard from".
 	StatusProblem string
+	// Devices are the instance's own devices (not its profiles'): which way it reaches the host's API is one of them (see APIVia).
+	Devices map[string]map[string]string
 }
 
 // Label is how the helper is named in messages.
@@ -40,7 +42,7 @@ func Find(s incus.InstanceServer) ([]Found, error) {
 	var out []Found
 	for _, inst := range all {
 		if _, ok := inst.Config[MarkerKey]; ok {
-			f := Found{Project: inst.Project, Name: inst.Name, State: inst.Status, Config: inst.Config}
+			f := Found{Project: inst.Project, Name: inst.Name, State: inst.Status, Config: inst.Config, Devices: inst.Devices}
 			withStatusVolume(s, &f)
 			out = append(out, f)
 		}
