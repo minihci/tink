@@ -18,6 +18,19 @@
 # route which client protocols actually use the scriptlet below). On an
 # older Incus, `incus config edit` rejects the whole document over an
 # unrecognized key — drop those three lines by hand on such a host.
+#
+# The scriptlet runs ONLY for a client class routed to it by an
+# authorization.client.* key (the classes are unix, tls, tls-restricted,
+# oidc and default). Incus's built-in routing is unix=allow, tls=allow,
+# tls-restricted=tls (the certificate's project list), oidc=allow and
+# default=deny, and with it the scriptlet is never called. The three keys
+# below are what make this host use it. Two things to know about them:
+#   - tls-restricted routed to the scriptlet gives a restricted certificate
+#     the scriptlet's answer, which is True for every tls client, not its
+#     project list. To hold restricted certificates to their projects,
+#     change that one line's value to "tls" (the built-in routing).
+#   - the scriptlet was validated on Incus 7.5.1 only and reads a field
+#     path that changes between Incus versions; see its own header.
 config:
   core.https_address: "${INCUS_API_ADDR}"
   # Lets Incus log/rate-limit by the real client IP Caddy forwards, not
