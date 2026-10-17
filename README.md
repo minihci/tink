@@ -36,9 +36,9 @@ comment for the working bash it's replacing.
 | `tink backup run` / `restore` / `verify` / `forget` | verified live on the lab host: pool targets (a TrueNAS-backed pool included) and an Incus remote over a tunnel ([docs](docs/volume-backup.md)) | (new) |
 | `tink secret` | verified live on the Immich stack on the lab host ([docs](docs/secrets.md)) | (new) |
 | `tink remote` / `--remote NAME` | verified live from a laptop against the lab host ([docs](docs/remote.md)) | (new) |
-| `tink helper install` / `upgrade` / `remove` / `remote` / `status` | built, and run live on the lab host: installed from the published image, it made the scheduled copies on its own, restarted after being killed, and upgraded from `v0.1.0` to `v0.1.1` with the release binary and no flags; a host reboot has not been tried; its status document now lives on a volume of its own (unit-tested, not yet run live) ([docs](docs/helper.md)) | (new - a way to run the daemon without a unit per init system) |
+| `tink helper install` / `upgrade` / `remove` / `remote` / `status` | built, and run live on the lab host: installed from the published image, it made the scheduled copies on its own, restarted after being killed, and upgraded from `v0.1.0` to `v0.1.1` with the release binary and no flags; a host reboot has not been tried; two changes are unit-tested and not yet run live: its status document lives on a volume of its own, and it reaches the host's API over the network instead of a proxy device (`--api-via`, the default where the bridge allows it) ([docs](docs/helper.md)) | (new - a way to run the daemon without a unit per init system) |
 | `tink identity groups` | built and unit-tested; run live once against a lab LLDAP: reads the directory's groups through the Incus exec API with a read-only user, and can project them into a Headscale policy `groups` fragment ([docs](docs/identity.md)) | (new) |
-| `tink join` / `tink join apply dns` | built and unit-tested; run on the author's own platform and canary stacks, where its five renderings (dns, mesh, proxy routes, sign-on rules, ACL rules) matched the hand-written pieces. `join` reads the files named and prints; `join apply dns` writes the dns helper's generated records (live: created, a name added and removed in seconds, a clash and the wrong files refused). The other four renderings are not applied yet ([docs](docs/join.md)) | (new) |
+| `tink join` / `tink join apply dns` | built and unit-tested; run on the author's own platform and canary stacks, where its five renderings (dns, mesh, proxy routes, sign-on rules, ACL rules) matched the hand-written pieces. `join` reads the files named and prints; `join apply dns` writes the dns helper's generated records (live: created, a name added and removed in seconds, a clash and the wrong files refused). The other four renderings are not applied yet. `plan apply` stamps each publish onto its instance (`user.tink.publish.<name>`, a prefix tink owns), and `join --from-server` / `join apply dns --from-server` join from those stamps and the server's own state, with no files: built and tested against fakes, not yet run on a real server ([docs](docs/join.md)) | (new) |
 | `tink mongo snapshot` | not yet designed | (none yet - still under discussion) |
 
 `deploy` converges a host to its declared platform state - storage
@@ -72,7 +72,7 @@ network, creates and updates but never deletes an ACL (the rules inside a declar
 `--remote` - unit-tested against a fake server, and run live once from a Mac against a lab bridge (created, attached, `no changes` on the second plan, a hand-added rule found and
 removed); see [`docs/network-acl.md`](docs/network-acl.md).
 A `kind: helper` declares the [daemon helper](docs/helper.md#declaring-it-in-a-stack) in a stack: an existing one is adopted and reported on (health, version, missing remotes) and never changed, and one that is missing is installed, as `tink helper install` does.
-A `kind: publish` is a declaration, not something `plan` converges: a name in the site's zone that shows one offer of an instance (`user.tink.offer.<offer>.port` and `.proto`) to named groups. It is left out of the dependency graph like `kind: stack`, and `tink join` reads it to print what the dns, mesh, proxy, sign-on and ACL pieces would need to match; see [`docs/join.md`](docs/join.md).
+A `kind: publish` is a declaration, not something `plan` converges: a name in the site's zone that shows one offer of an instance (`user.tink.offer.<offer>.port` and `.proto`) to named groups. It is left out of the dependency graph like `kind: stack`, `plan` stamps it onto its instance (which must be in the same stack and project) as `user.tink.publish.<name>`, and `tink join` reads it, from files or from those stamps (`--from-server`), to print what the dns, mesh, proxy, sign-on and ACL pieces would need to match; see [`docs/join.md`](docs/join.md).
 If you are starting from a `docker run` line or a Compose file, [`docs/docker-to-tink.md`](docs/docker-to-tink.md) says what to change and what Docker has that Incus does not.
 `export` is the other direction: it reads live instances, with their project and volumes, back into that YAML (leaving out what Incus and the image
 wrote, pinning the image, never writing a secret) and checks the result with `plan`; see [`docs/export.md`](docs/export.md).
@@ -80,8 +80,8 @@ wrote, pinning the image, never writing a secret) and checks the result with `pl
 daemon, so tink can run from another machine; see [`docs/remote.md`](docs/remote.md) for what that covers and what refuses.
 
 `tink backup run` copies volumes to the backup targets a stack declares, and `tink backup restore` / `tink backup verify` restore a
-volume's snapshot (or a restore point on a target) to a new volume and prove the backup is usable - see
-[`docs/volume-backup.md`](docs/volume-backup.md).
+volume's snapshot (or a restore point on a target) to a new volume and prove the backup is usable (`verify --check-project NAME` runs the check in a project
+of its own, which can be restricted and have no network) - see [`docs/volume-backup.md`](docs/volume-backup.md).
 `plan apply` also writes each volume's copy policy onto the volume, so `tink daemon run --jobs DIR` schedules the copies from the volumes
 themselves, with no stack for it to hold - see [`docs/daemon-jobs.md`](docs/daemon-jobs.md).
 `plan` also asks every storage volume to declare how it is backed up
@@ -138,7 +138,7 @@ internal/volbackup/  copy, restore and verify a storage volume - see docs/volume
 internal/backuprun/  tink backup run: decide which copies are due, make them
 internal/ingress/    tink ingress ...
 internal/identity/   the identity role (people and groups), its LLDAP reader, and tink identity groups - see docs/identity.md
-internal/join/       tink join: offers and publishes joined to the helpers' own facts, and the five renderings - see docs/join.md
+internal/join/       tink join: offers and publishes (from files, or from the server's stamps) joined to the helpers' own facts, and the five renderings - see docs/join.md
 internal/mesh/       projections into mesh policy (Headscale groups) - see docs/identity.md
 internal/daemon/     tink daemon ... (workers, the backup scheduler, the status document)
 internal/jobs/       the daemon's job queue, a directory - see docs/daemon-jobs.md
@@ -208,6 +208,23 @@ three real bugs" commit for the full detail on each.
 Confirmed idempotent: running `deploy` twice in a row against the same
 host, back to back, produced identical results both times with no
 manual intervention needed on the second run.
+
+`deploy`'s authorization (the scriptlet under `configs/daemon`) is
+**validated on Incus 7.5.1 only** and is easy to misread, so plainly: on
+Incus 7.x a scriptlet runs only for a client class routed to it with an
+`authorization.client.*` key. With Incus's built-in routing it is never
+called, and OIDC logins and unrestricted certificates are allowed anyway.
+`deploy`'s template routes the `oidc` and `tls` classes to it, so on a
+deployed host it is called for those two and allows both. It sets
+`tls-restricted` to Incus's own `tls` check on purpose: routed to this
+script, a *restricted* certificate would get the script's `True` instead
+of its project list (measured once, on another server,
+[not re-measured](configs/README.md#host-authorization) with this
+script). An earlier template did route it there, and a host deployed from
+it changes at its next `deploy`. The shape
+of the data Incus passes to the script changes between versions, so it is
+to be re-tested on a throwaway server at every Incus upgrade. Details:
+[`configs/README.md`](configs/README.md#host-authorization).
 
 `daemon` is implemented, smoke-tested on a disposable VPS, and **now the
 live mechanism running the reconciler on `incus.xlii.co`** -- supervised

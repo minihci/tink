@@ -212,7 +212,7 @@ func createInstance(server incus.InstanceServer, r Resource, env volumeEnv) erro
 // that; that's real downtime, a bigger decision than this function
 // makes for you.
 func updateInstance(server incus.InstanceServer, r Resource) error {
-	spec := &run.Spec{Name: r.Name, Config: r.Config, Devices: r.Devices, Ephemeral: r.Ephemeral}
+	spec := &run.Spec{Name: r.Name, Config: r.Config, Devices: r.Devices, Ephemeral: r.Ephemeral, OwnedConfigPrefixes: ownedConfigPrefixes}
 	if err := run.ApplyConfig(server, spec); err != nil {
 		return err
 	}

@@ -106,7 +106,7 @@ func Export(server incus.InstanceServer, opts ExportOptions) (*ExportResult, err
 		docs = append(docs, exportDoc{res: Resource{Kind: KindProject, Name: project, Config: copyMap(p.Config)}})
 	}
 
-	var instDocs []exportDoc
+	var instDocs, pubDocs []exportDoc
 	for _, name := range opts.Instances {
 		inst, _, found, err := incusapi.LookupInstance(scoped, name)
 		if err != nil {
@@ -125,8 +125,10 @@ func Export(server incus.InstanceServer, opts ExportOptions) (*ExportResult, err
 		}
 		docs = append(docs, volDocs...)
 		instDocs = append(instDocs, exportInstance(server, scoped, env, inst, project, opts, res))
+		pubDocs = append(pubDocs, exportPublishes(inst, project, res)...)
 	}
 	docs = append(docs, instDocs...)
+	docs = append(docs, pubDocs...)
 
 	res.YAML = renderDocs(docs)
 
@@ -136,6 +138,18 @@ func Export(server incus.InstanceServer, opts ExportOptions) (*ExportResult, err
 	for i, d := range docs {
 		resources[i] = d.res
 	}
+	// What plan sees is what Levels hands it: the stamps derived onto the instances, and the publishes themselves left out of the graph.
+	// An instance whose stamps could not be turned back into publishes (exportPublishes said so) therefore plans a removal, and is not verified.
+	if err := derivePublishStamps(resources); err != nil {
+		return res, fmt.Errorf("deriving the publish stamps of the export: %w", err)
+	}
+	inGraphOnly := resources[:0:0]
+	for _, r := range resources {
+		if inGraph(r.Kind) {
+			inGraphOnly = append(inGraphOnly, r)
+		}
+	}
+	resources = inGraphOnly
 	plans, err := PlanWithOptions(server, resources, PlanOptions{env: env, Offline: opts.Offline})
 	if err != nil {
 		return res, fmt.Errorf("planning the export against the live server: %w", err)
@@ -267,6 +281,8 @@ func exportInstance(server, scoped incus.InstanceServer, env *imageEnv, inst *ap
 		switch {
 		case strings.HasPrefix(k, "volatile."), strings.HasPrefix(k, "image."):
 			continue
+		case strings.HasPrefix(k, PublishStampPrefix):
+			continue // written as a kind: publish document (exportPublishes): a stack that declared the key itself would be refused
 		case derived[k]:
 			dropped = append(dropped, k)
 			continue
@@ -295,6 +311,29 @@ func exportInstance(server, scoped incus.InstanceServer, env *imageEnv, inst *ap
 		note("%s looks like a secret: written as ${secret:%s}; add the value with `tink secret set %s`", k, name, name)
 	}
 	return d
+}
+
+// exportPublishes reads the publish stamps of an instance back into the kind: publish documents they were made from, so that a stack written from the
+// live server declares the grants it holds (and applying it removes none). A stamp that is not a publish (publishstamp.go says why) is not guessed at: a
+// note names it, and because the stack then lacks it, plan will say it would remove it.
+func exportPublishes(inst *api.Instance, project string, res *ExportResult) []exportDoc {
+	var out []exportDoc
+	for _, k := range sortedKeys(inst.Config) {
+		if !strings.HasPrefix(k, PublishStampPrefix) {
+			continue
+		}
+		p, err := DecodePublishStamp(project, inst.Name, k, inst.Config[k])
+		if err != nil {
+			res.Notes = append(res.Notes, fmt.Sprintf("instance %s: %v; it is not written as a kind: publish, so applying this stack would remove it", inst.Name, err))
+			continue
+		}
+		allow := make([]string, len(p.Allow))
+		for i, g := range p.Allow {
+			allow[i] = scalar(g)
+		}
+		out = append(out, exportDoc{res: p, raw: fmt.Sprintf("instance: %s\noffer: %s\nallow: [%s]\n", scalar(p.Instance), scalar(p.Offer), strings.Join(allow, ", "))})
+	}
+	return out
 }
 
 // exportImage works out the image: reference. The reference is a candidate from image.id; it is kept only as the registry confirms it.

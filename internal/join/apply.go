@@ -64,7 +64,7 @@ func ApplyDNS(f Files, res Result, opts ApplyOptions) (ApplyReport, error) {
 		return rep, fmt.Errorf("no dns helper was found (no instance has %s: dns): nothing to apply to", roleKey)
 	}
 	if len(res.Published) == 0 && !opts.AllowEmpty {
-		return rep, fmt.Errorf("the files name no published name, so applying would replace every generated record with none; that usually means the wrong files were given (--allow-empty says it is meant)")
+		return rep, fmt.Errorf("no published name was found, so applying would replace every generated record with none; with files that usually means the wrong files were given, and from the server that nothing is stamped on it yet (--allow-empty says it is meant)")
 	}
 	if res.Zone == "" {
 		return rep, fmt.Errorf("the dns helper states no zone (%s), so the zone file cannot be checked for names it already holds", zoneKey)

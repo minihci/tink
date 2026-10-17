@@ -299,5 +299,5 @@ func (o incusRebuildOps) Rebuild(name, fingerprint string) error {
 }
 
 func (o incusRebuildOps) ApplyConfig(r Resource) error {
-	return run.ApplyConfig(o.server, &run.Spec{Name: r.Name, Config: r.Config, Devices: r.Devices})
+	return run.ApplyConfig(o.server, &run.Spec{Name: r.Name, Config: r.Config, Devices: r.Devices, OwnedConfigPrefixes: ownedConfigPrefixes})
 }

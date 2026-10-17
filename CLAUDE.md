@@ -44,17 +44,19 @@ several files to see are below.
   `cmd/tink/main.go`.
 - **The resolver (`internal/resolve`) is the core.** A stack is YAML documents of kinds project, profile, storage-volume,
   instance, file, exec, and two that are not resources to converge: `stack` (a name only) and `publish` (a declaration that
-  `tink join` reads; `publish.go`). Both are kept out of the graph, which is why a publish may share a name with its instance. `helper` (`helperkind.go`)
+  `tink join` reads; `publish.go`). Both are kept out of the graph, which is why a publish may share a name with its instance. `Levels` stamps each publish onto
+  its instance (same stack and project) as `user.tink.publish.<name>` (`publishstamp.go`): derived into the instance's desired config, so the ordinary plan converges it. That prefix is the one
+  config prefix tink OWNS: a live key under it that the stack no longer derives is a planned removal (`run.StaleOwnedKeys`), and nothing else is ever removed. `helper` (`helperkind.go`)
   declares the daemon helper: adopted and only reported on when present, installed (through `internal/helper`) when absent, never upgraded or removed. `graph.go` computes dependency levels (resources within a level
   apply concurrently; ties are broken by kind then name so a plan reads the same on every run). Dependencies come from
   name-matching (an instance's project, profiles and volume-backed devices) plus explicit `DependsOn`; deliberately not a
   Terraform-style expression language. `Plan` is pure reads; `apply*.go` converges. Design and rationale are in
   `docs/resolver-architecture.md`.
-- **`tink join` is a pure function of the stack files it is given** (`internal/join`): it reads no server and writes nothing, and prints
+- **`tink join` is a pure function of the stack files it is given, or of the server with `--from-server`** (`internal/join`; `server.go` reads the instances, profiles, networks and publish stamps, read-only, and fails on a stamp it cannot read): it writes nothing, and prints
   the dns records, mesh records, proxy routes, sign-on rules and ACL rules a site's `kind: publish` documents imply. Any error means
   nothing is printed (a partial rendering looks like a complete one). `tink join apply dns` (`internal/join/apply.go`) is the one thing
   that writes: the dns helper's generated `/hosts`, through an injected `Files` interface, with refusals instead of guesses (errors,
-  zero publishes, a clash with the zone file, a file tink did not write, a failed read) and a read-back. Its golden outputs in `internal/join/testdata/golden` are written
+  zero publishes, a clash with the zone file, a file tink did not write, a failed read) and a read-back. `apply dns --from-server` is what the daemon helper will run. Its golden outputs in `internal/join/testdata/golden` are written
   by hand, not generated. See `docs/join.md`.
 - **Plan also judges drift and policy**, not just existence: image drift by fingerprint (`volatile.base_image`, not `image.id`,
   see `imagedrift.go`) driven by an instance's `on_image_change`, and each storage volume's declared backup policy

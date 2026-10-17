@@ -103,6 +103,9 @@ func Validate(r Resource) error {
 	if err := validatePublish(r); err != nil {
 		return err
 	}
+	if err := validateOwnedConfig(r); err != nil {
+		return err
+	}
 	if err := validateHelper(r); err != nil {
 		return err
 	}

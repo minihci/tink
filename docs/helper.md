@@ -12,8 +12,8 @@ document is `docs/helper-design.md` on the `helper-design` branch, not yet on `m
 **Run live so far**, on one host (the lab server): a release build of tink installed the `v0.1.0` image with no flags; the scheduler queues and makes the copies
 on its own, and the restore point it made verifies; a helper whose process was killed is running again in about six seconds, with a fresh status document and
 its job history; and `upgrade` with no flags, from the `v0.1.1` release binary, drained it, moved it from the `v0.1.0` image to the `v0.1.1` one, and kept its
-certificate and its job history. **Not yet tried:** a host reboot or an Incus restart, and the helper copying to a second physical server. **Unit-tested, not yet run live:** the
-status document on a volume of its own, which is the default since [the helper stopped needing a right to edit its instance](#the-status-document).
+certificate and its job history. **Not yet tried:** a host reboot or an Incus restart, and the helper copying to a second physical server.
+**Unit-tested, not yet run live:** the status document on a volume of its own, which is the default since [the helper stopped needing a right to edit its instance](#the-status-document), and the helper reaching the host's API over the network instead of through a proxy device ([below](#how-the-helper-reaches-the-hosts-api)).
 
 ## What the helper is for
 
@@ -21,7 +21,7 @@ status document on a volume of its own, which is the default since [the helper s
 
 | Drift | What the helper does | Built? |
 |---|---|---|
-| a backup copy is overdue (time) | **heals**: makes the copy, verifies restores on schedule | yes: this is all it does for the platform today **[live]** |
+| a backup copy is overdue (time) | **heals**: makes the copy. It does not check restores: **the daemon never runs `tink backup verify`**, a person does, and `plan` warns when one is overdue | yes: this is all it does for the platform today **[live]** |
 | a published name's dns record, route, sign-on rule or ACL rule is wrong (derived state) | **heals**: renders from the declarations and rewrites the file | the dns records, by hand (`tink join apply dns`, [join.md](join.md#applying-dns)); not yet on a timer |
 | an instance's config, image or volume was changed by hand (declared state) | **reports**, and a human decides; healing it automatically is an opt-in per resource later, like `on_image_change` | not built |
 | the helper itself stops, or a copy keeps failing | says so in its status document, which `tink helper status` judges | yes; nothing yet *delivers* the message (open decision 6) |
@@ -29,6 +29,8 @@ status document on a volume of its own, which is the default since [the helper s
 **The rule that falls out: derived state heals, declared state reports.** A file that says "do not edit" (the generated `/hosts`, generated routes, rules) is the helper's to keep right. Something a person wrote in a stack is theirs to change, so a difference there is told, not undone. This is the same shape as `on_image_change: report | ignore | rebuild`, which already is a per-resource choice between telling and healing.
 
 **It also gives a least-privilege shape [lab, partly]:** detecting needs only read access; healing derived files needs a few narrow writes (the dns records are two file reads and one file write on one instance); healing declared state is the broad case. The always-on loop should not need more than it uses (see the authorization lab in the author's platform repository, `authz-lab/`: a restricted certificate in a restricted project is a real boundary against the host, and anything finer than a project needs Incus's authorization scriptlet or OpenFGA).
+
+**Restore checks are not the helper's work, so its certificate never needs the right to create instances for them.** A restore check runs a foreign image with the restored data mounted, which is why it is the one place a wide permission is easy to hand out by accident. `tink backup verify` does it, run by a person; with `--check-project` it runs in a restricted project whose `default` profile has no NIC, so a restored copy has no network and the right to create instances there cannot be used to escalate ([the recipe](volume-backup.md#running-the-check-in-a-project-of-its-own)).
 
 **Two gaps stand between here and that picture:**
 1. **Desired state for general drift.** The helper has no copy of the declarations. It finds its work in stamps on objects (the backup policy on a volume today; the publish declarations next). Detecting drift in *declared* state needs the declarations themselves, either a checkout of the stack repository or stamps for everything, and the age identity for any resource that holds a secret.
@@ -63,6 +65,8 @@ tink helper install                                                       # a re
 tink helper install --image ghcr:minihci/tink-helper:v0.1.0               # a particular image (tink at /usr/local/bin/tink): how any other build installs the published one
 tink helper install --binary ./tink-linux --timezone America/Denver      # the escape hatch: a linux tink binary, in a stock alpine image
 tink helper install --status-on-instance                                  # the status document on the helper's own instance, as before the status volume
+tink helper install --api-via network                                     # reach the host's API over the network, or say what to change
+tink helper install --api-via proxy                                       # reach it through a proxy device on the helper's loopback
 ```
 
 `--binary` is the escape hatch. It runs a binary you built (a development build, or a branch you are trying) in a stock alpine image, so it also works on a
@@ -74,9 +78,9 @@ image's digest) on itself, `user.tink.helper.image-fingerprint`, because a tag c
 
 It creates, in a project of its own (`tink-helper`): an OCI app container named `helper` that runs `tink daemon run --remote host ...`; two volumes,
 `tink-helper-config` (its Incus client configuration, mounted where the client looks for it) and `tink-helper-data` (its jobs); a third volume, `<name>-status`
-(`helper-status`), that holds only the helper's status document ([below](#the-status-document); `--status-on-instance` leaves it out); a NIC; and a **proxy
-device** that gives it the host's HTTPS API on its own loopback (`127.0.0.1:8443` inside the container), so the API is not exposed to anything it was
-not already exposed to. It starts the instance, enrols it, and waits for the first status document.
+(`helper-status`), that holds only the helper's status document ([below](#the-status-document); `--status-on-instance` leaves it out); and a NIC. How it
+reaches the host's HTTPS API is the next section's subject: **over the network by default** (no other device), or through a **proxy device** on its own
+loopback (`127.0.0.1:8443` inside the container). It starts the instance, enrols it, and waits for the first status document.
 
 **The helper's own certificate.** The helper is a client of its own host, with a certificate of its own. `install` does not hand it a credential:
 it mints a **single-use trust token** and runs `tink remote add host ... --token-file -` **inside the instance** with the token on standard input
@@ -98,12 +102,13 @@ certificate has been revoked is reported **down at once**, not after its last do
 25 minutes, because it can no longer write.
 
 **It does not claim health it has not earned.** The helper publishes nothing until its scheduler has completed a pass over the volumes; before that a
-"nothing skipped, nothing failing" would be about volumes nobody had looked at. A pass that could not look (the proxy to the host's API comes up a
-moment after the helper's process does) is retried in 5 seconds, not after the full minute.
+"nothing skipped, nothing failing" would be about volumes nobody had looked at. A pass that could not look (the way to the host's API, a proxy
+device or the network, comes up a moment after the helper's process does) is retried in 5 seconds, not after the full minute.
 
-**What it needs:** the host's API listening (`core.https_address`; the loopback address is enough, and `tink deploy` sets one), and a network for the NIC
-(`--network`, else the default profile's, else `incusbr0`). It refuses, before creating anything, if either is missing, or if another helper exists on
-the server.
+**What it needs:** the host's API listening (`core.https_address`: for a proxy device any address will do, the loopback address included; to go over
+the network it must cover the bridge's address, see [below](#how-the-helper-reaches-the-hosts-api)), and a network for the NIC (`--network`, else the
+default profile's, else `incusbr0`). `tink deploy` binds the API to the bridge's own address, which is the second kind. It refuses, before creating
+anything, if either is missing, or if another helper exists on the server.
 
 **If it dies,** Incus restarts it (`boot.autorestart` is set on the instance). On the lab host a helper whose process was killed with `SIGKILL` was running
 again in about six seconds, published a new status document, and still had its job history, which lives on its data volume. An entrypoint that exits over and
@@ -114,6 +119,49 @@ status` reports as down.
 and removes the old certificate. `--binary` puts the binary in the instance, which is also how a helper runs where an image cannot be pulled. The
 status volume is made again if the instance points at one that is gone; a helper installed before the status volume is left publishing on its instance
 (install says so, and migrates nothing).
+
+## How the helper reaches the host's API
+
+The helper is a client of its own host, so it needs the host's HTTPS API. There are two ways to give it that, and `--api-via` chooses:
+
+| | **network** | **proxy** |
+|---|---|---|
+| the instance has | its NIC, and **no proxy device** | its NIC, and a `proxy` device named `api` (bind container, listen `tcp:127.0.0.1:PORT`, connect to the host's listener) |
+| its `host` remote is | `https://<the bridge's address>:PORT` | `https://127.0.0.1:PORT` |
+| it needs | the NIC on a **managed bridge with an IPv4 address**, and the host's listener to **cover that address**: a wildcard (`:PORT`, `0.0.0.0:PORT`, `[::]:PORT`) or exactly that address | the API listening on any address the host can reach itself |
+| a restricted project | nothing beyond a NIC | must allow proxy devices (`restricted.devices.proxy`), and while the instance has one every update to it is invalid there |
+| who can reach the API port | every container on the bridge (see below) | only the helper |
+
+- **`auto`, the default:** network when both conditions hold, otherwise a proxy device, with one line saying why (`note: the helper will reach the host's API
+  through a proxy device, not over the network, because the host's API listens on 127.0.0.1:8443 (core.https_address), which does not include 10.10.50.1, the
+  host's address on tink0`). The reasons it can give: the NIC's network is not managed by Incus or not a bridge, it has no IPv4 address, the default profile's
+  NIC names no network, or the listener does not cover the bridge's address (loopback, another interface's address, an IPv6 address).
+- **`network`** insists, and fails before anything is created, saying what to change. For a listener that does not cover the bridge, that is
+  `incus config set core.https_address :PORT`, with its cost said alongside (a wildcard opens the port on every interface of the host, so a firewall decides who
+  reaches it), or `--api-via proxy`.
+- **`proxy`** is what `install` did before this choice existed.
+- **The remote is registered the same way in both:** `tink remote add host ADDRESS --token-file -`, run inside the instance with the token on standard input. The
+  token carries the host's certificate fingerprint and the helper pins the certificate to it, so only the address differs. Whether the Incus client accepts the
+  certificate at the bridge's address, as it does at the loopback one, is what a live run shows **[hypothesis]**; if the first connection cannot reach the
+  server, the error adds that the host's firewall may be what stops it, and names `--api-via proxy`.
+
+**Why network is the default.** A restricted project blocks proxy devices unless it is told to allow them, and a helper with one cannot be updated there; and a
+proxy device is a host-reach primitive (a proxy to the Incus unix socket is root on the host), which is the very thing a restricted project exists to refuse.
+Going over the network asks the project for nothing it was not already giving the helper, a NIC. A container on a managed bridge (`tink0`) reaching the host's
+API port at the bridge's gateway address when `core.https_address` is a wildcard was measured on the lab host **[lab]**.
+
+**What it costs.** The API port is then reachable by **every container on the bridge**, not only the helper (a proxy device was private to it). It is the
+same TLS API, which needs a certificate in the trust store, as it is on the host's other addresses; what changes is who can try. To limit it to the
+helper, put an egress rule on the other instances' NICs that drops tcp to the bridge's address on the API port (an `egress` rule in Incus's sense: traffic
+leaving the instance; [network-acl.md](network-acl.md)), and leave the helper's NIC without it. Whether a NIC's ACL rule applies to traffic addressed to the host
+itself on the bridge has not been measured here **[hypothesis]**: try it in a lab before relying on it. Separately, the host's firewall has to let the bridge's
+containers reach the port.
+
+**Existing helpers keep the way they have.** `install` run again leaves a helper's devices alone, and re-enrols it (`--reissue`) at the address it was
+installed with, not at wherever the listener is now. Asking for the other way is refused, with the way to get it: `tink helper remove` (it keeps the volumes),
+then `install` again. `tink helper upgrade` recreates the instance with the devices it had, so a network helper stays without a proxy device and a proxy helper
+keeps its own. `tink plan` on a `kind: helper` document adds a note when the helper it adopts has the proxy device (a restricted project must allow proxy devices);
+the document has no field for the way, so a helper installed from a stack uses `auto`.
 
 ## The ingress half
 

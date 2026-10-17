@@ -32,6 +32,11 @@ type Spec struct {
 	// carry none (a project's empty `default`) fail with "No root device could be found". It is for instances tink makes for its own purposes (the
 	// check instance of `backup verify`, the helper). A stack's instances leave it off: `plan` warns about their profiles instead (resolve/rootdisk.go).
 	RootDiskAtCreate bool
+
+	// OwnedConfigPrefixes are config key prefixes that tink OWNS on the instance: ApplyConfig removes every live key under one of them that Config does not
+	// carry. Everywhere else ApplyConfig only sets, and a key that is no longer declared is left alone; an owned prefix is the one place a key tink wrote is
+	// taken back when nothing derives it any more (the stamps of `kind: publish`, resolve/publishstamp.go). Empty for anything else.
+	OwnedConfigPrefixes []string
 }
 
 // HasRootDisk reports whether devices holds a root disk: Incus's own test (a disk with path / and no source, whatever the device is called).

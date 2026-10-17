@@ -7,7 +7,11 @@ import (
 	"strings"
 	"testing"
 
+	incus "github.com/lxc/incus/v7/client"
+	"github.com/lxc/incus/v7/shared/api"
+
 	"github.com/minihci/tink/internal/join"
+	"github.com/minihci/tink/internal/resolve"
 )
 
 const (
@@ -220,5 +224,178 @@ func TestJoinApply_AJoinErrorIsPrintedAndNothingIsWritten(t *testing.T) {
 	err := runJoinApply(&out, &errw, f, "dns", []string{broken, joinCanary}, join.ApplyOptions{})
 	if err == nil || !strings.Contains(err.Error(), "nothing was applied") || !strings.Contains(errw.String(), "error: sso helper") || len(f.writes) != 0 {
 		t.Errorf("err %v, stderr %q, writes %v", err, errw.String(), f.writes)
+	}
+}
+
+// ---- --from-server: the same join, built from what the server holds ----
+
+// joinServer is a server holding the platform and canary stacks as `tink plan apply` leaves them: each stack planned, so its publishes are stamped onto its
+// instances. It implements only the reads the join makes; any write panics through the nil embedded interface.
+type joinServer struct {
+	incus.InstanceServer
+	instances []api.Instance
+	profiles  []api.Profile
+	networks  []api.Network
+}
+
+func (s *joinServer) GetInstancesAllProjects(api.InstanceType) ([]api.Instance, error) {
+	return s.instances, nil
+}
+func (s *joinServer) GetProfilesAllProjects() ([]api.Profile, error) { return s.profiles, nil }
+func (s *joinServer) GetNetworks() ([]api.Network, error)            { return s.networks, nil }
+
+func newJoinServer(t *testing.T) *joinServer {
+	t.Helper()
+	stacks, err := loadJoinStacks([]string{joinPlatform, joinCanary})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &joinServer{}
+	for _, st := range stacks {
+		levels, err := resolve.Levels(st.Resources)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, level := range levels {
+			for _, r := range level {
+				project := r.Project
+				if project == "" {
+					project = "default"
+				}
+				switch r.Kind {
+				case resolve.KindInstance:
+					s.instances = append(s.instances, api.Instance{Name: r.Name, Project: project, InstancePut: api.InstancePut{Config: r.Config, Devices: r.Devices, Profiles: r.Profiles}})
+				case resolve.KindProfile:
+					s.profiles = append(s.profiles, api.Profile{Name: r.Name, Project: project, ProfilePut: api.ProfilePut{Config: r.Config, Devices: r.Devices}})
+				case resolve.KindNetwork:
+					s.networks = append(s.networks, api.Network{Name: r.Name, Managed: true, NetworkPut: api.NetworkPut{Config: r.Config}})
+				}
+			}
+		}
+	}
+	return s
+}
+
+func runFromServer(t *testing.T, s incus.InstanceServer, only string) (stdout, stderr string, err error) {
+	t.Helper()
+	var out, errw bytes.Buffer
+	err = runJoinFromServer(&out, &errw, s, only)
+	return out.String(), errw.String(), err
+}
+
+func TestJoinFromServer_PrintsTheSameSectionsAsTheFiles(t *testing.T) {
+	s := newJoinServer(t)
+	fromServer, errw, err := runFromServer(t, s, "")
+	if err != nil || errw != "" {
+		t.Fatalf("err %v, stderr %q", err, errw)
+	}
+	fromFiles, _, err := runJoinCmd(t, []string{joinPlatform, joinCanary}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fromServer != fromFiles {
+		t.Errorf("from the server:\n%s\nfrom the files:\n%s", fromServer, fromFiles)
+	}
+	for _, name := range []string{"dns", "mesh", "caddy", "sso", "acl"} {
+		one, _, err := runFromServer(t, s, name)
+		if err != nil || one != readJoinFixture(t, joinGolden+name+".txt") {
+			t.Errorf("--only %s: %v\n%s", name, err, one)
+		}
+	}
+	if _, _, err := runFromServer(t, s, "routes"); err == nil || !strings.Contains(err.Error(), "the sections are dns, mesh, caddy, sso, acl") {
+		t.Errorf("--only needs a known section: %v", err)
+	}
+}
+
+func TestJoinFromServer_AStampThatCannotBeReadPrintsNothingAndNamesTheInstance(t *testing.T) {
+	s := newJoinServer(t)
+	for i := range s.instances {
+		if s.instances[i].Name == "whoami" {
+			cfg := map[string]string{"user.tink.publish.whoami": `{"allow":["family"]`}
+			for k, v := range s.instances[i].Config {
+				if k != "user.tink.publish.whoami" {
+					cfg[k] = v
+				}
+			}
+			s.instances[i].Config = cfg
+		}
+	}
+	out, errw, err := runFromServer(t, s, "")
+	if err == nil || !strings.Contains(err.Error(), "1 error(s): nothing was rendered") {
+		t.Fatalf("err = %v", err)
+	}
+	if out != "" {
+		t.Errorf("stdout = %q: a failed join must print no rendering", out)
+	}
+	if !strings.Contains(errw, "error: instance/whoami: (project canary) user.tink.publish.whoami:") {
+		t.Errorf("stderr = %q", errw)
+	}
+}
+
+func TestJoinApplyFromServer_WritesTheSameFileAsTheFilesDo(t *testing.T) {
+	s := newJoinServer(t)
+	f := newFakeJoinFiles()
+	var out, errw bytes.Buffer
+	if err := runJoinApplyFromServer(&out, &errw, s, f, "dns", join.ApplyOptions{}); err != nil {
+		t.Fatalf("%v\n%s", err, errw.String())
+	}
+	if !strings.Contains(out.String(), "created, and read back") {
+		t.Errorf("output:\n%s", out.String())
+	}
+	fromFiles := newFakeJoinFiles()
+	if _, _, err := runApply(t, fromFiles, "dns", join.ApplyOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if f.files["tink/dns/hosts"] != fromFiles.files["tink/dns/hosts"] || f.files["tink/dns/hosts"] == "" {
+		t.Errorf("from the server %q, from the files %q", f.files["tink/dns/hosts"], fromFiles.files["tink/dns/hosts"])
+	}
+	// a second run changes nothing
+	out.Reset()
+	if err := runJoinApplyFromServer(&out, &errw, s, f, "dns", join.ApplyOptions{}); err != nil || !strings.Contains(out.String(), "no changes") {
+		t.Errorf("second run: %v\n%s", err, out.String())
+	}
+}
+
+func TestJoinApplyFromServer_ABadStampOrSectionWritesNothing(t *testing.T) {
+	s := newJoinServer(t)
+	f := newFakeJoinFiles()
+	var out, errw bytes.Buffer
+	if err := runJoinApplyFromServer(&out, &errw, s, f, "caddy", join.ApplyOptions{}); err == nil || !strings.Contains(err.Error(), "only dns is built") {
+		t.Errorf("caddy: %v", err)
+	}
+	s.instances[0].Config = map[string]string{"user.tink.publish.x": "nope"}
+	if err := runJoinApplyFromServer(&out, &errw, s, f, "dns", join.ApplyOptions{}); err == nil || !strings.Contains(err.Error(), "nothing was rendered") {
+		t.Errorf("bad stamp: %v", err)
+	}
+	if len(f.writes) != 0 {
+		t.Errorf("wrote %v", f.writes)
+	}
+}
+
+// The two sources are alternatives, and the guards fire before any connection is made.
+func TestJoinFlags_FilesAndFromServerAreAlternatives(t *testing.T) {
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"join", "--from-server", joinCanary}, "takes no FILE"},
+		{[]string{"join"}, "at least one FILE, or --from-server"},
+		{[]string{"join", "--socket", "/x.sock", joinCanary}, "--socket is for --from-server"},
+		{[]string{"join", "apply", "dns", "--from-server", joinCanary}, "takes no FILE"},
+		{[]string{"join", "apply", "dns"}, "at least one FILE, or --from-server"},
+		{[]string{"join", "apply", "routes", "--from-server"}, "is not a section"},
+	}
+	for _, c := range cases {
+		t.Run(strings.Join(c.args, " "), func(t *testing.T) {
+			root := newRootCmd()
+			var out, errw bytes.Buffer
+			root.SetOut(&out)
+			root.SetErr(&errw)
+			root.SetArgs(c.args)
+			err := root.Execute()
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Errorf("err = %v, want it to say %q", err, c.want)
+			}
+		})
 	}
 }
