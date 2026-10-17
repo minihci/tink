@@ -677,6 +677,39 @@ func TestInstallingAgainAfterARevocationEnrolsTheSameKeyAgain(t *testing.T) {
 	}
 }
 
+// `tink helper remove` keeps the config volume, and with it the helper's `host` remote. The instance is gone, so the next install builds a
+// new one, but its client configuration is the old one, and `remote add` will not replace a remote: found live (Incus 7.5.1) when a helper
+// installed through a proxy device was removed and installed again over the network, which failed with `remote "host" already exists`.
+func TestInstallingAfterARemoveThatKeptTheVolumesForgetsTheOldRemote(t *testing.T) {
+	h := newHost()
+	in, out := installer(h, new([]*run.Spec))
+	if err := in.Install(InstallOptions{Image: "x", Wait: -1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := in.Remove(RemoveOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if !h.volumes["fast/tink-helper-config"] && !h.volumes["default/tink-helper-config"] {
+		t.Fatalf("the test needs the config volume to survive the remove: %v", h.volumes)
+	}
+	h.execs, h.log = nil, nil
+	if err := in.Install(InstallOptions{Image: "x", Wait: -1}); err != nil {
+		t.Fatal(err)
+	}
+	got := commandsRun(h)
+	if len(got) != 2 || got[0] != "remote remove host" || !strings.HasPrefix(got[1], "remote add host") {
+		t.Errorf("the kept volume still has the old `host` remote, which `remote add` would refuse: forget it first: %v", got)
+	}
+	for _, l := range h.log {
+		if strings.HasPrefix(l, "delete file") {
+			t.Errorf("the key is kept (the host is told to trust it again), only --reissue makes a new one: %v", h.log)
+		}
+	}
+	if !strings.Contains(out.String(), "forgetting the helper's earlier enrolment") {
+		t.Errorf("%s", out.String())
+	}
+}
+
 func TestReissueAlsoRemovesTheOldKeyPairSoANewOneIsMade(t *testing.T) {
 	h := newHost()
 	in, _ := installer(h, new([]*run.Spec))
