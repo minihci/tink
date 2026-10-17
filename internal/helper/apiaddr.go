@@ -285,7 +285,8 @@ func listenerCovers(listen string, gateway netip.Addr, networkName string) *apiP
 	}
 	return &apiProblem{
 		Why: fmt.Sprintf("the host's API listens on %s (core.https_address), which does not include %s, the host's address on %s", listen, gateway, networkName),
-		Fix: fmt.Sprintf("make it listen there: `incus config set core.https_address :%s` listens on every address, which also opens the port on every other interface of the host (a firewall decides who reaches it); "+
-			"or leave it, and use --api-via proxy", port),
+		Fix: fmt.Sprintf("make it listen there: `incus config set core.https_address %s` listens on that address only, which is the narrower choice; "+
+			"`incus config set core.https_address :%s` listens on every address, which also opens the port on every other interface of the host (a firewall decides who reaches it); "+
+			"or leave it, and use --api-via proxy", net.JoinHostPort(gateway.String(), port), port),
 	}
 }

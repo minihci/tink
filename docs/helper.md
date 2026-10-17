@@ -159,7 +159,10 @@ containers reach the port.
 
 **Existing helpers keep the way they have.** `install` run again leaves a helper's devices alone, and re-enrols it (`--reissue`) at the address it was
 installed with, not at wherever the listener is now. Asking for the other way is refused, with the way to get it: `tink helper remove` (it keeps the volumes),
-then `install` again. `tink helper upgrade` recreates the instance with the devices it had, so a network helper stays without a proxy device and a proxy helper
+then `install` again. That install builds a new instance on the kept volumes, and the kept client configuration still has the old `host` remote (at the old address) and
+the helper's key; `remote add` will not replace a remote, so `install` forgets it first, exactly as it does for a helper that exists, and enrols the same key again at the
+address of the way it now uses (`--reissue` is only for a **new** key). Before this was fixed that second install failed with `remote "host" already exists` and left a
+half-installed helper, which `install --reissue` recovered **[lab: found and reproduced on Incus 7.5.1, 2026-10-17]**. `tink helper upgrade` recreates the instance with the devices it had, so a network helper stays without a proxy device and a proxy helper
 keeps its own. `tink plan` on a `kind: helper` document adds a note when the helper it adopts has the proxy device (a restricted project must allow proxy devices);
 the document has no field for the way, so a helper installed from a stack uses `auto`.
 

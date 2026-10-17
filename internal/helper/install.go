@@ -194,6 +194,16 @@ func (in *Installer) Install(opts InstallOptions) error {
 		return err
 	}
 	spec := in.spec(opts, route, network)
+	// `remove` without --purge deletes the instance and keeps its volumes, so a helper that is made again can arrive at a client
+	// configuration that already has the `host` remote (and the key) of the one before. Whether it does is read before the instance is
+	// made, because making it creates the volume when it is missing; enrol forgets that remote the way it does for a helper that exists.
+	keptConfig := false
+	if !haveInstance {
+		_, _, keptConfig, err = incusapi.LookupVolume(scoped, opts.Pool, "custom", configVolume)
+		if err != nil {
+			return fmt.Errorf("checking whether the helper's client configuration volume %s/%s exists: %w", opts.Pool, configVolume, err)
+		}
+	}
 	if !haveInstance {
 		var blob []byte
 		if opts.Binary != "" {
@@ -235,7 +245,7 @@ func (in *Installer) Install(opts InstallOptions) error {
 	}
 
 	enrolling := in.now()
-	if err := in.enrol(scoped, opts, route.Remote, !haveInstance); err != nil {
+	if err := in.enrol(scoped, opts, route.Remote, !haveInstance && !keptConfig); err != nil {
 		return route.explain(err)
 	}
 	return in.waitForReport(opts, enrolling)
@@ -368,6 +378,9 @@ func (in *Installer) spec(o InstallOptions, route apiRoute, network string) *run
 
 // enrol makes the host trust the helper's own certificate. The key pair is generated inside the instance, so the private key never
 // leaves it; what passes is a single-use token, handed over on standard input, never on a command line or to disk.
+//
+// fresh says there is nothing of an earlier enrolment to forget: the instance is new and so is its client configuration volume. A new
+// instance on a kept volume is not fresh.
 func (in *Installer) enrol(scoped incus.InstanceServer, opts InstallOptions, hostAddr string, fresh bool) error {
 	entry, err := in.trustEntry()
 	if err != nil {
