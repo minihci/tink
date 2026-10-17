@@ -20,9 +20,9 @@ The tron stack was written by hand, step by step (P1 to P7 in its own log), and 
 | East-west ACLs (`identity-in`, `sso-in`, `tink0-in`): who may reach whom | **recipe**, derived from the role graph | three ACLs, each a function of which role calls which; nobody would edit them per site |
 | Backup policy per volume (daily snapshot, a copy to each target, weekly restore check; `none:` with a reason for the regenerable mesh state) | **recipe defaults** over **site targets** | the same four lines, repeated for three volumes |
 | Engine config skeletons: the Corefile and zone file, the Caddyfile (`no_portal_cookie`, `sso` forward-auth), Authelia's configuration | **recipe**, but see the first precondition below | hand-written inside `kind: file` content |
-| The zone `home.xlii.co` | **site fact** | 27 occurrences, plus the LDAP base DN, the cookie domain and the wildcard certificate |
-| The platform bridge, its subnet and the helpers' static addresses | **recipe**, from one site fact (a range) | 19 occurrences of `10.10.50.`; the offsets are a convention |
-| The LAN leg: a parent NIC, a CIDR, two free addresses outside the router's DHCP pool, fixed MACs | **site facts** | `br0` and `10.0.142.` (14 occurrences); the author picked the addresses by ping and ARP probe |
+| The zone `home.xlii.co` | **site fact** | 18 occurrences in the content, plus the LDAP base DN, the cookie domain and the wildcard certificate |
+| The platform bridge, its subnet and the helpers' static addresses | **recipe**, from one site fact (a range) | 11 occurrences of `10.10.50.`; the offsets are a convention |
+| The LAN leg: a parent NIC, a CIDR, two free addresses outside the router's DHCP pool, fixed MACs | **site facts** | `br0` and `10.0.142.` (nine occurrences); the author picked the addresses by ping and ARP probe |
 | How certificates are obtained: DNS-01 through Cloudflare, with a token, an image that has the module, and public resolvers because the dns helper is authoritative for the zone | **site fact**, and it changes the engine image | one secret supplied by the user |
 | Backup targets: a same-host pool (declared honestly as `same-host`) and an offsite Incus remote | **site facts** | two `kind: backup-target` documents |
 | Mesh: join an **existing** control plane at a URL, advertise one route | **site fact** (the URL) | the control plane is not in the stack |
@@ -30,7 +30,7 @@ The tron stack was written by hand, step by step (P1 to P7 in its own log), and 
 | Secrets | **generated or supplied** | nine names; seven can be minted (JWT secrets, keys, session and storage secrets), two cannot (the Cloudflare token, the mesh auth key) |
 | Seeding the directory's bind account, approving the mesh route on the control plane, the router's resolver rule, creating people | **outside the stack today** | `ldap-seed.sh`, a `headscale` command, manual steps |
 
-The count that matters: of 415 non-comment lines, the site-specific values are a handful of facts repeated dozens of times. That is what makes "facts in, stack out" plausible. A flat facts file for tron would be about fifteen lines (field names are illustrative, not decided):
+The count that matters: across 24 documents and about 390 lines of content, the site-specific values are about fifteen facts repeated dozens of times ([the line-by-line accounting](platform-recipe-accounting.md) classifies every one). That is what makes "facts in, stack out" plausible. A flat facts file for tron would be about eighteen lines (field names are illustrative, not decided):
 
 ```yaml
 kind: site
@@ -42,10 +42,12 @@ platform: {bridge: tink0, subnet: 10.10.50.0/24}
 lan: {parent: br0, cidr: 10.0.142.0/24, addresses: {dns: 10.0.142.230, ingress: 10.0.142.231}}
 certificates: {challenge: dns-cloudflare, token: ${secret:platform-cloudflare-dns}}
 mesh: {control_plane: https://hs.xlii.co}
+helper: {project: tink-helper, network: incusbr0, remotes: [host, vps]}
+images: shared          # cached in the default project's store (features.images: "false")
 backup:
   targets:
-    - {name: nas, location: same-host, pool: nas2510}
-    - {name: offsite, location: offsite, remote: vps}
+    - {name: nas, location: same-host, engine: incus, pool: nas2510}
+    - {name: offsite, location: offsite, engine: incus, remote: vps}
 ```
 
 ## The site facts: a revised list
@@ -75,7 +77,8 @@ These are gaps in tink today, in the order they block a shipped recipe:
 3. **Ownership stamps and scoped removal** ([ownership-stamps-design](https://github.com/minihci/tink/blob/docs/ownership-stamps-design/docs/ownership-stamps-design.md)), or an upgrade can add and update a helper but never drop or rename one.
 4. **A version policy for the daemon helper.** The tron stack adopts a helper still on v0.1.4, which predates `tink join`; `plan` never upgrades it **[docs]**. A recipe rendered by a newer tink and a helper running an older one disagree. The recipe has to say which tink it needs, and `plan` has to say when the helper is behind.
 5. **Watching.** "The user does not maintain it" holds only if tink tells them when it breaks. Nothing watches the helpers, certificates or backups today **[docs]**; the author's watching design (a monitor at home, a heartbeat and alert delivery on the VPS) is the first candidate role.
-6. **Pins.** Ship image digests with the recipe, and have `plan` report newer upstream digests through `on_image_change: report`, so a security fix does not have to wait for the tink release that carries a new recipe. A separate pins file is a later option.
+6. **Role contracts as data, and stack-level defaults.** A role's contract (the stamps it carries, the files and ports it exposes, the snippets it must define) is in comments and Go constants today, and every stack repeats the same helper boilerplate ([the audit](platform-recipe-accounting.md#part-2-what-tink-has-that-should-have-this-shape-but-does-not)). Both are needed before "bring your own helper" is real.
+7. **Pins.** Ship image digests with the recipe, and have `plan` report newer upstream digests through `on_image_change: report`, so a security fix does not have to wait for the tink release that carries a new recipe. A separate pins file is a later option.
 
 ## Traps
 
@@ -104,3 +107,5 @@ Stages, each checkable on its own:
 - A `public` leg: what does `join` render for it, given there is no dns helper answering for public names?
 - Which roles are optional per server, and who decides that a server with no dns helper is still a complete site?
 - Is declared-state drift between recipe and server reported by `plan` only, or also by the daemon helper's status?
+
+For the line-by-line accounting of the real stack (stage 1), and an audit of what in tink already has this shape in the wrong form, see [platform-recipe-accounting.md](platform-recipe-accounting.md).
