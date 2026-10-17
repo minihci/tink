@@ -98,7 +98,7 @@ One finding is a relief: tink's code carries **no site literals**. The only hits
 The main note lists six preconditions. This audit adds two, and sharpens one:
 
 - **A role contract as data** (item 3): for each role, the stamps it must carry, the files and ports it exposes, the snippets it must define, and what `join` renders into it. `plan` checks a helper against it. This is also what makes "bring your own helper" real.
-- **Stack-level defaults, or a helper shape** (item 4): without them a recipe emitting resources in the stack language is still thirty lines of boilerplate per helper, and users who eject inherit it.
+- **Stack-level defaults, or a helper shape** (item 4): without them a recipe emitting resources in the stack language is still thirty lines of boilerplate per helper, and users who eject inherit it. Incus profiles can hold the instance-config half (restart flags, the time zone, stamps, the root disk) but not NICs, volume policy, file contents or ACLs; see the [design note](platform-recipe.md#what-a-profile-can-hold-as-a-default).
 - **Sharpened:** the generated-content split is two separate mechanisms today (item 2), so the first change is to **pick one** (the offer and publish path) and move `tink ingress` onto it, before the recipe depends on either.
 
 ### Suggested order

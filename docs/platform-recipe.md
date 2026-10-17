@@ -68,6 +68,46 @@ The first guess named six facts (how clients reach ingress, how certificates are
 3. **Bring your own helper.** `tink join` finds helpers by role stamp, never by name **[docs]**, and `kind: helper` adopts one that exists and changes nothing. A container the user built that carries `user.tink.role: ingress` satisfies the role. This is what makes enumerating site types unnecessary: the contract is the **role** (its stamps and what it must answer), and the recipe supplies a default for each.
 4. **Eject.** Print the full stack; the user owns it from then on.
 
+## Where the facts live on the server, and what Incus can hold as defaults
+
+Measured on Incus 7.5.1 on 2026-10-17, on a fresh server, with inert keys and throwaway objects, each removed afterwards **[lab]**.
+
+### `user.*` keys: which objects take them
+
+An inert `user.tink.probe` key was set, read back and removed on: the **server config**, a **project**, a **network** (bridge), a **network ACL**, a **profile**, an **instance**, a custom **storage volume** and a **storage pool**. All accepted it. Incus's own metadata (`/1.0/metadata/configuration`) lists `user.*` for the cluster, projects, instances and most network types, but **not** for the server config, pools or volumes, so those work without being documented there. tink already relies on that for volumes (`user.tink.backup.*`). Not tested: certificates, clusters, buckets, images (which use `properties`, not `user.*`). The most global object that takes them is the server config; below it sit the server-global objects (pools, networks, ACLs), then projects, then profiles, instances and volumes.
+
+### Three kinds of site data, and where each belongs
+
+1. **Facts used only to render** (the LAN CIDR in an ACL and the Caddyfile, the subnet). After apply they are inside the resources. They need no stamp.
+2. **Facts another component reads later.** tink already stamps these on the object that uses them: the zone and the legs on the helpers, role stamps, the publish stamps on app instances, the backup policy on volumes. That is the existing rule: a declaration is stamped only when something other than `plan apply` must act on it later (see [ownership-stamps-design](https://github.com/minihci/tink/blob/docs/ownership-stamps-design/docs/ownership-stamps-design.md)).
+3. **Facts about the platform as a whole**: the site's name, the recipe version that rendered it, a digest of the facts, and the facts that are fixed at birth. They are needed so the daemon helper can compare recipe and server without the author's repository (as #97 did for publishes), to see that the helper is older than the recipe, and to refuse a change to a fixed-at-birth fact. This is the one case for a single higher-level stamp.
+
+For the third kind there are two candidates:
+
+| | **The platform project** | **The server config** |
+|---|---|---|
+| Fit | A project is the stack's own unit (`project:` on `kind: stack`) | One per server, which matches "one platform stack per Incus server" |
+| Rights a helper needs | Project scope, which the helper needs to tend the platform anyway **[to confirm: not measured for a restricted certificate]** | Server scope, which is likely wider than a restricted helper certificate has **[to confirm]** |
+| Shared with | Only the platform | Everything else on the server; `tink deploy` replaces the server config whole with `incus config edit` |
+| Lifetime | Goes when the project goes | Lingers if the platform is removed |
+| Documented | `user.*` on projects is documented | accepted, but not in Incus's metadata for the server |
+
+Proposed: **stamp the platform project** with a small `user.tink.site.*` set (compact JSON, like the publish stamps), keep the per-consumer stamps where they are, and consider the server config only for a single pointer to the platform project if discovery by scanning proves insufficient. These stamps are **derived copies**: the facts file stays the source of truth, `plan apply` is the only writer, the prefix is tink's own, and a stale key is removed. Otherwise the facts live in two places and can disagree.
+
+### What a profile can hold as a default
+
+- **Instance config is inherited live.** An instance made with a profile had none of the profile's keys in its own config, and all of them in its expanded view (`boot.autostart`, `limits.memory`, `environment.TZ`, `user.tink.role`, `user.tink.stack`). That is the instance-config half of the boilerplate every helper repeats (restart flags, the time zone, a stack stamp, the root disk), and the profile's `used_by` lists what is in the platform for free.
+- **A device does not merge.** Adding a same-named NIC on the instance with only an address was refused (`Unsupported device type`). `incus config device override` copies the **whole** profile device into the instance, which then stops following the profile. Helpers need a static address and NIC-level ACLs, so profile NICs would serve only DHCP instances.
+- **Not profile material:** volume backup policy (volumes are not in profiles), `kind: file` contents, ACLs and secrets.
+
+So the proposal is a **base profile per site** for what Incus can inherit, and resolver-level defaults (the stack-level defaults of the audit) for what it cannot: the backup block, NIC specifics, `restart: true` on files. A profile carrying defaults has two prerequisites:
+- `plan`, `join` and `export` must read the **expanded** config. Today they read stored config, so profile-supplied keys would show as "not in the stack", and a role stamp in a profile would be invisible to `join`, which reads the stored config and not the expanded view ([join.md](join.md#from-the-server)).
+- A profile edit changes every instance that uses it at once, so it needs a guard like the network kind's `allow_disruption`.
+
+### Pool-level volume defaults are not a default
+
+A pool's `volume.snapshots.expiry` and `volume.snapshots.schedule` are **copied into a volume when it is created**. After the pool's `14d` was changed to `30d`, the existing volume stayed at `14d` (the value is in its own config) and only the next volume got `30d`. They cannot replace the per-volume backup block, because `plan` would still have to converge every existing volume. At most they are a creation-time convenience on a pool dedicated to the platform.
+
 ## What has to be true first
 
 These are gaps in tink today, in the order they block a shipped recipe:
@@ -77,7 +117,7 @@ These are gaps in tink today, in the order they block a shipped recipe:
 3. **Ownership stamps and scoped removal** ([ownership-stamps-design](https://github.com/minihci/tink/blob/docs/ownership-stamps-design/docs/ownership-stamps-design.md)), or an upgrade can add and update a helper but never drop or rename one.
 4. **A version policy for the daemon helper.** The tron stack adopts a helper still on v0.1.4, which predates `tink join`; `plan` never upgrades it **[docs]**. A recipe rendered by a newer tink and a helper running an older one disagree. The recipe has to say which tink it needs, and `plan` has to say when the helper is behind.
 5. **Watching.** "The user does not maintain it" holds only if tink tells them when it breaks. Nothing watches the helpers, certificates or backups today **[docs]**; the author's watching design (a monitor at home, a heartbeat and alert delivery on the VPS) is the first candidate role.
-6. **Role contracts as data, and stack-level defaults.** A role's contract (the stamps it carries, the files and ports it exposes, the snippets it must define) is in comments and Go constants today, and every stack repeats the same helper boilerplate ([the audit](platform-recipe-accounting.md#part-2-what-tink-has-that-should-have-this-shape-but-does-not)). Both are needed before "bring your own helper" is real.
+6. **Role contracts as data, and defaults.** A role's contract (the stamps it carries, the files and ports it exposes, the snippets it must define) is in comments and Go constants today, and every stack repeats the same helper boilerplate; the inheritable half can move to a [profile](#what-a-profile-can-hold-as-a-default) once `plan`, `join` and `export` read expanded config ([the audit](platform-recipe-accounting.md#part-2-what-tink-has-that-should-have-this-shape-but-does-not)). Both are needed before "bring your own helper" is real.
 7. **Pins.** Ship image digests with the recipe, and have `plan` report newer upstream digests through `on_image_change: report`, so a security fix does not have to wait for the tink release that carries a new recipe. A separate pins file is a later option.
 
 ## Traps
@@ -107,5 +147,7 @@ Stages, each checkable on its own:
 - A `public` leg: what does `join` render for it, given there is no dns helper answering for public names?
 - Which roles are optional per server, and who decides that a server with no dns helper is still a complete site?
 - Is declared-state drift between recipe and server reported by `plan` only, or also by the daemon helper's status?
+- The platform-wide stamp: the project or the server config, and can a restricted certificate read it? (Unmeasured; it needs the API listener on the bridge address again.)
+- Do `plan`, `join` and `export` move to expanded config before profiles carry defaults, and what happens to `join`'s rule of reading stored config?
 
 For the line-by-line accounting of the real stack (stage 1), and an audit of what in tink already has this shape in the wrong form, see [platform-recipe-accounting.md](platform-recipe-accounting.md).
