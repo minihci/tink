@@ -8,7 +8,7 @@ It exists so that a new design can be tested against the old ones. For any propo
 
 **The pattern.** tink has no state file, no daemon API of its own and no client/server split; it diffs live Incus state. What it must remember it writes on the object it concerns, under `user.tink.*`, so the state stays with the thing it describes.
 
-**Evidence.** Built: `CLAUDE.md` forbids a state file or a separate daemon binary; the volume's backup policy and verification stamps live on the volume (`internal/backupmeta`); ownership is `user.tink.stack` on a volume; the helper's status document lives on a volume it points at (`internal/helper`); publish stamps live on the instance (`internal/resolve/publishstamp.go`); `cmd/tink/keynamespace_test.go` fails the build if tink writes a `user.` key outside its namespace. Written: [what-tink-is.md](what-tink-is.md#the-loop), the `internal/daemon` package comment (why one binary), [platform-recipe.md](https://github.com/minihci/tink/pull/100) (which stamps, and where). Measured: `user.*` is accepted by the server config, projects, networks, ACLs, profiles, instances, volumes and pools, though Incus's own metadata lists it for only some **[lab]**.
+**Evidence.** Built: `CLAUDE.md` forbids a state file or a separate daemon binary; the volume's backup policy and verification stamps live on the volume (`internal/backupmeta`); ownership is `user.tink.stack` on a volume; the helper's status document lives on a volume it points at (`internal/helper`); publish stamps live on the instance (`internal/resolve/publishstamp.go`); `cmd/tink/keynamespace_test.go` fails the build if tink writes a `user.` key outside its namespace. Written: [what-tink-is.md](what-tink-is.md#the-loop), the `internal/daemon` package comment (why one binary), [platform-recipe.md](platform-recipe.md#where-the-facts-live-on-the-server-and-what-incus-can-hold-as-defaults) (which stamps, and where). Measured: `user.*` is accepted by the server config, projects, networks, ACLs, profiles, instances, volumes and pools, though Incus's own metadata lists it for only some **[lab]**.
 
 **The question to ask.** Does this add state tink must keep somewhere else? If a copy is needed, is it derived (written only by `plan apply`, in an owned prefix, removed when stale) and is something else the source of truth?
 
@@ -36,7 +36,7 @@ It exists so that a new design can be tested against the old ones. For any propo
 
 **Evidence.** Written: [what-tink-is.md](what-tink-is.md#one-pattern-a-capability) (the capability table, roles and engines, helpers), [helper.md](helper.md#what-the-helper-is-for) ("what the helper is for"). Built: the daemon helper (`internal/helper`, `internal/daemon`, `internal/jobs`), `kind: helper`, role and leg stamps read by `join`, the backup scheduler and the ingress reconcile. Not built: the role helpers as a shipped stack.
 
-**Known gap.** A role's contract (the stamps it carries, the files and ports it exposes, the snippets it must define) is in comments and Go constants, not data ([platform-recipe-accounting.md](https://github.com/minihci/tink/pull/100)).
+**Known gap.** A role's contract (the stamps it carries, the files and ports it exposes, the snippets it must define) is in comments and Go constants, not data ([platform-recipe-accounting.md](platform-recipe-accounting.md#part-2-what-tink-has-that-should-have-this-shape-but-does-not)).
 
 **The question to ask.** Which role is this, and what is its contract? Is it derived state (heal) or declared state (report)?
 
@@ -62,7 +62,7 @@ It exists so that a new design can be tested against the old ones. For any propo
 
 **The pattern (the newest, proposed).** tink owns the containers and the wiring between them (a *recipe*: a pure function from site facts to resources). The user owns a short file of site *facts*. *Policy* stays where it already is: apps state offers, the site publishes them to groups, people live in the identity helper. No copy of the stack exists, so nothing falls behind.
 
-**Evidence.** Proposed in [platform-recipe.md](https://github.com/minihci/tink/pull/100) (PR #100) and tested against a real platform stack literal by literal. Precursors that are built: `deploy.env` (a facts file, in the wrong form, `configs/deploy.env.example`), the offer/grant split (pattern 5), and `tink join`'s pure-function shape.
+**Evidence.** Proposed in [platform-recipe.md](platform-recipe.md) and tested against a real platform stack literal by literal. Precursors that are built: `deploy.env` (a facts file, in the wrong form, `configs/deploy.env.example`), the offer/grant split (pattern 5), and `tink join`'s pure-function shape.
 
 **The question to ask.** Is each input a fact, a recipe choice or a policy, and who maintains it? If the user must edit it on every upgrade, it is in the wrong place.
 
@@ -100,4 +100,4 @@ It exists so that a new design can be tested against the old ones. For any propo
 
 ## How to use this page
 
-For a new design, write one line per pattern: *holds*, *strains* (and where), or *not applicable*. The strains are the design work. For the platform recipe, the strains found so far are: its first-apply steps do not converge (pattern 2); upgrades and renames need ownership before "never delete" can bend (2); its knobs must carry reasons like an opt-out (6); a facts document is the first input not in Incus's vocabulary (3); facts fixed at birth are a category of declared state that must be refused, not reported (4); and the project stamp and the facts file are two places that can disagree (1). They are argued in [platform-recipe.md](https://github.com/minihci/tink/pull/100).
+For a new design, write one line per pattern: *holds*, *strains* (and where), or *not applicable*. The strains are the design work. For the platform recipe, the strains found so far are: its first-apply steps do not converge (pattern 2); upgrades and renames need ownership before "never delete" can bend (2); its knobs must carry reasons like an opt-out (6); a facts document is the first input not in Incus's vocabulary (3); facts fixed at birth are a category of declared state that must be refused, not reported (4); and the project stamp and the facts file are two places that can disagree (1). They are argued in [platform-recipe.md](platform-recipe.md).
