@@ -17,6 +17,8 @@ type Found struct {
 	// State is the instance's own state: "Running", "Stopped", ...
 	State  string
 	Config map[string]string
+	// Devices are the instance's own devices (not its profiles'): which way it reaches the host's API is one of them (see APIVia).
+	Devices map[string]map[string]string
 }
 
 // Label is how the helper is named in messages.
@@ -32,7 +34,7 @@ func Find(s incus.InstanceServer) ([]Found, error) {
 	var out []Found
 	for _, inst := range all {
 		if _, ok := inst.Config[MarkerKey]; ok {
-			out = append(out, Found{Project: inst.Project, Name: inst.Name, State: inst.Status, Config: inst.Config})
+			out = append(out, Found{Project: inst.Project, Name: inst.Name, State: inst.Status, Config: inst.Config, Devices: inst.Devices})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Label() < out[j].Label() })

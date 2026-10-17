@@ -58,9 +58,12 @@ type InstallOptions struct {
 	// Pool holds the instance's root disk and its two volumes (default "default").
 	Pool string
 	// Network is the network the helper's NIC joins. Empty means: the default profile already gives instances one, or else
-	// "incusbr0" if there is such a network. The helper needs a NIC even when it talks to nothing but its own host, because the
-	// loopback proxy that reaches the host's API listens on the container's loopback, which only a container with a network has up.
+	// "incusbr0" if there is such a network. The helper needs a NIC even when it talks to nothing but its own host: over the network it
+	// is the way to the host's API, and a loopback proxy listens on the container's loopback, which only a container with a network has up.
 	Network string
+	// APIVia is how the helper reaches the host's API: over the network (no proxy device), through a proxy device, or, when empty or
+	// "auto", over the network when the bridge and the host's listener allow it and through a proxy device when they do not (apiaddr.go).
+	APIVia APIVia
 	// Image is the OCI image the instance runs, resolved the way `tink run` resolves one (docker-oci:library/alpine:3).
 	Image string
 	// Binary is the path of a linux tink binary to put in the instance. With it and no Image the instance runs a stock alpine image.
@@ -163,10 +166,16 @@ func (in *Installer) Install(opts InstallOptions) error {
 	if err != nil {
 		return err
 	}
-	_, port, _ := net.SplitHostPort(apiAddr)
 	network, err := in.networkFor(opts)
 	if err != nil {
 		return err
+	}
+	route, err := in.chooseAPIRoute(opts, apiAddr, network, foundIn(existing, opts.Project, opts.Name))
+	if err != nil {
+		return err
+	}
+	if route.Note != "" {
+		in.say("%s", route.Note)
 	}
 
 	if err := in.ensureProject(opts.Project); err != nil {
@@ -178,7 +187,7 @@ func (in *Installer) Install(opts InstallOptions) error {
 	if err != nil {
 		return fmt.Errorf("checking whether the helper instance exists: %w", err)
 	}
-	spec := in.spec(opts, apiAddr, network)
+	spec := in.spec(opts, route, network)
 	if !haveInstance {
 		var blob []byte
 		if opts.Binary != "" {
@@ -220,13 +229,13 @@ func (in *Installer) Install(opts InstallOptions) error {
 	}
 
 	enrolling := in.now()
-	if err := in.enrol(scoped, opts, port, !haveInstance); err != nil {
-		return err
+	if err := in.enrol(scoped, opts, route.Remote, !haveInstance); err != nil {
+		return route.explain(err)
 	}
 	return in.waitForReport(opts, enrolling)
 }
 
-// apiAddress is where the host's API listens, as an address the helper's loopback proxy can connect to on the host.
+// apiAddress is where the host's API listens, as an address a proxy device (or anything else on the host) can connect to.
 func (in *Installer) apiAddress() (string, error) {
 	srv, _, err := in.Server.GetServer()
 	if err != nil {
@@ -308,8 +317,7 @@ func (in *Installer) ensureProject(name string) error {
 }
 
 // spec is the helper instance: what it runs, what it mounts, how it reaches the host's API.
-func (in *Installer) spec(o InstallOptions, apiAddr, network string) *run.Spec {
-	_, port, _ := net.SplitHostPort(apiAddr)
+func (in *Installer) spec(o InstallOptions, route apiRoute, network string) *run.Spec {
 	entry := []string{binaryPath, "daemon", "run", "--remote", RemoteName, "--jobs", dataMount + "/jobs"}
 	if o.Ingress {
 		entry = append(entry, "--ingress-via-api", "--ingress-instance", o.IngressInstance)
@@ -327,7 +335,7 @@ func (in *Installer) spec(o InstallOptions, apiAddr, network string) *run.Spec {
 		"environment.HOME":    "/root",
 		MarkerKey:             fmt.Sprint(jobs.Proto),
 		MarkerKey + ".image":  o.Image,
-		MarkerKey + ".remote": "https://127.0.0.1:" + port,
+		MarkerKey + ".remote": route.Remote,
 		MarkerKey + ".pool":   o.Pool,
 	}
 	if o.TZ != "" {
@@ -340,8 +348,9 @@ func (in *Installer) spec(o InstallOptions, apiAddr, network string) *run.Spec {
 		"root":   {"type": "disk", "path": "/", "pool": o.Pool},
 		"config": {"type": "disk", "pool": o.Pool, "source": configVolume, "path": configMount},
 		"data":   {"type": "disk", "pool": o.Pool, "source": dataVolume, "path": dataMount},
-		// the host's API, on the container's own loopback: the helper reaches it without it being exposed to anything new
-		"api": {"type": "proxy", "bind": "container", "listen": "tcp:127.0.0.1:" + port, "connect": "tcp:" + apiAddr},
+	}
+	if proxy := route.proxyDevice(); proxy != nil { // only when the helper does not reach the host's API over the network
+		dev[apiDevice] = proxy
 	}
 	if network != "" {
 		dev["eth0"] = map[string]string{"type": "nic", "network": network, "name": "eth0"}
@@ -352,7 +361,7 @@ func (in *Installer) spec(o InstallOptions, apiAddr, network string) *run.Spec {
 
 // enrol makes the host trust the helper's own certificate. The key pair is generated inside the instance, so the private key never
 // leaves it; what passes is a single-use token, handed over on standard input, never on a command line or to disk.
-func (in *Installer) enrol(scoped incus.InstanceServer, opts InstallOptions, port string, fresh bool) error {
+func (in *Installer) enrol(scoped incus.InstanceServer, opts InstallOptions, hostAddr string, fresh bool) error {
 	entry, err := in.trustEntry()
 	if err != nil {
 		return err
@@ -389,9 +398,8 @@ func (in *Installer) enrol(scoped incus.InstanceServer, opts InstallOptions, por
 	// redeemed is already gone (cancelling it then is harmless)
 	defer cancel()
 	in.say("enrolling the helper: its key is made inside the instance, and the host is told to trust it")
-	addr := "https://127.0.0.1:" + port
 	code, out, err := incusapi.ExecWithStdin(scoped, opts.Name,
-		[]string{binaryPath, "remote", "add", RemoteName, addr, "--token-file", "-"},
+		[]string{binaryPath, "remote", "add", RemoteName, hostAddr, "--token-file", "-"},
 		strings.NewReader(token), map[string]string{"HOME": "/root"})
 	if err != nil {
 		return fmt.Errorf("enrolling the helper: %w", err)

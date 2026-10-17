@@ -122,6 +122,9 @@ func planHelper(server incus.InstanceServer, r Resource, now time.Time) (Planned
 	if rep.Status != nil && rep.Status.Version != "" {
 		p.Notes = append(p.Notes, "it runs "+rep.Status.Version+"; plan never upgrades it (that is `tink helper upgrade`, which drains it first)")
 	}
+	if found.APIRoute() == helper.APIViaProxy {
+		p.Notes = append(p.Notes, "it reaches the host's API through a proxy device: a restricted project must allow proxy devices (a helper installed with `tink helper install --api-via network`, the default where the bridge allows it, has none)")
+	}
 	if rep.Health != helper.Healthy {
 		for _, reason := range rep.Reasons {
 			p.Warnings = append(p.Warnings, "the daemon helper is "+rep.Health.String()+": "+reason)
