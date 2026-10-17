@@ -13,7 +13,7 @@ document is `docs/helper-design.md` on the `helper-design` branch, not yet on `m
 on its own, and the restore point it made verifies; a helper whose process was killed is running again in about six seconds, with a fresh status document and
 its job history; and `upgrade` with no flags, from the `v0.1.1` release binary, drained it, moved it from the `v0.1.0` image to the `v0.1.1` one, and kept its
 certificate and its job history. **Not yet tried:** a host reboot or an Incus restart, and the helper copying to a second physical server.
-**Unit-tested, not yet run live:** the status document on a volume of its own, which is the default since [the helper stopped needing a right to edit its instance](#the-status-document), and the helper reaching the host's API over the network instead of through a proxy device ([below](#how-the-helper-reaches-the-hosts-api)).
+**Run live on a second host** (a fresh VPS, Incus 7.5.1, a development build installed with `--binary`, 2026-10-17): the status document on a volume of its own, which is the default since [the helper stopped needing a right to edit its instance](#the-status-document), and the helper reaching the host's API over the network instead of through a proxy device ([below](#how-the-helper-reaches-the-hosts-api)). With a loopback listener `auto` fell back to a proxy device with the note, and `network` refused before creating anything; with the listener on the bridge's gateway address the helper had no proxy device, its remote was at `https://<gateway>:<port>`, and it was healthy; `upgrade` kept the way, the status pointer and the certificate; `remove --purge` deleted the status volume through the pointer; `--status-on-instance` gave the old shape. That run also found that an install after a `remove` that kept the volumes failed until `--reissue` (fixed in #98).
 
 ## What the helper is for
 
@@ -93,7 +93,7 @@ The host verifies nothing secret until the helper has verified the host, by the 
   publishes on its own instance** (`--status-on-instance`, or one installed before the status volume): its status write is an instance PATCH, and the
   lifecycle event for a PATCH carries no requestor at all, so those writes (one on change and one per heartbeat) are not attributed. They are
   bookkeeping on the helper's own instance; the operations that move data are attributed. With the status volume the write is a volume update, the
-  same call as a copy stamp, so it should be attributed the same way **[inferred; not yet measured for this key]**.
+  same call as a copy stamp, and it is attributed the same way: on Incus 7.5.1 a restart of the helper produced one `storage-volume-updated` lifecycle event on the status volume with requestor protocol `tls` and username the helper certificate's fingerprint, from `127.0.0.1` through a proxy device and from the container's own address over the network **[lab, 2026-10-17]**.
 - **Not confined.** The certificate is unrestricted: it has the reach of root on the host. A restricted certificate is not a boundary on current Incus
   (see "Security" in [the helper design](https://github.com/minihci/tink/pull/16)), and nothing here claims one.
 
@@ -141,14 +141,14 @@ The helper is a client of its own host, so it needs the host's HTTPS API. There 
   reaches it), or `--api-via proxy`.
 - **`proxy`** is what `install` did before this choice existed.
 - **The remote is registered the same way in both:** `tink remote add host ADDRESS --token-file -`, run inside the instance with the token on standard input. The
-  token carries the host's certificate fingerprint and the helper pins the certificate to it, so only the address differs. Whether the Incus client accepts the
-  certificate at the bridge's address, as it does at the loopback one, is what a live run shows **[hypothesis]**; if the first connection cannot reach the
+  token carries the host's certificate fingerprint and the helper pins the certificate to it, so only the address differs. The Incus client accepted the
+  certificate at the bridge's address, as it does at the loopback one **[lab, Incus 7.5.1, 2026-10-17]**; if the first connection cannot reach the
   server, the error adds that the host's firewall may be what stops it, and names `--api-via proxy`.
 
 **Why network is the default.** A restricted project blocks proxy devices unless it is told to allow them, and a helper with one cannot be updated there; and a
 proxy device is a host-reach primitive (a proxy to the Incus unix socket is root on the host), which is the very thing a restricted project exists to refuse.
 Going over the network asks the project for nothing it was not already giving the helper, a NIC. A container on a managed bridge (`tink0`) reaching the host's
-API port at the bridge's gateway address when `core.https_address` is a wildcard was measured on the lab host **[lab]**.
+API port at the bridge's gateway address when `core.https_address` is a wildcard was measured on the lab host **[lab]**. On a second host the listener was exactly the bridge's gateway address (`10.34.253.1:8444`, not a wildcard), which is enough: the helper, and an unrelated container on the same bridge, reached it, and the host's public address did not answer on that port **[lab, 2026-10-17]**.
 
 **What it costs.** The API port is then reachable by **every container on the bridge**, not only the helper (a proxy device was private to it). It is the
 same TLS API, which needs a certificate in the trust store, as it is on the host's other addresses; what changes is who can try. To limit it to the

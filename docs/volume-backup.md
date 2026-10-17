@@ -355,8 +355,8 @@ volume's, or the check project's), and Incus needs a root disk the moment it wri
 Verify now reads that profile, and only if it has no root disk (a disk at `path: /`, under any device name) puts one in the creation request, on the
 pool of the volume being checked; a profile that has one is left to supply it, and nothing is added. The progress line says when the instance got its
 own. Incus takes a root disk from the creation request, as `incus init --storage` does **[code]** (`createFromImage` and the instance driver read the
-request's devices together with the profiles'). Covered by tests against a fake server that refuses an instance with no root disk as Incus does; **not
-yet run against a real server**. `tink helper install` makes its instance with the `default` profile too and now sends its root disk the same way.
+request's devices together with the profiles'). Covered by tests against a fake server that refuses an instance with no root disk as Incus does, and **run against a real
+Incus 7.5.1 server on 2026-10-17**: a verify in a project whose `default` profile had no root disk printed that the instance got its own on the volume's pool, and the check passed **[lab]**. `tink helper install` makes its instance with the `default` profile too and now sends its root disk the same way.
 
 **The stamp.** A passing verify records `user.tink.backup.verified-at` (UTC), `verified-snapshot` and
 `verified-with` (`check` or `restore`) on the source volume, as ordinary Incus volume config. There is no
@@ -437,7 +437,7 @@ cache, so the first check in the new project fetches the check image again.
 **What it was checked with, and what it was not.** With the plain `incus` client, copying a volume's snapshot from an unrestricted project into a restricted project with
 this `default` profile (`incus storage volume copy POOL/VOL/SNAP POOL/SCRATCH --project SRC --target-project tink-verify`) works, and an instance there mounts the scratch
 volume read-only and has only `lo` **[lab]**. The tink command itself is covered by tests against a fake server (the scratch volume, the instance and every
-cleanup in the check project, the stamp in the source project, `--from` restoring into the check project) and **has not yet been run against a real server**.
+cleanup in the check project, the stamp in the source project, `--from` restoring into the check project) and **was run against a real Incus 7.5.1 server on 2026-10-17 [lab]**, with a restricted `tink-verify` project made as above: `verify --check-project` restored the snapshot into it, the check passed (and it also asserted that the instance had only `lo`), the scratch volume and instance were removed from the check project, and the stamp (`verified-at`, `-snapshot`, `-with: check`) landed on the source volume in its own project; a failing check left the stamp unchanged and nothing behind; a check project that does not exist was refused before anything was restored; `plan` afterwards had no verify warning. **Not run:** `--from` (a restore point on a backup target), and a restricted client certificate running the command.
 
 **Permissions.** The certificate that runs `verify --check-project` needs the volume's project (read the volume and its snapshots, write the stamp) and the check project
 (create and delete volumes and instances, read its `default` profile). An unrestricted client certificate has both; a restricted one has to list both projects.

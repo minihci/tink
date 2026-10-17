@@ -38,9 +38,10 @@
 # certificate would no longer be held to its project list: this script only
 # looks at the protocol, which is tls for any certificate, so it answers True.
 # docs/volume-backup-design.md measured a restricted certificate seeing every
-# project through a scriptlet that returned True; this script's answer for
-# that class has not been re-measured on 7.5.1. The deploy template keeps that
-# class on Incus's own check:
+# project through a scriptlet that returned True, and the same was measured on
+# Incus 7.5.1 with this script routed to that class (2026-10-17): a certificate
+# restricted to one project listed every project and fetched one outside its
+# list. The deploy template keeps that class on Incus's own check:
 #   authorization.client.tls-restricted: tls
 # A host that wants a restricted certificate held to something narrower than its
 # project list routes that class to a script of its own, one that tells
