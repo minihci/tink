@@ -20,7 +20,7 @@ certificate and its job history. **Not yet tried:** a host reboot or an Incus re
 
 | Drift | What the helper does | Built? |
 |---|---|---|
-| a backup copy is overdue (time) | **heals**: makes the copy, verifies restores on schedule | yes: this is all it does for the platform today **[live]** |
+| a backup copy is overdue (time) | **heals**: makes the copy. It does not check restores: **the daemon never runs `tink backup verify`**, a person does, and `plan` warns when one is overdue | yes: this is all it does for the platform today **[live]** |
 | a published name's dns record, route, sign-on rule or ACL rule is wrong (derived state) | **heals**: renders from the declarations and rewrites the file | the dns records, by hand (`tink join apply dns`, [join.md](join.md#applying-dns)); not yet on a timer |
 | an instance's config, image or volume was changed by hand (declared state) | **reports**, and a human decides; healing it automatically is an opt-in per resource later, like `on_image_change` | not built |
 | the helper itself stops, or a copy keeps failing | says so in its status document, which `tink helper status` judges | yes; nothing yet *delivers* the message (open decision 6) |
@@ -28,6 +28,8 @@ certificate and its job history. **Not yet tried:** a host reboot or an Incus re
 **The rule that falls out: derived state heals, declared state reports.** A file that says "do not edit" (the generated `/hosts`, generated routes, rules) is the helper's to keep right. Something a person wrote in a stack is theirs to change, so a difference there is told, not undone. This is the same shape as `on_image_change: report | ignore | rebuild`, which already is a per-resource choice between telling and healing.
 
 **It also gives a least-privilege shape [lab, partly]:** detecting needs only read access; healing derived files needs a few narrow writes (the dns records are two file reads and one file write on one instance); healing declared state is the broad case. The always-on loop should not need more than it uses (see the authorization lab in the author's platform repository, `authz-lab/`: a restricted certificate in a restricted project is a real boundary against the host, and anything finer than a project needs Incus's authorization scriptlet or OpenFGA).
+
+**Restore checks are not the helper's work, so its certificate never needs the right to create instances for them.** A restore check runs a foreign image with the restored data mounted, which is why it is the one place a wide permission is easy to hand out by accident. `tink backup verify` does it, run by a person; with `--check-project` it runs in a restricted project whose `default` profile has no NIC, so a restored copy has no network and the right to create instances there cannot be used to escalate ([the recipe](volume-backup.md#running-the-check-in-a-project-of-its-own)).
 
 **Two gaps stand between here and that picture:**
 1. **Desired state for general drift.** The helper has no copy of the declarations. It finds its work in stamps on objects (the backup policy on a volume today; the publish declarations next). Detecting drift in *declared* state needs the declarations themselves, either a checkout of the stack repository or stamps for everything, and the age identity for any resource that holds a secret.

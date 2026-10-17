@@ -163,8 +163,18 @@ instance, or repoint the instance's disk device at it, when you are ready.`,
 	return cmd
 }
 
+// verifyOn connects to Incus and verifies the volume there. A variable so that a test can see what the command's flags come to without a server.
+var verifyOn = func(socket string, v volbackup.Volume, opts volbackup.VerifyOptions) (volbackup.VerifyResult, error) {
+	server, err := incusapi.Connect(socket)
+	if err != nil {
+		return volbackup.VerifyResult{}, fmt.Errorf("connecting to incus: %w", err)
+	}
+	return volbackup.Verify(server, v, opts)
+}
+
 func newBackupVerifyCmd() *cobra.Command {
 	var f volumeFlags
+	var checkProject string
 	cmd := &cobra.Command{
 		Use:   "verify VOLUME [flags]",
 		Short: "Prove a volume's backup restores, and that the restored data is good",
@@ -183,19 +193,21 @@ verification never looks fresh.
       every: weekly
       check:
         image: docker-oci:library/alpine:3      # an OCI image with sleep
-        command: [sh, -c, "test -s /data/important.db"]`,
+        command: [sh, -c, "test -s /data/important.db"]
+
+--check-project NAME makes the scratch volume and the throwaway instance in that project instead of the
+volume's own, and removes them from there. The restore check runs an image with the restored data mounted,
+so a project of its own can be restricted and given a default profile with a root disk and no network
+(docs/volume-backup.md has the recipe); the result is still recorded on VOLUME in the volume's project. The
+project must already exist.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			v, check, target, err := f.resolveVolume(args[0])
 			if err != nil {
 				return err
 			}
-			server, err := incusapi.Connect(f.socket)
-			if err != nil {
-				return fmt.Errorf("connecting to incus: %w", err)
-			}
 			out := cmd.OutOrStdout()
-			res, err := volbackup.Verify(server, v, volbackup.VerifyOptions{Snapshot: f.snapshot, Check: check, From: target, Progress: out})
+			res, err := verifyOn(f.socket, v, volbackup.VerifyOptions{Snapshot: f.snapshot, Check: check, From: target, CheckProject: checkProject, Progress: out})
 			if err != nil {
 				var failed *volbackup.CheckFailedError
 				if errors.As(err, &failed) {
@@ -220,6 +232,7 @@ verification never looks fresh.
 		},
 	}
 	f.bind(cmd)
+	cmd.Flags().StringVar(&checkProject, "check-project", "", "run the check in this existing project (scratch volume and throwaway instance live and die there); the result is still recorded on the volume (default: the volume's own project)")
 	return cmd
 }
 

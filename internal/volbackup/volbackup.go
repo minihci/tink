@@ -9,7 +9,9 @@
 //     whole feature, so the swap-in is left to the person.
 //   - Verify restores to a scratch volume, optionally runs a declared check against
 //     it in a throwaway instance, deletes both, and stamps the result on the source
-//     volume so `tink plan` can tell a tested backup from an untested one.
+//     volume so `tink plan` can tell a tested backup from an untested one. It does
+//     all of that in the volume's own project unless VerifyOptions.CheckProject names
+//     another (see there for why that is worth having).
 //
 // Both work from the volume's own snapshots (tier 1) or, with From set, from a restore point on a
 // backup target that `tink backup run` copied there (copy.go).
@@ -81,7 +83,7 @@ func Restore(server incus.InstanceServer, v Volume, opts RestoreOptions) (Restor
 	now := nowOr(opts.Now)
 	s := v.scoped(server)
 
-	restoreFrom, err := sourceToRestore(s, v, opts.From, opts.Snapshot)
+	restoreFrom, err := sourceToRestore(s, s, v, opts.From, opts.Snapshot)
 	if err != nil {
 		return RestoreResult{}, err
 	}
@@ -117,7 +119,18 @@ type VerifyOptions struct {
 	Check *backupmeta.VerifyCheck
 	// From verifies a restore point on this target instead of a local snapshot.
 	From *Target
-	Now  func() time.Time
+	// CheckProject, when it names a project other than the volume's own, is where the scratch volume and the throwaway instance are made, used and
+	// removed; the volume it checks, its snapshots and its restore points stay where they are, and the result is still stamped on the source volume
+	// in ITS project. Empty means the volume's own project.
+	//
+	// Why anyone would: a restore check runs an image the stack did not build with the restored data mounted in it. In the volume's own project that
+	// instance gets that project's `default` profile, which may carry a network (a restored copy of an app's data could then phone home) and in which
+	// "may create instances" is a wide permission. A project made for the purpose can be restricted and have a `default` profile with a root disk and no
+	// NIC, so the instance has no network at all and a certificate that may only work there cannot use the right to create instances to escalate.
+	// It is deliberately not part of a volume's policy: the policy is what the daemon reads, and the daemon never runs a verification, so there is
+	// nobody for the setting to be for but the person running the command.
+	CheckProject string
+	Now          func() time.Time
 	// Progress, if set, gets one line per step.
 	Progress io.Writer
 }
@@ -160,7 +173,13 @@ func Verify(server incus.InstanceServer, v Volume, opts VerifyOptions) (res Veri
 		}
 	}
 
-	restoreFrom, err := sourceToRestore(s, v, opts.From, opts.Snapshot)
+	// Before anything is touched: a check project that is not there is a mistake in the command, and it is cheaper to say so than to restore first.
+	site, err := checkSiteFor(server, s, v, opts.CheckProject)
+	if err != nil {
+		return res, err
+	}
+
+	restoreFrom, err := sourceToRestore(s, site.server, v, opts.From, opts.Snapshot)
 	if err != nil {
 		return res, err
 	}
@@ -191,13 +210,16 @@ func Verify(server incus.InstanceServer, v Volume, opts VerifyOptions) (res Veri
 	}()
 
 	scratch := scratchName(v.Name, start)
-	say("restoring %s (%s) to scratch volume %s", snap, from, scratch)
+	say("restoring %s (%s) to scratch volume %s%s", snap, from, scratch, site.in())
 	if err := restoreFrom.run(scratch); err != nil {
+		if site.apart {
+			err = fmt.Errorf("restoring into project %s: %w", site.project, err)
+		}
 		return res, err
 	}
 	cleanups = append(cleanups, func() error {
-		if derr := s.DeleteStoragePoolVolume(v.pool(), "custom", scratch); derr != nil {
-			return fmt.Errorf("volume %s/%s: %w", v.pool(), scratch, derr)
+		if derr := site.server.DeleteStoragePoolVolume(v.pool(), "custom", scratch); derr != nil {
+			return fmt.Errorf("volume %s/%s%s: %w", v.pool(), scratch, site.left(), derr)
 		}
 		return nil
 	})
@@ -211,21 +233,21 @@ func Verify(server incus.InstanceServer, v Volume, opts VerifyOptions) (res Veri
 			mount = backupmeta.DefaultVerifyMount
 		}
 		devices := map[string]map[string]string{"data": {"type": "disk", "pool": v.pool(), "source": scratch, "path": mount, "readonly": "true"}}
-		// The instance gets only the project's `default` profile, and Incus needs a root disk when it writes the instance record. A project made
-		// with features.profiles=true starts with an EMPTY `default`, so the instance then brings its own, on the pool of the volume being checked.
-		// A profile that has one is left to supply it: a second root device would be an error or an override.
-		hasRoot, err := profileHasRootDisk(s, checkProfile)
+		// The instance gets only the project's `default` profile (the check project's, when there is one), and Incus needs a root disk when it writes
+		// the instance record. A project made with features.profiles=true starts with an EMPTY `default`, so the instance then brings its own, on the
+		// pool of the volume being checked. A profile that has one is left to supply it: a second root device would be an error or an override.
+		hasRoot, err := profileHasRootDisk(site.server, checkProfile)
 		if err != nil {
-			return res, fmt.Errorf("reading the %q profile%s to see whether the check instance needs a root disk: %w", checkProfile, inProject(v), err)
+			return res, fmt.Errorf("reading the %q profile%s to see whether the check instance needs a root disk: %w", checkProfile, inProject(site.project), err)
 		}
 		if !hasRoot {
-			say("the %q profile%s has no root disk, so the check instance gets one on pool %s", checkProfile, inProject(v), v.pool())
+			say("the %q profile%s has no root disk, so the check instance gets one on pool %s", checkProfile, inProject(site.project), v.pool())
 			devices["root"] = map[string]string{"type": "disk", "path": "/", "pool": v.pool()}
 		}
-		say("running the check in throwaway instance %s (%s), volume mounted read-only at %s", instName, opts.Check.Image, mount)
+		say("running the check in throwaway instance %s%s (%s), volume mounted read-only at %s", instName, site.in(), opts.Check.Image, mount)
 
 		// Registered BEFORE creating, so a half-created instance is still cleaned up.
-		cleanups = append(cleanups, func() error { return deleteInstance(s, instName) })
+		cleanups = append(cleanups, func() error { return deleteInstance(site.server, instName, site.left()) })
 
 		spec := &run.Spec{
 			Name:     instName,
@@ -237,16 +259,16 @@ func Verify(server incus.InstanceServer, v Volume, opts VerifyOptions) (res Veri
 			// Only the root disk goes in the creation request: the data device names the scratch volume, which ApplyConfig attaches.
 			RootDiskAtCreate: true,
 		}
-		if err := run.Create(server, spec, v.Project); err != nil {
+		if err := run.Create(server, spec, site.project); err != nil {
 			return res, err
 		}
-		if err := run.ApplyConfig(s, spec); err != nil {
+		if err := run.ApplyConfig(site.server, spec); err != nil {
 			return res, err
 		}
-		if err := run.EnsureRunning(s, instName); err != nil {
+		if err := run.EnsureRunning(site.server, instName); err != nil {
 			return res, err
 		}
-		code, out, err := incusapi.ExecInGuest(s, instName, opts.Check.Command)
+		code, out, err := incusapi.ExecInGuest(site.server, instName, opts.Check.Command)
 		if err != nil {
 			return res, fmt.Errorf("running the check: %w", err)
 		}
@@ -256,6 +278,7 @@ func Verify(server incus.InstanceServer, v Volume, opts VerifyOptions) (res Veri
 		}
 	}
 
+	// The result goes on the SOURCE volume, in the source volume's own project, whichever project the check ran in: `plan` reads it from there.
 	// A failed look-up does not fail a verification that passed: the result simply is not recorded, and it says why.
 	switch exists, lerr := volumeExists(s, v.pool(), v.Name); {
 	case lerr != nil:
@@ -285,12 +308,56 @@ func profileHasRootDisk(s incus.InstanceServer, name string) (bool, error) {
 	return run.HasRootDisk(p.Devices), nil
 }
 
-// inProject says which project a message is about, when the volume names one.
-func inProject(v Volume) string {
-	if v.Project == "" {
+// inProject says which project a message is about, when there is one named.
+func inProject(project string) string {
+	if project == "" {
 		return ""
 	}
-	return " of project " + v.Project
+	return " of project " + project
+}
+
+// checkSite is where a verification's scratch volume and throwaway instance live: the volume's own project, or the one asked for with
+// VerifyOptions.CheckProject.
+type checkSite struct {
+	server incus.InstanceServer // scoped to project: every call that creates, uses or removes the scratch volume or the instance goes through it
+	// project is the name to scope by; empty means the daemon's default project, as for Volume.Project.
+	project string
+	// apart is whether this is a project other than the volume's own. Only then do the messages name the project: with one project a verification
+	// reads exactly as it always did.
+	apart bool
+}
+
+// checkSiteFor resolves the project a verification works in. A project other than the volume's own must exist before anything is restored into it: Incus
+// would refuse the copy with a message about the destination that does not say the project was the mistake.
+func checkSiteFor(server, own incus.InstanceServer, v Volume, want string) (checkSite, error) {
+	if want == "" || want == v.Project {
+		return checkSite{server: own, project: v.Project}, nil
+	}
+	_, _, found, err := incusapi.LookupProject(server, want)
+	if err != nil {
+		// Not "does not exist": the advice below would be wrong for a certificate that merely may not look.
+		return checkSite{}, fmt.Errorf("checking whether the check project %s exists: %w", want, err)
+	}
+	if !found {
+		return checkSite{}, fmt.Errorf("project %s does not exist: create it, see docs/volume-backup.md", want)
+	}
+	return checkSite{server: server.UseProject(want), project: want, apart: true}, nil
+}
+
+// in is the end of a progress line, saying where it happened, when that is not the volume's own project.
+func (c checkSite) in() string {
+	if !c.apart {
+		return ""
+	}
+	return " in project " + c.project
+}
+
+// left is the end of a cleanup failure, naming the project to look in when a throwaway object was left behind.
+func (c checkSite) left() string {
+	if !c.apart {
+		return ""
+	}
+	return " (project " + c.project + ")"
 }
 
 func stamp(s incus.InstanceServer, v Volume, snap, with, from string, at time.Time) error {
@@ -324,14 +391,15 @@ func snapshotToUse(s incus.InstanceServer, v Volume, wanted string) (string, err
 }
 
 // sourceToRestore resolves which backup to restore: a local snapshot, or (with from) a restore point on
-// that target. It checks the backup exists before anything is created.
-func sourceToRestore(s incus.InstanceServer, v Volume, from *Target, wanted string) (restoreFunc, error) {
+// that target. It checks the backup exists before anything is created. s is the volume's own project, where the
+// backup is found; into is where the new volume is made (s itself, unless a verification works in a project of its own).
+func sourceToRestore(s, into incus.InstanceServer, v Volume, from *Target, wanted string) (restoreFunc, error) {
 	if from == nil {
 		snap, err := snapshotToUse(s, v, wanted)
 		if err != nil {
 			return restoreFunc{}, err
 		}
-		return restoreFunc{label: snap, run: func(newName string) error { return copySnapshot(s, v, snap, newName) }}, nil
+		return restoreFunc{label: snap, run: func(newName string) error { return copySnapshot(s, into, v, snap, newName) }}, nil
 	}
 	// The source volume is deliberately NOT required to exist here: restoring from a target is for exactly
 	// the case where it is gone. Restore points are found by their marker, which names the volume.
@@ -343,7 +411,7 @@ func sourceToRestore(s incus.InstanceServer, v Volume, from *Target, wanted stri
 	if err != nil {
 		return restoreFunc{}, fmt.Errorf("target %q: %w", from.Name, err)
 	}
-	return restoreFunc{label: rp.Volume, server: rp.Server, run: func(newName string) error { return copyFromTarget(s, v, *from, rp, newName) }}, nil
+	return restoreFunc{label: rp.Volume, server: rp.Server, run: func(newName string) error { return copyFromTarget(s, into, v, *from, rp, newName) }}, nil
 }
 
 // restoreFunc is a backup that can be materialised as a new local volume (run), and a label saying which.
@@ -360,13 +428,16 @@ func volumeExists(s incus.InstanceServer, pool, name string) (bool, error) {
 	return found, err
 }
 
-func copySnapshot(s incus.InstanceServer, v Volume, snap, newName string) error {
+// copySnapshot makes newName, in the project into is scoped to, from the volume's snapshot, which is read in the project s is scoped to. They are the
+// same handle except for a verification that works in a project of its own. Incus reads the source's project off the handle it is given, which is why
+// the copy is called on the destination and told about the source, as the client library has it.
+func copySnapshot(s, into incus.InstanceServer, v Volume, snap, newName string) error {
 	src, _, err := s.GetStoragePoolVolume(v.pool(), "custom", v.Name)
 	if err != nil {
 		return fmt.Errorf("volume %s/%s: %w", v.pool(), v.Name, err)
 	}
 	from := api.StorageVolume{Name: v.Name + "/" + snap, Type: "custom", ContentType: src.ContentType}
-	op, err := s.CopyStoragePoolVolume(v.pool(), s, v.pool(), from, &incus.StoragePoolVolumeCopyArgs{Name: newName})
+	op, err := into.CopyStoragePoolVolume(v.pool(), s, v.pool(), from, &incus.StoragePoolVolumeCopyArgs{Name: newName})
 	if err != nil {
 		return fmt.Errorf("restoring %s/%s@%s to %s: %w", v.pool(), v.Name, snap, newName, err)
 	}
@@ -375,18 +446,20 @@ func copySnapshot(s incus.InstanceServer, v Volume, snap, newName string) error 
 	}
 	// the snapshot carries the volume's config, including its copy policy: the restored volume is not the volume that
 	// is copied on a schedule (the operator may swap it in, and applies the stack again, which writes the policy back)
-	if err := scrubPolicy(s, v.pool(), newName); err != nil {
+	if err := scrubPolicy(into, v.pool(), newName); err != nil {
 		return fmt.Errorf("restored %s/%s@%s to %s, but could not clear its copy policy: %w", v.pool(), v.Name, snap, newName, err)
 	}
 	return nil
 }
 
-func deleteInstance(s incus.InstanceServer, name string) error {
+// deleteInstance stops and removes the throwaway instance name in the project s is scoped to. where is added to the instance's name in what it
+// reports, so that a failure in a project other than the volume's says which project to look in.
+func deleteInstance(s incus.InstanceServer, name, where string) error {
 	_, _, found, err := incusapi.LookupInstance(s, name)
 	if err != nil {
 		// Not "never got created": skipping on a failed read would leave the throwaway instance, and the volume mounted in it, behind
 		// with nothing said. The cleanup reports it, naming the instance to remove by hand.
-		return fmt.Errorf("instance %s: could not check whether it exists, so it was not removed: %w", name, err)
+		return fmt.Errorf("instance %s%s: could not check whether it exists, so it was not removed: %w", name, where, err)
 	}
 	if !found {
 		return nil // never got created
@@ -396,10 +469,10 @@ func deleteInstance(s incus.InstanceServer, name string) error {
 	}
 	op, err := s.DeleteInstance(name)
 	if err != nil {
-		return fmt.Errorf("instance %s: %w", name, err)
+		return fmt.Errorf("instance %s%s: %w", name, where, err)
 	}
 	if err := op.Wait(); err != nil {
-		return fmt.Errorf("instance %s: %w", name, err)
+		return fmt.Errorf("instance %s%s: %w", name, where, err)
 	}
 	return nil
 }
