@@ -251,7 +251,7 @@ func TestErrorsStopTheRenderingAndSayWhy(t *testing.T) {
 		}, "no NIC is stamped user.tink.leg.<nic>: mesh"},
 		{"a leg that is not a word", func(t *testing.T, s []Stack) {
 			edit(t, s, resolve.KindInstance, "ingress", func(r *resolve.Resource) { setConfig(r, "user.tink.leg.eth1", "lan") })
-		}, `is "lan": a leg is serves, mesh or discovery`},
+		}, `is "lan": a leg is serves, mesh, public or discovery`},
 		{"two serves legs", func(t *testing.T, s []Stack) {
 			edit(t, s, resolve.KindInstance, "ingress", func(r *resolve.Resource) { setConfig(r, "user.tink.leg.eth0", "serves") })
 		}, "2 NICs are marked serves"},

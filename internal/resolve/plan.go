@@ -153,6 +153,8 @@ func planKind(server incus.InstanceServer, r Resource, opts PlanOptions) (Planne
 			return p, err
 		}
 		p.Warnings = append(p.Warnings, ociNICWarnings(r, opts.imageRemotes(), opts.profiles)...)
+		p.Warnings = append(p.Warnings, natProxyWarnings(r, opts.profiles)...)
+		p.Warnings = append(p.Warnings, opts.listenerNotes[r.Name]...)
 		p.Warnings = append(p.Warnings, rootDiskWarnings(s, r, opts.profiles)...)
 		p.Warnings = append(p.Warnings, aclReferenceWarnings(s, r, opts.acls)...)
 		return p, nil

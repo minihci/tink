@@ -1,0 +1,43 @@
+# A site that is reached from the internet through its host's one address: no dns helper (its names are in public DNS), no mesh gateway and no LAN leg.
+# Shaped like a small VPS. The ingress helper's only NIC is on the platform bridge, and proxy devices on the host (nat on, so the helper sees the client's real
+# address, measured in docs/public-exposure.md) carry ports 80 and 443 to it. With no dns helper the ingress helper states the zone.
+kind: stack
+name: vps-platform
+project: tink
+---
+kind: network-acl
+name: tink0-in
+description: the platform bridge
+---
+kind: network
+name: tink0
+config:
+  ipv4.address: 10.20.50.1/24
+  security.acls: tink0-in
+---
+kind: profile
+name: tink-base
+devices:
+  root: {path: /, pool: default, type: disk}
+---
+kind: instance
+name: sso
+image: docker-oci:authelia/authelia:4.39.28
+profiles: [tink-base]
+config:
+  user.tink.role: sso
+devices:
+  eth0: {name: eth0, type: nic, network: tink0, ipv4.address: 10.20.50.11}
+---
+kind: instance
+name: ingress
+image: docker-oci:caddybuilds/caddy-cloudflare:2.11.7
+profiles: [tink-base]
+config:
+  user.tink.role: ingress
+  user.tink.dns.zone: apps.example.org
+  user.tink.leg.eth0: public
+devices:
+  eth0:  {name: eth0, type: nic, network: tink0, ipv4.address: 10.20.50.3}
+  http:  {type: proxy, nat: "true", listen: "tcp:203.0.113.10:80", connect: "tcp:10.20.50.3:80"}
+  https: {type: proxy, nat: "true", listen: "tcp:203.0.113.10:443", connect: "tcp:10.20.50.3:443"}

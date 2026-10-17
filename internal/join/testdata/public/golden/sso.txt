@@ -1,0 +1,6 @@
+- domain: 'whoami.apps.example.org'
+  policy: one_factor
+  subject: 'group:family'
+- domain: 'whoami-admin.apps.example.org'
+  policy: one_factor
+  subject: 'group:admins'

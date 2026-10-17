@@ -1,0 +1,14 @@
+@whoami host whoami.apps.example.org
+handle @whoami {
+	import sso
+	reverse_proxy 10.20.60.10:80 {
+		import no_portal_cookie
+	}
+}
+@whoami_admin host whoami-admin.apps.example.org
+handle @whoami_admin {
+	import sso
+	reverse_proxy 10.20.60.10:80 {
+		import no_portal_cookie
+	}
+}

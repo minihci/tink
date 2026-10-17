@@ -49,6 +49,9 @@ type PlanOptions struct {
 	projectNotes map[string]string
 	// firstStart are the files to place with each instance this apply creates, before its first start (see firststart.go), from the full stack.
 	firstStart map[string][]Resource
+	// listenerNotes are, by instance name, the notes about host-side proxy listeners that overlap another instance's in the stack (proxydev.go),
+	// computed from the full stack with targets, because the two instances that clash land in different levels.
+	listenerNotes map[string][]string
 }
 
 // ForResources returns the options carrying the backup targets of the full
@@ -61,6 +64,7 @@ func (o PlanOptions) ForResources(resources []Resource) PlanOptions {
 	o.stack, _ = StackName(resources) // more than one is reported by Levels
 	o.projectNotes = mixedProjectNotes(resources)
 	o.firstStart = firstStartFiles(resources)
+	o.listenerNotes = proxyListenerNotes(resources, o.profiles)
 	return o
 }
 
@@ -71,6 +75,10 @@ func (o PlanOptions) withTargets(resources []Resource) PlanOptions {
 		o.targets = backupTargets(resources)
 		o.stack, _ = StackName(resources)
 		o.projectNotes = mixedProjectNotes(resources)
+		if o.profiles == nil {
+			o.profiles = declaredProfiles(resources)
+		}
+		o.listenerNotes = proxyListenerNotes(resources, o.profiles)
 	}
 	if o.profiles == nil {
 		o.profiles = declaredProfiles(resources)

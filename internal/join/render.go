@@ -47,6 +47,9 @@ func (r Result) Sections() []Section {
 
 // renderDNS is a hosts-file line for every published name, all answering with the ingress helper's LAN address.
 func renderDNS(r Result) string {
+	if r.DNSInstance == "" { // no dns helper: the names live in public DNS, and a warning says which
+		return ""
+	}
 	var b strings.Builder
 	for _, p := range r.Published {
 		fmt.Fprintf(&b, "%s %s\n", r.LANAddress, p.FQDN)
@@ -119,8 +122,8 @@ type aclRule struct {
 	labels []string
 }
 
-// renderACL is, for every ACL a published app's bridge carries, one rule per port: the ingress helper (on its mesh leg, the platform-bridge address)
-// may reach it. Several publishes of one port collapse into one rule, and the rule's description says which. A publish whose network is not declared
+// renderACL is, for every ACL a published app's bridge carries, one rule per port: the ingress helper (from the addresses of its mesh and public legs, the
+// platform-bridge addresses) may reach it. Several publishes of one port collapse into one rule, and the rule's description says which. A publish whose network is not declared
 // in the files given has no ACL to show and is left out (a warning already said so).
 func renderACL(r Result) string {
 	byACL := map[string]map[int]*aclRule{}
@@ -146,6 +149,11 @@ func renderACL(r Result) string {
 		names = append(names, n)
 	}
 	sort.Strings(names)
+	masked := make([]string, len(r.Sources))
+	for i, a := range r.Sources {
+		masked[i] = a + "/32"
+	}
+	sources := strings.Join(masked, ",") // an Incus ACL rule takes a comma-separated list of sources
 	var b strings.Builder
 	for _, n := range names {
 		ports := make([]int, 0, len(byACL[n]))
@@ -162,8 +170,8 @@ func renderACL(r Result) string {
 		for _, port := range ports {
 			rule := byACL[n][port]
 			sort.Strings(rule.labels)
-			fmt.Fprintf(&b, "  - {action: allow, source: %s/32, protocol: tcp, destination_port: \"%d\", state: enabled, description: \"ingress helper publishes %s\"}\n",
-				r.MeshAddress, port, strings.Join(rule.labels, ", "))
+			fmt.Fprintf(&b, "  - {action: allow, source: %s, protocol: tcp, destination_port: \"%d\", state: enabled, description: \"ingress helper publishes %s\"}\n",
+				sources, port, strings.Join(rule.labels, ", "))
 		}
 	}
 	return b.String()

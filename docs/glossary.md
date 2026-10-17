@@ -56,7 +56,7 @@ tink fills gaps; it does not replace what it builds on. It gives a home or self-
 | `kind: publish` | a declaration: a name in the site's zone (the document's `name:`, plus the dns helper's zone) shows one offer of an instance to named groups. tink converges nothing for it and `plan` leaves it out of the graph, but stamps it onto its instance as `user.tink.publish.<name>` so the server holds it; `tink join` reads it, from files or `--from-server` ([join.md](join.md)) | yes (a declaration) |
 | `kind: helper` | the daemon helper declared in a stack: adopted when present (plan reports its health and flags a missing remote, changes nothing), installed when absent ([helper.md](helper.md#declaring-it-in-a-stack)) | yes |
 | join | the step that looks across the offers, the publishes and the helpers' own facts and derives what each helper needs to match: dns records, mesh records, proxy routes, sign-on rules, ACL rules. `tink join` prints them, and `tink join apply dns` writes the dns records | yes (print-only; dns can be applied) |
-| leg | why an instance has a NIC where it does: `user.tink.leg.<nic>` is `serves` (LAN clients reach it here), `mesh` (mesh clients reach it here) or `discovery` (it is not a way in for users) | yes (read by `tink join`) |
+| leg | why an instance has a NIC where it does: `user.tink.leg.<nic>` is `serves` (LAN clients reach it here), `mesh` (mesh clients reach it here), `public` (the internet reaches it here, through the host's address) or `discovery` (it is not a way in for users); several may be given, separated by commas | yes (read by `tink join`) |
 
 ## Proposed: remote access (not built)
 

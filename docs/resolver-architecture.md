@@ -478,3 +478,12 @@ profiles: [base]       # without a profile like this, apply fails with "No root 
 - **Not covered:** `tink run` creates an instance the same way and has no such check. The instances tink makes for itself do not depend on the profile: `backup verify`'s check instance and the helper set `Spec.RootDiskAtCreate`, which puts their root disk in the creation request (see [volume-backup.md](volume-backup.md)). A stack's instances do not, so the warning stands.
 
 See `internal/resolve/rootdisk.go`.
+
+## Update, 2026-10-17: `plan` warns about two proxy-device mistakes Incus does not report
+
+A `proxy` device with `nat: "true"` is how a host with one public address carries a port to an instance, keeping the client's real address (measured on Incus 7.5.1; the design and the measurements are in [public-exposure.md](public-exposure.md)). A stack expresses it as any other device, and it planned, applied and re-planned correctly. Two mistakes in it were not reported:
+
+- **A NAT proxy that connects to an address the instance does not have as a static address** planned as `would create`; the apply created the instance, retried the start five times and left it stopped, with Incus's own message. A connect address that is not an IP address is refused by Incus when the device is added. `plan` now says so beforehand: for each host-side proxy device with `nat` on, the `connect` host must be an IP address and must be one of the `ipv4.address` / `ipv6.address` values (a CIDR counts) of the NIC devices the instance declares, or gets from a profile the stack declares. A profile the stack does not declare cannot be seen; the warning names it.
+- **Two host-side listeners that overlap** (the same protocol, equal addresses or a wildcard of the same family, and intersecting ports, ranges and comma lists included) are accepted by Incus without comment: both instances run and the rule written first answers. `plan` now tells each instance involved which other instance and device it overlaps. The comparison is across the whole stack and ignores projects, because a listener is global to the host; it cannot see other stacks. A proxy bound inside the instance (`bind: container`) is not the host's and is ignored.
+
+Both are **warnings, not errors**, like the [OCI NIC warning](oci-network.md), and are about the stack: they appear whether or not the instance exists yet. A wildcard NAT listener is deliberately not warned about: Incus writes `fib daddr type local` for it, so it takes only traffic addressed to the host's own addresses. See `internal/resolve/proxydev.go`.
