@@ -632,7 +632,7 @@ func newDaemonRunCmd() *cobra.Command {
 	var interval, schedulerInterval time.Duration
 	var jobsDir, timezone string
 	var noIngress bool
-	var statusInstance, statusProject string
+	var statusInstance, statusVolume, statusPool, statusProject string
 	var statusHeartbeat time.Duration
 	var ingressViaAPI bool
 
@@ -674,24 +674,16 @@ reach. Anything else is refused rather than act on the wrong machine.`,
 					return fmt.Errorf("--timezone: %w", err)
 				}
 			}
-			if statusInstance != "" {
-				socket := opts.Socket
-				project := statusProject
-				name := statusInstance
+			target := statusTarget{Instance: statusInstance, Volume: statusVolume, Pool: statusPool, Project: statusProject, PoolGiven: cmd.Flags().Changed("status-pool")}
+			if err := target.validate(); err != nil {
+				return err
+			}
+			if publisher := target.publisher(connectorFor(opts.Socket), statusHeartbeat); publisher != nil {
 				ro.Status = &daemon.StatusOptions{
-					Publisher: &helper.Publisher{
-						Heartbeat: statusHeartbeat,
-						Patch: func(config map[string]string) error {
-							server, err := incusapi.Connect(socket)
-							if err != nil {
-								return err
-							}
-							return incusapi.PatchInstanceConfig(server, project, name, config)
-						},
-					},
-					Version: buildVersion(),
-					Zone:    zone,
-					Remotes: helper.ConfiguredRemotes,
+					Publisher: publisher,
+					Version:   buildVersion(),
+					Zone:      zone,
+					Remotes:   helper.ConfiguredRemotes,
 				}
 				// this process is the helper: a missing remote is fixed from outside it, not with a CLI that is not in the container
 				incusapi.SetRemoteAdvice("this is the tink helper, which has no incus CLI: from a machine that manages the host, make a trust token on that server (`incus config trust add helper -q`) and run `tink helper remote add %s --token-file -`")
@@ -735,8 +727,10 @@ reach. Anything else is refused rather than act on the wrong machine.`,
 	cmd.Flags().DurationVar(&schedulerInterval, "scheduler-interval", time.Minute, "how often the scheduler looks for due copies")
 	cmd.Flags().BoolVar(&noIngress, "no-ingress", false, "do not run the ingress reconcile loop (only the --jobs work)")
 	cmd.Flags().BoolVar(&ingressViaAPI, "ingress-via-api", false, "run the ingress reconcile through the ingress instance's file API instead of on this host's filesystem (the way the helper does, and the only way under --remote)")
-	cmd.Flags().StringVar(&statusInstance, "status-instance", "", "publish a status document on this instance's config (user.tink.helper.status), so `tink helper status` and `plan` can see this daemon; the helper sets it to itself")
-	cmd.Flags().StringVar(&statusProject, "status-project", "", "the project of --status-instance (default: the connection's own)")
+	cmd.Flags().StringVar(&statusVolume, "status-volume", "", "publish a status document on this custom volume's config (user.tink.helper.status), so `tink helper status` and `plan` can see this daemon; the helper's instance points at the volume (user.tink.helper.status-volume), and the helper holds no right to edit an instance")
+	cmd.Flags().StringVar(&statusPool, "status-pool", "default", "the storage pool of --status-volume")
+	cmd.Flags().StringVar(&statusInstance, "status-instance", "", "publish a status document on this instance's own config instead (user.tink.helper.status): the way helpers installed before the status volume do; not with --status-volume")
+	cmd.Flags().StringVar(&statusProject, "status-project", "", "the project of --status-volume, or of --status-instance (default: the connection's own)")
 	cmd.Flags().DurationVar(&statusHeartbeat, "status-heartbeat", helper.DefaultHeartbeat, "how often the status document is written when nothing in it has changed")
 	return cmd
 }

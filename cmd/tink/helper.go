@@ -24,7 +24,8 @@ func newHelperCmd() *cobra.Command {
 		Use:   "helper",
 		Short: "Look at the tink helper: the instance that runs tink's scheduled work next to the data",
 		Long: `The helper is an Incus instance that runs "tink daemon run" next to the data: the backup scheduler and the ingress
-reconcile. It publishes what it is doing on its own instance config, and these commands read that back. See docs/helper.md.`,
+reconcile. It publishes what it is doing as a config key on a storage volume that its instance points at (older helpers: on the instance
+itself), and these commands read that back. See docs/helper.md.`,
 	}
 	cmd.AddCommand(newHelperInstallCmd(), newHelperUpgradeCmd(), newHelperRemoveCmd(), newHelperStatusCmd(), newHelperRemoteCmd(), newHelperJobsCmd(), newHelperLogCmd(), newHelperCancelCmd())
 	return cmd
@@ -41,6 +42,10 @@ func newHelperInstallCmd() *cobra.Command {
 (its client configuration, and its jobs) and a NIC. It starts it, and enrols it: the host is told to trust a certificate that the helper generates
 INSIDE the instance, so the private key never leaves it, using a single-use token handed over on standard input (never on a command line, never on
 disk). The helper then publishes a status document, which install waits for and reports.
+
+The status document is kept on a volume of its own (<name>-status), which install makes and the instance points at, so the helper's
+credential needs no right to edit an instance (that would cover the instance's devices, which is a route to root). --status-on-instance
+makes the older shape instead: the document on the helper's own instance config.
 
 It needs the host's API to be listening (core.https_address). How the helper reaches it is --api-via:
 
@@ -98,6 +103,7 @@ confined: it has the reach of root on the host, and nothing here claims otherwis
 	cmd.Flags().BoolVar(&opts.Ingress, "ingress", false, "also run the ingress reconcile (through the ingress instance's file API): the helper then does what tink-daemon does on the host, and deploy stops installing that")
 	cmd.Flags().StringVar(&opts.IngressInstance, "ingress-instance", "", "the ingress instance to keep routes for (default \"ingress\"; with --ingress)")
 	cmd.Flags().StringVar(&opts.TZ, "timezone", "", "the time zone schedules are evaluated in, e.g. America/Denver (default: $TZ, else UTC)")
+	cmd.Flags().BoolVar(&opts.StatusOnInstance, "status-on-instance", false, "publish the status document on the helper's own instance config, as helpers installed before the status volume do, instead of on a volume of its own (the helper then needs a right to edit its instance)")
 	cmd.Flags().BoolVar(&opts.Reissue, "reissue", false, "enrol the helper again with a fresh key pair, removing its old certificate from the trust store")
 	cmd.Flags().DurationVar(&opts.Wait, "wait", 90*time.Second, "how long to wait for the helper to report in (negative: do not wait)")
 	return cmd
@@ -152,8 +158,8 @@ func newHelperRemoveCmd() *cobra.Command {
 		Use:   "remove",
 		Short: "Revoke the helper's certificate, then stop and delete it",
 		Long: `remove revokes the helper's certificate in the host's trust store, then stops and deletes the instance. Its two volumes (the job history, and its
-client configuration with any keys for remote backup targets) stay, so installing again picks up where it was; --purge deletes them too, and the
-project if that leaves it empty. Nothing is removed from the volumes' data: restore points on the backup targets are not the helper's to remove.`,
+client configuration with any keys for remote backup targets) and its status volume stay, so installing again picks up where it was; --purge deletes
+them too (the status volume is found through the pointer on the instance, and only the one install makes), and the project if that leaves it empty. Nothing is removed from the volumes' data: restore points on the backup targets are not the helper's to remove.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			server, err := incusapi.Connect(socket)
@@ -176,9 +182,10 @@ func newHelperStatusCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Say whether the helper is well, from what it publishes about itself",
-		Long: `status finds the helper (an instance marked with user.tink.helper, in any project) and reads the status document it keeps on its
-own instance config (user.tink.helper.status). That works when the helper has stopped, which is the case that matters: the last
-thing it said is still there, going stale.
+		Long: `status finds the helper (an instance marked with user.tink.helper, in any project) and reads the status document it keeps
+(user.tink.helper.status) on the volume its instance points at (user.tink.helper.status-volume), or, for a helper installed before there
+was one, on its own instance config. That works when the helper has stopped, which is the case that matters: the last thing it said is
+still there, going stale. A status volume that cannot be read makes the helper degraded, with that as the reason.
 
 It judges the helper, from what it said and from the state of its instance:
 
@@ -374,19 +381,22 @@ func nameList(names []string, max int) string {
 }
 
 type helperJSON struct {
-	Project string         `json:"project"`
-	Name    string         `json:"name"`
-	State   string         `json:"instance_state"`
-	Health  string         `json:"health"`
-	Code    int            `json:"exit_code"`
-	Reasons []string       `json:"reasons,omitempty"`
-	Status  *helper.Status `json:"status,omitempty"`
+	Project string   `json:"project"`
+	Name    string   `json:"name"`
+	State   string   `json:"instance_state"`
+	Health  string   `json:"health"`
+	Code    int      `json:"exit_code"`
+	Reasons []string `json:"reasons,omitempty"`
+	// StatusVolume is POOL/VOLUME when the helper's status document is on a volume its instance points at; absent for one that keeps it
+	// on the instance.
+	StatusVolume string         `json:"status_volume,omitempty"`
+	Status       *helper.Status `json:"status,omitempty"`
 }
 
 func printHelperJSON(out io.Writer, reports []helper.Report) error {
 	list := make([]helperJSON, len(reports))
 	for i, r := range reports {
-		list[i] = helperJSON{Project: r.Found.Project, Name: r.Found.Name, State: r.Found.State, Health: r.Health.String(), Code: int(r.Health), Reasons: r.Reasons, Status: r.Status}
+		list[i] = helperJSON{Project: r.Found.Project, Name: r.Found.Name, State: r.Found.State, Health: r.Health.String(), Code: int(r.Health), Reasons: r.Reasons, StatusVolume: r.Found.StatusVolume, Status: r.Status}
 	}
 	b, err := json.MarshalIndent(list, "", "  ")
 	if err != nil {
@@ -402,6 +412,9 @@ func printHelperDetails(out io.Writer, r helper.Report, now time.Time) {
 		fmt.Fprintf(out, "  - %s\n", why)
 	}
 	fmt.Fprintf(out, "  instance:    %s\n", r.Found.State)
+	if r.Found.StatusVolume != "" {
+		fmt.Fprintf(out, "  status on:   volume %s\n", r.Found.StatusVolume)
+	}
 	st := r.Status
 	if st == nil {
 		return

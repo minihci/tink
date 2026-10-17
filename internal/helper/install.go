@@ -76,6 +76,9 @@ type InstallOptions struct {
 	IngressInstance string
 	// Reissue enrols the helper again: it removes the old certificate from the trust store and redeems a fresh token.
 	Reissue bool
+	// StatusOnInstance makes the helper publish its status document on its own instance, as every helper did before the status volume
+	// (--status-instance). By default install makes a status volume and the helper publishes there (statusvol.go).
+	StatusOnInstance bool
 	// Wait is how long to wait for the helper to report in once it is enrolled (default 90 seconds; negative: do not wait).
 	Wait time.Duration
 }
@@ -183,9 +186,12 @@ func (in *Installer) Install(opts InstallOptions) error {
 	}
 	scoped := in.Server.UseProject(opts.Project)
 
-	_, _, haveInstance, err := incusapi.LookupInstance(scoped, opts.Name)
+	current, _, haveInstance, err := incusapi.LookupInstance(scoped, opts.Name)
 	if err != nil {
 		return fmt.Errorf("checking whether the helper instance exists: %w", err)
+	}
+	if err := in.ensureStatusVolume(scoped, opts, current); err != nil {
+		return err
 	}
 	spec := in.spec(opts, route, network)
 	if !haveInstance {
@@ -324,7 +330,7 @@ func (in *Installer) spec(o InstallOptions, route apiRoute, network string) *run
 	} else {
 		entry = append(entry, "--no-ingress")
 	}
-	entry = append(entry, "--status-instance", o.Name, "--status-project", o.Project)
+	entry = append(entry, statusArgs(o)...)
 	if o.TZ != "" {
 		entry = append(entry, "--timezone", o.TZ)
 	}
@@ -341,6 +347,7 @@ func (in *Installer) spec(o InstallOptions, route apiRoute, network string) *run
 	if o.TZ != "" {
 		cfg["environment.TZ"] = o.TZ
 	}
+	addStatusPointer(cfg, o)
 	if o.Ingress {
 		cfg[MarkerKey+".ingress"] = o.IngressInstance
 	}
@@ -473,8 +480,8 @@ func (in *Installer) waitForReport(opts InstallOptions, since time.Time) error {
 type RemoveOptions struct {
 	Project string // default: where the helper is found
 	Name    string
-	// Purge also deletes the helper's two volumes (its job history, and its client configuration with any keys for remote backup targets)
-	// and the project if that leaves it empty.
+	// Purge also deletes the helper's two volumes (its job history, and its client configuration with any keys for remote backup targets),
+	// the status volume install made (found through the pointer on the instance), and the project if that leaves it empty.
 	Purge bool
 }
 
@@ -528,6 +535,7 @@ func (in *Installer) Remove(opts RemoveOptions) error {
 
 	if !opts.Purge {
 		in.say("kept the volumes %s and %s in project %s (--purge removes them)", configVolume, dataVolume, target.Project)
+		in.keptStatusVolume(target)
 		return nil
 	}
 	for _, v := range []string{configVolume, dataVolume} {
@@ -536,6 +544,9 @@ func (in *Installer) Remove(opts RemoveOptions) error {
 			return fmt.Errorf("deleting volume %s: %w", v, err)
 		}
 		in.say("deleted volume %s", v)
+	}
+	if err := in.purgeStatusVolume(scoped, target); err != nil {
+		return err
 	}
 	// the project goes too when nothing else is in it; if something is, it is the operator's, and stays
 	if err := in.Server.DeleteProject(target.Project); err != nil {

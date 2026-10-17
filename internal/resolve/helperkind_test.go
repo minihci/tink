@@ -19,6 +19,24 @@ type helperKindServer struct {
 	incus.InstanceServer
 	project   string
 	instances []api.Instance
+	// volumes are the status volumes a helper may point at, by "project/pool/name" (the project UseProject chose): their config, or an
+	// error to read them with.
+	volumes map[string]map[string]string
+	volErr  map[string]error
+}
+
+func (s *helperKindServer) GetStoragePoolVolume(pool, _, name string) (*api.StorageVolume, string, error) {
+	key := s.project + "/" + pool + "/" + name
+	if err := s.volErr[key]; err != nil {
+		return nil, "", err
+	}
+	cfg, ok := s.volumes[key]
+	if !ok {
+		return nil, "", api.StatusErrorf(http.StatusNotFound, "Storage volume not found")
+	}
+	v := &api.StorageVolume{Name: name}
+	v.Config = cfg
+	return v, "", nil
 }
 
 func (s *helperKindServer) UseProject(p string) incus.InstanceServer {
@@ -123,6 +141,40 @@ func TestPlanHelperWarnsWhenItIsNotWellButStillChangesNothing(t *testing.T) {
 	p, _ = planHelper(srv, helperRes(nil), helperNow)
 	if p.Action != ActionNone || !strings.Contains(joined(p.Warnings), "degraded") {
 		t.Errorf("failing a copy: %+v", p)
+	}
+}
+
+// A helper whose status document is on a volume (the default since the helper stopped holding a right to edit its instance) is planned
+// exactly as one that keeps it on the instance: healthy when the volume has a fresh document, degraded with the reason when it cannot be read.
+func TestPlanHelperReadsAStatusVolumeTheInstancePointsAt(t *testing.T) {
+	inst := helperInstance(t, "tink-helper", "helper", "Running", helper.Status{})
+	delete(inst.Config, helper.StatusKey)
+	inst.Config[helper.StatusVolumeKey] = "default/helper-status"
+	doc, err := helper.Encode(goodStatus())
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &helperKindServer{instances: []api.Instance{inst}, volumes: map[string]map[string]string{"tink-helper/default/helper-status": {helper.StatusKey: doc}}}
+	p, err := planHelper(srv, helperRes(nil), helperNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Action != ActionNone || len(p.Warnings) != 0 || !strings.Contains(joined(p.Notes), "the daemon helper tink-helper/helper is healthy") || !strings.Contains(joined(p.Notes), "it runs v0.1.4;") {
+		t.Errorf("read from the volume: %+v", p)
+	}
+
+	// not readable: degraded, with the reason, and nothing about "no status yet"; the listing itself does not fail
+	srv.volErr = map[string]error{"tink-helper/default/helper-status": api.StatusErrorf(http.StatusForbidden, "not authorized")}
+	p, err = planHelper(srv, helperRes(nil), helperNow)
+	if err != nil {
+		t.Fatalf("an unreadable status volume must not make the plan fail: %v", err)
+	}
+	w := joined(p.Warnings)
+	if p.Action != ActionNone || !strings.Contains(w, "the daemon helper is degraded: cannot read its status volume default/helper-status: not authorized") || strings.Contains(w, "has not published") {
+		t.Errorf("%+v", p)
+	}
+	if !strings.Contains(joined(p.Notes), "is degraded") {
+		t.Errorf("notes = %q", joined(p.Notes))
 	}
 }
 

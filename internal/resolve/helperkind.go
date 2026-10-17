@@ -105,7 +105,7 @@ func planHelper(server incus.InstanceServer, r Resource, now time.Time) (Planned
 				fmt.Sprintf("an instance named %s exists and is not a helper (it lacks the marker %s): rename the helper, or move that instance", label, helper.MarkerKey)}}, nil
 		}
 		p.Action = ActionCreate
-		p.Changes = []string{fmt.Sprintf("install the daemon helper %s (what `tink helper install` does: a trust token from this certificate, then its own certificate)", label)}
+		p.Changes = []string{fmt.Sprintf("install the daemon helper %s (what `tink helper install` does: a volume for its status document, a trust token from this certificate, then its own certificate)", label)}
 		if r.Timezone == "" {
 			p.Warnings = append(p.Warnings, "no timezone: the helper would evaluate its backup schedules in UTC")
 		}

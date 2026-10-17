@@ -17,6 +17,12 @@ type Found struct {
 	// State is the instance's own state: "Running", "Stopped", ...
 	State  string
 	Config map[string]string
+	// StatusVolume is "POOL/VOLUME" when the instance points at a volume that holds its status document (StatusVolumeKey), else "". With
+	// it set, Config[StatusKey] is what Find read from that volume, and never what the instance itself carries.
+	StatusVolume string
+	// StatusProblem is why that volume could not be read, when it could not. Find does not fail the listing for it: Evaluate says it,
+	// and the helper is degraded, neither healthy nor merely "not yet heard from".
+	StatusProblem string
 	// Devices are the instance's own devices (not its profiles'): which way it reaches the host's API is one of them (see APIVia).
 	Devices map[string]map[string]string
 }
@@ -25,7 +31,9 @@ type Found struct {
 func (f Found) Label() string { return f.Project + "/" + f.Name }
 
 // Find lists the helper instances on the server, in every project: the instances marked with MarkerKey. There should be one; the
-// caller decides what to do about none or several.
+// caller decides what to do about none or several. A helper whose instance points at a status volume (StatusVolumeKey) has its status
+// document read from there and placed in Config[StatusKey], so the rest of this package reads it the same wherever it was kept; a
+// volume that cannot be read is carried on the result (StatusProblem), not returned as an error.
 func Find(s incus.InstanceServer) ([]Found, error) {
 	all, err := s.GetInstancesAllProjects(api.InstanceTypeAny)
 	if err != nil {
@@ -34,7 +42,9 @@ func Find(s incus.InstanceServer) ([]Found, error) {
 	var out []Found
 	for _, inst := range all {
 		if _, ok := inst.Config[MarkerKey]; ok {
-			out = append(out, Found{Project: inst.Project, Name: inst.Name, State: inst.Status, Config: inst.Config, Devices: inst.Devices})
+			f := Found{Project: inst.Project, Name: inst.Name, State: inst.Status, Config: inst.Config, Devices: inst.Devices}
+			withStatusVolume(s, &f)
+			out = append(out, f)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Label() < out[j].Label() })
@@ -82,7 +92,8 @@ func (r Report) Summary() string {
 
 // Evaluate judges a helper from what it published and the state of its instance. A helper that has stopped or has gone quiet is
 // Down; one that is running and speaking but skipping volumes or failing copies is Degraded; a running one that has published
-// nothing yet, or something unreadable, is Degraded (it may be new, or old).
+// nothing yet, or something unreadable, is Degraded (it may be new, or old); and so is one whose status volume could not be read,
+// with that said as the reason.
 func Evaluate(f Found, now time.Time) Report {
 	r := Report{Found: f}
 	down := func(format string, args ...any) {
@@ -94,6 +105,12 @@ func Evaluate(f Found, now time.Time) Report {
 			r.Health = Degraded
 		}
 		r.Reasons = append(r.Reasons, fmt.Sprintf(format, args...))
+	}
+
+	// A status volume that could not be read comes first: whatever the instance's state, the document cannot be judged, and saying
+	// nothing about it would read as "no status yet" or, worse, as well.
+	if f.StatusProblem != "" {
+		degrade("cannot read its status volume %s: %s", f.StatusVolume, f.StatusProblem)
 	}
 
 	text, published := f.Config[StatusKey]
