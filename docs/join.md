@@ -67,11 +67,16 @@ Everywhere else tink never removes a config key it is no longer told about: a ke
 
 | Key | On | Says |
 |---|---|---|
-| `user.tink.role: dns` / `ingress` / `sso` / `mesh` | each helper | which job it does. `dns` and `ingress` must be exactly one; `sso` at least one; `mesh` is optional (without it there is no mesh view) |
-| `user.tink.dns.zone: home.example.org` | the dns helper | the zone every published name ends with |
-| `user.tink.leg.<nic>: serves` | the ingress helper | LAN clients reach it on this NIC: the address the dns records answer with |
-| `user.tink.leg.<nic>: mesh` | the ingress helper | mesh clients reach it on this NIC: the address the mesh view answers with, and the source address the apps' ACLs admit (these coincide by design: the gateway advertises exactly that address **[to confirm]** if a site ever needs them apart) |
+| `user.tink.role: dns` / `ingress` / `sso` / `mesh` | each helper | which job it does. `ingress` must be exactly one and `sso` at least one; `dns` and `mesh` are optional, at most one each (without a `dns` helper there are no dns records to render; without `mesh` there is no mesh view) |
+| `user.tink.dns.zone: home.example.org` | the dns helper, or the ingress helper when there is no dns helper | the zone every published name ends with. With both stated they must agree |
+| `user.tink.leg.<nic>: serves` | the ingress helper | LAN clients reach it on this NIC: the address the dns records answer with. Needed when there is a dns helper |
+| `user.tink.leg.<nic>: mesh` | the ingress helper | mesh clients reach it on this NIC: the address the mesh view answers with, and a source address the apps' ACLs admit (these coincide by design: the gateway advertises exactly that address **[to confirm]** if a site ever needs them apart). Needed when there is a mesh helper |
+| `user.tink.leg.<nic>: public` | the ingress helper | the internet reaches it on this NIC, through the host's address: proxy devices on the host (`nat` on, so the helper sees the client's address) connect to it. A source address the apps' ACLs admit. Nothing is rendered for it: the names live in public DNS, outside tink |
 | `user.tink.leg.<nic>: discovery` | any | why a NIC exists when it is not a way in for users (not read by the join) |
+
+A NIC may have several purposes, separated by commas (`mesh, public`), and an address that is both is admitted once. At most one NIC has each of `serves`, `mesh` and `public`. A site needs at least one source address for its ACLs, so it has a `mesh` leg or a `public` leg; a LAN-only site with neither has no way for the ingress helper to be admitted, and that is an error rather than an ACL that admits nobody.
+
+**A site with no dns helper** (a VPS whose names are in public DNS) states the zone on the ingress helper and gets `caddy`, `sso` and `acl` only. The join prints one warning naming the names that belong in public DNS and the address that carries them. It was written for the shape in `internal/join/testdata/public/`, whose hand-written pieces are `internal/join/testdata/public/golden/`. The `public` leg also checks, as warnings, that a proxy device on the host connects to its address and has `nat` on; see [public-exposure.md](public-exposure.md).
 
 ## Running it
 
@@ -140,11 +145,11 @@ What the daemon will read is exactly this: `tink join apply dns --from-server` m
 
 What each section is shaped for, and what it assumes:
 
-- **dns**: a hosts-file line per name. Fits CoreDNS's `hosts` plugin; every name answers with the ingress helper's `serves` address.
+- **dns**: a hosts-file line per name. Fits CoreDNS's `hosts` plugin; every name answers with the ingress helper's `serves` address. Left out when no helper has role `dns`.
 - **mesh**: Headscale's `extra_records` entries, answering with the ingress helper's `mesh` address. Left out, with a warning, when no helper has role `mesh`.
 - **caddy**: `handle` fragments for the **wildcard** site, not a site block per name: a site block of its own would ask for its own certificate instead of using the wildcard one **[docs, from memory]**. The upstream is the app's **address**, because names do not resolve across bridges. They import two snippets the platform's Caddyfile defines by hand: `sso` (the forward-auth call to the sign-on helper) and `no_portal_cookie` (which strips the portal's zone-wide session cookie before a request reaches the app, so an app cannot replay a user's portal session against another host).
 - **sso**: one Authelia rule per name, `one_factor` (a publish does not choose; a field for it arrives when something needs two factors). Several groups render as an OR of single-group lists, `[['group:a'], ['group:b']]`, which Authelia's own policy checker confirmed means "either" **[live]**.
-- **acl**: one rule per port per ACL: the ingress helper (on its `mesh` leg) may reach it. Several publishes of one port collapse into one rule whose description names them. The ACL is found from the network the app's NIC is on (`security.acls` on the `kind: network`).
+- **acl**: one rule per port per ACL: the ingress helper (from its `mesh` and `public` legs) may reach it; two sources are written as one comma-separated list. Several publishes of one port collapse into one rule whose description names them. The ACL is found from the network the app's NIC is on (`security.acls` on the `kind: network`).
 
 ## Applying: dns
 
@@ -192,13 +197,15 @@ Findings go to standard error. **Any error means nothing is printed and the exit
 | the offer's NIC is on an unmanaged bridge: no ACL can restrict who reaches it | error |
 | the instance has several NICs and the offer does not say which (`...listen`) | error |
 | the app's network has no ACL attached (`security.acls`), or several | error |
-| no dns helper, no zone, or more than one dns or ingress helper; no `serves` or `mesh` leg, or a leg on a NIC without a static address; no sign-on helper | error |
+| no ingress helper, or more than one ingress or dns helper; no zone (on the dns helper, or on the ingress helper when there is no dns helper), or two that differ; no `serves` leg when there is a dns helper, no `mesh` leg when there is a mesh helper, or neither a `mesh` nor a `public` leg; two NICs with one purpose; a leg word that is not `serves`, `mesh`, `public` or `discovery`; a read leg on a NIC without a static address; no sign-on helper | error |
 | the same name published twice; an instance declared twice | error |
 | `--from-server`: a publish stamp that is not valid JSON, has a field it should not or lacks one, or breaks a rule of `kind: publish` (the message names the instance, its project and the key) | error |
 | `plan`: a publish whose instance is not in the same stack and project | error (from `plan`, not from `join`) |
 | an app's `http` offer that no publish shows (helpers are not asked) | warning |
 | the app's network is not declared in the files given, so its ACL cannot be shown | warning |
-| no helper has role `mesh` | warning |
+| no helper has role `mesh`, though a `mesh` leg is stamped | warning |
+| no helper has role `dns`: the names that belong in public DNS | warning |
+| the `public` leg has no host proxy device connecting to its address, or some of those lack `nat` | warning |
 | no publish at all in the files given | warning |
 
 ## What it does not do

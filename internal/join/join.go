@@ -75,10 +75,16 @@ type Result struct {
 	DNSProject  string // where the dns helper lives, so the DNS applier knows where to write
 	DNSInstance string
 	LANAddress  string // the ingress helper's address on its `serves` leg: what the dns records answer with
-	MeshAddress string // the ingress helper's address on its `mesh` leg: what the mesh view answers with, and the source the apps' ACLs admit
-	HasMesh     bool   // a helper with role mesh is declared
-	Published   []Published
-	Findings    []Finding
+	MeshAddress string // the ingress helper's address on its `mesh` leg: what the mesh view answers with
+	// PublicAddress is the ingress helper's address on its `public` leg: where the host's proxy devices carry traffic from the internet. Nothing is rendered
+	// from it except that it is one of the sources below.
+	PublicAddress string
+	// Sources are the addresses the apps' ACLs admit: the ingress helper's addresses on its `mesh` and `public` legs, sorted, without repeats. They are
+	// what the helper reaches the apps from, and a site needs at least one.
+	Sources   []string
+	HasMesh   bool // a helper with role mesh is declared
+	Published []Published
+	Findings  []Finding
 
 	// The five renderings. All are empty when any finding is an error.
 	DNS, Mesh, Caddy, SSO, ACL string
@@ -204,22 +210,50 @@ func Build(stacks []Stack) Result {
 		}
 		return resolve.Resource{}, false
 	}
-	if dns, ok := only("dns"); ok {
+	// The ingress helper is read first: with no dns helper (a site whose names live in public DNS) it is where the zone is stated.
+	ing, haveIngress := only("ingress")
+	switch len(roles["dns"]) {
+	case 1:
+		dns := roles["dns"][0]
 		res.DNSProject, res.DNSInstance = projectOf(dns), dns.Name
 		res.Zone = strings.TrimSpace(dns.Config[zoneKey])
 		if !zonePattern.MatchString(res.Zone) {
 			add(Error, "instance/"+dns.Name, "%s is %q: the dns helper must state the zone it serves (for example home.example.org), the part every published name ends with", zoneKey, res.Zone)
 			res.Zone = ""
 		}
+		if z := strings.TrimSpace(ing.Config[zoneKey]); haveIngress && z != "" && res.Zone != "" && z != res.Zone {
+			add(Error, "instance/"+ing.Name, "%s is %q, but the dns helper serves %q: a site has one zone", zoneKey, z, res.Zone)
+		}
+	case 0:
+		if haveIngress {
+			res.Zone = strings.TrimSpace(ing.Config[zoneKey])
+			switch {
+			case res.Zone == "":
+				add(Error, "dns helper", "no instance has %s: dns, and the ingress helper states no zone (%s): a published name ends with the zone, and with no dns helper the ingress helper is where it is stated", roleKey, zoneKey)
+			case !zonePattern.MatchString(res.Zone):
+				add(Error, "instance/"+ing.Name, "%s is %q: with no dns helper the ingress helper must state the zone the published names end with (for example apps.example.org)", zoneKey, res.Zone)
+				res.Zone = ""
+			default:
+				names := make([]string, 0, len(publishes))
+				for _, p := range publishes {
+					names = append(names, p.Name+"."+res.Zone)
+				}
+				sort.Strings(names)
+				add(Warning, "dns helper", "no instance has %s: dns, so no dns records are rendered: point DNS for %s at the host that carries the ingress helper's traffic", roleKey, strings.Join(names, ", "))
+			}
+		}
+	default:
+		add(Error, "dns helper", "%d instances have %s: dns, and the join needs exactly one", len(roles["dns"]), roleKey)
 	}
-	if ing, ok := only("ingress"); ok {
-		res.LANAddress, res.MeshAddress = legAddresses(ing, profiles, add)
+	if haveIngress {
+		lg := legAddresses(ing, profiles, len(roles["dns"]) > 0, len(roles["mesh"]) > 0, add)
+		res.LANAddress, res.MeshAddress, res.PublicAddress, res.Sources = lg.serves, lg.mesh, lg.public, lg.sources
 	}
 	if len(roles["sso"]) == 0 {
 		add(Error, "sso helper", "no instance has %s: sso, and a publish is a sign-on rule that something has to enforce", roleKey)
 	}
 	res.HasMesh = len(roles["mesh"]) > 0
-	if !res.HasMesh {
+	if !res.HasMesh && res.MeshAddress != "" { // a site with no mesh leg never had a mesh to leave out
 		add(Warning, "mesh helper", "no instance has %s: mesh, so the names are not offered to mesh clients", roleKey)
 	}
 
@@ -256,51 +290,129 @@ func Build(stacks []Stack) Result {
 	return res
 }
 
-// legAddresses reads the ingress helper's legs: user.tink.leg.<nic> is serves (clients on the LAN reach it here), mesh (mesh clients reach it
-// here, and it is the address the apps' ACLs admit) or discovery (not a way in for anyone; ignored here). Exactly one serves and one mesh are
-// needed, and each NIC must have a static address.
-func legAddresses(ing resolve.Resource, profiles map[key]resolve.Resource, add func(Severity, string, string, ...any)) (lan, mesh string) {
+// legs are the addresses read from the ingress helper's legs.
+type legs struct {
+	serves, mesh, public string
+	sources              []string // the addresses of the mesh and public legs, sorted, without repeats: what the apps' ACLs admit
+}
+
+// legPurposes are the words a leg may be.
+var legPurposes = map[string]bool{"serves": true, "mesh": true, "public": true, "discovery": true}
+
+// legAddresses reads the ingress helper's legs: user.tink.leg.<nic> says why a NIC is where it is, in one word or several separated by commas:
+//
+//	serves     clients on the LAN reach it here: the address the dns records answer with. Needed when there is a dns helper.
+//	mesh       mesh clients reach it here: the address the mesh view answers with, and a source the apps' ACLs admit. Needed when there is a mesh helper.
+//	public     the internet reaches it here, through the host's address, carried by proxy devices that connect to this NIC. A source the apps' ACLs admit.
+//	discovery  not a way in for anyone; ignored here.
+//
+// Each rendering needs only what it renders. The dns records need a dns helper and a serves leg, the mesh records a mesh helper and a mesh leg; the proxy's
+// routes, the sign-on rules and the apps' ACLs need neither, but the ACLs need at least one address to admit, so a site has a mesh leg or a public leg. At most
+// one NIC has each purpose, and the NIC of a purpose that is read must have a static address.
+func legAddresses(ing resolve.Resource, profiles map[key]resolve.Resource, needServes, needMesh bool, add func(Severity, string, string, ...any)) legs {
 	subject := "instance/" + ing.Name
 	devs := effectiveDevices(ing, profiles)
-	byValue := map[string][]string{}
+	byPurpose := map[string][]string{}
 	for k, v := range ing.Config {
 		if !strings.HasPrefix(k, legKey) {
 			continue
 		}
 		nic := strings.TrimPrefix(k, legKey)
-		switch v = strings.TrimSpace(v); v {
-		case "serves", "mesh", "discovery":
-			byValue[v] = append(byValue[v], nic)
-		default:
-			add(Error, subject, "%s is %q: a leg is serves, mesh or discovery", k, v)
+		purposes := strings.FieldsFunc(v, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' })
+		if len(purposes) == 0 {
+			add(Error, subject, "%s is %q: a leg is serves, mesh, public or discovery (a NIC can have several, separated by commas)", k, v)
+		}
+		for _, p := range purposes {
+			if !legPurposes[p] {
+				add(Error, subject, "%s is %q: a leg is serves, mesh, public or discovery (a NIC can have several, separated by commas)", k, v)
+				continue
+			}
+			byPurpose[p] = append(byPurpose[p], nic)
 		}
 	}
-	pick := func(value, why string) string {
-		nics := byValue[value]
+	pick := func(purpose, why string, required bool) (nic, addr string) {
+		nics := byPurpose[purpose]
 		sort.Strings(nics)
 		switch len(nics) {
 		case 0:
-			add(Error, subject, "no NIC is stamped %s<nic>: %s (%s)", legKey, value, why)
-			return ""
+			if required {
+				add(Error, subject, "no NIC is stamped %s<nic>: %s (%s)", legKey, purpose, why)
+			}
+			return "", ""
 		case 1:
 			dev, ok := devs[nics[0]]
 			if !ok || dev["type"] != "nic" {
 				add(Error, subject, "%s%s names a device that is not a NIC of this instance", legKey, nics[0])
-				return ""
+				return "", ""
 			}
 			a := staticAddress(dev)
 			if a == "" {
-				add(Error, subject, "the %s leg (%s) has no static ipv4.address: the join needs a fixed address to render", value, nics[0])
+				add(Error, subject, "the %s leg (%s) has no static ipv4.address: the join needs a fixed address to render", purpose, nics[0])
 			}
-			return a
+			return nics[0], a
 		default:
-			add(Error, subject, "%d NICs are marked %s (%s): the join cannot tell which address to use", len(nics), value, strings.Join(nics, ", "))
-			return ""
+			add(Error, subject, "%d NICs are marked %s (%s): the join cannot tell which address to use", len(nics), purpose, strings.Join(nics, ", "))
+			return "", ""
 		}
 	}
-	lan = pick("serves", "that is the address the dns records answer with")
-	mesh = pick("mesh", "that is the address the mesh view answers with and the source the apps' ACLs admit")
-	return lan, mesh
+	var lg legs
+	if needServes {
+		_, lg.serves = pick("serves", "that is the address the dns records answer with", true)
+	}
+	_, lg.mesh = pick("mesh", "that is the address the mesh view answers with and the source the apps' ACLs admit", needMesh)
+	publicNIC, public := pick("public", "that is where the host's proxy devices carry traffic from the internet to", false)
+	lg.public = public
+	if publicNIC != "" && public != "" {
+		publicLegFindings(subject, devs, publicNIC, public, add)
+	}
+	seen := map[string]bool{}
+	for _, a := range []string{lg.mesh, lg.public} {
+		if a != "" && !seen[a] {
+			seen[a] = true
+			lg.sources = append(lg.sources, a)
+		}
+	}
+	sort.Strings(lg.sources)
+	// With a mesh helper a missing mesh leg is already an error above; this one is for a site that has neither leg to give the ACLs an address.
+	if len(lg.sources) == 0 && !needMesh {
+		add(Error, subject, "no NIC is stamped %s<nic>: mesh or public: the apps' ACLs admit the address the ingress helper reaches them from, and that has to be one of those legs", legKey)
+	}
+	return lg
+}
+
+// publicLegFindings checks that the public leg is not just a word: that a proxy device on the host connects to its address, and with nat, so the ingress
+// helper sees the client's address and not the relay's (measured on Incus 7.5.1, docs/public-exposure.md). Warnings: the devices may be applied later.
+func publicLegFindings(subject string, devs map[string]map[string]string, nic, addr string, add func(Severity, string, string, ...any)) {
+	carrying, natted := 0, 0
+	for _, dev := range devs {
+		if dev["type"] != "proxy" || dev["bind"] == "container" || dev["bind"] == "instance" || connectHost(dev["connect"]) != addr {
+			continue
+		}
+		carrying++
+		switch strings.ToLower(strings.TrimSpace(dev["nat"])) {
+		case "true", "1", "yes", "on":
+			natted++
+		}
+	}
+	switch {
+	case carrying == 0:
+		add(Warning, subject, "the public leg (%s, %s) has no proxy device on the host that connects to it, so nothing carries the host's public address to this helper (docs/public-exposure.md)", nic, addr)
+	case natted < carrying:
+		add(Warning, subject, "%d of the %d proxy device(s) that carry traffic to the public leg (%s, %s) do not have nat on, so the helper sees the relay, not the client, as the source address (docs/public-exposure.md)", carrying-natted, carrying, nic, addr)
+	}
+}
+
+// connectHost is the host of a proxy device's connect value (proto:host:port, an IPv6 host in brackets), or "" when it does not read.
+func connectHost(connect string) string {
+	_, rest, ok := strings.Cut(strings.TrimSpace(connect), ":")
+	if !ok {
+		return ""
+	}
+	i := strings.LastIndex(rest, ":")
+	if i < 0 {
+		return ""
+	}
+	return strings.Trim(rest[:i], "[]")
 }
 
 // resolvePublish joins one publish to its instance, its offer and the NIC the offer listens on.

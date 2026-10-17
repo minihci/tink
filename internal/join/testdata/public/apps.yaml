@@ -1,0 +1,42 @@
+# The app stack of the public site: the same shape as the canary, on its own bridge whose ACL declares no rule (the join derives it).
+kind: stack
+name: apps
+project: apps
+---
+kind: network-acl
+name: apps0-in
+description: only the ingress helper may reach the apps
+---
+kind: network
+name: apps0
+config:
+  ipv4.address: 10.20.60.1/24
+  ipv4.nat: "false"
+  security.acls: apps0-in
+---
+kind: profile
+name: apps-base
+devices:
+  root: {path: /, pool: default, type: disk}
+---
+kind: instance
+name: whoami
+image: docker-oci:traefik/whoami:v1.12.0
+profiles: [apps-base]
+config:
+  user.tink.offer.web.port: "80"
+  user.tink.offer.web.proto: http
+devices:
+  eth0: {name: eth0, type: nic, network: apps0, ipv4.address: 10.20.60.10}
+---
+kind: publish
+name: whoami
+instance: whoami
+offer: web
+allow: [family]
+---
+kind: publish
+name: whoami-admin
+instance: whoami
+offer: web
+allow: [admins]

@@ -264,7 +264,7 @@ As of 2026-10-13 **[code]**: one implementation of an offer (`ingress.Registrati
 | the document's identity | `name:` is the host label; the published name is the label plus the dns helper's zone |
 | which offer | two fields, `instance:` and `offer:` (the same `instance:` field `kind: file` uses), not one `instance/offer` string |
 | who | `allow:` takes plain group names; typed subjects (`group:`, `instance:`) belong to `access` and are refused here |
-| the NIC's purpose | `user.tink.leg.<nic>`: `serves` (LAN clients), `mesh` (mesh clients, and the source the apps' ACLs admit), `discovery` |
+| the NIC's purpose | `user.tink.leg.<nic>`: `serves` (LAN clients), `mesh` (mesh clients, and a source the apps' ACLs admit), `public` (the internet, through the host's address; also a source), `discovery`. Added 2026-10-17: [public-exposure.md](public-exposure.md) |
 | the command | `tink join` |
 
 What it taught that the design had not said:

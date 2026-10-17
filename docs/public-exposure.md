@@ -1,6 +1,6 @@
 # Public exposure: how traffic reaches an ingress instance on a host with one public address
 
-**Status: a design note, 2026-10-17. The two plan-time checks below are built; the rest is proposed.** Claims are marked **[lab]** (measured on a real host, Incus 7.5.1, 2026-10-17), **[code]** (read in this repository), **[docs]** or **[proposed]**.
+**Status: a design note, 2026-10-17. The two plan-time checks and the `join` generalization (item 3) are built; the network-forward kind is proposed.** Claims are marked **[lab]** (measured on a real host, Incus 7.5.1, 2026-10-17), **[code]** (read in this repository), **[docs]** or **[proposed]**.
 
 ## The question
 
@@ -28,7 +28,7 @@ The gaps are in what it does **not** say when the stack is wrong:
 
 1. **A NAT proxy with no static address** planned as `would create` with no warning. The apply created the instance, retried the start five times, and left it stopped with Incus's message.
 2. **A duplicate listener** planned and applied without comment.
-3. **`tink join` cannot describe a public host.** A leg is `serves`, `mesh` or `discovery`, and the join **requires** exactly one dns helper, an ingress helper with one `serves` and one `mesh` leg (each with a static address), and at least one sign-on helper **[code, `internal/join/join.go`]**. A site that is reached from the internet through the host's address, with its names in public DNS and no mesh gateway, fits none of that.
+3. **`tink join` could not describe a public host.** A leg was `serves`, `mesh` or `discovery`, and the join **required** exactly one dns helper, an ingress helper with one `serves` and one `mesh` leg (each with a static address), and at least one sign-on helper **[code, `internal/join/join.go`, before this change]**. A site that is reached from the internet through the host's address, with its names in public DNS and no mesh gateway, fitted none of that. Built: see below.
 
 ## Changes
 
@@ -39,10 +39,20 @@ The gaps are in what it does **not** say when the stack is wrong:
 
 Run against a real server on 2026-10-17 **[lab]**, as a read-only `plan`: a correct stack (a static address, a NAT proxy that connects to it) was silent; the same stack with the NIC's address removed got the static-address warning; two instances listening on `tcp:170.205.38.254:443` and `tcp:0.0.0.0:443` each got a note naming the other. Nothing was applied.
 
-**Proposed, in this order:**
+**Built here, then: `join` describes a public-only site (item 3).**
 
-3. **Generalize `join`'s site shape, then add a `public` leg.** Each rendering should need only what it renders: the dns records need a dns helper and a `serves` leg; the mesh records need a mesh helper and a `mesh` leg; the Caddy routes, sign-on rules and ACL rules need the ingress and sign-on helpers. A `public` leg says "reached from the internet through the host's address"; `join` would render nothing for it (the names live in public DNS, outside tink) and print a note. What the apps' ACLs admit as the source, today the `mesh` leg's address, has to be defined for a host with no mesh leg. This is the real design work, and it is a platform-recipe question as much as a `join` one.
-4. **A `kind: network-forward`** (untested). Incus network forwards put the rule on the network, not on an instance device, so the helper that owns the traffic does not need a device-edit right. They also need a static target address, and tink would need the kind. Worth measuring against the proxy device before building.
+- **Each rendering needs only what it renders.** The dns records need a dns helper and a `serves` leg; the mesh records a mesh helper and a `mesh` leg; the Caddy routes, sign-on rules and ACL rules need the ingress and sign-on helpers. A dns helper or a mesh helper is now optional, and a leg is required only when the helper it serves is there. The tron site renders byte-for-byte as before.
+- **A `public` leg** (`user.tink.leg.<nic>: public`) says "the internet reaches the ingress helper on this NIC, through the host's address". It renders nothing, because the names live in public DNS outside tink; the join warns with the names that need records. A NIC may have several purposes (`mesh, public`).
+- **The ACL source** is the set of the ingress helper's `mesh` and `public` addresses, sorted, without repeats, written as one comma-separated Incus source list. It was the `mesh` leg's address alone, which a host with no mesh gateway does not have. A site with neither leg is an error: an ACL that admits nobody is not what anyone meant.
+- **The zone** is stated on the dns helper, or, when there is none, on the ingress helper (`user.tink.dns.zone`); stated on both, they must agree.
+- **Decision, 2026-10-17: the zone lives on the ingress helper in a public-only site, not on a separate "site" document.** The ingress helper is the one instance such a site is certain to have, and it is where the wildcard certificate for the zone is requested. A project-level stamp (see [platform-recipe.md](platform-recipe.md)) is the likely home when the platform recipe is built; the join would read it the same way.
+- **The `public` leg is checked as a warning**: that a proxy device on the host connects to its address, and that every such device has `nat` on. The proxy devices may be applied after the join is read, so it is not an error.
+
+Test fixtures: `internal/join/testdata/public/` (a VPS-shaped platform and an app stack), with hand-written pieces in `public/golden/`.
+
+**Proposed:**
+
+1. **A `kind: network-forward`** (untested). Incus network forwards put the rule on the network, not on an instance device, so the helper that owns the traffic does not need a device-edit right. They also need a static target address, and tink would need the kind. Worth measuring against the proxy device before building.
 
 ## Cautions
 
