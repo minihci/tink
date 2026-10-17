@@ -87,10 +87,22 @@ For the third kind there are two candidates:
 | | **The platform project** | **The server config** |
 |---|---|---|
 | Fit | A project is the stack's own unit (`project:` on `kind: stack`) | One per server, which matches "one platform stack per Incus server" |
-| Rights a helper needs | Project scope, which the helper needs to tend the platform anyway **[to confirm: not measured for a restricted certificate]** | Server scope, which is likely wider than a restricted helper certificate has **[to confirm]** |
+| Rights a helper needs | Plain `can_view` on the project, which a project-restricted certificate has even under Incus's built-in routing **[lab]** | `can_view_sensitive` on the server; with plain `can_view` the config comes back empty, and under the built-in routing a restricted certificate sees none **[lab]** |
 | Shared with | Only the platform | Everything else on the server; `tink deploy` replaces the server config whole with `incus config edit` |
 | Lifetime | Goes when the project goes | Lingers if the platform is removed |
 | Documented | `user.*` on projects is documented | accepted, but not in Incus's metadata for the server |
+
+**Measured** with a certificate restricted to the platform project (Incus 7.5.1, 2026-10-17) **[lab]**:
+
+| What the restricted certificate does | Built-in routing | A scriptlet allowing only `can_view` | Plus `can_view_sensitive` |
+|---|---|---|---|
+| Reads the platform project's config (the stamp) | yes | yes | yes |
+| Reads its instances' config (the role, zone and other stamps) | yes | yes | yes |
+| Reads another project | `403` | `403` | `403` |
+| Reads the **server config** | empty | empty | **visible** |
+| Writes the project or server config | `403 Certificate is restricted` | `403` | `403` |
+
+An unrestricted certificate sees the server config. With `can_edit` on the project added to the scriptlet, a write reached Incus's own validation; the one tried was refused for an unrelated reason, because a bare `PATCH` of the config map dropped the project's `features.*` keys. A writer therefore reads the object and writes the whole config back with its ETag, as the status-volume write already does **[docs]**. The writer of the platform stamp is `plan apply` under the user's own certificate, not the helper.
 
 Proposed: **stamp the platform project** with a small `user.tink.site.*` set (compact JSON, like the publish stamps), keep the per-consumer stamps where they are, and consider the server config only for a single pointer to the platform project if discovery by scanning proves insufficient. These stamps are **derived copies**: the facts file stays the source of truth, `plan apply` is the only writer, the prefix is tink's own, and a stale key is removed. Otherwise the facts live in two places and can disagree.
 
@@ -147,7 +159,7 @@ Stages, each checkable on its own:
 - A `public` leg: what does `join` render for it, given there is no dns helper answering for public names?
 - Which roles are optional per server, and who decides that a server with no dns helper is still a complete site?
 - Is declared-state drift between recipe and server reported by `plan` only, or also by the daemon helper's status?
-- The platform-wide stamp: the project or the server config, and can a restricted certificate read it? (Unmeasured; it needs the API listener on the bridge address again.)
+- The platform-wide stamp is proposed on the platform project: a restricted certificate reads it with plain `can_view`, and the server config needs `can_view_sensitive`. Is there a reason left to want the server config (a pointer to the platform project)?
 - Do `plan`, `join` and `export` move to expanded config before profiles carry defaults, and what happens to `join`'s rule of reading stored config?
 
 For the line-by-line accounting of the real stack (stage 1), and an audit of what in tink already has this shape in the wrong form, see [platform-recipe-accounting.md](platform-recipe-accounting.md).
