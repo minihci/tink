@@ -379,6 +379,9 @@ func ApplyConfig(server incus.InstanceServer, spec *Spec) error {
 	for k, v := range spec.Config {
 		put.Config[k] = v
 	}
+	for _, k := range StaleOwnedKeys(put.Config, spec.Config, spec.OwnedConfigPrefixes) {
+		delete(put.Config, k)
+	}
 	if put.Devices == nil {
 		put.Devices = api.DevicesMap{}
 	}
@@ -391,6 +394,26 @@ func ApplyConfig(server incus.InstanceServer, spec *Spec) error {
 		return fmt.Errorf("updating %s config/devices: %w", spec.Name, err)
 	}
 	return op.Wait()
+}
+
+// StaleOwnedKeys are the keys of live that start with one of prefixes and that declared does not carry, sorted. It is the whole of what "tink owns this
+// prefix" means: plan reports these as removals and ApplyConfig makes them, and both ask here so they cannot disagree. A key outside every prefix is never
+// returned, however absent from declared it is.
+func StaleOwnedKeys(live, declared map[string]string, prefixes []string) []string {
+	var out []string
+	for k := range live {
+		if _, ok := declared[k]; ok {
+			continue
+		}
+		for _, p := range prefixes {
+			if p != "" && strings.HasPrefix(k, p) {
+				out = append(out, k)
+				break
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // ensureManagedVolumes creates any managed storage volume a disk device
