@@ -19,7 +19,7 @@ var requiredVolumes = []string{
 }
 
 func applyStorageVolumes(r *runner, opts Options) error {
-	server, err := incusapi.Connect(opts.socket())
+	server, err := incusapi.Connect(opts.Socket)
 	if err != nil {
 		return fmt.Errorf("connecting to incus: %w", err)
 	}

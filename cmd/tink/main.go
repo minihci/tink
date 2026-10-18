@@ -537,7 +537,7 @@ func newIngressStatusCmd() *cobra.Command {
 }
 
 func addIngressFlags(cmd *cobra.Command, opts *ingress.Options) {
-	cmd.Flags().StringVar(&opts.Socket, "socket", opts.Socket, "Incus daemon unix socket path")
+	cmd.Flags().StringVar(&opts.Socket, "socket", opts.Socket, "Incus daemon unix socket path (default: Incus's own resolution)")
 	cmd.Flags().StringVar(&opts.RoutesDir, "routes-dir", opts.RoutesDir, "generated ingress routes directory (with --via-api: the path inside the ingress instance)")
 	cmd.Flags().BoolVar(&opts.ViaAPI, "via-api", false, "read and write the route files through the ingress instance's file API instead of on this host's filesystem: works from anywhere, and under --remote")
 	cmd.Flags().StringVar(&opts.IngressInstance, "ingress-instance", opts.IngressInstance, "name of the ingress instance to reload")
@@ -718,7 +718,7 @@ reach. Anything else is refused rather than act on the wrong machine.`,
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.Socket, "socket", opts.Socket, "Incus daemon unix socket path")
+	cmd.Flags().StringVar(&opts.Socket, "socket", opts.Socket, "Incus daemon unix socket path (default: Incus's own resolution)")
 	cmd.Flags().StringVar(&opts.RoutesDir, "routes-dir", opts.RoutesDir, "generated ingress routes directory")
 	cmd.Flags().StringVar(&opts.IngressInstance, "ingress-instance", opts.IngressInstance, "name of the ingress instance to reload")
 	cmd.Flags().DurationVar(&interval, "interval", time.Minute, "how often to reconcile ingress")

@@ -13,8 +13,6 @@ package bootstrap
 
 import (
 	"fmt"
-
-	"github.com/minihci/tink/internal/incusapi"
 )
 
 // Options configures where deploy reads its inputs from and how it
@@ -28,15 +26,9 @@ type Options struct {
 	DryRun   bool
 	// Socket is the Incus daemon's local unix socket, used for every
 	// client-library call (profiles, storage volumes, instance
-	// existence/deletion). Defaults to incusapi.DefaultSocket.
+	// existence/deletion). Empty means Incus's own resolution (see
+	// incusapi.Connect).
 	Socket string
-}
-
-func (o Options) socket() string {
-	if o.Socket != "" {
-		return o.Socket
-	}
-	return incusapi.DefaultSocket
 }
 
 // Result is the ordered log of what deploy did (or, in dry-run mode,

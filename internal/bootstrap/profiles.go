@@ -27,7 +27,7 @@ var profileSpecs = []profileSpec{
 // are clean, verified, single-purpose API calls, unlike instance launch
 // (see instances.go for why that one still shells out).
 func applyProfiles(r *runner, opts Options) error {
-	server, err := incusapi.Connect(opts.socket())
+	server, err := incusapi.Connect(opts.Socket)
 	if err != nil {
 		return fmt.Errorf("connecting to incus: %w", err)
 	}

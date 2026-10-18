@@ -38,7 +38,6 @@ const InstanceRoutesDir = "/etc/caddy/routes/generated"
 // DefaultOptions returns the same paths reconcile.sh has always used.
 func DefaultOptions() Options {
 	return Options{
-		Socket:          incusapi.DefaultSocket,
 		RoutesDir:       "/var/lib/incus/storage-pools/default/custom/default_ingress-routes/generated",
 		IngressInstance: "ingress",
 	}
