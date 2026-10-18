@@ -13,7 +13,8 @@
 7. **The platform recipe is the right direction, built one role at a time from the roles the site shapes share,** with golden fixtures taken from live hosts. Not from the full spine in one go, and not from a one-role first step either.
 8. Two pairs of mechanisms overlap and should be merged before the recipe depends on them. **Ingress:** `tink ingress reconcile` and `join`'s Caddy rendering. **"The platform":** `tink deploy` and the recipe. A deployment still runs both old mechanisms, so freezing them has a cost.
 9. Some designs have no workload behind them. Park the verify helper with its ledger, `kind: network-forward`, profile-carried defaults and `access` documents.
-10. Ownership stamps should be written from birth on a fresh host. Minimal watching is the quiet precondition of "reliable", and nothing is built. The docs disagree about two decisions that matter (copied template or shipped recipe; whether a restricted certificate is a boundary), and both should be settled in the docs first.
+10. **Off-site copies are not encrypted.** Incus 7.5.1 has no at-rest encryption for volumes, copies or exports, so a copy lands as plaintext on the target. The designed way out is the restic job engine (K10); its open questions are credential delivery, who runs the job, retention and a network path for a remote repository.
+11. Ownership stamps should be written from birth on a fresh host. Minimal watching is the quiet precondition of "reliable", and nothing is built. The docs disagree about two decisions that matter (copied template or shipped recipe; whether a restricted certificate is a boundary), and both should be settled in the docs first.
 
 ## 1. Where things stand: tink's capabilities
 
@@ -74,7 +75,7 @@
 | Secrets in files (phase 2) | [secrets-design.md](secrets-design.md#later-phases) | blocks sign-on OIDC keys and a directory service's password file in a recipe |
 | Watching and alerts (a heartbeat, a push channel) | the author's private notes | nothing built or applied |
 | Retiring `tink daemon install` | an unmerged branch, far behind main | |
-| Restic job engine (backup step 4) | [volume-backup-design.md](volume-backup-design.md) | nothing in the code refers to it **[docs]** |
+| Restic job engine (backup step 4): client-side encrypted, deduplicated off-site copies | [volume-backup-design.md](volume-backup-design.md) | prototyped (restore fidelity, a repeat backup adding 0 B, `restic check` passing); nothing in the code refers to it **[docs]**. Needed for encrypted off-site copies: K10 |
 
 ### Proposed or idea only
 
@@ -145,6 +146,7 @@ How the capabilities in section 5 stand against it:
 | Ownership stamps, phase 1 | a fresh host | LAN and edge sites adopt later | Build phase 1 only |
 | Minimal watching | all | n/a | Build the minimum |
 | Narrow helper credential | a LAN site | a clean public host | Build in parallel, not on the critical path |
+| Encrypted off-site copies (the restic job engine) | volumes with sensitive content that leave the host | any off-site target on a provider the author does not control | Build, after credential delivery and the job's rights are settled (K10) |
 | Verify helper, `network-forward`, profile defaults, `access` | none | none | Parking lot |
 
 ## 4. Designs that should change shape
@@ -195,6 +197,7 @@ K0 release ──> K3 helper on a clean host ──> [a stateful workload, offsi
       ├──> K4 join apply path ──> K9 retire the old mechanisms
       └──> K5 recipe: stage 0 fixtures ──> expander + first shared roles ──> more roles ──> a full-spine site through it
 K6 ownership phase 1 (before K5's expander) · K7 watching · K8 credential narrowing (all parallel)
+K8 + secrets in files ──> K10 encrypted off-site copies (restic job engine)
 ```
 
 ### K0: release and hygiene (S)
@@ -269,6 +272,21 @@ K6 ownership phase 1 (before K5's expander) · K7 watching · K8 credential narr
 - **Deliverables.** Delete `tink ingress` and `tink deploy` once that deployment moves or is retired. Merge or redo `retire-daemon-install`. Remove the `tink mongo snapshot` stub (section 8).
 - **Depends on.** K4, K5, and that decision.
 
+### K10: encrypted off-site copies (L)
+
+- **Needed by.** any volume with sensitive content that is copied to a provider the author does not control. Today every off-site copy is plaintext at rest.
+- **What Incus can and cannot do (measured on Incus 7.5.1).** The server's configuration metadata has no encryption, LUKS or key setting for pools, volumes, instances or backups. `incus storage volume copy` has no encryption option, and `incus storage volume export` offers only compression and the driver-optimized format. A copy is encrypted in transit by TLS and then **stored as plaintext on the target's pool**. Encrypting the target's disk (LUKS under the pool, or an encrypted ZFS dataset) protects only a powered-off or reprovisioned disk, because the key has to be on the running host.
+- **The path:** the *ephemeral restic job* already designed in [volume-backup-design.md](volume-backup-design.md#the-ephemeral-job-engine). Per job tink takes a snapshot, makes a copy-on-write clone, mounts it read-only into a short-lived container from a digest-pinned restic image, runs the command through exec, and always deletes the instance and the clone. restic encrypts and deduplicates on the way out, so the target holds only ciphertext and can be anything restic can write to (an S3-compatible store, SFTP, or a REST server in append-only mode, which also stops a compromised source from deleting history). The design keeps tink out of the business of being a backup engine. It was prototyped with the real image and verified for restore fidelity, a repeat backup adding nothing, and `restic check` passing.
+- **Open questions, to settle before building:**
+  1. **Credential delivery.** The repository password and any storage keys must reach the job container. Secrets are only usable in `environment.*` today (the secrets design's later phases cover files). A lost repository password means lost backups, so its own backup is part of the design.
+  2. **Who runs the job.** The daemon helper's certificate deliberately cannot create instances, so a job needs either its own restricted project and certificate or a narrow, project-scoped right for the helper. This is the same question as K8.
+  3. **Retention.** `retain:` is an age; `restic forget` is count or calendar based, so the engine needs its own `keep:` block.
+  4. **A remote repository needs a network path in the job container.** The prototype used a local repository volume and did not cover this.
+  5. **Orphan cleanup** if tink dies mid-job (a marker on the instance and clone, and a reaper), **and which project** the jobs and clones live in.
+- **Deliverables.** `engine: restic` on `kind: backup-target`; the job runner; `plan` warnings that name a copy to a plaintext target as such; a restore and a `check` through the same mechanism; docs in [volume-backup.md](volume-backup.md) saying plainly that `engine: incus` copies are not encrypted at rest.
+- **Depends on.** The secrets work (files) and K8's answer on the job's rights. **Unblocks.** Off-site targets that are not Incus servers, and off-site copies of sensitive volumes on a third-party provider.
+- **Exit test.** A volume is backed up off-site by restic, the target holds no plaintext (a listing of the repository shows only encrypted data), a restore into a scratch volume has the same checksums, and `restic check` passes.
+
 **Smallest sequences:**
 
 - **A stateful app on a clean host, backed up, with a graceful stop:** K0, K3, the workload's stack with K1 before its cut-over, K2a, offsite copies. Five steps, about one M and four S. K2b replaces the hand-written unit and makes image updates safe.
@@ -288,6 +306,10 @@ Decisions about particular hosts are kept in the private notes. These are the on
 3. **`quit`, or `server.save` then stop, for a game server?**
    - Decide after one measurement.
    - Blocks: K2b's `stop:` field shape, and whether autorestart stays on.
+4. **Who runs the restic job?**
+   - Options: a separate job project and certificate (a second credential, kept apart from the daemon helper); or a narrow, project-scoped instance and volume-clone right added to the helper's certificate.
+   - Recommendation: the separate project and certificate. It keeps the helper's rule that it never creates instances, and a compromised helper cannot reach job credentials.
+   - Blocks: K10, and part of K8.
 
 ## 7. Risks and unknowns
 
@@ -306,6 +328,7 @@ Decisions about particular hosts are kept in the private notes. These are the on
 | A deployed helper is on `v0.1.4`, and moving it to the status volume needs a new token | the author's notes | the helper upgrade defers the move |
 | Single host for everything on a site | the author's notes | accepted; K7 at least makes outages visible |
 | Several "decided" claims were decided in the author's own working sessions and are recorded only in docs | design notes | where one blocks a phase, it is listed in section 6 |
+| Copies made with `engine: incus` are stored unencrypted on the target (Incus 7.5.1 has no at-rest encryption for volumes, copies or exports) | measured on a lab host | say so in the docs now (K10's deliverables); treat any third-party target as able to read the data until K10 exists |
 | The plan knows of three site shapes because they were found by looking | the author's notes | ask whether other shapes exist before section 5 is settled |
 
 ## 8. Parking lot
@@ -322,7 +345,6 @@ Decisions about particular hosts are kept in the private notes. These are the on
 | Project-level `user.tink.site.*` stamps | only for daemon-side drift checks of the recipe, which come after K5's stage 3 |
 | Mesh gateway and control plane as recipe roles | the control plane is hand-run elsewhere; move it only with the decision about that deployment |
 | Declaring people through the directory's bootstrap | needs secrets in files; the directory UI works |
-| Restic engine | Incus-native copies cover every site |
 | Cross-stack references | `--from-server` stamps cover the case that mattered |
 | `tink mongo snapshot` | a stub with no design. Under the "no deprecation for undeployed features" rule in CLAUDE.md, remove the command |
 | A name for the remote-access feature | nothing to name until the mesh is a recipe role |
