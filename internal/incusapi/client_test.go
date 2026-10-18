@@ -3,6 +3,7 @@ package incusapi
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -14,13 +15,13 @@ func TestWantsRemote(t *testing.T) {
 		want           bool
 		wantErr        string
 	}{
-		"no remote: the local daemon":                   {"", "", false, ""},
-		"no remote, any socket":                         {"", "/run/x.sock", false, ""},
-		"a remote, no socket":                           {"tron", "", true, ""},
-		"a remote, the default socket is not a choice":  {"tron", DefaultSocket, true, ""},
-		"a remote and an explicit socket contradict":    {"tron", "/tmp/other.sock", false, "contradict"},
-		"the built-in 'local' remote means the daemon":  {"local", "", false, ""},
-		"'local' with an explicit socket is just local": {"local", "/tmp/other.sock", false, ""},
+		"no remote: the local daemon":                               {"", "", false, ""},
+		"no remote, any socket":                                     {"", "/run/x.sock", false, ""},
+		"a remote, no socket":                                       {"tron", "", true, ""},
+		"a remote and an explicit socket contradict":                {"tron", "/tmp/other.sock", false, "contradict"},
+		"the old default path is an explicit socket like any other": {"lab", "/var/lib/incus/unix.socket", false, "contradict"},
+		"the built-in 'local' remote means the daemon":              {"local", "", false, ""},
+		"'local' with an explicit socket is just local":             {"local", "/tmp/other.sock", false, ""},
 	} {
 		UseRemote(tc.remote)
 		got, err := wantsRemote(tc.socket)
@@ -33,6 +34,23 @@ func TestWantsRemote(t *testing.T) {
 		if err != nil || got != tc.want {
 			t.Errorf("%s: got %v, %v; want %v", name, got, err, tc.want)
 		}
+	}
+}
+
+// Without --socket the path is Incus's to resolve, $INCUS_SOCKET first. A default filled in here would hide it, and with it the
+// /run/incus/unix.socket that a distribution package such as Fedora's uses: tink then reported "no local Incus daemon" on a machine that
+// had one.
+func TestConnectWithoutASocketFollowsINCUS_SOCKET(t *testing.T) {
+	t.Cleanup(func() { UseRemote("") })
+	UseRemote("")
+	sock := filepath.Join(t.TempDir(), "elsewhere.sock")
+	t.Setenv("INCUS_SOCKET", sock)
+	_, err := Connect("")
+	if err == nil || !strings.Contains(err.Error(), sock) {
+		t.Fatalf("Connect(\"\") must dial $INCUS_SOCKET (%s): %v", sock, err)
+	}
+	if !strings.Contains(err.Error(), "--socket PATH or $INCUS_SOCKET") {
+		t.Errorf("a missing local daemon should say how to point tink at a socket: %v", err)
 	}
 }
 

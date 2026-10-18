@@ -78,7 +78,7 @@ func applyReconcilerDaemon(r *runner, opts Options) error {
 
 	// A helper that runs the ingress reconcile is that reconciler. A second one, installed here, would reconcile the same routes and
 	// reload the same Caddy from two places that do not know about each other.
-	if server, err := incusapi.Connect(opts.socket()); err == nil {
+	if server, err := incusapi.Connect(opts.Socket); err == nil {
 		if label, runs := helperRunsIngress(server); runs {
 			r.note("the helper %s runs the ingress reconcile, so the host's tink-daemon is not installed; if one is already installed on this host, "+
 				"disable it (systemctl disable --now tink-daemon), or the two reconcile the same routes", label)

@@ -14,10 +14,6 @@ import (
 	"github.com/minihci/tink/internal/incusconf"
 )
 
-// DefaultSocket is the local Incus daemon socket every tink capability
-// talks to unless a remote is chosen.
-const DefaultSocket = "/var/lib/incus/unix.socket"
-
 // remote is the Incus remote every Connect goes to, set once at startup by the CLI. It is process-wide state on
 // purpose: the choice of server is made once per invocation, by a flag or $TINK_REMOTE, and the alternative is
 // threading a value through every options struct in every package.
@@ -39,22 +35,23 @@ func Remote() string { return remote }
 // the host's own filesystem or processes must refuse when it is true.
 func IsRemote() bool { return remote != "" }
 
-// wantsRemote decides whether a Connect with socketPath goes to the remote. The default socket path is not an
-// explicit choice (some commands fill it in as their flag default); any other path alongside a remote is a
-// contradiction and an error.
+// wantsRemote decides whether a Connect with socketPath goes to the remote. An empty path is not a choice (it is
+// every command's flag default); any path alongside a remote is a contradiction and an error.
 func wantsRemote(socketPath string) (bool, error) {
 	if remote == "" {
 		return false, nil
 	}
-	if socketPath != "" && socketPath != DefaultSocket {
+	if socketPath != "" {
 		return false, fmt.Errorf("--socket %s and --remote %s contradict each other: choose one", socketPath, remote)
 	}
 	return true, nil
 }
 
 // Connect opens a connection to Incus: the remote chosen with UseRemote, or else the local daemon over its unix
-// socket. An empty path uses Incus's own default resolution ($INCUS_SOCKET, then $INCUS_DIR/unix.socket, then
-// DefaultSocket).
+// socket. An empty path uses Incus's own resolution ($INCUS_SOCKET, then $INCUS_DIR/unix.socket, then
+// /run/incus/unix.socket if it exists, else /var/lib/incus/unix.socket), which is where a distribution package
+// that puts the socket under /run (Fedora's) is found without the caller knowing. Callers pass "" unless the user
+// gave --socket: a path filled in here as a default would hide $INCUS_SOCKET and that fallback.
 func Connect(socketPath string) (incus.InstanceServer, error) {
 	useRemote, err := wantsRemote(socketPath)
 	if err != nil {
@@ -65,7 +62,7 @@ func Connect(socketPath string) (incus.InstanceServer, error) {
 	}
 	server, err := incus.ConnectIncusUnix(socketPath, nil)
 	if err != nil && errors.Is(err, syscall.ENOENT) {
-		return nil, fmt.Errorf("%w (there is no local Incus daemon on this machine: to manage a server from here, use --remote NAME or $TINK_REMOTE, see `tink remote`)", err)
+		return nil, fmt.Errorf("%w (there is no local Incus daemon on this machine: to manage a server from here, use --remote NAME or $TINK_REMOTE, see `tink remote`; for a local one whose socket is somewhere unusual, use --socket PATH or $INCUS_SOCKET)", err)
 	}
 	return server, err
 }

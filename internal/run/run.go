@@ -65,14 +65,13 @@ type Options struct {
 	Out io.Writer
 }
 
-// DefaultOptions returns sensible defaults: the local socket every tink
-// capability talks to, and "default" as the storage pool a bare -v
-// name:path managed-volume mount attaches in, matching Incus's own
-// default pool name on a freshly initialized host.
+// DefaultOptions returns sensible defaults: "default" as the storage pool a
+// bare -v name:path managed-volume mount attaches in, matching Incus's own
+// default pool name on a freshly initialized host. Socket stays empty, which
+// is Incus's own resolution of the local daemon's socket.
 func DefaultOptions() Options {
 	return Options{
-		Socket: incusapi.DefaultSocket,
-		Pool:   "default",
+		Pool: "default",
 	}
 }
 
