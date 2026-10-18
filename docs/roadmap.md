@@ -1,11 +1,11 @@
 # Roadmap: tink's capabilities, the proving grounds that test them, and what to build next
 
-**Status: a draft for the author to edit, 2026-10-17. First written by an outside reviewer at `a7ec084` (main after #103), then reframed after the author's review: the plan is organised by tink's capabilities, and the sites and workloads tink has been run on are listed as proving grounds, not as deliverables.** Nothing here is decided. Claims are marked **[code]** (read in this tree, and `go build`, `go vet` and `go test ./...` pass at `a7ec084`), **[pr]** (the merged pull request), **[docs]** (what a doc in this repository says, not re-checked), **[tron]** (the author's tron repository, `~/my/projects/tron`, read-only), **[ssh]** (a host looked at read-only over ssh on 2026-10-17), **[session]** (the author's own notes from the 2026-10-17 VPS sessions, not in any repository) and **[inferred]** (reasoning; check it). Sizes: **S** (a small PR), **M** (a few PRs, or one with a live lab), **L** (a design plus several PRs and labs). No dates.
+**Status: a draft for the author to edit, 2026-10-17. First written by an outside reviewer at `a7ec084` (main after #103), then reframed after the author's review: the plan is organised by tink's capabilities, the workloads are probes that find gaps in them, and the hosts they ran on are listed as proving grounds, not as deliverables.** Nothing here is decided. Claims are marked **[code]** (read in this tree, and `go build`, `go vet` and `go test ./...` pass at `a7ec084`), **[pr]** (the merged pull request), **[docs]** (what a doc in this repository says, not re-checked), **[tron]** (the author's tron repository, `~/my/projects/tron`, read-only), **[ssh]** (a host looked at read-only over ssh on 2026-10-17), **[session]** (the author's own notes from the 2026-10-17 VPS sessions, not in any repository) and **[inferred]** (reasoning; check it). Sizes: **S** (a small PR), **M** (a few PRs, or one with a live lab), **L** (a design plus several PRs and labs). No dates.
 
 ## In one page
 
-1. **Tink is the tool. tron, the edge host and the Rust VPS are where it is proven.** Three sites with three different shapes, and a dozen workloads, have run on it. This plan is ordered by what tink must be able to do. A site's or workload's own rollout (the Rust stack, a tron upgrade) is listed once, in section 5, only to show the order, and is not a tink deliverable.
-2. **A gate (section 3) decides what gets built.** A capability is built when a named proving ground needs it now and its exit test can run there. It becomes generic (a recipe field, a new kind, a new verb) only with a second ground behind it, or a stated reason. The author is the only user today, so nothing is built for users who do not exist yet.
+1. **Tink is the tool. The workloads are how it is tested.** The author runs different workloads on tink to see what works, what does not, and what has to be built, and the goal is a tink that runs today's workloads and tomorrow's. A game server exercises different parts of tink than home automation does. This plan is ordered by what tink must be able to do. The workloads and the hosts they run on are the probes, and a workload's own rollout (the Rust stack, a tron upgrade) is listed once, in section 5, only to show the order.
+2. **Gaps found by running workloads decide what gets built (sections 2 and 3).** The method already exists: run a workload, log each gap with evidence, fix it, run it again. The roadmap makes two additions: a coverage matrix, so the parts of tink no workload has touched are visible, and a list of next trials to fill them. A capability becomes generic (a recipe field, a new kind, a new verb) only when a second kind of workload hits the same gap, or the author says why one is enough. The author is the only user today, so nothing is built for users who do not exist yet.
 3. The binary is in better shape than the docs suggest. Resolver, backups, secrets, `--remote`, the daemon helper and `join` are built and have been run live. Most of what feels "in flux" is design that has not been built, plus about a dozen docs whose status lines are out of date.
 4. **Nothing merged since 2026-10-07 has been released.** `v0.1.4` is the newest tag, with 91 commits on top of it: `join`, `kind: publish`, `kind: helper`, the status volume, `--api-via network`, `--check-project`. A release build installs the helper image of its own version, so no ground can run the new helper work without `--binary` until there is a release **[code, git tags]**.
 5. **Three shapes have been tried (section 2):** a LAN host behind NAT (tron, the full spine); a public edge on one address (`incus.xlii.co`, a live site built before the recipe, with the old ingress daemon and `tink deploy`); and a non-web, stateful, UDP workload on a clean public host (the Rust VPS). The `join` public-site fixture in #103 was synthetic. The edge host is the real thing it imitates.
@@ -127,7 +127,7 @@ Tink is a declarative layer over Incus for one person's sites: the plan and appl
 
 ### The workloads, and what each taught
 
-A workload is not a tink feature. It is listed because it showed tink something, and its stack lives with the workload.
+A workload is a probe, not a tink feature. It is listed because it showed tink something, and its stack lives with the workload.
 
 | Workload | Where | Shape it showed |
 |---|---|---|
@@ -136,6 +136,63 @@ A workload is not a tink feature. It is listed because it showed tink something,
 | Home Assistant | tron | A discovery leg that must not listen; the case for the listener check **[docs]** |
 | Immich, Nextcloud | tron | Large volumes and databases: backups, restore checks, and a database that also needs a stop that saves **[inferred]** |
 | Headscale, Authelia, LLDAP, Caddy | tron, edge | The platform's own roles. They are what the recipe would ship **[docs]** |
+
+### How tink is evaluated: the loop
+
+The author's method, as it is already practised:
+
+1. **Pick a workload and run it from its real install instructions,** the way a newcomer would: `docker run` or compose for a single container, upstream docs for a larger stack. Use a throwaway project.
+2. **Log every place tink helped, was silent, or was wrong,** each with an ID, the area, the finding and the evidence. The form is the gap log in tron's `smarthome/EVAL.md` (G1 to G19). The newcomer trials (`docs/explore-uptime-kuma.md`, `docs/explore-audiobookshelf.md`) and `docs/docker-gap-analysis.md` are the same thing for single-container installs. The tron labs (`acl-lab`, `authz-lab`, `dns-lab`, `e2e-lab`, `identity-lab`) are the same thing for one feature at a time **[tron, docs]**.
+3. **Fix the gap in tink** on a branch, then a PR. The first eight landed as PRs #70 to #75 and others after the smarthome trial **[tron: EVAL.md]**.
+4. **Run the workload again.** That is the exit test for the fix.
+5. **Record what the run exercised** in the matrix below, so the next trial can aim at what is still untouched.
+
+Where the log's open gaps land in this plan. These are the log's own words as I read them on 2026-10-17. Some may have been fixed since, which I did not re-check **[inferred]**:
+
+| Gap | Area | Where the plan puts it |
+|---|---|---|
+| G8 | `${secret:}` only in `environment.*`, no secret-to-file | K5 stage 2 (secrets in files, phase 2) |
+| G10 | No readiness, no stop timeout, no dependent restarts | K2 (a stop that saves). Readiness and dependent restarts are not planned |
+| G11 | Ingress is HTTP-only and reads the NIC address | K4 (the join apply path replaces the discovery, section 4, item 2) |
+| G12 | A backup target's `location` is an unverified claim | Not planned. Small, and a candidate for `plan` to check |
+| G13 | No ownership marker on instances | K6 |
+| G14 | No networking opinions | Partly #103 (the NAT proxy checks); the rest is not planned |
+| G15 | No way to import data into a volume | Not planned. The Rust world migration (decision 2) will hit it once |
+| G16 | No way to create an instance without starting it | Not planned. Same hit |
+
+### Coverage: what each kind of workload has exercised
+
+Rows are workload archetypes. Columns are the parts of tink. **L** = exercised live on a real host. **T** = a lab, a fixture or a unit test only. **–** = not touched. **?** = I could not tell from the docs and the hosts. Every cell is my reading and the author should correct it.
+
+| Archetype (workloads) | Stack model | Networking | Exposure (ingress, join, sign-on, NAT) | Secrets | Files and config | Backups and restore | Stop and update | Devices | Run and export |
+|---|---|---|---|---|---|---|---|---|---|
+| **Web app with a database** (Nextcloud, Nightscout, Immich, the canary) | L | L (the canary on its own bridge behind an ACL **[tron]**) | L (through the spine on tron; through the old ingress on the edge host) | L (Immich **[README]**). Nightscout predates `${secret:}` and has a plain password **[ssh]** | ? | L (Immich volumes copied offsite) | T (`on_image_change: report`; `rebuild` never run live) | – | – |
+| **One container from a `docker run` line** (Uptime Kuma, Audiobookshelf) | L | – | – | – | – | ? | – | – | L (run, then export back to YAML) |
+| **Home automation with LAN discovery and devices** (Home Assistant, Frigate, Mosquitto, zigbee2mqtt, Matter, X10 bridge) | T (lab stacks; the real stack is not built **[tron: PLAN.md]**) | T (a LAN leg plus a dedicated bridge, decided and labbed) | T (the discovery-leg listener check is parked) | T (an MQTT password-file workaround, G8) | T (the file fixes #78, #85) | T (the HAOS restore test passed in the lab) | T (the host-reboot gate was never tried) | ? (unix char devices were live; the Zigbee dongle and the GPU were planned, not run) | – |
+| **A game server: stateful, UDP, no web** (Rust) | T (a lab stack on the Rust VPS) | L for TCP (a `nat` proxy: clean re-plan, real client address). UDP is – | L for TCP; UDP – | L (the RCON password) | T (the RCON client file is planned) | – (designed; crash-consistent snapshots measured to be fine) | L, as a gap: `incus stop` kills without a save | – | – |
+| **Platform services** (dns, identity, sso, ingress, mesh) | L (the tron spine plans quietly) | L | L (the canary proved the chain; the dns half of `join` is run by hand) | L, with a limit (plain `environment.*`, G8) | L | L (the helper copies their volumes) | ? | – | – |
+| **A backup target** (the edge host's `tink-backup`, TrueNAS) | L | – | – | – | – | L (48 copy volumes from tron, a restore-check project) | – | – | – |
+
+What the matrix says:
+
+- **Never touched by any workload:** UDP through a `nat` proxy; a database-primary app that needs a quiesce before a snapshot (`volume-backup-design.md` names a future `quiesce` hook); any app that signs in through OIDC; more than one Incus host as a cluster; IPv6; a GPU; a VM-type instance (the code handles `virtual-machine`, and HAOS was a VM, but I found no live run **[code]**).
+- **Only ever touched in a lab:** the home automation stack, `on_image_change: rebuild`, the helper's ingress half, the host reboot gate.
+- **Most exercised:** plan and apply, backups to a second host, and the sign-on chain through the spine.
+- **The Rust trial's one finding so far is a gap in a different column than the others:** stop and update. That is the sort of result the matrix is for.
+
+### Next trials
+
+Candidates, in the order I would try them. They are suggestions for the author to cut or reorder, and none is built on yet.
+
+| Trial | Archetype | Fills | Why now |
+|---|---|---|---|
+| Rust server, the real stack on the Rust VPS (in flight) | game server | UDP, stop that saves, offsite copies, the helper on a clean host | It is already under way and a clean host makes mistakes cheap |
+| A database-primary app with a quiesce step (Postgres or MongoDB; Nightscout's Mongo is the nearest) | web app with a database | Stop and update, backups (consistency) | The same stop problem as Rust, in a second archetype. That is the gate's second archetype for K2b |
+| An app that signs in through Authelia's OIDC | web app | Exposure, secrets in files | Parked OIDC attributes need a real app before they are designed. Immich and Nextcloud both support it **[inferred]** |
+| Home automation, the real stack on tron | home automation | The host reboot gate, devices, the LAN leg | Decided and half labbed. Waits on the router work |
+| A monitoring app (Uptime Kuma, already explored) as a platform role | platform service | Watching (K7) | Turns the exploration into the first probe |
+| A VM-type workload | new | Stack model for VMs | Only if you plan to run VMs. HAOS was one |
+| A second Incus host or a cluster | new | Remote, helper reach | Only if you plan to. The docs say nothing about it **[inferred]** |
 
 ### What the grounds say
 
@@ -147,21 +204,24 @@ A workload is not a tink feature. It is listed because it showed tink something,
 
 ## 3. The gate: what gets built
 
-1. **A capability is built when a named ground needs it for something that ground does now or next.** "It might be useful" goes to the parking lot.
-2. **Every capability names its ground and an exit test that runs there.** No ground, no exit test: the item is a design note, not a deliverable.
-3. **Going generic takes a second ground.** A new kind, a verb the user must learn, or a recipe field is built for one ground only as the smallest thing that works (a printed unit, a hand-written stack, a doc). It becomes a feature when a second ground needs the same thing, or when the author says why one is enough.
-4. **Workload files stay with the workload.** The Rust stack, the RCON script, the Nightscout stack and a Home Assistant config are fixtures that tink's docs point to. Tink takes only what generalises.
-5. **Evidence is measured on a ground, with the version written down.** A design resting on one measurement says so ([section 7](#7-risks-and-unknowns)).
+The aim is a tink that runs the workloads you have now and the ones you will try next. The gate keeps that from turning into building for imagined users.
+
+1. **A gap found by running a workload is the trigger.** The workload can be one that has run, or a named planned trial (section 2, "Next trials"). "It might be useful" goes to the parking lot.
+2. **Fix the gap with the smallest thing that closes it,** and use the workload's rerun as the exit test. A capability with no workload to rerun is a design note, not a deliverable.
+3. **Going generic takes a second archetype.** A new kind, a verb the user must learn, or a recipe field is built for one workload only as the smallest thing that works (a printed unit, a hand-written stack, a doc). It becomes a feature when the matrix shows a second kind of workload hitting the same gap, or when the author says why one is enough.
+4. **Empty cells are work too.** Where the docs say tink supports something and no workload has run it (UDP proxies, `on_image_change: rebuild`, a host reboot with the helper), a trial is part of the roadmap, ahead of building more.
+5. **Workload files stay with the workload.** The Rust stack, the RCON script, the Nightscout stack and a Home Assistant config are fixtures that tink's docs point to. Tink takes only what generalises.
+6. **Evidence is measured on a host, with the version written down.** A design resting on one measurement says so ([section 7](#7-risks-and-unknowns)).
 
 How the capabilities in section 5 stand against it:
 
-| Capability | Ground that needs it now | Second ground | Verdict |
+| Capability | Workload that needs it now | Second archetype | Verdict |
 |---|---|---|---|
 | Release | all | n/a | Build |
 | Prove the helper on a clean host | Rust VPS | edge, if it moves | Build (it is a test, not a feature) |
 | UDP through a `nat` proxy | Rust VPS | none | Measure only. Add a check if it fails |
 | Stop that saves: the unit | Rust VPS | none | Build as a hand-written unit |
-| Stop that saves: `stop:` and a verb | Rust VPS | tron and edge databases **[inferred]** | Build after the unit has run a real reboot and an image update |
+| Stop that saves: `stop:` and a verb | Rust | a database-primary app (a next trial) | Build after the unit has run a real reboot and an image update, and the database trial confirms the gap |
 | Apply the join renderings | tron | edge | Build for tron first |
 | Platform recipe | tron, Rust VPS | edge | Build, role by role, with a fixture per ground that has the role |
 | Ownership stamps, phase 1 | Rust VPS (fresh) | tron and edge adopt later | Build phase 1 only |
@@ -238,7 +298,7 @@ K6 ownership phase 1 (before K5's expander) · K7 watching · K8 credential narr
 
 - **Needed by.** the Rust VPS now; the databases on tron and the edge host probably **[inferred, unmeasured for them]**.
 - **K2a (S): the unit.** A hand-written host unit, `Requires=` and `After=incus-startup.service`, whose `ExecStop` runs the app's quit command through `incus exec` and waits. This is what [graceful-stop.md](graceful-stop.md) measured. Its source is kept with the workload. *Exit:* a real `systemctl reboot`, not only `systemctl stop incus-startup.service` as measured: the log shows the save before the instance stops, and the server is back after boot.
-- **K2b (M): `stop:` in tink.** The `stop:` field and its `user.tink.stop` stamp, one verb (`tink stop [INSTANCE...|--all]`), and use in tink's own stops: `on_image_change: rebuild` and `restart: true` **[code: rebuild.go, apply.go]**, which kill the app without a save today. Print the unit rather than install it, as `daemon install` does. Measure `server.save` against `quit` first. *Gate:* start only after K2a has run through a reboot and an image update, and a second stateful workload confirms the need. *Exit:* an image change applied with `rebuild` leaves a fresh save from before the stop.
+- **K2b (M): `stop:` in tink.** The `stop:` field and its `user.tink.stop` stamp, one verb (`tink stop [INSTANCE...|--all]`), and use in tink's own stops: `on_image_change: rebuild` and `restart: true` **[code: rebuild.go, apply.go]**, which kill the app without a save today. Print the unit rather than install it, as `daemon install` does. Measure `server.save` against `quit` first. *Gate:* start only after K2a has run through a reboot and an image update, and the database trial (section 2, "Next trials") confirms the need in a second archetype. *Exit:* an image change applied with `rebuild` leaves a fresh save from before the stop.
 - **Depends on.** the workload's stack (K2a), K2a and PR #104 (K2b). **Unblocks.** Image updates with `on_image_change: rebuild` for anything stateful.
 
 ### K3: the helper on a clean host (S)
@@ -349,6 +409,11 @@ This is what the grounds do with the capabilities. It lives in each ground's own
    - Options: the Rust VPS (clean, small, answers the stop and offsite questions); tron (the real spine, and the join apply path); both in parallel.
    - Recommendation: the Rust VPS leads on K1 to K3, and K0 and K4 run for tron alongside. The Rust VPS is the ground where mistakes cost least. Earlier in the sessions the author called the Rust work secondary, then returned to it, so this should be confirmed.
    - Blocks: nothing hard. It sets the order of attention.
+10. **Where does the gap log live?**
+    - It is in the tron repository today (`smarthome/EVAL.md`, G1 to G19), and tink's issues and PRs refer to it.
+    - Options: leave it; move it into tink as `docs/gap-log.md` with the coverage matrix beside it; one file per trial.
+    - Recommendation: move it into tink, so the roadmap, the matrix and the gaps cite each other and the next trial adds to one place. Gaps would keep their IDs.
+    - Blocks: nothing. It is cheaper to do before the log grows.
 
 
 ## 7. Risks and unknowns
