@@ -86,6 +86,12 @@ several files to see are below.
 - **Docs travel with code.** Update the docs a change touches in the same PR, and flip "not yet run / not yet built" claims in
   the README and `docs/` when they stop being true. Package doc comments carry much of the design rationale; read them before
   changing a package.
+- **This repository is public.** Never put a real hostname, domain, address, account, or a description of where something
+  runs or what is weak about a particular site in code, tests, fixtures, golden files, docs, commit messages, or PR and issue
+  text. Use documentation values (`example.org`; `192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`) and generic words ("a
+  homelab host", "a public VPS"). A measurement taken on a real host cites a lab ID (for example "L-2026-10-17") and states
+  the software version; the host's name and the raw output stay in the author's private notes. Read PR and issue text before
+  posting it, because it is public too.
 - **No deprecation period for undeployed features.** If nothing has been deployed with a feature, remove it outright.
 - **Releases.** A `v*` tag builds the binaries (`release.yml`) and the helper image (`helper-image.yml`). The version is
   compiled in from the tag, and `tink helper install` with no flag picks the image published for the version it reports.
