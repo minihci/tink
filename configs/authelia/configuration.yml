@@ -122,7 +122,7 @@ identity_providers:
       # (same reasoning nightscout-app.profile.yaml hardcodes its own
       # BASE_URL rather than being templated by this repo). Currently
       # nc.test.greenlock.cloud, the homelabvps rehearsal target — update
-      # here (and reissue a client secret) at the real incus.xlii.co
+      # here (and reissue a client secret) at the real incus.example.org
       # production cutover rather than assuming this value still applies.
       # client_secret is the pbkdf2-sha512 hash from `incus exec authelia
       # -- authelia crypto hash generate pbkdf2 --variant sha512 --random

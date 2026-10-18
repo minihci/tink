@@ -90,7 +90,7 @@ func TestTheServersStampsJoinToTheSamePiecesAsTheFiles(t *testing.T) {
 	if len(res.Findings) != 0 {
 		t.Fatalf("findings: %v", res.Findings)
 	}
-	if res.Zone != "home.xlii.co" || res.LANAddress != "10.0.142.231" || res.MeshAddress != "10.10.50.3" || !res.HasMesh {
+	if res.Zone != "home.example.org" || res.LANAddress != "192.0.2.231" || res.MeshAddress != "10.10.50.3" || !res.HasMesh {
 		t.Errorf("facts = zone %q lan %q mesh %q hasMesh %v", res.Zone, res.LANAddress, res.MeshAddress, res.HasMesh)
 	}
 	for name, got := range map[string]string{"dns": res.DNS, "mesh": res.Mesh, "caddy": res.Caddy, "sso": res.SSO, "acl": res.ACL} {
@@ -236,7 +236,7 @@ func TestFromServerSeesAnOfferNicThatComesFromAProfileAndAnUnmanagedBridgeAsTheJ
 		t.Errorf("the NIC from the profile should be used: %v\n%s", res.Findings, res.Caddy)
 	}
 	// a NIC bridged to br0, which is on the server but is not a network Incus manages: no ACL can restrict it
-	f.whoami(t).Devices = map[string]map[string]string{"eth0": {"type": "nic", "nictype": "bridged", "parent": "br0", "ipv4.address": "10.0.142.50"}}
+	f.whoami(t).Devices = map[string]map[string]string{"eth0": {"type": "nic", "nictype": "bridged", "parent": "br0", "ipv4.address": "192.0.2.50"}}
 	if res := fromServer(t, f); !strings.Contains(messages(res, Error), "is not on a managed network") {
 		t.Errorf("findings: %v", res.Findings)
 	}
@@ -318,7 +318,7 @@ func TestAStampBelongsToTheInstanceAndProjectThatCarryIt(t *testing.T) {
 // find an ACL on, and must not be taken for one with no ACL attached.
 func TestAnUnmanagedBridgeIsNotANetworkTheJoinCanFindAnAclOn(t *testing.T) {
 	f := serverOf(t, load(t))
-	f.whoami(t).Devices = map[string]map[string]string{"eth0": {"type": "nic", "network": "br0", "ipv4.address": "10.0.142.50"}}
+	f.whoami(t).Devices = map[string]map[string]string{"eth0": {"type": "nic", "network": "br0", "ipv4.address": "192.0.2.50"}}
 	res := fromServer(t, f)
 	if res.Errors() != 0 || !strings.Contains(messages(res, Warning), "network br0 is not declared") {
 		t.Errorf("findings: %v", res.Findings)

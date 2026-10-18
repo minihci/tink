@@ -31,7 +31,7 @@ devices:
 
 ```yaml
 kind: publish
-name: whoami            # the host label: whoami.home.xlii.co is this plus the dns helper's zone
+name: whoami            # the host label: whoami.home.example.org is this plus the dns helper's zone
 instance: whoami        # the instance that makes the offer
 offer: web              # which of its offers
 allow: [family]         # groups, never people; a typed subject such as group:family is refused
@@ -88,14 +88,14 @@ tink join --only dns platform/platform.yaml canary/canary.yaml      # one sectio
 Each argument is one stack (that is what gives its resources the stack's default project); a stack split across files is given as `a.yaml,b.yaml`. Output, for two publishes of one app:
 
 ```
-== dns: records for the dns helper's hosts file (zone home.xlii.co)
-10.0.142.231 whoami.home.xlii.co
-10.0.142.231 whoami-admin.home.xlii.co
+== dns: records for the dns helper's hosts file (zone home.example.org)
+192.0.2.231 whoami.home.example.org
+192.0.2.231 whoami-admin.home.example.org
 
 == mesh: ...                                  a JSON array of A records, the format of Headscale's extra_records file
 
 == caddy: routes for the proxy, to sit inside the wildcard site block ...
-@whoami host whoami.home.xlii.co
+@whoami host whoami.home.example.org
 handle @whoami {
 	import sso
 	reverse_proxy 10.10.60.10:80 {
@@ -104,7 +104,7 @@ handle @whoami {
 }
 ...
 == sso: rules for the sign-on helper, to sit under access_control.rules
-- domain: 'whoami.home.xlii.co'
+- domain: 'whoami.home.example.org'
   policy: one_factor
   subject: 'group:family'
 ...

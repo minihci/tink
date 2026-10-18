@@ -15,16 +15,16 @@ Stage 1 of that note is "account for every literal in `platform.yaml` as recipe,
 | `10.10.50.1/24`, DHCP range `.100-.250` | 2 | derived | one fact, the platform subnet. Convention: `.1` gateway, `.2-.99` static for helpers, `.100-.250` DHCP |
 | `10.10.50.3`, `.10`, `.11`, `.12` | 4 | derived | a per-role offset table in the recipe (ingress 3, identity 10, sso 11, mesh 12) |
 | `10.10.50.3/32` (route, two ACL rules), `10.10.50.11/32` | 4 | derived | the role graph: who may call whom (ingress to sso and identity, sso to identity, mesh advertises ingress) |
-| `10.0.142.230`, `.231` (and their `/24` forms, and the zone-file A records) | 6 | **fact** | the two LAN addresses, outside the router's DHCP pool; `/24` comes from the LAN CIDR |
-| `10.0.142.0/24` | 1 | **fact** | the LAN CIDR (here it also guards the directory's UI to LAN clients) |
+| `192.0.2.230`, `.231` (and their `/24` forms, and the zone-file A records) | 6 | **fact** | the two LAN addresses, outside the router's DHCP pool; `/24` comes from the LAN CIDR |
+| `192.0.2.0/24` | 1 | **fact** | the LAN CIDR (here it also guards the directory's UI to LAN clients) |
 | `1.1.1.1`, `8.8.8.8` | 2 | recipe default | public resolvers for the ACME check, needed because the dns helper is authoritative for the zone |
 | `10.10.60.10` | 2 | **generated** | the canary app's address and port in a hand-written route; `tink join` renders it from the app's offer |
 | MACs `02:1a:2b:00:23:30`, `:31` | 2 | derivable, or unneeded | a prefix plus a per-role byte. They keep a recreated NIC's MAC stable; whether they are needed at all with static addresses is an open question |
-| `home.xlii.co` (5 bare, the rest as a suffix), `hostmaster.`, SOA | 18 | **fact** | the zone. Labels `auth`, `id`, `ns`, `db.<zone>`, `hostmaster` are recipe |
+| `home.example.org` (5 bare, the rest as a suffix), `hostmaster.`, SOA | 18 | **fact** | the zone. Labels `auth`, `id`, `ns`, `db.<zone>`, `hostmaster` are recipe |
 | `whoami.`, `whoami-admin.` | 4 | **generated** | the canary's two `publish` documents |
 | `identity.incus`, `sso.incus` | 4 | recipe | the helpers' names on the platform bridge |
-| `hs.xlii.co` | 1 | **fact** | the mesh control plane's URL |
-| `DC=home,DC=xlii,DC=co` (and the user DN) | 3 | derived from the zone | **fixed at birth**: Authelia names users by it, so it is hard to change later |
+| `hs.example.org` | 1 | **fact** | the mesh control plane's URL |
+| `DC=home,DC=example,DC=org` (and the user DN) | 3 | derived from the zone | **fixed at birth**: Authelia names users by it, so it is hard to change later |
 | `nothing.invalid` | 1 | recipe | Authelia refuses `default_policy: deny` with no rules, so one rule keeps it honest (found live) |
 | image digests | 5 | recipe | pins |
 | `${secret:...}` | 9 | 7 generated, 2 **supplied** | JWT secrets, keys, session and storage secrets and the admin and bind passwords can be minted; the Cloudflare token and the mesh auth key cannot |
@@ -91,7 +91,7 @@ Searched in `cmd`, `internal`, `configs`, `build` and `docs` of tink at `2351d59
 
 Worth keeping as the pattern: **`tink join`** (a pure function from declarations to renderings, with hand-written golden files); **the backup opinion** (a default, a check that notices departure, a reasoned opt-out, machinery that makes following it cheap); **`kind: helper`** (adopt what exists, change nothing); **role and leg stamps** (`user.tink.role`, `user.tink.leg.*`), which are the beginning of a role contract; and **`${secret:}` with `--generate`**.
 
-One finding is a relief: tink's code carries **no site literals**. The only hits for `xlii` or a home LAN range in non-test code are comments and fixtures. The coupling is in the files, the names and the paths above, not in constants.
+One finding is a relief: tink's code carries **no site literals**. The only hits for the site's domain or a home LAN range in non-test code are comments and fixtures. The coupling is in the files, the names and the paths above, not in constants.
 
 ### What this adds to "what has to be true first"
 

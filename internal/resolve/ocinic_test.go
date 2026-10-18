@@ -18,8 +18,8 @@ func nicInstance(image string, devices map[string]map[string]string, profiles ..
 }
 
 func TestOCINICWarnings(t *testing.T) {
-	cidr := map[string]string{"type": "nic", "nictype": "bridged", "parent": "br0", "ipv4.address": "10.0.142.246/24"}
-	named := map[string]string{"type": "nic", "nictype": "bridged", "parent": "br0", "ipv4.address": "10.0.142.246/24", "name": "eth1"}
+	cidr := map[string]string{"type": "nic", "nictype": "bridged", "parent": "br0", "ipv4.address": "192.0.2.246/24"}
+	named := map[string]string{"type": "nic", "nictype": "bridged", "parent": "br0", "ipv4.address": "192.0.2.246/24", "name": "eth1"}
 	cases := []struct {
 		name  string
 		r     Resource
@@ -106,7 +106,7 @@ func TestPlanOptions_ProfilesComeFromTheFullStack(t *testing.T) {
 
 func TestPlanOne_UnnamedOCINICWarnsBeforeTheInstanceExists(t *testing.T) {
 	r := nicInstance("docker-oci:eclipse-mosquitto:2", map[string]map[string]string{
-		"lan": {"type": "nic", "nictype": "bridged", "parent": "br0", "ipv4.address": "10.0.142.246/24"},
+		"lan": {"type": "nic", "nictype": "bridged", "parent": "br0", "ipv4.address": "192.0.2.246/24"},
 	})
 	stack := []Resource{r}
 	opts := PlanOptions{env: &imageEnv{offline: true, conf: &cliconfig.Config{Remotes: ociTestRemotes}}}.ForResources(stack)

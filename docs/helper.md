@@ -148,7 +148,7 @@ The helper is a client of its own host, so it needs the host's HTTPS API. There 
 **Why network is the default.** A restricted project blocks proxy devices unless it is told to allow them, and a helper with one cannot be updated there; and a
 proxy device is a host-reach primitive (a proxy to the Incus unix socket is root on the host), which is the very thing a restricted project exists to refuse.
 Going over the network asks the project for nothing it was not already giving the helper, a NIC. A container on a managed bridge (`tink0`) reaching the host's
-API port at the bridge's gateway address when `core.https_address` is a wildcard was measured on the lab host **[lab]**. On a second host the listener was exactly the bridge's gateway address (`10.34.253.1:8444`, not a wildcard), which is enough: the helper, and an unrelated container on the same bridge, reached it, and the host's public address did not answer on that port **[lab, 2026-10-17]**.
+API port at the bridge's gateway address when `core.https_address` is a wildcard was measured on the lab host **[lab]**. On a second host the listener was exactly the bridge's gateway address (`198.51.100.1:8444`, not a wildcard), which is enough: the helper, and an unrelated container on the same bridge, reached it, and the host's public address did not answer on that port **[lab, 2026-10-17]**.
 
 **What it costs.** The API port is then reachable by **every container on the bridge**, not only the helper (a proxy device was private to it). It is the
 same TLS API, which needs a certificate in the trust store, as it is on the host's other addresses; what changes is who can try. To limit it to the
@@ -196,7 +196,7 @@ host path uses, so the files are the same bytes.
     user.tink.ingress.enabled: "true"
     user.tink.ingress.domain: ha.example.com
     user.tink.ingress.port: "8123"
-    user.tink.ingress.address: 10.0.142.176   # an IP address or a host name: no scheme, no port
+    user.tink.ingress.address: 192.0.2.176   # an IP address or a host name: no scheme, no port
   ```
 
   The address you set is believed over anything Incus reports, so the machine is routed whether or not Incus can see it. Because it ends up in generated Caddy configuration it

@@ -1,2 +1,2 @@
-10.0.142.231 whoami.home.xlii.co
-10.0.142.231 whoami-admin.home.xlii.co
+192.0.2.231 whoami.home.example.org
+192.0.2.231 whoami-admin.home.example.org

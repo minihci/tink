@@ -29,9 +29,9 @@ func TestFilterAndResolve_BasicRegistration(t *testing.T) {
 	instances := []api.InstanceFull{
 		instanceFixture("ns-caddy", map[string]string{
 			"user.ingress.enabled": "true",
-			"user.ingress.domain":  "ns.xlii.co",
+			"user.ingress.domain":  "ns.example.org",
 			"user.ingress.port":    "80",
-		}, "10.77.20.32"),
+		}, "192.0.2.32"),
 	}
 
 	regs, warnings := filterAndResolve(instances)
@@ -40,7 +40,7 @@ func TestFilterAndResolve_BasicRegistration(t *testing.T) {
 		t.Fatalf("expected no warnings, got %v", warnings)
 	}
 	// the old key names: still registered, and marked so the rename can be asked for
-	want := []Registration{{Name: "ns-caddy", Domain: "ns.xlii.co", Port: "80", Address: "10.77.20.32", Legacy: true}}
+	want := []Registration{{Name: "ns-caddy", Domain: "ns.example.org", Port: "80", Address: "192.0.2.32", Legacy: true}}
 	if !reflect.DeepEqual(regs, want) {
 		t.Fatalf("got %+v, want %+v", regs, want)
 	}
@@ -50,8 +50,8 @@ func TestFilterAndResolve_DefaultsPortTo80(t *testing.T) {
 	instances := []api.InstanceFull{
 		instanceFixture("ns-caddy", map[string]string{
 			"user.ingress.enabled": "true",
-			"user.ingress.domain":  "ns.xlii.co",
-		}, "10.77.20.32"),
+			"user.ingress.domain":  "ns.example.org",
+		}, "192.0.2.32"),
 	}
 
 	regs, _ := filterAndResolve(instances)
@@ -62,13 +62,13 @@ func TestFilterAndResolve_DefaultsPortTo80(t *testing.T) {
 
 func TestFilterAndResolve_SkipsUnopted(t *testing.T) {
 	instances := []api.InstanceFull{
-		instanceFixture("ns-mongo", map[string]string{}, "10.77.20.30"),
+		instanceFixture("ns-mongo", map[string]string{}, "192.0.2.30"),
 		instanceFixture("ns-app", map[string]string{
-			"user.ingress.domain": "ns.xlii.co", // enabled missing -> not registered
-		}, "10.77.20.31"),
+			"user.ingress.domain": "ns.example.org", // enabled missing -> not registered
+		}, "192.0.2.31"),
 		instanceFixture("authelia", map[string]string{
 			"user.ingress.enabled": "true", // domain missing -> not registered
-		}, "10.77.20.20"),
+		}, "192.0.2.20"),
 	}
 
 	regs, warnings := filterAndResolve(instances)
@@ -81,12 +81,12 @@ func TestFilterAndResolve_ConflictSkipsBothClaimants(t *testing.T) {
 	instances := []api.InstanceFull{
 		instanceFixture("a", map[string]string{
 			"user.ingress.enabled": "true",
-			"user.ingress.domain":  "shared.xlii.co",
-		}, "10.77.20.1"),
+			"user.ingress.domain":  "shared.example.org",
+		}, "192.0.2.1"),
 		instanceFixture("b", map[string]string{
 			"user.ingress.enabled": "true",
-			"user.ingress.domain":  "shared.xlii.co",
-		}, "10.77.20.2"),
+			"user.ingress.domain":  "shared.example.org",
+		}, "192.0.2.2"),
 	}
 
 	regs, warnings := filterAndResolve(instances)
@@ -101,12 +101,12 @@ func TestFilterAndResolve_ConflictSkipsBothClaimants(t *testing.T) {
 func TestFilterAndResolve_CrossProjectRegistrationsBothSurvive(t *testing.T) {
 	a := instanceFixture("ns-caddy", map[string]string{
 		"user.ingress.enabled": "true",
-		"user.ingress.domain":  "ns.xlii.co",
-	}, "10.77.20.32")
+		"user.ingress.domain":  "ns.example.org",
+	}, "192.0.2.32")
 	a.Project = "default"
 	b := instanceFixture("ns-caddy", map[string]string{
 		"user.ingress.enabled": "true",
-		"user.ingress.domain":  "ns-staging.xlii.co",
+		"user.ingress.domain":  "ns-staging.example.org",
 	}, "10.135.20.32")
 	b.Project = "nightscout"
 
@@ -116,8 +116,8 @@ func TestFilterAndResolve_CrossProjectRegistrationsBothSurvive(t *testing.T) {
 		t.Fatalf("expected no warnings, got %v", warnings)
 	}
 	want := []Registration{
-		{Name: "ns-caddy", Project: "default", Domain: "ns.xlii.co", Port: "80", Address: "10.77.20.32", Legacy: true},
-		{Name: "ns-caddy", Project: "nightscout", Domain: "ns-staging.xlii.co", Port: "80", Address: "10.135.20.32", Legacy: true},
+		{Name: "ns-caddy", Project: "default", Domain: "ns.example.org", Port: "80", Address: "192.0.2.32", Legacy: true},
+		{Name: "ns-caddy", Project: "nightscout", Domain: "ns-staging.example.org", Port: "80", Address: "10.135.20.32", Legacy: true},
 	}
 	if !reflect.DeepEqual(regs, want) {
 		t.Fatalf("got %+v, want %+v", regs, want)
@@ -128,7 +128,7 @@ func TestFilterAndResolve_NoAddressYetIsSkippedWithWarning(t *testing.T) {
 	instances := []api.InstanceFull{
 		instanceFixture("ns-caddy", map[string]string{
 			"user.ingress.enabled": "true",
-			"user.ingress.domain":  "ns.xlii.co",
+			"user.ingress.domain":  "ns.example.org",
 		} /* no addresses */),
 	}
 
@@ -165,8 +165,8 @@ func TestFilterAndResolve_TheNewNameWinsPerKeyAndAMixIsStillLegacy(t *testing.T)
 
 	// the old name alone switches nothing off: this is what keeps a route from being deleted when tink is upgraded first
 	regs, _ = filterAndResolve([]api.InstanceFull{instanceFixture("ns-caddy", map[string]string{
-		"user.ingress.enabled": "true", "user.ingress.domain": "ns.xlii.co",
-	}, "10.77.20.32")})
+		"user.ingress.enabled": "true", "user.ingress.domain": "ns.example.org",
+	}, "192.0.2.32")})
 	if len(regs) != 1 {
 		t.Fatalf("an instance registered under the old names must stay registered: %+v", regs)
 	}
@@ -195,10 +195,10 @@ func TestLegacyNamesAndNotice(t *testing.T) {
 func TestFilterAndResolve_ANoAgentVMSaysWhereItIs(t *testing.T) {
 	// Home Assistant OS as it is on the lab host: a VM whose eth0 Incus cannot read, so nothing is discovered
 	haos := instanceFixture("haos", map[string]string{
-		KeyEnabled: "true", KeyDomain: "ha.example.com", KeyPort: "8123", KeyAddress: "10.0.142.176",
+		KeyEnabled: "true", KeyDomain: "ha.example.com", KeyPort: "8123", KeyAddress: "192.0.2.176",
 	}) // no address in its state
 	regs, warnings := filterAndResolve([]api.InstanceFull{haos})
-	want := []Registration{{Name: "haos", Domain: "ha.example.com", Port: "8123", Address: "10.0.142.176"}}
+	want := []Registration{{Name: "haos", Domain: "ha.example.com", Port: "8123", Address: "192.0.2.176"}}
 	if len(warnings) != 0 || !reflect.DeepEqual(regs, want) {
 		t.Fatalf("got %+v %v, want %+v", regs, warnings, want)
 	}

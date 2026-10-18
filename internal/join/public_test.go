@@ -271,7 +271,7 @@ func TestAMeshLegAndASeparatePublicLegAreBothAdmitted(t *testing.T) {
 // With a dns helper that states the zone, the ingress helper may state it too, and the two may not disagree; stating it twice is not an error.
 func TestAnIngressZoneThatAgreesWithTheDNSHelperIsFine(t *testing.T) {
 	stacks := load(t)
-	edit(t, stacks, resolve.KindInstance, "ingress", func(r *resolve.Resource) { setConfig(r, "user.tink.dns.zone", "home.xlii.co") })
+	edit(t, stacks, resolve.KindInstance, "ingress", func(r *resolve.Resource) { setConfig(r, "user.tink.dns.zone", "home.example.org") })
 	res := Build(stacks)
 	if len(res.Findings) != 0 {
 		t.Errorf("findings = %v", res.Findings)

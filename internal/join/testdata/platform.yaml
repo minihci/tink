@@ -41,9 +41,9 @@ image: docker-oci:coredns/coredns:1.14.7
 profiles: [tink-base]
 config:
   user.tink.role: dns
-  user.tink.dns.zone: home.xlii.co
+  user.tink.dns.zone: home.example.org
 devices:
-  eth0: {name: eth0, type: nic, nictype: bridged, parent: br0, hwaddr: "02:1a:2b:00:23:30", ipv4.address: 10.0.142.230/24, ipv4.gateway: none}
+  eth0: {name: eth0, type: nic, nictype: bridged, parent: br0, hwaddr: "02:1a:2b:00:23:30", ipv4.address: 192.0.2.230/24, ipv4.gateway: none}
 ---
 kind: instance
 name: ingress
@@ -55,7 +55,7 @@ config:
   user.tink.leg.eth1: serves
 devices:
   eth0: {name: eth0, type: nic, network: tink0, ipv4.address: 10.10.50.3}
-  eth1: {name: eth1, type: nic, nictype: bridged, parent: br0, hwaddr: "02:1a:2b:00:23:31", ipv4.address: 10.0.142.231/24, ipv4.gateway: none}
+  eth1: {name: eth1, type: nic, nictype: bridged, parent: br0, hwaddr: "02:1a:2b:00:23:31", ipv4.address: 192.0.2.231/24, ipv4.gateway: none}
 ---
 kind: instance
 name: mesh

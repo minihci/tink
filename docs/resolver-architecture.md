@@ -152,7 +152,7 @@ right alongside this host's real, running `authelia`/`incus-ui`/
 `ingress`. No collision happened this time; nothing prevented one. This
 is exactly the kind of bug that matters most here specifically, since
 project isolation is this platform's real tenant-separation boundary
-(`nextcloud`/`nightscout` projects on `incus.xlii.co`) — not something
+(`nextcloud`/`nightscout` projects on `incus.example.org`) — not something
 to route around quietly.
 
 Filed upstream as

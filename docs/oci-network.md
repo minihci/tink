@@ -35,7 +35,7 @@ devices:
     type: nic
     nictype: bridged
     parent: br0
-    ipv4.address: 10.0.142.246/24
+    ipv4.address: 192.0.2.246/24
     ipv4.gateway: none
 ```
 
@@ -50,7 +50,7 @@ It is a **warning**, not an error: a stack that works today must keep applying. 
 
 ## Where this came from
 
-The Home Assistant migration lab (`smarthome/EVAL.md`, gap G19): a dual-homed Home Assistant container kept a router lease next to its static LAN address, took the router's default route, and picked up the router's nameservers, and two documented settings seemed to be ignored. Reading the Incus source showed one cause. The Incus NIC reference does not mention that `name:` is required; that is worth raising upstream.
+A home-automation migration trial (gap G19 in the author's private gap log): a dual-homed Home Assistant container kept a router lease next to its static LAN address, took the router's default route, and picked up the router's nameservers, and two documented settings seemed to be ignored. Reading the Incus source showed one cause. The Incus NIC reference does not mention that `name:` is required; that is worth raising upstream.
 
 ## Status
 

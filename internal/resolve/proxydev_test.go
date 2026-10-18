@@ -91,7 +91,7 @@ func TestEndpointOverlaps(t *testing.T) {
 
 func TestNATProxyWarnings(t *testing.T) {
 	profiles := map[string]Resource{
-		"lan": {Kind: KindProfile, Name: "lan", Devices: map[string]map[string]string{"eth0": nicWith("ipv4.address", "10.34.253.50")}},
+		"lan": {Kind: KindProfile, Name: "lan", Devices: map[string]map[string]string{"eth0": nicWith("ipv4.address", "198.51.100.50")}},
 	}
 	cases := []struct {
 		name  string
@@ -99,42 +99,42 @@ func TestNATProxyWarnings(t *testing.T) {
 		wants []string // substrings, one per expected warning; nil = none
 	}{
 		{"connects to the NIC's static address", proxyInstance("ing", map[string]map[string]string{
-			"eth0": nicWith("ipv4.address", "10.34.253.201"), "https": natProxy("tcp:170.205.38.254:443", "tcp:10.34.253.201:443")}), nil},
+			"eth0": nicWith("ipv4.address", "198.51.100.201"), "https": natProxy("tcp:203.0.113.10:443", "tcp:198.51.100.201:443")}), nil},
 		{"a CIDR on the NIC counts, its prefix ignored", proxyInstance("ing", map[string]map[string]string{
-			"eth0": nicWith("ipv4.address", "10.34.253.201/24"), "https": natProxy("tcp:170.205.38.254:443", "tcp:10.34.253.201:443")}), nil},
+			"eth0": nicWith("ipv4.address", "198.51.100.201/24"), "https": natProxy("tcp:203.0.113.10:443", "tcp:198.51.100.201:443")}), nil},
 		{"an IPv6 static address", proxyInstance("ing", map[string]map[string]string{
 			"eth0": nicWith("ipv6.address", "fd42::201"), "https": natProxy("tcp:[2001:db8::1]:443", "tcp:[fd42::201]:443")}), nil},
 		{"the NIC has no static address (a DHCP lease is not one)", proxyInstance("ing", map[string]map[string]string{
-			"eth0": nicWith(), "https": natProxy("tcp:170.205.38.254:443", "tcp:10.34.253.77:443")}),
-			[]string{`proxy device "https" has nat on and connects to 10.34.253.77`, "none of its NICs declares a static address"}},
+			"eth0": nicWith(), "https": natProxy("tcp:203.0.113.10:443", "tcp:198.51.100.77:443")}),
+			[]string{`proxy device "https" has nat on and connects to 198.51.100.77`, "none of its NICs declares a static address"}},
 		{"connects to an address the NIC does not have", proxyInstance("ing", map[string]map[string]string{
-			"eth0": nicWith("ipv4.address", "10.34.253.201"), "https": natProxy("tcp:170.205.38.254:443", "tcp:10.34.253.202:443")}),
-			[]string{"which is not a static address of this instance", "the static addresses its NICs declare are 10.34.253.201"}},
+			"eth0": nicWith("ipv4.address", "198.51.100.201"), "https": natProxy("tcp:203.0.113.10:443", "tcp:198.51.100.202:443")}),
+			[]string{"which is not a static address of this instance", "the static addresses its NICs declare are 198.51.100.201"}},
 		{"ipv4.address none is not an address", proxyInstance("ing", map[string]map[string]string{
-			"eth0": nicWith("ipv4.address", "none"), "https": natProxy("tcp:170.205.38.254:443", "tcp:10.34.253.77:443")}),
+			"eth0": nicWith("ipv4.address", "none"), "https": natProxy("tcp:203.0.113.10:443", "tcp:198.51.100.77:443")}),
 			[]string{"none of its NICs declares a static address"}},
 		{"a connect name that is not an IP address", proxyInstance("ing", map[string]map[string]string{
-			"eth0": nicWith("ipv4.address", "10.34.253.201"), "https": natProxy("tcp:170.205.38.254:443", "tcp:localhost:443")}),
+			"eth0": nicWith("ipv4.address", "198.51.100.201"), "https": natProxy("tcp:203.0.113.10:443", "tcp:localhost:443")}),
 			[]string{`connects to "localhost", which is not an IP address`}},
 		{"the default userspace proxy (no nat) needs no static address", proxyInstance("ing", map[string]map[string]string{
-			"eth0": nicWith(), "https": {"type": "proxy", "listen": "tcp:170.205.38.254:443", "connect": "tcp:127.0.0.1:443"}}), nil},
+			"eth0": nicWith(), "https": {"type": "proxy", "listen": "tcp:203.0.113.10:443", "connect": "tcp:127.0.0.1:443"}}), nil},
 		{"nat written false", proxyInstance("ing", map[string]map[string]string{
-			"eth0": nicWith(), "https": {"type": "proxy", "nat": "false", "listen": "tcp:170.205.38.254:443", "connect": "tcp:127.0.0.1:443"}}), nil},
+			"eth0": nicWith(), "https": {"type": "proxy", "nat": "false", "listen": "tcp:203.0.113.10:443", "connect": "tcp:127.0.0.1:443"}}), nil},
 		{"a proxy that listens inside the instance is not a host NAT", proxyInstance("ing", map[string]map[string]string{
 			"eth0": nicWith(), "api": {"type": "proxy", "nat": "true", "bind": "container", "listen": "tcp:127.0.0.1:8443", "connect": "tcp:10.0.0.1:8443"}}), nil},
 		{"the static address comes from a declared profile", proxyInstance("ing", map[string]map[string]string{
-			"https": natProxy("tcp:170.205.38.254:443", "tcp:10.34.253.50:443")}, "lan"), nil},
+			"https": natProxy("tcp:203.0.113.10:443", "tcp:198.51.100.50:443")}, "lan"), nil},
 		{"a profile the stack does not declare is named in the warning", proxyInstance("ing", map[string]map[string]string{
-			"eth0": nicWith(), "https": natProxy("tcp:170.205.38.254:443", "tcp:10.34.253.77:443")}, "default", "site"),
+			"eth0": nicWith(), "https": natProxy("tcp:203.0.113.10:443", "tcp:198.51.100.77:443")}, "default", "site"),
 			[]string{"profiles default, site are not declared in this stack"}},
 		{"one good and one bad device give one warning, naming the bad one", proxyInstance("ing", map[string]map[string]string{
-			"eth0": nicWith("ipv4.address", "10.34.253.201"),
-			"http": natProxy("tcp:170.205.38.254:80", "tcp:10.34.253.201:80"), "https": natProxy("tcp:170.205.38.254:443", "tcp:10.34.253.9:443")}),
+			"eth0": nicWith("ipv4.address", "198.51.100.201"),
+			"http": natProxy("tcp:203.0.113.10:80", "tcp:198.51.100.201:80"), "https": natProxy("tcp:203.0.113.10:443", "tcp:198.51.100.9:443")}),
 			[]string{`proxy device "https"`}},
 		{"a device that is not a proxy is ignored", proxyInstance("ing", map[string]map[string]string{
 			"eth0": nicWith(), "data": {"type": "disk", "nat": "true", "connect": "tcp:localhost:1"}}), nil},
 		{"an unparseable connect is left to Incus", proxyInstance("ing", map[string]map[string]string{
-			"eth0": nicWith(), "https": natProxy("tcp:170.205.38.254:443", "unix:/run/x.sock")}), nil},
+			"eth0": nicWith(), "https": natProxy("tcp:203.0.113.10:443", "unix:/run/x.sock")}), nil},
 		{"not an instance", Resource{Kind: KindProfile, Name: "p", Devices: map[string]map[string]string{"https": natProxy("tcp:1.2.3.4:443", "tcp:localhost:443")}}, nil},
 	}
 	for _, c := range cases {
@@ -166,8 +166,8 @@ func listenOn(listen string) map[string]string {
 }
 
 func TestProxyListenerNotes(t *testing.T) {
-	a := proxyInstance("a", map[string]map[string]string{"web": listenOn("tcp:170.205.38.254:443")})
-	b := proxyInstance("b", map[string]map[string]string{"web": listenOn("tcp:170.205.38.254:443")})
+	a := proxyInstance("a", map[string]map[string]string{"web": listenOn("tcp:203.0.113.10:443")})
+	b := proxyInstance("b", map[string]map[string]string{"web": listenOn("tcp:203.0.113.10:443")})
 
 	t.Run("two instances on the same address and port are each told about the other", func(t *testing.T) {
 		n := proxyListenerNotes([]Resource{a, b}, nil)
@@ -182,13 +182,13 @@ func TestProxyListenerNotes(t *testing.T) {
 		}
 	})
 	t.Run("different ports", func(t *testing.T) {
-		c := proxyInstance("c", map[string]map[string]string{"web": listenOn("tcp:170.205.38.254:8443")})
+		c := proxyInstance("c", map[string]map[string]string{"web": listenOn("tcp:203.0.113.10:8443")})
 		if n := proxyListenerNotes([]Resource{a, c}, nil); n != nil {
 			t.Errorf("notes = %q, want none", n)
 		}
 	})
 	t.Run("a port range that contains the other's port", func(t *testing.T) {
-		c := proxyInstance("c", map[string]map[string]string{"web": listenOn("tcp:170.205.38.254:400-500")})
+		c := proxyInstance("c", map[string]map[string]string{"web": listenOn("tcp:203.0.113.10:400-500")})
 		if n := proxyListenerNotes([]Resource{a, c}, nil); len(n["a"]) != 1 || len(n["c"]) != 1 {
 			t.Errorf("notes = %q, want one each", n)
 		}
@@ -204,26 +204,26 @@ func TestProxyListenerNotes(t *testing.T) {
 		}
 	})
 	t.Run("udp and tcp do not clash", func(t *testing.T) {
-		u := proxyInstance("u", map[string]map[string]string{"web": listenOn("udp:170.205.38.254:443")})
+		u := proxyInstance("u", map[string]map[string]string{"web": listenOn("udp:203.0.113.10:443")})
 		if n := proxyListenerNotes([]Resource{a, u}, nil); n != nil {
 			t.Errorf("notes = %q, want none", n)
 		}
 	})
 	t.Run("two devices of one instance are reported to it once", func(t *testing.T) {
-		d := proxyInstance("d", map[string]map[string]string{"one": listenOn("tcp:170.205.38.254:443"), "two": listenOn("tcp:170.205.38.254:443")})
+		d := proxyInstance("d", map[string]map[string]string{"one": listenOn("tcp:203.0.113.10:443"), "two": listenOn("tcp:203.0.113.10:443")})
 		n := proxyListenerNotes([]Resource{d}, nil)
 		if len(n["d"]) != 1 || !strings.Contains(n["d"][0], `"one"`) || !strings.Contains(n["d"][0], `"two"`) {
 			t.Errorf("notes = %q, want one note naming both devices", n)
 		}
 	})
 	t.Run("a listener bound inside the instance is not the host's", func(t *testing.T) {
-		in := proxyInstance("in", map[string]map[string]string{"web": {"type": "proxy", "bind": "container", "listen": "tcp:170.205.38.254:443", "connect": "tcp:127.0.0.1:1"}})
+		in := proxyInstance("in", map[string]map[string]string{"web": {"type": "proxy", "bind": "container", "listen": "tcp:203.0.113.10:443", "connect": "tcp:127.0.0.1:1"}})
 		if n := proxyListenerNotes([]Resource{a, in}, nil); n != nil {
 			t.Errorf("notes = %q, want none", n)
 		}
 	})
 	t.Run("three on one port: each is told about the other two", func(t *testing.T) {
-		c := proxyInstance("c", map[string]map[string]string{"web": listenOn("tcp:170.205.38.254:443")})
+		c := proxyInstance("c", map[string]map[string]string{"web": listenOn("tcp:203.0.113.10:443")})
 		n := proxyListenerNotes([]Resource{a, b, c}, nil)
 		if len(n["a"]) != 2 || len(n["b"]) != 2 || len(n["c"]) != 2 {
 			t.Errorf("notes = %q, want two each", n)
@@ -237,21 +237,21 @@ func TestProxyListenerNotes(t *testing.T) {
 		}
 	})
 	t.Run("a listener that comes from a declared profile counts", func(t *testing.T) {
-		profiles := map[string]Resource{"edge": {Kind: KindProfile, Name: "edge", Devices: map[string]map[string]string{"web": listenOn("tcp:170.205.38.254:443")}}}
+		profiles := map[string]Resource{"edge": {Kind: KindProfile, Name: "edge", Devices: map[string]map[string]string{"web": listenOn("tcp:203.0.113.10:443")}}}
 		p := proxyInstance("p", nil, "edge")
 		if n := proxyListenerNotes([]Resource{a, p}, profiles); len(n) != 2 {
 			t.Errorf("notes = %q, want both", n)
 		}
 	})
 	t.Run("non-instances and unparseable listens are ignored", func(t *testing.T) {
-		v := Resource{Kind: KindStorageVolume, Name: "v", Devices: map[string]map[string]string{"web": listenOn("tcp:170.205.38.254:443")}}
+		v := Resource{Kind: KindStorageVolume, Name: "v", Devices: map[string]map[string]string{"web": listenOn("tcp:203.0.113.10:443")}}
 		u := proxyInstance("u", map[string]map[string]string{"web": {"type": "proxy", "listen": "unix:/run/x.sock", "connect": "tcp:127.0.0.1:1"}})
 		if n := proxyListenerNotes([]Resource{a, v, u}, nil); n != nil {
 			t.Errorf("notes = %q, want none", n)
 		}
 	})
 	t.Run("the order of the notes does not depend on the order of the resources", func(t *testing.T) {
-		c := proxyInstance("c", map[string]map[string]string{"web": listenOn("tcp:170.205.38.254:443")})
+		c := proxyInstance("c", map[string]map[string]string{"web": listenOn("tcp:203.0.113.10:443")})
 		if x, y := proxyListenerNotes([]Resource{a, b, c}, nil), proxyListenerNotes([]Resource{c, b, a}, nil); !reflect.DeepEqual(x, y) {
 			t.Errorf("notes differ with the order of the resources:\n%q\n%q", x, y)
 		}
@@ -261,7 +261,7 @@ func TestProxyListenerNotes(t *testing.T) {
 func TestPlanOne_NATProxyWithoutAStaticAddressWarnsBeforeTheInstanceExists(t *testing.T) {
 	r := proxyInstance("ingress", map[string]map[string]string{
 		"eth0":  nicWith(),
-		"https": natProxy("tcp:170.205.38.254:443", "tcp:10.34.253.77:443"),
+		"https": natProxy("tcp:203.0.113.10:443", "tcp:198.51.100.77:443"),
 	})
 	opts := PlanOptions{env: &imageEnv{offline: true, conf: &cliconfig.Config{Remotes: ociTestRemotes}}}.ForResources([]Resource{r})
 	p, err := planOne(&lookupServer{err: errNotFound}, r, opts)
@@ -277,8 +277,8 @@ func TestPlanOne_NATProxyWithoutAStaticAddressWarnsBeforeTheInstanceExists(t *te
 }
 
 func TestPlanOptions_ListenerNotesComeFromTheFullStack(t *testing.T) {
-	a := proxyInstance("a", map[string]map[string]string{"eth0": nicWith("ipv4.address", "10.0.0.9"), "web": natProxy("tcp:170.205.38.254:443", "tcp:10.0.0.9:443")})
-	b := proxyInstance("b", map[string]map[string]string{"eth0": nicWith("ipv4.address", "10.0.0.10"), "web": natProxy("tcp:170.205.38.254:443", "tcp:10.0.0.10:443")})
+	a := proxyInstance("a", map[string]map[string]string{"eth0": nicWith("ipv4.address", "10.0.0.9"), "web": natProxy("tcp:203.0.113.10:443", "tcp:10.0.0.9:443")})
+	b := proxyInstance("b", map[string]map[string]string{"eth0": nicWith("ipv4.address", "10.0.0.10"), "web": natProxy("tcp:203.0.113.10:443", "tcp:10.0.0.10:443")})
 	stack := []Resource{a, b}
 
 	env := &imageEnv{offline: true, conf: &cliconfig.Config{Remotes: ociTestRemotes}}
