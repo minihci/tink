@@ -158,7 +158,7 @@ func (f *fakeJoinFiles) Write(p, i, path, content string) error {
 
 func newFakeJoinFiles() *fakeJoinFiles {
 	return &fakeJoinFiles{files: map[string]string{
-		"tink/dns/db.home.xlii.co": "$ORIGIN home.xlii.co.\n@ IN SOA ns.home.xlii.co. h.home.xlii.co. ( 1 3600 600 86400 30 )\nns IN A 10.0.142.230\nauth IN A 10.0.142.231\n",
+		"tink/dns/db.home.example.org": "$ORIGIN home.example.org.\n@ IN SOA ns.home.example.org. h.home.example.org. ( 1 3600 600 86400 30 )\nns IN A 192.0.2.230\nauth IN A 192.0.2.231\n",
 	}}
 }
 
@@ -175,7 +175,7 @@ func TestJoinApply_DryRunShowsTheChangeAndWritesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"dns: /hosts on dns (project tink)", "  + 10.0.142.231 whoami.home.xlii.co", "  + 10.0.142.231 whoami-admin.home.xlii.co", "would create the file (dry run: nothing was written)"} {
+	for _, want := range []string{"dns: /hosts on dns (project tink)", "  + 192.0.2.231 whoami.home.example.org", "  + 192.0.2.231 whoami-admin.home.example.org", "would create the file (dry run: nothing was written)"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}

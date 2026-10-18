@@ -14,8 +14,8 @@ point, Authelia for SSO, and a growing set of small automations that keep
 those pieces converged without manual steps.
 
 Those automations started as one-off bash scripts living in
-[`incus-host`](https://github.com/xlii-co/incus-host) (the reference
-deployment, currently running on `incus.xlii.co`). Tink exists to
+`incus-host` (the reference
+deployment, currently running on `incus.example.org`). Tink exists to
 consolidate them into one tool that any host or project adopting this
 platform can run, instead of continuing to mint a new script per need.
 
@@ -31,8 +31,8 @@ comment for the working bash it's replacing.
 | `tink run` | verified live against a real, disposable test host | (new - the manual per-tenant "mental docker-run into `incus launch` plus a sequence of `incus config`/`incus config device add` calls" dance) |
 | `tink plan` / `tink plan apply` | live-verified against real stacks: Nextcloud and Nightscout, and the Immich, mosquitto and Matter stacks on the lab host; the primary way to describe a stack ([docs](docs/resolver-architecture.md)) | (new - hand-running a sequence of `incus` commands in the right order from memory or a prose runbook) |
 | `tink export` | run live against the lab host: an instance made with `tink run`, and the real Mosquitto, each came back as a stack that plans as no changes ([docs](docs/export.md)) | (new - writing down by hand what a `tink run` or `incus` session had built) |
-| `tink ingress reconcile` / `tink ingress status` | live on `incus.xlii.co` | `incus-host/reconciler/reconcile.sh` |
-| `tink daemon run` / `tink daemon install` | live on `incus.xlii.co`, running the ingress reconcile; the backup scheduler and job executor run in the helper, on the lab host ([docs](docs/daemon-jobs.md)) | (new - it replaced the cron entry that ran `ingress reconcile`) |
+| `tink ingress reconcile` / `tink ingress status` | live on `incus.example.org` | `incus-host/reconciler/reconcile.sh` |
+| `tink daemon run` / `tink daemon install` | live on `incus.example.org`, running the ingress reconcile; the backup scheduler and job executor run in the helper, on the lab host ([docs](docs/daemon-jobs.md)) | (new - it replaced the cron entry that ran `ingress reconcile`) |
 | `tink backup run` / `restore` / `verify` / `forget` | verified live on the lab host: pool targets (a TrueNAS-backed pool included) and an Incus remote over a tunnel ([docs](docs/volume-backup.md)) | (new) |
 | `tink secret` | verified live on the Immich stack on the lab host ([docs](docs/secrets.md)) | (new) |
 | `tink remote` / `--remote NAME` | verified live from a laptop against the lab host ([docs](docs/remote.md)) | (new) |
@@ -108,8 +108,8 @@ against, and [`docs/secrets-design.md`](docs/secrets-design.md) for the reasonin
 ## Relationship to `incus-host`
 
 Tink started as a separate repo from
-[`incus-host`](https://github.com/xlii-co/incus-host) (the reference
-deployment, currently running on `incus.xlii.co`) on the assumption that
+`incus-host` (the reference
+deployment, currently running on `incus.example.org`) on the assumption that
 `incus-host` would become a *consumer* of tink - cloning and building a
 pinned version as part of its own deploy step. That assumption inverted
 once `tink deploy` actually existed: `incus-host`'s real ongoing job
@@ -164,7 +164,7 @@ same code the CLI calls, without duplicating it.
 
 ## Status
 
-`ingress` is implemented and **cut over live on `incus.xlii.co`**: `tink
+`ingress` is implemented and **cut over live on `incus.example.org`**: `tink
 ingress reconcile` and `tink ingress status` use Incus's own Go client
 (`GetInstancesFull`, matching `recursion=2`) instead of curl+jq. The
 cutover followed the plan as written -- ran `tink daemon run` side by
@@ -172,8 +172,8 @@ side with the still-cron-invoked `incus-host/reconciler/reconcile.sh` for
 two full passes against real production data (the live `ns-caddy`
 registration, not a scratch instance), confirmed byte-identical output
 and zero unnecessary writes (route file mtime unchanged across both
-passes), then removed the cron entry. `ns.xlii.co`/`incus.xlii.co`/
-`auth.xlii.co` all confirmed healthy throughout and afterward.
+passes), then removed the cron entry. `ns.example.org`/`incus.example.org`/
+`auth.example.org` all confirmed healthy throughout and afterward.
 
 `deploy` (capability zero) is implemented and verified end-to-end against
 a real, freshly installed Incus 7.4 host -- not just dry-run, a real run
@@ -227,7 +227,7 @@ to be re-tested on a throwaway server at every Incus upgrade. Details:
 [`configs/README.md`](configs/README.md#host-authorization).
 
 `daemon` is implemented, smoke-tested on a disposable VPS, and **now the
-live mechanism running the reconciler on `incus.xlii.co`** -- supervised
+live mechanism running the reconciler on `incus.example.org`** -- supervised
 by a real, `systemd-analyze verify`-passed unit (`systemctl enable --now
 tink-daemon`), not cron. `daemon run`'s loop mechanics (immediate first
 pass, ticks at the given interval, survives a failed pass without dying,

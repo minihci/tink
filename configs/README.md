@@ -1,7 +1,7 @@
 # configs/
 
 `tink deploy`'s config templates — moved here from
-[`incus-host`](https://github.com/xlii-co/incus-host) (2026-09-18) so a
+`incus-host` (2026-09-18) so a
 host only needs one checkout (this repo's) to run `deploy`, not two.
 `--repo-root` defaults to this directory; `deploy.env` and the real
 secrets below are resolved relative to whatever `--repo-root` points at.

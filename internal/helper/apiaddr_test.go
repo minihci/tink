@@ -472,12 +472,12 @@ func TestEnrolmentThatCannotReachTheBridgeAddressFailsWithTheHint(t *testing.T) 
 // Found live: for a loopback listener the refusal only offered the wildcard, though the bridge's own address is what the docs say works and
 // is the narrower choice (it opens nothing on the host's other interfaces).
 func TestAListenerThatDoesNotCoverTheBridgeIsToldTheNarrowFixAsWellAsTheWildcard(t *testing.T) {
-	p := listenerCovers("127.0.0.1:8444", netip.MustParseAddr("10.34.253.1"), "incusbr0")
+	p := listenerCovers("127.0.0.1:8444", netip.MustParseAddr("198.51.100.1"), "incusbr0")
 	if p == nil {
 		t.Fatal("a loopback listener does not cover the bridge")
 	}
 	for _, want := range []string{
-		"core.https_address 10.34.253.1:8444` listens on that address only",
+		"core.https_address 198.51.100.1:8444` listens on that address only",
 		"core.https_address :8444` listens on every address",
 		"--api-via proxy",
 	} {

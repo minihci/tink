@@ -4,7 +4,7 @@ import "testing"
 
 func TestRender_MatchesHandWrittenRouteShape(t *testing.T) {
 	files, err := Render([]Registration{
-		{Name: "ns-caddy", Domain: "ns.xlii.co", Port: "80", Address: "10.77.20.32"},
+		{Name: "ns-caddy", Domain: "ns.example.org", Port: "80", Address: "192.0.2.32"},
 	})
 	if err != nil {
 		t.Fatalf("Render returned error: %v", err)
@@ -15,7 +15,7 @@ func TestRender_MatchesHandWrittenRouteShape(t *testing.T) {
 		t.Fatalf("expected a ns-caddy.caddy entry, got keys %v", keysOf(files))
 	}
 
-	want := `ns.xlii.co {
+	want := `ns.example.org {
 	encode zstd gzip
 
 	header {
@@ -26,7 +26,7 @@ func TestRender_MatchesHandWrittenRouteShape(t *testing.T) {
 		-Server
 	}
 
-	reverse_proxy http://10.77.20.32:80 {
+	reverse_proxy http://192.0.2.32:80 {
 		header_up X-Real-IP {remote_host}
 	}
 
@@ -46,8 +46,8 @@ func TestRender_MatchesHandWrittenRouteShape(t *testing.T) {
 
 func TestRender_PrefixesNonDefaultProjectFilenames(t *testing.T) {
 	files, err := Render([]Registration{
-		{Name: "ns-caddy", Project: "default", Domain: "ns.xlii.co", Port: "80", Address: "10.77.20.32"},
-		{Name: "ns-caddy", Project: "nightscout", Domain: "ns-staging.xlii.co", Port: "80", Address: "10.135.20.32"},
+		{Name: "ns-caddy", Project: "default", Domain: "ns.example.org", Port: "80", Address: "192.0.2.32"},
+		{Name: "ns-caddy", Project: "nightscout", Domain: "ns-staging.example.org", Port: "80", Address: "10.135.20.32"},
 	})
 	if err != nil {
 		t.Fatalf("Render returned error: %v", err)

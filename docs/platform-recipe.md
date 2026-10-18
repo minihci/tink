@@ -20,9 +20,9 @@ The tron stack was written by hand, step by step (P1 to P7 in its own log), and 
 | East-west ACLs (`identity-in`, `sso-in`, `tink0-in`): who may reach whom | **recipe**, derived from the role graph | three ACLs, each a function of which role calls which; nobody would edit them per site |
 | Backup policy per volume (daily snapshot, a copy to each target, weekly restore check; `none:` with a reason for the regenerable mesh state) | **recipe defaults** over **site targets** | the same four lines, repeated for three volumes |
 | Engine config skeletons: the Corefile and zone file, the Caddyfile (`no_portal_cookie`, `sso` forward-auth), Authelia's configuration | **recipe**, but see the first precondition below | hand-written inside `kind: file` content |
-| The zone `home.xlii.co` | **site fact** | 18 occurrences in the content, plus the LDAP base DN, the cookie domain and the wildcard certificate |
+| The zone `home.example.org` | **site fact** | 18 occurrences in the content, plus the LDAP base DN, the cookie domain and the wildcard certificate |
 | The platform bridge, its subnet and the helpers' static addresses | **recipe**, from one site fact (a range) | 11 occurrences of `10.10.50.`; the offsets are a convention |
-| The LAN leg: a parent NIC, a CIDR, two free addresses outside the router's DHCP pool, fixed MACs | **site facts** | `br0` and `10.0.142.` (nine occurrences); the author picked the addresses by ping and ARP probe |
+| The LAN leg: a parent NIC, a CIDR, two free addresses outside the router's DHCP pool, fixed MACs | **site facts** | `br0` and `192.0.2.` (nine occurrences); the author picked the addresses by ping and ARP probe |
 | How certificates are obtained: DNS-01 through Cloudflare, with a token, an image that has the module, and public resolvers because the dns helper is authoritative for the zone | **site fact**, and it changes the engine image | one secret supplied by the user |
 | Backup targets: a same-host pool (declared honestly as `same-host`) and an offsite Incus remote | **site facts** | two `kind: backup-target` documents |
 | Mesh: join an **existing** control plane at a URL, advertise one route | **site fact** (the URL) | the control plane is not in the stack |
@@ -35,13 +35,13 @@ The count that matters: across 24 documents and about 390 lines of content, the 
 ```yaml
 kind: site
 name: tron
-zone: home.xlii.co
+zone: home.example.org
 timezone: America/Denver
 roles: [identity, sso, dns, ingress, mesh, daemon]
 platform: {bridge: tink0, subnet: 10.10.50.0/24}
-lan: {parent: br0, cidr: 10.0.142.0/24, addresses: {dns: 10.0.142.230, ingress: 10.0.142.231}}
+lan: {parent: br0, cidr: 192.0.2.0/24, addresses: {dns: 192.0.2.230, ingress: 192.0.2.231}}
 certificates: {challenge: dns-cloudflare, token: ${secret:platform-cloudflare-dns}}
-mesh: {control_plane: https://hs.xlii.co}
+mesh: {control_plane: https://hs.example.org}
 helper: {project: tink-helper, network: incusbr0, remotes: [host, vps]}
 images: shared          # cached in the default project's store (features.images: "false")
 backup:

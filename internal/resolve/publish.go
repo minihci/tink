@@ -10,7 +10,7 @@ import (
 // A kind: publish resource is a DECLARATION: it says that a name in the site's zone shows one offer of an instance, to the people in the named groups.
 //
 //	kind: publish
-//	name: whoami               # the host label: the published name is this plus the dns helper's zone (whoami.home.xlii.co)
+//	name: whoami               # the host label: the published name is this plus the dns helper's zone (whoami.home.example.org)
 //	instance: whoami           # the instance that makes the offer
 //	offer: web                 # which of its offers (user.tink.offer.web.* on the instance)
 //	allow: [family]            # groups, never people

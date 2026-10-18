@@ -1,6 +1,6 @@
-- domain: 'whoami.home.xlii.co'
+- domain: 'whoami.home.example.org'
   policy: one_factor
   subject: 'group:family'
-- domain: 'whoami-admin.home.xlii.co'
+- domain: 'whoami-admin.home.example.org'
   policy: one_factor
   subject: 'group:admins'

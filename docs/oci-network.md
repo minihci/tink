@@ -35,7 +35,7 @@ devices:
     type: nic
     nictype: bridged
     parent: br0
-    ipv4.address: 10.0.142.246/24
+    ipv4.address: 192.0.2.246/24
     ipv4.gateway: none
 ```
 

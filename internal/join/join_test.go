@@ -90,7 +90,7 @@ func TestTheCanaryJoinsToTheHandWrittenPieces(t *testing.T) {
 	if len(res.Findings) != 0 {
 		t.Fatalf("the canary has findings: %v", res.Findings)
 	}
-	if res.Zone != "home.xlii.co" || res.LANAddress != "10.0.142.231" || res.MeshAddress != "10.10.50.3" || !res.HasMesh {
+	if res.Zone != "home.example.org" || res.LANAddress != "192.0.2.231" || res.MeshAddress != "10.10.50.3" || !res.HasMesh {
 		t.Errorf("facts = zone %q lan %q mesh %q hasMesh %v", res.Zone, res.LANAddress, res.MeshAddress, res.HasMesh)
 	}
 	for name, got := range map[string]string{"dns": res.DNS, "mesh": res.Mesh, "caddy": res.Caddy, "sso": res.SSO, "acl": res.ACL} {
@@ -122,7 +122,7 @@ func TestSeveralGroupsRenderAsAnOrOfSingleGroupLists(t *testing.T) {
 	stacks := load(t)
 	edit(t, stacks, resolve.KindPublish, "whoami", func(r *resolve.Resource) { r.Allow = []string{"family", "admins"} })
 	res := Build(stacks)
-	want := "- domain: 'whoami.home.xlii.co'\n  policy: one_factor\n  subject: [['group:family'], ['group:admins']]\n"
+	want := "- domain: 'whoami.home.example.org'\n  policy: one_factor\n  subject: [['group:family'], ['group:admins']]\n"
 	if !strings.HasPrefix(res.SSO, want) {
 		t.Errorf("sso =\n%s\nwant it to start with\n%s", res.SSO, want)
 	}
@@ -211,7 +211,7 @@ func TestErrorsStopTheRenderingAndSayWhy(t *testing.T) {
 		}, "has no static ipv4.address"},
 		{"a NIC on an unmanaged bridge", func(t *testing.T, s []Stack) {
 			edit(t, s, resolve.KindInstance, "whoami", func(r *resolve.Resource) {
-				setDevice(r, "eth0", map[string]string{"type": "nic", "nictype": "bridged", "parent": "br0", "ipv4.address": "10.0.142.99/24"})
+				setDevice(r, "eth0", map[string]string{"type": "nic", "nictype": "bridged", "parent": "br0", "ipv4.address": "192.0.2.99/24"})
 			})
 		}, "not on a managed network"},
 		{"two NICs and no listen", func(t *testing.T, s []Stack) {
