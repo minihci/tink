@@ -1,0 +1,10 @@
+changelog:
+  categories:
+    - title: Removed (read this before upgrading)
+      labels: [removal]
+    - title: Fixes
+      labels: [bug]
+    - title: Documentation
+      labels: [documentation]
+    - title: Everything else
+      labels: ["*"]
