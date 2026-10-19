@@ -39,7 +39,6 @@ comment for the working bash it's replacing.
 | `tink helper install` / `upgrade` / `remove` / `remote` / `status` | built, and run live on the lab host: installed from the published image, it made the scheduled copies on its own, restarted after being killed, and upgraded from `v0.1.0` to `v0.1.1` with the release binary and no flags; a host reboot has not been tried; two changes were run live on a fresh Incus 7.5.1 server (2026-10-17, a development build installed with `--binary`): its status document lives on a volume of its own, and it reaches the host's API over the network instead of a proxy device (`--api-via`, the default where the bridge allows it); the run also found that an install after a `remove` that kept the volumes failed with `remote "host" already exists` until `--reissue` (fixed in #98) ([docs](docs/helper.md)) | (new - a way to run the daemon without a unit per init system) |
 | `tink identity groups` | built and unit-tested; run live once against a lab LLDAP: reads the directory's groups through the Incus exec API with a read-only user, and can project them into a Headscale policy `groups` fragment ([docs](docs/identity.md)) | (new) |
 | `tink join` / `tink join apply dns` | built and unit-tested; run on the author's own platform and canary stacks, where its five renderings (dns, mesh, proxy routes, sign-on rules, ACL rules) matched the hand-written pieces. `join` reads the files named and prints; `join apply dns` writes the dns helper's generated records (live: created, a name added and removed in seconds, a clash and the wrong files refused). The other four renderings are not applied yet. `plan apply` stamps each publish onto its instance (`user.tink.publish.<name>`, a prefix tink owns), and `join --from-server` / `join apply dns --from-server` join from those stamps and the server's own state, with no files: run on a real Incus 7.5.1 server on 2026-10-17: the stamps are written as documented, the `--from-server` output was identical to the file-based join's and matched the golden files for all five renderings; `join apply dns` was not run against a real CoreDNS helper ([docs](docs/join.md)) | (new) |
-| `tink mongo snapshot` | not yet designed | (none yet - still under discussion) |
 
 `deploy` converges a host to its declared platform state - storage
 volumes, profiles, the `ingress`/`authelia`/`incus-ui` instances, the
@@ -95,8 +94,7 @@ removing nothing - see [`docs/plan-extras.md`](docs/plan-extras.md).
 push. `daemon run` runs that same reconcile loop as a persistent process
 instead of a cron-invoked one-shot; `daemon install` prints (doesn't
 apply) the systemd unit or OpenRC init script needed to supervise it, for
-whichever init system the host actually runs. `mongo snapshot` doesn't
-have a settled design yet.
+whichever init system the host actually runs.
 
 ## Secrets
 
@@ -144,7 +142,6 @@ internal/daemon/     tink daemon ... (workers, the backup scheduler, the status 
 internal/jobs/       the daemon's job queue, a directory - see docs/daemon-jobs.md
 internal/helper/     tink helper ... - see docs/helper.md
 internal/remote/     tink remote ..., the client configuration --remote uses - see docs/remote.md
-internal/backup/     tink mongo ... (undesigned)
 configs/             tink deploy's config templates - see configs/README.md
 ```
 

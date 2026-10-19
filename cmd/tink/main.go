@@ -18,7 +18,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/minihci/tink/internal/backup"
 	"github.com/minihci/tink/internal/backuprun"
 	"github.com/minihci/tink/internal/bootstrap"
 	"github.com/minihci/tink/internal/daemon"
@@ -103,7 +102,6 @@ made executable instead of just documented.`,
 	root.AddCommand(newIngressCmd())
 	root.AddCommand(newIdentityCmd())
 	root.AddCommand(newJoinCmd())
-	root.AddCommand(newMongoCmd())
 	root.AddCommand(newDaemonCmd())
 	root.AddCommand(newVersionCmd())
 
@@ -595,24 +593,6 @@ func printIngressResult(cmd *cobra.Command, result *ingress.Result, dryRun bool)
 	for _, f := range result.Diff.Changed {
 		fmt.Fprintf(out, "  change %s\n", f)
 	}
-}
-
-func newMongoCmd() *cobra.Command {
-	mongoCmd := &cobra.Command{
-		Use:   "mongo",
-		Short: "Mongo backup and recovery",
-	}
-
-	mongoCmd.AddCommand(&cobra.Command{
-		Use:   "snapshot",
-		Short: "Trigger a mongo backup",
-		Long:  `snapshot is not yet designed — see the repo README for the open discussion.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return backup.Snapshot()
-		},
-	})
-
-	return mongoCmd
 }
 
 func newDaemonCmd() *cobra.Command {
