@@ -1,0 +1,54 @@
+name: Proposal
+description: A design for review. Nothing in it is built.
+labels: [proposal]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A design note lives here until its feature is built, then its reasoning moves to the package comment and this issue is closed. This repository is public: no real host name, domain, address or account; use example.org and the documentation address blocks.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem, and who has it
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: The proposal
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Tag each claim as [code] (read in this repository), [docs], [lab] (seen on a real host, with the software version) or [proposed] (not built).
+    validations:
+      required: true
+  - type: dropdown
+    id: ring
+    attributes:
+      label: Ring
+      options:
+        - Adapters (ring 0)
+        - Converger (ring 1)
+        - Capability (ring 2)
+        - Recipe (ring 3)
+    validations:
+      required: true
+  - type: checkboxes
+    id: gate
+    attributes:
+      label: The capability gate
+      description: A new capability ships only with all of these. Tick what the proposal already says; leave the rest as open questions in the proposal.
+      options:
+        - label: An engine-neutral declaration on the app or the site
+        - label: A default engine behind a role
+        - label: A plan-time check
+        - label: It fits the three extension points (a kind, a pass, a check)
+        - label: A golden test is named
+  - type: textarea
+    id: removes
+    attributes:
+      label: What it replaces or lets us remove
+      description: If nothing, say so; a capability that adds without removing needs a reason.

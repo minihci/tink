@@ -1,0 +1,43 @@
+name: Bug
+description: Something is wrong in what is built
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This repository is public. Do not paste a real host name, domain, address or account; use example.org and the documentation address blocks (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24). For a security problem, use the private report link instead of an issue.
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened
+      description: What you ran and what it printed, as exactly as you can.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce it
+      description: A small stack file, if there is one.
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Output of `tink version`, and the Incus version.
+    validations:
+      required: true
+  - type: dropdown
+    id: ring
+    attributes:
+      label: Where it seems to be
+      options:
+        - Not sure
+        - Adapters (incusapi, remote, secrets)
+        - Converger (plan, apply, export, run)
+        - Capability (backup, the helper, join, identity)
+        - Recipe
