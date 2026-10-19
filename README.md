@@ -31,8 +31,7 @@ comment for the working bash it's replacing.
 | `tink run` | verified live against a real, disposable test host | (new - the manual per-tenant "mental docker-run into `incus launch` plus a sequence of `incus config`/`incus config device add` calls" dance) |
 | `tink plan` / `tink plan apply` | live-verified against real stacks: Nextcloud and Nightscout, and the Immich, mosquitto and Matter stacks on the lab host; the primary way to describe a stack ([docs](docs/resolver-architecture.md)) | (new - hand-running a sequence of `incus` commands in the right order from memory or a prose runbook) |
 | `tink export` | run live against the lab host: an instance made with `tink run`, and the real Mosquitto, each came back as a stack that plans as no changes ([docs](docs/export.md)) | (new - writing down by hand what a `tink run` or `incus` session had built) |
-| `tink ingress reconcile` / `tink ingress status` | live on `incus.example.org` | `incus-host/reconciler/reconcile.sh` |
-| `tink daemon run` / `tink daemon install` | live on `incus.example.org`, running the ingress reconcile; the backup scheduler and job executor run in the helper, on the lab host ([docs](docs/daemon-jobs.md)) | (new - it replaced the cron entry that ran `ingress reconcile`) |
+| `tink daemon run` | the backup scheduler and job executor, run by the helper on the lab host ([docs](docs/daemon-jobs.md)) | (new) |
 | `tink backup run` / `restore` / `verify` / `forget` | verified live on the lab host: pool targets (a TrueNAS-backed pool included) and an Incus remote over a tunnel ([docs](docs/volume-backup.md)) | (new) |
 | `tink secret` | verified live on the Immich stack on the lab host ([docs](docs/secrets.md)) | (new) |
 | `tink remote` / `--remote NAME` | verified live from a laptop against the lab host ([docs](docs/remote.md)) | (new) |
@@ -88,13 +87,8 @@ themselves, with no stack for it to hold - see [`docs/daemon-jobs.md`](docs/daem
 that does not - see [`docs/volume-backup.md`](docs/volume-backup.md).
 `plan` also says, for each instance that exists, what it carries that the stack does not declare (a line starting "not in the stack"), changing and
 removing nothing - see [`docs/plan-extras.md`](docs/plan-extras.md).
-`ingress reconcile` discovers instances that opt in via
-`user.tink.ingress.{domain,port,enabled}` config and converges the shared
-`ingress` instance's routes to match, without a restart or a manual file
-push. `daemon run` runs that same reconcile loop as a persistent process
-instead of a cron-invoked one-shot; `daemon install` prints (doesn't
-apply) the systemd unit or OpenRC init script needed to supervise it, for
-whichever init system the host actually runs.
+Public routes for apps are written by hand for now (a route file the ingress instance's Caddyfile imports). Ingress self-registration, which
+generated them from config keys on the instance, was removed; [how to replace it](docs/removals/ingress-self-registration.md).
 
 ## Secrets
 
@@ -134,7 +128,6 @@ internal/secrets/    tink secret, ${secret:NAME} references, the output redactor
 internal/backupmeta/ what tink records on a volume (policy key, stamps, markers), the backup block's rules, the copy policy a volume carries (how it is written, read and put in words) and the schedule arithmetic; depends on nothing here
 internal/volbackup/  copy, restore and verify a storage volume - see docs/volume-backup.md
 internal/backuprun/  tink backup run: decide which copies are due, make them
-internal/ingress/    tink ingress ...
 internal/identity/   the identity role (people and groups), its LLDAP reader, and tink identity groups - see docs/identity.md
 internal/join/       tink join: offers and publishes (from files, or from the server's stamps) joined to the helpers' own facts, and the five renderings - see docs/join.md
 internal/mesh/       projections into mesh policy (Headscale groups) - see docs/identity.md
@@ -145,8 +138,8 @@ internal/remote/     tink remote ..., the client configuration --remote uses - s
 configs/             tink deploy's config templates - see configs/README.md
 ```
 
-One binary, not two: `tink daemon run`/`tink daemon install` are
-subcommands of the same `tink` binary, not a separate `tinkd` daemon
+One binary, not two: `tink daemon run` is a
+subcommand of the same `tink` binary, not a separate `tinkd` daemon
 binary or a client/server split. Considered both and rejected them -- see
 `internal/daemon`'s own package doc for why (short version: a
 symlink/argv[0] dispatch trick is implicit "magic," and a
@@ -161,17 +154,6 @@ same code the CLI calls, without duplicating it.
 
 ## Status
 
-`ingress` is implemented and **cut over live on `incus.example.org`**: `tink
-ingress reconcile` and `tink ingress status` use Incus's own Go client
-(`GetInstancesFull`, matching `recursion=2`) instead of curl+jq. The
-cutover followed the plan as written -- ran `tink daemon run` side by
-side with the still-cron-invoked `incus-host/reconciler/reconcile.sh` for
-two full passes against real production data (the live `ns-caddy`
-registration, not a scratch instance), confirmed byte-identical output
-and zero unnecessary writes (route file mtime unchanged across both
-passes), then removed the cron entry. `ns.example.org`/`incus.example.org`/
-`auth.example.org` all confirmed healthy throughout and afterward.
-
 `deploy` (capability zero) is implemented and verified end-to-end against
 a real, freshly installed Incus 7.4 host -- not just dry-run, a real run
 that stood up authelia/incus-ui/ingress with real secrets, a real
@@ -180,17 +162,14 @@ serving over HTTPS with real Let's Encrypt certs afterward. Same order as
 `deploy.sh` (registries, storage volumes, profiles, incus-ui, authelia,
 ingress, daemon config), same behavior including deploy.sh's own existing
 quirk of unconditionally deleting and relaunching incus-ui/authelia/ingress
-on every run, not just the first. One deliberate improvement over
-deploy.sh, not just a port: the last step installs and enables `tink
-daemon run` under the host's real init system instead of installing the
-old cron entry, removing any leftover legacy cron entry from an older run
-first.
+on every run, not just the first. Its last step, which installed `tink daemon run` as the reconcile daemon,
+went with ingress self-registration ([removed](docs/removals/ingress-self-registration.md)).
 Profiles, storage volumes, and instance existence/stop/delete go through
 Incus's real Go client (verified against its actual interface
 definitions); registries and instance launch still shell out, since
 remotes have no daemon API to call instead and launch means resolving an
 OCI image from a named remote. `--dry-run` computes and reports the full
-action plan without touching the daemon, any instance, or the crontab.
+action plan without touching the daemon or any instance.
 
 Live testing found and fixed three real bugs unreachable from unit tests
 or dry-run alone: a storage-volume existence check that never matched
@@ -223,17 +202,8 @@ of the data Incus passes to the script changes between versions, so it is
 to be re-tested on a throwaway server at every Incus upgrade. Details:
 [`configs/README.md`](configs/README.md#host-authorization).
 
-`daemon` is implemented, smoke-tested on a disposable VPS, and **now the
-live mechanism running the reconciler on `incus.example.org`** -- supervised
-by a real, `systemd-analyze verify`-passed unit (`systemctl enable --now
-tink-daemon`), not cron. `daemon run`'s loop mechanics (immediate first
-pass, ticks at the given interval, survives a failed pass without dying,
-exits cleanly on SIGTERM/SIGINT) are unit-tested with an injected
-reconcile function; `daemon install` auto-detects the init system,
-failing honestly rather than guessing wrong when neither systemd nor
-OpenRC is found. `deploy` (`tink` and `deploy.sh` both) now installs and
-enables this instead of the old cron entry on every run, so a future
-re-deploy can't silently reinstate cron underneath it.
+`daemon run` runs the helper's work (the backup scheduler and the job executor) until stopped; the helper is an Incus instance that runs it
+([docs](docs/helper.md)). It no longer reconciles ingress routes.
 
 ## Building
 

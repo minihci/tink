@@ -372,7 +372,7 @@ func TestPlanRemovesAStaleStampAndNothingElseUndeclared(t *testing.T) {
 		"user.tink.publish.retired":      `{"allow":["kids"],"offer":"web"}`, // its publish was deleted from the stack
 		// keys the stack does not declare, none of them under the owned prefix: left alone, as ever
 		"user.tink.helper.status": "x", "user.tink.role": "app", "user.tink.publisher": "x", "user.tink.publish": "x",
-		"user.ingress.domain": "a.example", "limits.cpu": "2", "boot.autostart": "true",
+		"user.example.domain": "a.example", "limits.cpu": "2", "boot.autostart": "true",
 	}
 	p, err := planInstance(&stampServer{inst: liveWhoami(live)}, r, NewPlanOptions(true))
 	if err != nil {
@@ -415,7 +415,7 @@ func TestUpdatingTheInstanceSetsTheStampsAndTakesBackOnlyTheStaleOnes(t *testing
 		"user.tink.publish.retired": `{"allow":["kids"],"offer":"web"}`,
 		"user.tink.role":            "app",
 		"user.tink.publisher":       "x",
-		"user.ingress.domain":       "a.example",
+		"user.example.domain":       "a.example",
 		"limits.cpu":                "2",
 		"volatile.base_image":       "abc",
 	}
@@ -430,7 +430,7 @@ func TestUpdatingTheInstanceSetsTheStampsAndTakesBackOnlyTheStaleOnes(t *testing
 		"user.tink.offer.web.port": "80", "user.tink.offer.web.proto": "http",
 		"user.tink.publish.whoami":       `{"allow":["family"],"offer":"web"}`,
 		"user.tink.publish.whoami-admin": `{"allow":["admins","family"],"offer":"web"}`,
-		"user.tink.role":                 "app", "user.tink.publisher": "x", "user.ingress.domain": "a.example", "limits.cpu": "2", "volatile.base_image": "abc",
+		"user.tink.role":                 "app", "user.tink.publisher": "x", "user.example.domain": "a.example", "limits.cpu": "2", "volatile.base_image": "abc",
 	}
 	if !reflect.DeepEqual(map[string]string(s.updated.Config), want) {
 		t.Errorf("written config = %v\nwant %v", s.updated.Config, want)

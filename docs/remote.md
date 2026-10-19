@@ -86,8 +86,7 @@ the remote, with what the helper said, and the registry is not then asked anonym
 | Command or resource | Why | What happens |
 |---|---|---|
 | `tink deploy` | It provisions the machine it runs on (instances, registries, the daemon's own configuration). | Refuses, naming the remote. |
-| `tink ingress reconcile`, `ingress status` | They read and write a path inside a storage pool on the host. | Refuse, unless `--via-api` sends them through the ingress instance's file API, which is the same from anywhere ([helper.md](helper.md#the-ingress-half)). |
-| `tink daemon run` | Its backup half is a client of the server like any other command; its ingress half reads and writes the same host path. | Refuses, unless `--ingress-via-api` runs the ingress half through the ingress instance's file API, `--no-ingress` leaves it out, or `--routes-dir` names a directory the process can reach. The helper runs it with one of the first two, as a client of its own host. |
+| `tink daemon run` | It is a client of the server like any other command. | Works under a remote; that is how the helper runs, as a client of its own host. |
 | `kind: incus` resources | They are argv for the **local** `incus` CLI, often with local paths, against that CLI's own default remote, which is not the remote tink was told to manage. | The resource is **BLOCKED** with the reason; the rest of the stack plans and applies. |
 
 ## Data stays on the server where it can

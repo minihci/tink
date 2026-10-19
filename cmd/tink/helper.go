@@ -100,8 +100,6 @@ confined: it has the reach of root on the host, and nothing here claims otherwis
 	cmd.Flags().StringVar(&apiVia, "api-via", "auto", "how the helper reaches the host's API: auto (over the network when its bridge allows it, else a proxy device), network (or an error), proxy")
 	cmd.Flags().StringVar(&opts.Image, "image", "", "the OCI image it runs (with tink at /usr/local/bin/tink)")
 	cmd.Flags().StringVar(&opts.Binary, "binary", "", "a linux tink binary to put in the instance; with no --image, a stock alpine image is used")
-	cmd.Flags().BoolVar(&opts.Ingress, "ingress", false, "also run the ingress reconcile (through the ingress instance's file API): the helper then does what tink-daemon does on the host, and deploy stops installing that")
-	cmd.Flags().StringVar(&opts.IngressInstance, "ingress-instance", "", "the ingress instance to keep routes for (default \"ingress\"; with --ingress)")
 	cmd.Flags().StringVar(&opts.TZ, "timezone", "", "the time zone schedules are evaluated in, e.g. America/Denver (default: $TZ, else UTC)")
 	cmd.Flags().BoolVar(&opts.StatusOnInstance, "status-on-instance", false, "publish the status document on the helper's own instance config, as helpers installed before the status volume do, instead of on a volume of its own (the helper then needs a right to edit its instance)")
 	cmd.Flags().BoolVar(&opts.Reissue, "reissue", false, "enrol the helper again with a fresh key pair, removing its old certificate from the trust store")
@@ -190,7 +188,7 @@ still there, going stale. A status volume that cannot be read makes the helper d
 It judges the helper, from what it said and from the state of its instance:
 
   healthy   running, heard from recently, nothing skipped, nothing failing
-  degraded  running and heard from, but skipping a volume, failing a copy, failing an ingress reconcile, or saying nothing useful
+  degraded  running and heard from, but skipping a volume, failing a copy, or saying nothing useful
   down      stopped, not found, or silent for longer than 2.5 of its heartbeats
 
 --check prints one line per helper and exits 0 for healthy, 1 for degraded and 2 for down, so cron, a monitor or Home Assistant can
@@ -443,16 +441,6 @@ func printHelperDetails(out io.Writer, r helper.Report, now time.Time) {
 		fmt.Fprintf(out, "  remotes:     not reported (this helper is older than this tink)\n")
 	default:
 		fmt.Fprintf(out, "  remotes:     %s\n", listOrNone(len(st.Remotes), func(i int) string { return st.Remotes[i].Name }))
-	}
-	switch i := st.Ingress; {
-	case i == nil:
-		fmt.Fprintf(out, "  ingress:     not run by this helper\n")
-	case i.OK && i.Legacy > 0:
-		fmt.Fprintf(out, "  ingress:     ok, %s ago; %d instance(s) still register with the old user.ingress.* keys (rename them to user.tink.ingress.*)\n", roundAge(now.Sub(i.At)), i.Legacy)
-	case i.OK:
-		fmt.Fprintf(out, "  ingress:     ok, %s ago\n", roundAge(now.Sub(i.At)))
-	default:
-		fmt.Fprintf(out, "  ingress:     the last reconcile FAILED, %s ago\n", roundAge(now.Sub(i.At)))
 	}
 }
 

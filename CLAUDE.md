@@ -25,7 +25,7 @@ disposable host, and the README's per-command "Status" notes record what has act
 ## What tink is
 
 A single Go binary (`cobra`, module `github.com/minihci/tink`) that makes the Mini HCI platform's Incus conventions executable:
-`deploy`, `run`, `plan` / `plan apply`, `export`, `ingress`, `daemon`, `backup`, `secret`, `remote`, `helper`. It talks to Incus through
+`deploy`, `run`, `plan` / `plan apply`, `export`, `daemon`, `backup`, `secret`, `remote`, `helper`. It talks to Incus through
 Incus's own Go client (`github.com/lxc/incus/v7`), not by shelling out. The exceptions are registries and `incus launch` in
 `internal/bootstrap`, which still shell out.
 
@@ -40,7 +40,7 @@ several files to see are below.
   `internal/daemon` package doc says why).
 - **The server is chosen once per process.** `--remote NAME` / `$TINK_REMOTE` is applied in `main.go`'s root command and stored
   in process-wide state in `internal/incusapi` (`UseRemote`); every `incusapi.Connect` then goes to that remote. Commands that
-  only make sense on the host itself (anything reading a storage-pool path, `daemon run`'s ingress half) refuse a remote in
+  only make sense on the host itself (anything reading a storage-pool path) refuse a remote in
   `cmd/tink/main.go`.
 - **The resolver (`internal/resolve`) is the core.** A stack is YAML documents of kinds project, profile, storage-volume,
   instance, file, exec, and two that are not resources to converge: `stack` (a name only) and `publish` (a declaration that
@@ -81,8 +81,7 @@ several files to see are below.
 ## Conventions
 
 - **Metadata keys.** Everything tink reads or writes on an object's config lives under `user.tink.*`.
-  `cmd/tink/keynamespace_test.go` scans non-test Go source for string literals starting `"user.` outside that namespace, with
-  an allowlist for the three legacy `user.ingress.*` keys.
+  `cmd/tink/keynamespace_test.go` scans non-test Go source for string literals starting `"user.` outside that namespace.
 - **Docs travel with code.** Update the docs a change touches in the same PR, and flip "not yet run / not yet built" claims in
   the README and `docs/` when they stop being true. Package doc comments carry much of the design rationale; read them before
   changing a package.

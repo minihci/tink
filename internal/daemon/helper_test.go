@@ -475,7 +475,7 @@ func TestRunStartsTheWorkersAndAJobHappensWithoutAnyoneAsking(t *testing.T) {
 	var out bytes.Buffer
 	done := make(chan error, 1)
 	go func() {
-		done <- Run(ctx, &out, RunOptions{NoIngress: true, Helper: r.h, RestartBackoff: time.Millisecond})
+		done <- Run(ctx, &out, RunOptions{Helper: r.h, RestartBackoff: time.Millisecond})
 	}()
 
 	deadline := time.Now().Add(10 * time.Second)
@@ -539,7 +539,7 @@ func TestALongCopyDoesNotStopTheSchedulerOrTheHeartbeat(t *testing.T) {
 	var out bytes.Buffer
 	done := make(chan struct{})
 	go func() {
-		Run(ctx, &out, RunOptions{NoIngress: true, Helper: r.h, RestartBackoff: time.Millisecond})
+		Run(ctx, &out, RunOptions{Helper: r.h, RestartBackoff: time.Millisecond})
 		close(done)
 	}()
 	defer func() { cancel(); <-done }()

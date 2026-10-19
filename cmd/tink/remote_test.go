@@ -24,9 +24,6 @@ func runRoot(t *testing.T, args ...string) error {
 func TestHostLocalCommandsRefuseUnderARemote(t *testing.T) {
 	for _, args := range [][]string{
 		{"--remote", "tron", "deploy"},
-		{"--remote", "tron", "ingress", "reconcile"},
-		{"--remote", "tron", "ingress", "status"},
-		// `daemon run` is not here: it refuses only its ingress half, and has its own test (daemonjobs_test.go)
 	} {
 		err := runRoot(t, args...)
 		if err == nil || !strings.Contains(err.Error(), `remote "tron"`) || !strings.Contains(err.Error(), "works on the host it runs on") {

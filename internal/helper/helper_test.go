@@ -66,21 +66,6 @@ func TestThePublisherWritesOnChangeAndOnTheHeartbeatAndOtherwiseStaysQuiet(t *te
 	}
 }
 
-func TestWhenTheIngressPassRanAloneIsNotAChange(t *testing.T) {
-	r := newRecorder()
-	s := Status{Ingress: &IngressState{OK: true, At: t0}}
-	r.p.Publish(s)
-	r.now = r.now.Add(time.Minute)
-	s.Ingress = &IngressState{OK: true, At: r.now} // it ran again; the result is the same
-	if wrote, _ := r.p.Publish(s); wrote {
-		t.Error("the ingress pass running again with the same result is not worth an event")
-	}
-	s.Ingress = &IngressState{OK: false, At: r.now}
-	if wrote, _ := r.p.Publish(s); !wrote {
-		t.Error("the ingress pass starting to fail is")
-	}
-}
-
 func TestThePublisherStampsTheDocumentAndMarksTheInstanceOnce(t *testing.T) {
 	r := newRecorder()
 	r.p.Publish(Status{JobProto: 1})
@@ -170,8 +155,6 @@ func TestEvaluateJudgesTheHelperFromWhatItSaidAndWhatItsInstanceIs(t *testing.T)
 		{"running, nothing published yet", found("Running", nil), Degraded, "has not published"},
 		{"a skipped volume", found("Running", fresh(func(s *Status) { s.Skipped = []Skip{{"tenant/lib", "policy of a newer protocol"}} })), Degraded, "tenant/lib (policy of a newer protocol)"},
 		{"a failing copy", found("Running", fresh(func(s *Status) { s.Failing = []Failing{{Volume: "lib", Target: "nas", Count: 3}} })), Degraded, "lib -> nas (3x)"},
-		{"ingress failing", found("Running", fresh(func(s *Status) { s.Ingress = &IngressState{OK: false} })), Degraded, "ingress reconcile failed"},
-		{"ingress fine", found("Running", fresh(func(s *Status) { s.Ingress = &IngressState{OK: true} })), Healthy, ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -216,7 +199,7 @@ func TestFindReturnsOnlyMarkedInstancesInEveryProject(t *testing.T) {
 		return api.Instance{Name: name, Project: project, Status: "Running", InstancePut: api.InstancePut{Config: cfg}}
 	}
 	got, err := Find(listServer{all: []api.Instance{
-		mk("default", "caddy", map[string]string{"user.ingress.enabled": "true"}),
+		mk("default", "caddy", map[string]string{"limits.cpu": "1"}),
 		mk("tink-helper", "helper", map[string]string{MarkerKey: "1"}),
 		mk("other", "also", map[string]string{MarkerKey: "1"}),
 	}})

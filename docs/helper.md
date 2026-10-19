@@ -1,13 +1,9 @@
 # The helper
 
-The helper is an Incus instance that runs `tink daemon run` next to the data: the backup scheduler, the job executor and, if you ask for it, the
-ingress reconcile. It is where tink does work that needs nothing from the host's own filesystem or processes, so it behaves the same under `--remote`.
+The helper is an Incus instance that runs `tink daemon run` next to the data: the backup scheduler and the job executor. It is where tink does work that needs nothing from the host's own filesystem or processes, so it behaves the same under `--remote`.
 The design, with its reasoning and the findings behind it, is in [the helper design](https://github.com/minihci/tink/pull/16) (an open pull request: the
 document is `docs/helper-design.md` on the `helper-design` branch, not yet on `main`). This page covers what exists: **`tink helper install`, `upgrade` and
-`remove`, `remote add|list|remove`, `status`, the status document, the ingress half, the image and its release, and what `plan` and `apply` do with the helper.**
-
-**Not built yet:**
-- Retiring `tink daemon install`, which still prints the old ingress-only unit ([daemon-jobs.md](daemon-jobs.md)).
+`remove`, `remote add|list|remove`, `status`, the status document, the image and its release, and what `plan` and `apply` do with the helper.**
 
 **Run live so far**, on one host (the lab server): a release build of tink installed the `v0.1.0` image with no flags; the scheduler queues and makes the copies
 on its own, and the restore point it made verifies; a helper whose process was killed is running again in about six seconds, with a fresh status document and
@@ -56,7 +52,7 @@ remotes: [host, vps]          # the Incus servers it must be able to reach, for 
 - **A helper that is there is adopted, and nothing about it is changed.** `plan` says how it is (`healthy`, `degraded`, `down`, with the reasons), which tink version it runs, and warns when a remote the stack says it needs is not among the remotes it reports (naming `tink helper remote add`). It never upgrades, restarts or re-enrols it: an upgrade drains the helper first, and a declaration is not the place to start one by surprise (`tink helper upgrade`).
 - **When there is none, `apply` installs it,** exactly as `tink helper install` does: it mints a single-use trust token with the certificate of whoever runs the apply, and the helper enrols with a certificate of its own. So a platform stack brings up its own controller. Remotes other than the host's cannot be added this way (they need a token or fingerprint from the other server, which is for its owner to give), and `plan` warns about each.
 - **It is BLOCKED if an instance of that name exists in that project and is not a helper** (it lacks the marker), instead of failing half way through an install.
-- **Not here:** a version policy (an `on_version_change: report | upgrade`, like `on_image_change`), the ingress half, and removal (a stack never deletes: `tink helper remove`).
+- **Not here:** a version policy (an `on_version_change: report | upgrade`, like `on_image_change`), and removal (a stack never deletes: `tink helper remove`).
 
 ## Installing it
 
@@ -165,59 +161,6 @@ address of the way it now uses (`--reissue` is only for a **new** key). Before t
 half-installed helper, which `install --reissue` recovered **[lab: found and reproduced on Incus 7.5.1, 2026-10-17]**. `tink helper upgrade` recreates the instance with the devices it had, so a network helper stays without a proxy device and a proxy helper
 keeps its own. `tink plan` on a `kind: helper` document adds a note when the helper it adopts has the proxy device (a restricted project must allow proxy devices);
 the document has no field for the way, so a helper installed from a stack uses `auto`.
-
-## The ingress half
-
-```
-tink helper install --ingress                        # also reconcile the instance named ingress
-tink helper install --ingress --ingress-instance edge
-```
-
-The helper can do what `tink-daemon` does on the host: discover the instances that register with `user.tink.ingress.{domain,port,enabled}`, render their Caddy
-routes, and reload Caddy. It does it **through the ingress instance's file API**, not through a path in the host's storage pool: it reads and writes
-`/etc/caddy/routes/generated/` *inside* the ingress instance (where the `ingress-routes` volume is mounted), then runs `caddy reload` in it. Nothing is mounted
-into the helper, and nothing depends on the machine the helper runs on, which is also what makes it work under `--remote`. The rendering is the same code the
-host path uses, so the files are the same bytes.
-
-- **Registering an app.** An app asks for a route with three keys on its own instance, in a stack's `config:`:
-
-  ```yaml
-  config:
-    user.tink.ingress.enabled: "true"
-    user.tink.ingress.domain: app.example.com
-    user.tink.ingress.port: "8080"      # default 80
-  ```
-
-  **A machine Incus cannot read the address of** (a virtual machine with no guest agent, such as Home Assistant OS) is skipped with "no address yet", because the address is
-  normally read from the instance's `eth0`. Say where it is:
-
-  ```yaml
-  config:
-    user.tink.ingress.enabled: "true"
-    user.tink.ingress.domain: ha.example.com
-    user.tink.ingress.port: "8123"
-    user.tink.ingress.address: 192.0.2.176   # an IP address or a host name: no scheme, no port
-  ```
-
-  The address you set is believed over anything Incus reports, so the machine is routed whether or not Incus can see it. Because it ends up in generated Caddy configuration it
-  is held to what a host is (an IPv4 or IPv6 address, or a DNS name); a value that is not one **skips the instance with a warning** and is not replaced by the discovered
-  address, since a route to the wrong place is worse than none. A route you set an address for is yours to keep correct: if the machine's address changes, so must the key.
-
-  Everything tink writes or reads on an object's metadata is under `user.tink.*`. These keys used to be `user.ingress.{enabled,domain,port}`; **the old names still
-  work**, because instances in other repositories register with them and a reconciler that stopped seeing them would delete their routes. A key under the new name wins
-  over the old one, key by key. An instance still on the old names is routed as before and named once: in `tink ingress status`/`reconcile`, in the daemon's log
-  (when the set changes, not every pass), and in `tink helper status`. Rename the keys and the notice goes away. The old names will stop being read once the hosts
-  that use them have moved.
-- **The same thing is available by hand**, to try it: `tink ingress status --via-api` and `tink ingress reconcile --via-api [--ingress-instance NAME]`, from
-  anywhere that can reach the server (`--remote` included). `tink daemon run --ingress-via-api` is what the helper's entrypoint uses.
-- **It is opt-in, and the host path is unchanged.** Without `--via-api` everything works as it did, on the host's filesystem.
-- **A routes directory it cannot read is an error, never "no routes"**: a failed read taken for an empty directory would rewrite every route.
-- **Writes before removals.** It writes the desired files first and removes the stale ones after, so there is never a moment with no routes; Caddy is told to
-  reload only once everything is in place. A pass that changes nothing writes nothing and does not reload.
-- **One reconciler.** With `--ingress` the instance is marked `user.tink.helper.ingress`, and **`tink deploy` then does not install the host's `tink-daemon`**, which
-  would reconcile the same routes and reload the same Caddy from a place that does not know about the helper. If `tink-daemon` is already installed on the host,
-  deploy says so and leaves it: disable it (`systemctl disable --now tink-daemon`). A helper without `--ingress` leaves ingress to the host's daemon, as before.
-- **A failed pass is retried in 5 seconds**, not after the whole minute: the helper's first pass races its own enrolment.
 
 ## Copying to another Incus server
 
@@ -386,7 +329,6 @@ was read, **keeping every other key as it was**; if the volume changed in betwee
 | `failing` | copies that have failed since their last success: volume, target, how many in a row, since when |
 | `last_job` | the newest finished job: id, state, when |
 | `remotes` | the Incus servers the helper can reach by name: `host`, and any added with `tink helper remote add` (name, address, project; no credential). Absent from an older helper, which is why a missing list is not read as "none" |
-| `ingress` | the last ingress reconcile: ok or not, when, how many warnings (only if this daemon runs ingress) |
 
 It holds **no error text**. Errors from Incus and its drivers can echo credentials, so the reasons it gives for something Incus refused are fixed
 phrases, and the detail stays in the job's log.
@@ -424,7 +366,7 @@ instance for an older helper), and judges it from that and from the state of its
 | | |
 |---|---|
 | **healthy** (exit 0) | running, heard from recently, nothing skipped, nothing failing |
-| **degraded** (exit 1) | running and heard from, but skipping a volume, failing a copy, failing an ingress reconcile, or saying nothing useful (no document yet, one it cannot read, or a status volume that cannot be read) |
+| **degraded** (exit 1) | running and heard from, but skipping a volume, failing a copy, or saying nothing useful (no document yet, one it cannot read, or a status volume that cannot be read) |
 | **down** (exit 2) | the instance is stopped, there is no helper, or it has been silent for more than **2.5 heartbeats** |
 
 `--check` prints one line per helper and sets the exit status, so cron, a monitor or Home Assistant can poll it. Without `--check` it prints the
@@ -441,7 +383,7 @@ $ echo $?
 after the helper has gone. Nothing here sends a notification: this is what a notifier would run. Nothing in tink does that yet.
 
 **Under `--remote`.** It works from anywhere that can reach the server: it reads instance config, and the status volume's. `daemon run` itself accepts a remote (the
-helper runs as a client of its own host): see `docs/remote.md` for what it needs for its ingress half.
+helper runs as a client of its own host).
 
 ## The image, and releasing it
 

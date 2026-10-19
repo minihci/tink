@@ -82,7 +82,7 @@ Say these out loud rather than hide them. Each is from Incus's reference for ins
   with a `check:` is the nearest to "wait until it answers".
 - **A stop timeout (`--stop-timeout`, `stop_grace_period`).** Only `boot.host_shutdown_timeout`, for the host shutting down. For a slow database, stop it with `incus stop --timeout` yourself.
 - **`--hostname`, `--add-host` / `extra_hosts`.** The hostname is the instance name (verified). Nothing sets extra hosts entries.
-- **The Docker socket** (Portainer, Traefik's Docker provider, Watchtower). There is no Docker. Reverse-proxy routes are `user.tink.ingress.*` config here, not labels read from a socket; image updates are
+- **The Docker socket** (Portainer, Traefik's Docker provider, Watchtower). There is no Docker. Reverse-proxy routes are a hand-written route file here, not labels read from a socket; image updates are
   `on_image_change` in a stack.
 - **Container-to-container by name** works, and without a suffix: a bare `kuma-play` resolved from another instance on the same network (verified). Compose service names carry over.
 

@@ -55,8 +55,7 @@ func agentRetry(r Resource) (attempts int, delay time.Duration) {
 // instance named by Instance, over incusapi.ExecInGuest -- the same
 // WebSocket exec protocol `incus exec` itself is built on (see that
 // function's own doc comment for why it lives in incusapi rather than
-// here: internal/ingress's Caddy-reload apply() needed the exact same
-// primitive for the exact same reason). A USB device finishing a driver
+// here). A USB device finishing a driver
 // bind or a Caddy process reloading its config both live on the guest
 // side, which is the entire reason kind: exec exists next to kind: incus
 // rather than one field broadened to cover both.

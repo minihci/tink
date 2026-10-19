@@ -53,12 +53,12 @@ func TestUndeclaredExtras_AKeyTheStackDeclaresIsNeverAnExtraWhateverItsValue(t *
 func TestUndeclaredExtras_TinksOwnStateIsNotAnExtra(t *testing.T) {
 	live := Resource{Config: map[string]string{
 		"user.tink.helper.status": "{...}", "user.tink.run.command": "tink run ...", "user.tink.exec.restart-app.trigger-hash": "abc",
-		"user.tink.ingress.domain": "x.example.com",
+		"user.tink.example.key": "x.example.com",
 	}}
 	declared := Resource{}
 	e := undeclaredExtras(live, declared)
 	// the ingress keys are declared by a person (they decide a route), so they are not tink's state
-	if want := []string{"user.tink.ingress.domain"}; !reflect.DeepEqual(e.Config, want) {
+	if want := []string{"user.tink.example.key"}; !reflect.DeepEqual(e.Config, want) {
 		t.Errorf("Config = %v, want %v", e.Config, want)
 	}
 }

@@ -16,14 +16,12 @@ import (
 	"github.com/minihci/tink/internal/jobs"
 )
 
-// Live is what the workers learn that the status document reports: the scheduler's view of the volumes and the ingress pass's last
-// result. The workers write it as they go; the status worker reads it and publishes only what changed.
+// Live is what the workers learn that the status document reports: the scheduler's view of the volumes. The workers write it as they go; the status worker reads it and publishes only what changed.
 type Live struct {
 	mu      sync.Mutex
 	known   bool // the scheduler has completed a pass, so skipped and failing are facts and not "not looked yet"
 	skipped []helper.Skip
 	failing []helper.Failing
-	ingress *helper.IngressState
 }
 
 func (l *Live) setBackup(skipped []helper.Skip, failing []helper.Failing) {
@@ -39,20 +37,10 @@ func (l *Live) backupKnown() bool {
 	return l.known
 }
 
-func (l *Live) setIngress(ok bool, warnings, legacy int, at time.Time) {
+func (l *Live) snapshot() (skipped []helper.Skip, failing []helper.Failing) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.ingress = &helper.IngressState{OK: ok, At: at.UTC(), Warnings: warnings, Legacy: legacy}
-}
-
-func (l *Live) snapshot() (skipped []helper.Skip, failing []helper.Failing, ingress *helper.IngressState) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.ingress != nil {
-		i := *l.ingress
-		ingress = &i
-	}
-	return append([]helper.Skip(nil), l.skipped...), append([]helper.Failing(nil), l.failing...), ingress
+	return append([]helper.Skip(nil), l.skipped...), append([]helper.Failing(nil), l.failing...)
 }
 
 // maxReason keeps a skip reason to a line. The reasons that come from tink's own parsing of a policy are short; this is a bound,
@@ -132,7 +120,7 @@ func (o StatusOptions) interval() time.Duration {
 
 // buildStatus is the document as it stands now.
 func buildStatus(o StatusOptions, live *Live, started, now time.Time) helper.Status {
-	skipped, failing, ingress := live.snapshot()
+	skipped, failing := live.snapshot()
 	s := helper.Status{
 		Version:     o.Version,
 		JobProto:    jobs.Proto,
@@ -140,7 +128,6 @@ func buildStatus(o StatusOptions, live *Live, started, now time.Time) helper.Sta
 		Started:     started.UTC(),
 		Skipped:     skipped,
 		Failing:     failing,
-		Ingress:     ingress,
 	}
 	zone := o.Zone
 	if zone == nil {

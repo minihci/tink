@@ -84,8 +84,19 @@ func TestTheStackStoreIsGone(t *testing.T) {
 }
 
 func TestDaemonRunFlags(t *testing.T) {
-	if _, err := runCLI(t, "daemon", "run", "--no-ingress"); err == nil || !strings.Contains(err.Error(), "leaves nothing to run") {
-		t.Errorf("--no-ingress alone: %v", err)
+	if _, err := runCLI(t, "daemon", "run"); err == nil || !strings.Contains(err.Error(), "needs --jobs") {
+		t.Errorf("with the ingress reconcile gone, --jobs is all it runs, so it is required: %v", err)
+	}
+	for _, gone := range []string{"--no-ingress", "--ingress-via-api", "--routes-dir", "--ingress-instance", "--interval"} {
+		if _, err := runCLI(t, "daemon", "run", "--jobs", t.TempDir(), gone); err == nil || !strings.Contains(err.Error(), "unknown flag") {
+			t.Errorf("%s no longer exists: %v", gone, err)
+		}
+	}
+	if _, err := runCLI(t, "ingress", "status"); err == nil || !strings.Contains(err.Error(), "unknown command") {
+		t.Errorf("tink ingress no longer exists: %v", err)
+	}
+	if out, err := runCLI(t, "daemon", "--help"); err != nil || strings.Contains(out, "  install ") {
+		t.Errorf("`daemon install` no longer exists, but the help lists it: %v\n%s", err, out)
 	}
 	if _, err := runCLI(t, "daemon", "run", "--jobs", t.TempDir(), "--timezone", "Not/AZone"); err == nil || !strings.Contains(err.Error(), "--timezone") {
 		t.Errorf("a bad time zone: %v", err)
@@ -101,48 +112,10 @@ func TestAJobWithAnUnreadableRequestHasNoNonsenseAge(t *testing.T) {
 	}
 }
 
-func TestDaemonRunUnderARemoteRefusesOnlyTheIngressPathItCannotReach(t *testing.T) {
-	// With a remote and nothing said about ingress, it would read a path inside the host's storage pool: refused, saying what to give.
-	err := runRoot(t, "--remote", "helper-host", "daemon", "run", "--jobs", t.TempDir())
-	if err == nil || !strings.Contains(err.Error(), `remote "helper-host"`) || !strings.Contains(err.Error(), "--no-ingress") || !strings.Contains(err.Error(), "--routes-dir") {
-		t.Errorf("err = %v", err)
-	}
-	// --no-ingress or an explicit --routes-dir gets past the refusal. A bad --timezone then stops the command before it
-	// starts anything, which is how this test knows the PreRunE let it through.
-	for _, extra := range [][]string{{"--no-ingress"}, {"--routes-dir", t.TempDir()}} {
-		args := append([]string{"--remote", "helper-host", "daemon", "run", "--jobs", t.TempDir(), "--timezone", "Not/AZone"}, extra...)
-		if err := runRoot(t, args...); err == nil || !strings.Contains(err.Error(), "--timezone") {
-			t.Errorf("%v must pass the remote check and fail on the time zone, got: %v", extra, err)
-		}
-	}
-	// no remote: unchanged
-	if err := runRoot(t, "daemon", "run", "--jobs", t.TempDir(), "--timezone", "Not/AZone"); err == nil || !strings.Contains(err.Error(), "--timezone") {
-		t.Errorf("without a remote nothing is refused: %v", err)
-	}
-}
-
-func TestDaemonRunUnderARemoteAcceptsTheIngressViaTheFileAPI(t *testing.T) {
-	// a bad --timezone stops the command before it starts anything, which is how this knows the refusal let it through
-	args := []string{"--remote", "helper-host", "daemon", "run", "--jobs", t.TempDir(), "--timezone", "Not/AZone", "--ingress-via-api"}
+func TestDaemonRunUnderARemoteIsNotRefused(t *testing.T) {
+	// A bad --timezone stops the command before it starts anything, which is how this knows nothing refused it first.
+	args := []string{"--remote", "helper-host", "daemon", "run", "--jobs", t.TempDir(), "--timezone", "Not/AZone"}
 	if err := runRoot(t, args...); err == nil || !strings.Contains(err.Error(), "--timezone") {
-		t.Errorf("--ingress-via-api needs nothing from this machine, so a remote is fine: %v", err)
-	}
-	err := runRoot(t, "--remote", "helper-host", "daemon", "run", "--jobs", t.TempDir())
-	if err == nil || !strings.Contains(err.Error(), "--ingress-via-api") {
-		t.Errorf("and the refusal now names it as the way out: %v", err)
-	}
-}
-
-func TestIngressCommandsWorkUnderARemoteOnlyThroughTheFileAPI(t *testing.T) {
-	for _, sub := range []string{"reconcile", "status"} {
-		err := runRoot(t, "--remote", "helper-host", "ingress", sub)
-		if err == nil || !strings.Contains(err.Error(), "works on the host it runs on") {
-			t.Errorf("ingress %s without --via-api is still host-local: %v", sub, err)
-		}
-		// with --via-api it is not refused for being under a remote: it goes on to look for the remote itself
-		err = runRoot(t, "--remote", "helper-host", "ingress", sub, "--via-api")
-		if err == nil || strings.Contains(err.Error(), "works on the host it runs on") {
-			t.Errorf("ingress %s --via-api must get past the refusal: %v", sub, err)
-		}
+		t.Errorf("the daemon is a client of whatever server it is pointed at, so a remote is fine: %v", err)
 	}
 }

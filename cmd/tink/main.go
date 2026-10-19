@@ -23,7 +23,6 @@ import (
 	"github.com/minihci/tink/internal/daemon"
 	"github.com/minihci/tink/internal/helper"
 	"github.com/minihci/tink/internal/incusapi"
-	"github.com/minihci/tink/internal/ingress"
 	"github.com/minihci/tink/internal/jobs"
 	"github.com/minihci/tink/internal/resolve"
 	"github.com/minihci/tink/internal/run"
@@ -99,7 +98,6 @@ made executable instead of just documented.`,
 	root.AddCommand(newVolBackupCmd())
 	root.AddCommand(newRemoteCmd())
 	root.AddCommand(newHelperCmd())
-	root.AddCommand(newIngressCmd())
 	root.AddCommand(newIdentityCmd())
 	root.AddCommand(newJoinCmd())
 	root.AddCommand(newDaemonCmd())
@@ -218,8 +216,7 @@ equivalents, and docker logs specifically has no Incus equivalent to
 translate to at all.
 
 Use --dry-run to compute and print the plan without creating or
-starting anything, matching tink deploy's and tink ingress reconcile's
-existing convention.
+starting anything, matching tink deploy's existing convention.
 
 --incus-config and --incus-device are the escape hatch: Incus's own vocabulary, for anything
 the flags above do not say (memory and cpu limits, sysctls, host devices, a tmpfs, privileged...).
@@ -474,179 +471,44 @@ func printPlanned(w interface{ Write([]byte) (int, error) }, p resolve.PlannedRe
 	}
 }
 
-func newIngressCmd() *cobra.Command {
-	ingressCmd := &cobra.Command{
-		Use:   "ingress",
-		Short: "Manage self-registered ingress routes",
-	}
-
-	ingressCmd.AddCommand(newIngressReconcileCmd())
-	ingressCmd.AddCommand(newIngressStatusCmd())
-
-	return ingressCmd
-}
-
-func newIngressReconcileCmd() *cobra.Command {
-	opts := ingress.DefaultOptions()
-	cmd := &cobra.Command{
-		Use:   "reconcile",
-		Short: "Discover registered instances and converge ingress routes to match",
-		Long: `reconcile is tink's port of incus-host/reconciler/reconcile.sh: it
-discovers instances that opt in via user.tink.ingress.{domain,port,enabled}
-config and renders/applies the shared ingress instance's routes.
-
-Use --dry-run to compute and report what would change without writing
-anything or reloading Caddy -- this is how it's meant to be run alongside
-the live bash version before its cron entry actually gets moved over.`,
-		PreRunE: ingressUnderRemote("tink ingress reconcile", &opts),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			useInstanceRoutesDir(cmd, &opts)
-			result, err := ingress.Reconcile(opts)
-			if err != nil {
-				return err
-			}
-			printIngressResult(cmd, result, opts.DryRun)
-			return nil
-		},
-	}
-	addIngressFlags(cmd, &opts)
-	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "compute and report what would change without applying it")
-	return cmd
-}
-
-func newIngressStatusCmd() *cobra.Command {
-	opts := ingress.DefaultOptions()
-	cmd := &cobra.Command{
-		Use:     "status",
-		Short:   "Show what's currently registered, without changing anything",
-		PreRunE: ingressUnderRemote("tink ingress status", &opts),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			useInstanceRoutesDir(cmd, &opts)
-			result, err := ingress.Status(opts)
-			if err != nil {
-				return err
-			}
-			printIngressResult(cmd, result, true)
-			return nil
-		},
-	}
-	addIngressFlags(cmd, &opts)
-	return cmd
-}
-
-func addIngressFlags(cmd *cobra.Command, opts *ingress.Options) {
-	cmd.Flags().StringVar(&opts.Socket, "socket", opts.Socket, "Incus daemon unix socket path (default: Incus's own resolution)")
-	cmd.Flags().StringVar(&opts.RoutesDir, "routes-dir", opts.RoutesDir, "generated ingress routes directory (with --via-api: the path inside the ingress instance)")
-	cmd.Flags().BoolVar(&opts.ViaAPI, "via-api", false, "read and write the route files through the ingress instance's file API instead of on this host's filesystem: works from anywhere, and under --remote")
-	cmd.Flags().StringVar(&opts.IngressInstance, "ingress-instance", opts.IngressInstance, "name of the ingress instance to reload")
-}
-
-// ingressUnderRemote is the PreRunE of the ingress commands: they work on a path inside the host's storage pool, which is the wrong place
-// on any other machine, unless they go through the ingress instance's file API instead (--via-api), which is the same everywhere.
-func ingressUnderRemote(what string, opts *ingress.Options) func(*cobra.Command, []string) error {
-	return func(cmd *cobra.Command, args []string) error {
-		if via, _ := cmd.Flags().GetBool("via-api"); via {
-			return nil
-		}
-		return refuseUnderRemote(what)(cmd, args)
-	}
-}
-
-// useInstanceRoutesDir points the reconcile at the generated directory inside the ingress instance when it goes through the file API and
-// the caller did not name another one.
-func useInstanceRoutesDir(cmd *cobra.Command, opts *ingress.Options) {
-	if opts.ViaAPI && !cmd.Flags().Changed("routes-dir") {
-		opts.RoutesDir = ingress.InstanceRoutesDir
-	}
-}
-
-func printIngressResult(cmd *cobra.Command, result *ingress.Result, dryRun bool) {
-	out := cmd.OutOrStdout()
-	for _, w := range result.Warnings {
-		fmt.Fprintf(cmd.ErrOrStderr(), "WARN: %s\n", w)
-	}
-	if len(result.Legacy) > 0 {
-		fmt.Fprintf(cmd.ErrOrStderr(), "NOTE: %s\n", ingress.LegacyNotice(result.Legacy))
-	}
-
-	fmt.Fprintf(out, "%d instance(s) registered:\n", len(result.Registrations))
-	for _, r := range result.Registrations {
-		fmt.Fprintf(out, "  %s -> https://%s (proxying to %s:%s)\n", r.Name, r.Domain, r.Address, r.Port)
-	}
-
-	if result.Diff.Empty() {
-		fmt.Fprintln(out, "no changes")
-		return
-	}
-
-	verb := "would apply"
-	if result.Applied {
-		verb = "applied"
-	}
-	fmt.Fprintf(out, "%s: +%d -%d ~%d\n", verb, len(result.Diff.Added), len(result.Diff.Removed), len(result.Diff.Changed))
-	for _, f := range result.Diff.Added {
-		fmt.Fprintf(out, "  add %s\n", f)
-	}
-	for _, f := range result.Diff.Removed {
-		fmt.Fprintf(out, "  remove %s\n", f)
-	}
-	for _, f := range result.Diff.Changed {
-		fmt.Fprintf(out, "  change %s\n", f)
-	}
-}
-
 func newDaemonCmd() *cobra.Command {
 	daemonCmd := &cobra.Command{
 		Use:   "daemon",
-		Short: "Run tink's periodic actions as a persistent process, instead of via cron",
+		Short: "Run the helper's periodic work (the backup scheduler and the job executor)",
 	}
 
 	daemonCmd.AddCommand(newDaemonRunCmd())
-	daemonCmd.AddCommand(newDaemonInstallCmd())
 	daemonCmd.AddCommand(newDaemonEnqueueCmd(), newDaemonJobsCmd(), newDaemonCancelCmd())
 	return daemonCmd
 }
 
 func newDaemonRunCmd() *cobra.Command {
-	opts := ingress.DefaultOptions()
-	var interval, schedulerInterval time.Duration
+	var socket string
+	var schedulerInterval time.Duration
 	var jobsDir, timezone string
-	var noIngress bool
 	var statusInstance, statusVolume, statusPool, statusProject string
 	var statusHeartbeat time.Duration
-	var ingressViaAPI bool
 
 	cmd := &cobra.Command{
 		Use:   "run",
-		Short: "Run tink's periodic work (ingress reconcile, backup scheduler) until stopped",
-		Long: `run reconciles ingress registrations immediately, then again every
---interval, until it receives SIGTERM or SIGINT -- the mode an init
-system's unit file (see "tink daemon install") actually invokes.
+		Short: "Run the helper's work (the backup scheduler and the job executor) until stopped",
+		Long: `run starts the helper's work and runs it until it receives SIGTERM or SIGINT. --jobs is required: it is the
+directory the work is queued in.
 
-With --jobs it also runs the helper's work: a scheduler that, every --scheduler-interval,
-lists the volumes that carry a copy policy (written by "tink plan apply" from the stack's
-backup: block) and queues a backup job in --jobs when one of their copies is due (and none
-is already queued or running), and an executor that runs the queued jobs one at a time,
-oldest first. There is no stack to keep in step: the volumes say what to copy. Schedules
-are evaluated in --timezone (default: this machine's). A failing copy backs off instead of
-being retried every tick. Look at the work with "tink daemon jobs".
+A scheduler, every --scheduler-interval, lists the volumes that carry a copy policy (written by "tink plan apply" from
+the stack's backup: block) and queues a backup job in --jobs when one of their copies is due (and none is already queued
+or running), and an executor runs the queued jobs one at a time, oldest first. There is no stack to keep in step: the
+volumes say what to copy. Schedules are evaluated in --timezone (default: this machine's). A failing copy backs off
+instead of being retried every tick. Look at the work with "tink daemon jobs".
 
-Each worker is isolated: one that crashes is logged and restarted, and does not stop the
-others. --no-ingress runs only the helper's work, beside an ingress daemon that already exists.
+Each worker is isolated: one that crashes is logged and restarted, and does not stop the others.
 
-With --remote (or $TINK_REMOTE) the daemon manages that server over its API, which is how the
-helper runs: a client of its own host. The ingress half reads and writes a directory, and the
-default one is a path inside the host's storage pool, so under a remote it needs either
---ingress-via-api (the route files are read and written through the ingress instance's file API, so
-nothing depends on this machine), --no-ingress, or a --routes-dir that this process can actually
-reach. Anything else is refused rather than act on the wrong machine.`,
-		PreRunE: daemonRunUnderRemote,
+With --remote (or $TINK_REMOTE) the daemon manages that server over its API, which is how the helper runs: a client of
+its own host.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
-			opts.ViaAPI = ingressViaAPI
-			useInstanceRoutesDir(cmd, &opts)
-			ro := daemon.RunOptions{Interval: interval, IngressOptions: opts, NoIngress: noIngress}
+			ro := daemon.RunOptions{}
 			zone := time.Local
 			if timezone != "" {
 				var err error
@@ -658,7 +520,10 @@ reach. Anything else is refused rather than act on the wrong machine.`,
 			if err := target.validate(); err != nil {
 				return err
 			}
-			if publisher := target.publisher(connectorFor(opts.Socket), statusHeartbeat); publisher != nil {
+			if jobsDir == "" {
+				return fmt.Errorf("tink daemon run needs --jobs: the directory the backup scheduler queues jobs in and the executor runs them from")
+			}
+			if publisher := target.publisher(connectorFor(socket), statusHeartbeat); publisher != nil {
 				ro.Status = &daemon.StatusOptions{
 					Publisher: publisher,
 					Version:   buildVersion(),
@@ -676,7 +541,6 @@ reach. Anything else is refused rather than act on the wrong machine.`,
 				if err := os.MkdirAll(jobsDir, 0o700); err != nil {
 					return fmt.Errorf("--jobs: %w", err)
 				}
-				socket := opts.Socket
 				ro.Helper = &daemon.Helper{
 					Store: jobs.Store{Dir: jobsDir},
 					Connect: func() (backuprun.Engine, error) {
@@ -691,87 +555,21 @@ reach. Anything else is refused rather than act on the wrong machine.`,
 					SchedulerInterval: schedulerInterval,
 					Redactor:          redactor,
 				}
-			} else if noIngress {
-				return fmt.Errorf("--no-ingress leaves nothing to run without --jobs")
 			}
 			return daemon.Run(ctx, cmd.OutOrStdout(), ro)
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.Socket, "socket", opts.Socket, "Incus daemon unix socket path (default: Incus's own resolution)")
-	cmd.Flags().StringVar(&opts.RoutesDir, "routes-dir", opts.RoutesDir, "generated ingress routes directory")
-	cmd.Flags().StringVar(&opts.IngressInstance, "ingress-instance", opts.IngressInstance, "name of the ingress instance to reload")
-	cmd.Flags().DurationVar(&interval, "interval", time.Minute, "how often to reconcile ingress")
-	cmd.Flags().StringVar(&jobsDir, "jobs", "", "directory the backup scheduler queues jobs in and the executor runs them from; giving it turns the backup scheduler on")
+	cmd.Flags().StringVar(&socket, "socket", "", "Incus daemon unix socket path (default: Incus's own resolution)")
+	cmd.Flags().StringVar(&jobsDir, "jobs", "", "directory the backup scheduler queues jobs in and the executor runs them from (required)")
 	cmd.Flags().StringVar(&timezone, "timezone", "", "time zone schedules are evaluated in, e.g. America/Denver (default: this machine's)")
 	cmd.Flags().DurationVar(&schedulerInterval, "scheduler-interval", time.Minute, "how often the scheduler looks for due copies")
-	cmd.Flags().BoolVar(&noIngress, "no-ingress", false, "do not run the ingress reconcile loop (only the --jobs work)")
-	cmd.Flags().BoolVar(&ingressViaAPI, "ingress-via-api", false, "run the ingress reconcile through the ingress instance's file API instead of on this host's filesystem (the way the helper does, and the only way under --remote)")
 	cmd.Flags().StringVar(&statusVolume, "status-volume", "", "publish a status document on this custom volume's config (user.tink.helper.status), so `tink helper status` and `plan` can see this daemon; the helper's instance points at the volume (user.tink.helper.status-volume), and the helper holds no right to edit an instance")
 	cmd.Flags().StringVar(&statusPool, "status-pool", "default", "the storage pool of --status-volume")
 	cmd.Flags().StringVar(&statusInstance, "status-instance", "", "publish a status document on this instance's own config instead (user.tink.helper.status): the way helpers installed before the status volume do; not with --status-volume")
 	cmd.Flags().StringVar(&statusProject, "status-project", "", "the project of --status-volume, or of --status-instance (default: the connection's own)")
 	cmd.Flags().DurationVar(&statusHeartbeat, "status-heartbeat", helper.DefaultHeartbeat, "how often the status document is written when nothing in it has changed")
 	return cmd
-}
-
-func newDaemonInstallCmd() *cobra.Command {
-	unitOpts := daemon.DefaultUnitOptions()
-	var initSystem string
-
-	cmd := &cobra.Command{
-		Use:   "install",
-		Short: "Print a unit/init file for supervising \"tink daemon run\", for review before installing",
-		Long: `install prints (to stdout, for you to review and redirect yourself) the
-unit or init script content for running "tink daemon run" under the given
-init system. It does not write, enable, or start anything -- generating
-and applying are kept separate, the same way "kubectl create" and
-"kubectl apply" are two different steps.
-
-  tink daemon install --init=systemd > /etc/systemd/system/tink-daemon.service
-  tink daemon install --init=openrc  > /etc/init.d/tink-daemon
-
-Defaults to auto-detecting the running init system if --init is omitted;
-fails rather than guessing if detection is inconclusive.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if initSystem == "" {
-				initSystem = daemon.DetectInit()
-				if initSystem == "" {
-					return fmt.Errorf("could not detect the running init system -- pass --init explicitly (one of: %v)", daemon.InitSystems)
-				}
-				fmt.Fprintf(cmd.ErrOrStderr(), "detected init system: %s\n", initSystem)
-			}
-
-			out, err := daemon.Generate(initSystem, unitOpts)
-			if err != nil {
-				return err
-			}
-			fmt.Fprint(cmd.OutOrStdout(), out)
-			return nil
-		},
-	}
-
-	cmd.Flags().StringVar(&initSystem, "init", "", fmt.Sprintf("init system to generate for (one of: %v; default: auto-detect)", daemon.InitSystems))
-	cmd.Flags().StringVar(&unitOpts.ExecPath, "exec-path", unitOpts.ExecPath, "path to the tink binary on the target host")
-	return cmd
-}
-
-// daemonRunUnderRemote is `daemon run`'s PreRunE. The daemon is a client of whatever server it is pointed at, except for
-// the ingress half, which reads and writes a directory: refused under a remote unless that half is off (--no-ingress) or
-// the directory was named (--routes-dir), because the default is a path inside the host's own storage pool, which is
-// the wrong place, or no place at all, on any machine but the host.
-func daemonRunUnderRemote(cmd *cobra.Command, _ []string) error {
-	if !incusapi.IsRemote() {
-		return nil
-	}
-	if off, _ := cmd.Flags().GetBool("no-ingress"); off || cmd.Flags().Changed("routes-dir") {
-		return nil
-	}
-	if via, _ := cmd.Flags().GetBool("ingress-via-api"); via {
-		return nil
-	}
-	return fmt.Errorf("tink daemon run is pointed at the remote %q (--remote or $TINK_REMOTE), and its ingress half reads a path inside the host's storage pool, which is not this machine's: "+
-		"give --ingress-via-api to run it through the ingress instance's file API, --no-ingress to run only the backup work, or --routes-dir with a directory this process can reach", incusapi.Remote())
 }
 
 // refuseUnderRemote is the PreRunE of every command that works on the host's own filesystem or processes (it

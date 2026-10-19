@@ -1,17 +1,17 @@
 # Backups on a schedule: the daemon's scheduler and jobs
 
-`tink daemon run --jobs DIR` adds two workers to the daemon (beside the ingress reconcile loop, which `--no-ingress` leaves out):
+`tink daemon run --jobs DIR` runs two workers (`--jobs` is required):
 
 - a **scheduler**: every `--scheduler-interval` (default a minute) it lists the volumes on the server that carry a **copy policy**, and queues a backup job in
   `--jobs` if at least one of their copies is **due**, and no backup job is already queued or running;
 - an **executor**: it runs the queued jobs one at a time, oldest first, through the same code as `tink backup run`.
 
 It runs under any supervisor: a systemd unit, OpenRC, or by hand. [The helper](helper.md) is an Incus instance that runs exactly this, which is the way to
-run it without writing a unit; `daemon install` is not retired yet.
+run it without writing a unit.
 
 ```
 tink plan apply tink.yaml                                         # puts each volume's copy policy on the volume
-tink daemon run --jobs /var/lib/tink/jobs --timezone America/Denver --no-ingress
+tink daemon run --jobs /var/lib/tink/jobs --timezone America/Denver
 tink daemon jobs --jobs /var/lib/tink/jobs                        # is it alive, and what has it done
 tink daemon jobs --jobs /var/lib/tink/jobs --log <ID>             # one job: its status and log
 tink daemon enqueue --jobs /var/lib/tink/jobs lib                 # run a backup now, in the daemon, surviving this command
@@ -83,5 +83,4 @@ that has the directory.
 ## Not here yet
 
 Starting a run from another machine and following it: `daemon enqueue`, `jobs` and `cancel` work where the jobs directory is, which for the helper is inside its
-instance ([helper.md](helper.md)). `daemon install` still prints a unit for the old ingress-only invocation; for this, write the unit's `ExecStart` with the
-flags above, or use the helper.
+instance ([helper.md](helper.md)). To run it under your own supervisor, write the unit's `ExecStart` with the flags above, or use the helper.

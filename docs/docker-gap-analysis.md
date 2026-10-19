@@ -97,7 +97,7 @@ Verdicts: ✅ covered, ◐ partial, ❌ gap (Incus can; tink's `run` cannot say 
 | `--hostname` | 0 | ⛔ | ⛔ | the instance name, not settable **live** | ⛔ |
 | `--add-host` / `extra_hosts` | 1 | ⛔ | ⛔ | none found | ⛔ |
 | `--ulimit`, `--pids-limit`, `--sysctl`, `--security-opt` | 1 each | ◐ `--incus-config` | ✅ | `limits.kernel.*`, `limits.processes`, `linux.sysctl.*`, `security.syscalls.*` docs | ◐ |
-| `--label` | 1 | ◐ `--incus-config user.KEY=VALUE` | ✅ | `user.*`. Reverse-proxy labels (Traefik/Caddy) are `user.tink.ingress.*` here | ◐ |
+| `--label` | 1 | ◐ `--incus-config user.KEY=VALUE` | ✅ | `user.*`. Reverse-proxy labels (Traefik/Caddy) are a hand-written route file here | ◐ |
 | `healthcheck` / `depends_on: condition: service_healthy` | 0 | ⛔ | ⛔ | Incus has no health check for application containers docs. `depends_on` is start order only; `kind: exec` with a `check` is the closest | ⛔ |
 | `depends_on` | 3 | n/a | ✅ | tink's graph | ✅ |
 | `IMAGE CMD...` | 0 | ◐ **replaces** entrypoint and command | ✅ | `oci.entrypoint`. Docker keeps the ENTRYPOINT and replaces only CMD | ◐ code: a semantic difference |
