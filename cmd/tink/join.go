@@ -12,6 +12,7 @@ import (
 
 	"github.com/minihci/tink/internal/incusapi"
 	"github.com/minihci/tink/internal/join"
+	"github.com/minihci/tink/internal/prepare"
 	"github.com/minihci/tink/internal/resolve"
 )
 
@@ -158,7 +159,7 @@ func printJoin(out, errw io.Writer, stacks []join.Stack, only string) error {
 func loadJoinStacks(args []string) ([]join.Stack, error) {
 	var stacks []join.Stack
 	for _, arg := range args {
-		rs, err := resolve.LoadFiles(strings.Split(arg, ","))
+		rs, err := prepare.Load(strings.Split(arg, ",")) // the stack's defaults filled in, as plan sees it
 		if err != nil {
 			return nil, err
 		}

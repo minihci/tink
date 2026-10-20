@@ -7,10 +7,17 @@
 // project inheritance), and each one reads what the passes before it left. The sequence is:
 //
 //  1. load the files (which also gives every resource the stack's default project);
-//  2. expand ${secret:NAME} references, so nothing after this point sees a reference, and nothing before it holds a value;
-//  3. connect to the server, once, for everything that follows (the commands reuse the connection for planning or applying);
-//  4. qualify each instance's image the way Incus resolves it, which needs the server and must come before the graph is built;
-//  5. build the dependency levels (resolve.Levels), which applies the passes inside the resolver in their own fixed order.
+//  2. fill the stack's `defaults:` into the resources that do not set a value (docs/stack-defaults.md). It comes straight after the load because
+//     it needs only the loaded documents, and before everything else because everything else must see the resources as they will be planned: an
+//     environment.* default may carry a secret reference that the next pass has to expand, and the graph is built from the filled resources, so a
+//     default is never a surprise to a later pass. It needs no server, so a bad `defaults:` fails before a connection is made;
+//  3. expand ${secret:NAME} references, so nothing after this point sees a reference, and nothing before it holds a value;
+//  4. connect to the server, once, for everything that follows (the commands reuse the connection for planning or applying);
+//  5. qualify each instance's image the way Incus resolves it, which needs the server and must come before the graph is built;
+//  6. build the dependency levels (resolve.Levels), which applies the passes inside the resolver in their own fixed order.
+//
+// A command that reads a stack's files and never plans them (`tink join`, `tink volume backup`) calls Load, which is passes 1 and 2, so that it sees
+// the same resources `plan` does.
 //
 // A new pass is added to the list in prepare, in the place its inputs require, and every command that prepares a stack has it.
 package prepare
@@ -55,22 +62,34 @@ func Prepare(req Request) (*Prepared, error) {
 	return prepare(req, defaultSteps())
 }
 
+// Load is the first two passes on their own: the files loaded, and the stack's defaults filled in. It is for the commands that read a stack and
+// never plan it, so that they see the resources `plan` would plan and not the ones as they were written.
+func Load(files []string) ([]resolve.Resource, error) {
+	resources, err := resolve.LoadFiles(files)
+	if err != nil {
+		return nil, err
+	}
+	return resolve.ApplyDefaults(resources)
+}
+
 // steps are the passes that touch the world, so a test can replace them and watch the order they are called in.
 type steps struct {
-	load    func(files []string) ([]resolve.Resource, error)
-	secrets func(resources []resolve.Resource, req Request) ([]resolve.Resource, error)
-	connect func(socket string) (incus.InstanceServer, error)
-	qualify func(server incus.InstanceServer, resources []resolve.Resource) ([]string, error)
-	levels  func(resources []resolve.Resource) ([][]resolve.Resource, error)
+	load     func(files []string) ([]resolve.Resource, error)
+	defaults func(resources []resolve.Resource) ([]resolve.Resource, error)
+	secrets  func(resources []resolve.Resource, req Request) ([]resolve.Resource, error)
+	connect  func(socket string) (incus.InstanceServer, error)
+	qualify  func(server incus.InstanceServer, resources []resolve.Resource) ([]string, error)
+	levels   func(resources []resolve.Resource) ([][]resolve.Resource, error)
 }
 
 func defaultSteps() steps {
 	return steps{
-		load:    resolve.LoadFiles,
-		secrets: expandSecrets,
-		connect: incusapi.Connect,
-		qualify: resolve.QualifyImages,
-		levels:  resolve.Levels,
+		load:     resolve.LoadFiles,
+		defaults: resolve.ApplyDefaults,
+		secrets:  expandSecrets,
+		connect:  incusapi.Connect,
+		qualify:  resolve.QualifyImages,
+		levels:   resolve.Levels,
 	}
 }
 
@@ -78,6 +97,9 @@ func defaultSteps() steps {
 func prepare(req Request, s steps) (*Prepared, error) {
 	resources, err := s.load(req.Files)
 	if err != nil {
+		return nil, err
+	}
+	if resources, err = s.defaults(resources); err != nil {
 		return nil, err
 	}
 	if resources, err = s.secrets(resources, req); err != nil {

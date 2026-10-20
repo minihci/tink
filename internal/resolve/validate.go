@@ -33,6 +33,7 @@ var fieldOwners = map[string][]Kind{
 	"Ingress":         {KindNetworkACL},
 	"Egress":          {KindNetworkACL},
 	"Devices":         {KindProfile, KindInstance},
+	"Defaults":        {KindStack},
 	"Instance":        {KindFile, KindExec, KindPublish},
 	"Offer":           {KindPublish},
 	"Network":         {KindHelper},
@@ -93,6 +94,9 @@ func Validate(r Resource) error {
 		return err
 	}
 	if err := validateStack(r); err != nil {
+		return err
+	}
+	if err := validateStackDefaults(r); err != nil {
 		return err
 	}
 	if err := validateNetwork(r); err != nil {

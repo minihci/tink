@@ -14,6 +14,7 @@ import (
 	"github.com/minihci/tink/internal/backuprun"
 	"github.com/minihci/tink/internal/incusapi"
 	"github.com/minihci/tink/internal/jobs"
+	"github.com/minihci/tink/internal/prepare"
 	"github.com/minihci/tink/internal/resolve"
 	"github.com/minihci/tink/internal/volbackup"
 )
@@ -100,7 +101,7 @@ func (f *volumeFlags) loadStack() ([]resolve.Resource, error) {
 		}
 		files = []string{resolve.DefaultFile}
 	}
-	return resolve.LoadFiles(files)
+	return prepare.Load(files)
 }
 
 func newVolBackupCmd() *cobra.Command {
