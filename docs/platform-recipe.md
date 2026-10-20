@@ -4,7 +4,7 @@
 
 ## The question
 
-[what-tink-is.md](what-tink-is.md#the-platform-stack-proposed) decided that the platform stack starts as "a template you copy and own", with two levers against the copy falling behind (a thin template with the wiring in tink, and visible drift). The author now leans toward **shipping it**, for a reason that decision did not weigh enough: **the end user should not have to maintain the platform stack.** The difficulty is that a home server behind NAT or on a VLAN, and a VPS with a public IP, do not look alike, and it is not practical to design for every kind of site.
+[what-tink-is.md](what-tink-is.md#the-platform-stack-proposed) first decided that the platform stack starts as "a template you copy and own", with two levers against the copy falling behind (a thin template with the wiring in tink, and visible drift). That decision has been replaced by this one: **ship it as a recipe, with `tink plan explain` as the eject**, for a reason the first decision did not weigh enough: **the end user should not have to maintain the platform stack.** The difficulty is that a home server behind NAT or on a VLAN, and a VPS with a public IP, do not look alike, and it is not practical to design for every kind of site.
 
 ## The proposal in one paragraph
 
@@ -58,7 +58,7 @@ The first guess named six facts (how clients reach ingress, how certificates are
 2. **Backup targets**, and the honesty that goes with them (`same-host` versus `other-host`, so the 3-2-1 check judges the truth).
 3. **Which secrets are minted and which are supplied.** A user who must hand-mint seven secrets is maintaining the stack. First apply needs generation (`tink secret --generate` exists **[docs]**) and one clear list of what only a person can give.
 4. **A site is more than one server.** The home site's control plane, its offsite backup target and, in the watching design, its alert endpoint all live on the VPS. So the recipe is **per server**, selecting the roles that server hosts, and servers refer to each other by URL or remote name, never by cross-stack reference (which tink does not have **[docs]**). The VPS is not "the VPS template"; it is `{mesh control plane, offsite target, alerts}` plus whatever public ingress the site wants. That also removes most of the homelab-versus-VPS worry: one recipe, different role selections, different facts.
-5. **Reach is a set of legs**, not a mode. tron serves a LAN leg and a mesh leg and has no public one. A public host would have a `public` leg, which `tink join` does not model yet (`serves`, `mesh`, `discovery` **[docs]**).
+5. **Reach is a set of legs**, not a mode. tron serves a LAN leg and a mesh leg and has no public one. A public host would have a `public` leg, which `tink join` models (`serves`, `mesh`, `public`, `discovery` **[code]**, [public-exposure.md](public-exposure.md)).
 6. **Where the Incus API may listen**, because it is a security fact that depends on the host: this VPS has a public IP and no host firewall, so a wildcard listener would expose the API; the live run used the bridge's own address **[lab]**.
 
 ## Escape hatches, cheapest first
@@ -140,7 +140,7 @@ These are gaps in tink today, in the order they block a shipped recipe:
 
 ## Proving it
 
-The author has two real sites, which is the test. **(1)** `recipe(tron's facts)` must `plan` as *no changes* against the live tron stack (the criterion of the opinion-as-code note's stage 3, on branch `platform-design`). **(2)** `recipe(the VPS's facts)` must produce something sound on a clean VPS. If one function does both, the axes are right; if one site needs another knob, that knob is a real axis. Both become golden fixtures, as reference sites, not as templates anyone maintains.
+The author has two real sites, which is the test. **(1)** `recipe(tron's facts)` must `plan` as *no changes* against the live tron stack (the criterion of the opinion-as-code note's stage 3: run the platform stack's `plan` read-only against the live server until it reports no changes). **(2)** `recipe(the VPS's facts)` must produce something sound on a clean VPS. If one function does both, the axes are right; if one site needs another knob, that knob is a real axis. Both become golden fixtures, as reference sites, not as templates anyone maintains.
 
 Stages, each checkable on its own:
 
@@ -156,7 +156,7 @@ Stages, each checkable on its own:
 - Is the facts file a `kind: site` document in a stack, or a separate file or flags? A document keeps one mechanism; a separate file keeps the facts out of the stack the recipe produces.
 - How much of the LAN addressing can tink discover, and how much must the user type?
 - Does the recipe live in `internal/` as Go (preferred here) or as embedded YAML with substitution (what `deploy` does)?
-- A `public` leg: what does `join` render for it, given there is no dns helper answering for public names?
+- ~~A `public` leg: what does `join` render for it?~~ Answered: nothing for the names (they live in public DNS), a warning naming the names that need records, and the leg's address as an ACL source ([public-exposure.md](public-exposure.md)).
 - Which roles are optional per server, and who decides that a server with no dns helper is still a complete site?
 - Is declared-state drift between recipe and server reported by `plan` only, or also by the daemon helper's status?
 - The platform-wide stamp is proposed on the platform project: a restricted certificate reads it with plain `can_view`, and the server config needs `can_view_sensitive`. Is there a reason left to want the server config (a pointer to the platform project)?

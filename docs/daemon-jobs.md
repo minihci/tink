@@ -82,5 +82,4 @@ that has the directory.
 
 ## Not here yet
 
-Starting a run from another machine and following it: `daemon enqueue`, `jobs` and `cancel` work where the jobs directory is, which for the helper is inside its
-instance ([helper.md](helper.md)). To run it under your own supervisor, write the unit's `ExecStart` with the flags above, or use the helper.
+`daemon enqueue`, `daemon jobs` and `daemon cancel` work where the jobs directory is. For the helper, whose directory is inside its instance, `tink helper jobs`, `tink helper log ID [--follow]` and `tink helper cancel ID` do the same from any machine that can reach the server, through the instance's file API ([helper.md](helper.md)). To run the daemon under your own supervisor, write the unit's `ExecStart` with the flags above, or use the helper.

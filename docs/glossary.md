@@ -43,7 +43,7 @@ tink fills gaps; it does not replace what it builds on. It gives a home or self-
 | engine | the technology that does a role's job today (Caddy, LLDAP, Authelia, Headscale) | design word |
 | helper | a container Incus keeps running for tink that provides one role's capability. Always named by its role: *ingress helper*, *dns helper*. Incus starts it at boot, so tink writes no init scripts. One container per role ([helpers](what-tink-is.md#helpers)) | partly: only the daemon helper exists |
 | daemon helper | the helper whose engine is tink itself: it runs `tink daemon run` (backup scheduler, job executor, optional ingress reconcile). Its certificate has the reach of root on the host. `tink helper ...` and [helper.md](helper.md) call it "the helper" | yes |
-| platform stack | a stack that declares a site's helpers, each from its upstream image pinned by digest. One per Incus server. Starts as a template you copy and own | no (proposed) |
+| platform stack | a stack that declares a site's helpers, each from its upstream image pinned by digest. One per Incus server. Proposed as a shipped recipe (a load-time expander), with `tink plan explain` as the eject; until then you write and own it | no (proposed) |
 | ingress | the reverse proxy in front of apps, and the routes tink renders for it from `user.tink.ingress.*` on the apps (the Kubernetes sense of the word) | yes |
 | backup target, copy, restore point | where copies go, a copy made there, a verified copy you can restore from | yes |
 | secret | `${secret:NAME}` in an instance's `environment.*`, encrypted with an age identity | yes |
