@@ -39,7 +39,7 @@ The instance is first reduced to what a person set, the same way `tink export` d
 - Devices a **profile** supplies (only the instance's own devices count).
 - tink's own state under `user.tink.helper.`, `user.tink.run.` and `user.tink.exec.`, and the stamps of `kind: publish` under `user.tink.publish.` (a stamp the stack derives is declared; one it no longer derives is a planned removal, the one case where `plan apply` removes a key: see [join.md](join.md#the-owned-prefix-and-the-one-place-tink-removes-a-key)).
 
-For a profile, a storage volume, a network and a project the following are not counted either: `volatile.*` and tink's own `user.tink.*` (a volume's backup policy, stack pointer and copy markers); a volume's snapshot keys that its `backup:` block declares; and on a project, a `features.*` key that still has the value Incus gives it when it creates a project (Incus writes all of them, so a project that declares only some carries the rest). A `features.*` flag with any other value is listed. Incus can also generate other keys when it creates an object (a network's address and NAT keys, say, when the stack does not set them); those are not recognised and are listed, so expect them on a network that declares only some of its keys. This part has been tested against fakes, not a live server.
+For a profile, a storage volume, a network and a project the following are not counted either: `volatile.*` and tink's own `user.tink.*` (a volume's backup policy, stack pointer and copy markers); a volume's snapshot keys that its `backup:` block declares; and on a project, a `features.*` key that still has the value Incus gives it (Incus 7.5.1 writes four of them when it creates a project, `features.images`, `features.profiles`, `features.storage.buckets` and `features.storage.volumes`, and none of the networks flags, so a project that declares only some carries the rest; the table of default values covers all six). A `features.*` flag with any other value is listed. Incus can also generate other keys when it creates an object (a network's address and NAT keys, say, when the stack does not set them); those are not recognised and are listed, so expect them on a network that declares only some of its keys (#165). See [Run live](#run-live).
 
 A key or device the stack **does** declare is never listed, even if its value differs; that difference is an ordinary change `plan` already shows. Profiles are
 compared only when the stack lists some.
@@ -57,6 +57,16 @@ no such limit.
   tell you that tink once applied it, or remove it: that needs tink to remember what it applied, which is a separate design (#138).
 - An instance with no stack file at all.
 - Network ACLs and the other kinds (files, execs, images, backup targets) are not compared in this direction. An ACL's rules are converged rule by rule, not left in place.
+
+## Run live
+
+For profiles, storage volumes, networks and projects (Incus 7.5.1, tink 22db2a2, 2026-10-20, a disposable host, #122). Objects were made by a plan apply, then keys and devices were added by hand.
+
+- **Matches.** A profile with a hand-added config key and device, a volume with a hand-added config key, a project with a hand-added config key and a `features.networks.zones` flag set to `true`, each listed exactly those and nothing else; `plan` exited 0 and `plan apply` changed none of them (a dump of each object was identical before and after). A volume's snapshot keys that its `backup:` block declares, and its `user.tink.*` keys, were not listed. A `features.networks` or `features.networks.zones` flag set to its default (`false`) was not listed; `features.images` set to `false` was.
+- **No line where there is nothing to compare.** An object the stack declares and that does not exist yet (`would create`), and a network that is blocked (an unmanaged one), got no extras line. A network that `would update` got one.
+- **Projects.** A project made with no config of its own showed no extras line: Incus 7.5.1 wrote only the four flags above, whether made by tink or by `incus project create`, so the table of defaults needed no change. Incus refuses to turn `features.networks.zones` off once it is set on a project that is not empty, so that flag cannot be put back by tink either.
+- **Networks are noisy (#165).** After tink created a bridge declaring only `ipv4.address`, the next plan listed `config.ipv4.nat`, `config.ipv6.address` and `config.ipv6.nat`, which Incus filled in; a stock bridge that declares only its name lists `config.ipv4.address`, `config.ipv4.nat`, `config.ipv6.address` and `config.ipv6.nat`. They are information and change nothing, as above, but they are not keys anyone set by hand.
+- **Not exercised:** the `volatile.*` exclusion on a storage volume, because Incus added no such key to the volume used.
 
 ## There is no switch to turn it off
 
