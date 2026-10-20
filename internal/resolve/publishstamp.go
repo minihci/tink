@@ -26,7 +26,7 @@ import (
 // instance can be stamped, because a grant sits next to the thing it governs and the server holds it there.
 //
 // The prefix is OWNED by tink, and that is the one place tink takes a config key back. Everywhere else a key that is no longer declared is left on the
-// instance (docs/authoritative-apply-design.md), but a stamp that stays after its publish is deleted would keep the name rendered: it would go on being
+// instance (docs/plan-extras.md; removing them is proposed in #138), but a stamp that stays after its publish is deleted would keep the name rendered: it would go on being
 // routed and let in. So when planning an instance that the stack declares, a live key under the prefix that the stack no longer derives is reported as a
 // removal and removed on apply (run.StaleOwnedKeys). Only that prefix, and only on instances the stack declares: any other key, tink's or not, is untouched.
 const PublishStampPrefix = "user.tink.publish."

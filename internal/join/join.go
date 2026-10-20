@@ -1,5 +1,5 @@
 // Package join computes, from the stack files a site declares, what the site's helpers would have to say for its published names to work, and
-// prints it. It is the "join" of docs/offer-grant-join-design.md: the app states an offer (a port on one of its NICs), the site publishes it
+// prints it. It is the "join" of the offer-grant design (docs/join.md; the unbuilt parts are proposed in #130): the app states an offer (a port on one of its NICs), the site publishes it
 // (a `kind: publish`: a name, and the groups that may use it), and the join looks across both, and across the platform helpers' own stamps, to
 // derive the pieces no one should have to keep in step by hand: the dns records, the mesh view, the proxy's routes, the sign-on rules, and the ACL on
 // the app's bridge.
@@ -10,7 +10,7 @@
 //     output is compared by eye or by diff with the hand-written pieces it will one day replace. The documents come from stack files (resolve.LoadFiles)
 //     or from a live server (FromServer, server.go: the instances, profiles and networks as they are, and the publishes as the stamps `plan apply` put on
 //     the instances), and Build cannot tell which. Applying any of it is later work, and needs the decisions about who holds the credential for
-//     reconcile jobs (docs/offer-grant-join-design.md, open question 7).
+//     reconcile jobs (#130, open question 7).
 //   - It fails closed. If any finding is an error it renders nothing, because a partial rendering (a mesh view missing one name) looks exactly like a
 //     complete one. Warnings are reported beside a complete rendering.
 //   - It knows no engine. The helpers are found by `user.tink.role`, the addresses by `user.tink.leg.<nic>`, the zone by `user.tink.dns.zone`; what

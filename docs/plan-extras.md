@@ -44,7 +44,7 @@ no such limit.
 ## What it cannot see
 
 - A key or device that was **removed from the YAML** but is still on the instance looks the same as one added by hand, and is listed. What it cannot do is
-  tell you that tink once applied it, or remove it: that needs tink to remember what it applied, which is a separate design.
+  tell you that tink once applied it, or remove it: that needs tink to remember what it applied, which is a separate design (#138).
 - An instance with no stack file at all.
 - Only instances for now. Storage volumes, profiles and projects are not compared in this direction.
 

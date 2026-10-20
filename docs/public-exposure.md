@@ -45,14 +45,12 @@ Run against a real server on 2026-10-17 **[lab]**, as a read-only `plan`: a corr
 - **A `public` leg** (`user.tink.leg.<nic>: public`) says "the internet reaches the ingress helper on this NIC, through the host's address". It renders nothing, because the names live in public DNS outside tink; the join warns with the names that need records. A NIC may have several purposes (`mesh, public`).
 - **The ACL source** is the set of the ingress helper's `mesh` and `public` addresses, sorted, without repeats, written as one comma-separated Incus source list. It was the `mesh` leg's address alone, which a host with no mesh gateway does not have. A site with neither leg is an error: an ACL that admits nobody is not what anyone meant.
 - **The zone** is stated on the dns helper, or, when there is none, on the ingress helper (`user.tink.dns.zone`); stated on both, they must agree.
-- **Decision, 2026-10-17: the zone lives on the ingress helper in a public-only site, not on a separate "site" document.** The ingress helper is the one instance such a site is certain to have, and it is where the wildcard certificate for the zone is requested. A project-level stamp (see [platform-recipe.md](platform-recipe.md)) is the likely home when the platform recipe is built; the join would read it the same way.
+- **Decision, 2026-10-17: the zone lives on the ingress helper in a public-only site, not on a separate "site" document.** The ingress helper is the one instance such a site is certain to have, and it is where the wildcard certificate for the zone is requested. A project-level stamp (see #131) is the likely home when the platform recipe is built; the join would read it the same way.
 - **The `public` leg is checked as a warning**: that a proxy device on the host connects to its address, and that every such device has `nat` on. The proxy devices may be applied after the join is read, so it is not an error.
 
 Test fixtures: `internal/join/testdata/public/` (a VPS-shaped platform and an app stack), with hand-written pieces in `public/golden/`.
 
-**Proposed:**
-
-1. **A `kind: network-forward`** (untested). Incus network forwards put the rule on the network, not on an instance device, so the helper that owns the traffic does not need a device-edit right. They also need a static target address, and tink would need the kind. Worth measuring against the proxy device before building.
+**Not built:** `kind: network-forward`, as a declarative alternative to a proxy device with `nat`. Parked (#139) until a workload needs it.
 
 ## Cautions
 
