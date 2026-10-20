@@ -35,6 +35,7 @@ var fieldOwners = map[string][]Kind{
 	"Devices":         {KindProfile, KindInstance},
 	"Defaults":        {KindStack},
 	"Instance":        {KindFile, KindExec, KindPublish},
+	"Ownership":       {KindStack},
 	"Offer":           {KindPublish},
 	"Network":         {KindHelper},
 	"Timezone":        {KindHelper},
@@ -94,6 +95,12 @@ func Validate(r Resource) error {
 		return err
 	}
 	if err := validateStack(r); err != nil {
+		return err
+	}
+	if err := validateStackOwnership(r); err != nil {
+		return err
+	}
+	if err := validateStampKey(r); err != nil {
 		return err
 	}
 	if err := validateStackDefaults(r); err != nil {

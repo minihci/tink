@@ -325,6 +325,9 @@ not counted. See docs/plan-extras.md.`, resolve.DefaultFile),
 			opts := helperPolicyOptions(server, resolve.NewPlanOptions(flags.offline).WithExtras().ForResources(resources)).WithContext(ctx)
 			withExtras := 0
 			defer func() { noteExtras(cmd.OutOrStdout(), withExtras) }()
+			// whose the declared objects are is not a plan line of any resource (ownership.go): one line after the levels, whatever they said
+			stackName, _ := resolve.StackName(resources) // more than one is an error that Levels has reported already
+			owned := resolve.NewOwnershipReport(stackName, resolve.AdoptOnApply(resources))
 			for i, level := range levels {
 				if err := ctx.Err(); err != nil {
 					return fmt.Errorf("plan interrupted: %w", err)
@@ -336,10 +339,14 @@ not counted. See docs/plan-extras.md.`, resolve.DefaultFile),
 				}
 				for _, p := range plans {
 					printPlanned(cmd.OutOrStdout(), p)
+					owned.Add(p)
 					if p.Extras != nil && !p.Extras.Empty() {
 						withExtras++
 					}
 				}
+			}
+			if line := owned.Line(); line != "" {
+				fmt.Fprintln(cmd.OutOrStdout(), line)
 			}
 			noteUndeclaredPolicies(cmd.OutOrStdout(), backuprun.ServerEngine{Server: server}, resources)
 			noteHelper(cmd.OutOrStdout(), server, time.Now(), resources)
@@ -355,6 +362,7 @@ not counted. See docs/plan-extras.md.`, resolve.DefaultFile),
 
 // newPlanApplyCmd takes the flags it shares with `plan`, which declares them as persistent flags and so owns them.
 func newPlanApplyCmd(flags *stackFlags) *cobra.Command {
+	var adopt bool
 	cmd := &cobra.Command{
 		Use:   "apply [flags] [FILE...]",
 		Short: "Converge a set of resources declared in YAML to match",
@@ -374,7 +382,14 @@ possibly later or by someone else, that gap is the reason to add one.
 apply ends with a one-line summary and exits non-zero if it left
 anything BLOCKED or SKIPPED, so an exit status of 0 means converged.
 An instance with image drift is only converged by apply if its YAML
-says on_image_change: rebuild; see docs/image-updates.md.`, resolve.DefaultFile),
+says on_image_change: rebuild; see docs/image-updates.md.
+
+Every object apply creates for a stack that has a name (a kind: stack document)
+carries the stack's name in user.tink.stack from the creation request on. One that
+existed before is not touched; "tink plan" says how many declared objects have no
+stamp. --adopt (or "ownership: adopt-on-apply" in the kind: stack document) stamps
+them first, in one pass that writes that one key and nothing else: no instance is
+restarted, whatever its restart: says. See docs/ownership.md.`, resolve.DefaultFile),
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			stack, err := flags.prepare(cmd, args)
@@ -386,6 +401,17 @@ says on_image_change: rebuild; see docs/image-updates.md.`, resolve.DefaultFile)
 			opts := helperPolicyOptions(server, resolve.NewPlanOptions(flags.offline))
 			ctx, stop := interruptContext(cmd.Context())
 			defer stop()
+			// Stamping what exists comes first and is a pass of its own: a stamp is no part of converging, so it can neither restart an instance
+			// nor be a "would update". What apply creates afterwards is stamped from birth.
+			if stackName, _ := resolve.StackName(resources); adopt || resolve.AdoptOnApply(resources) {
+				adopted, err := resolve.Adopt(ctx, server, stack.Levels, stackName, 0)
+				if err != nil {
+					return fmt.Errorf("adopt: %w (%d object(s) were stamped before it stopped; nothing was applied)", err, len(adopted.Stamped))
+				}
+				for _, line := range adopted.Lines() {
+					fmt.Fprintln(cmd.OutOrStdout(), line)
+				}
+			}
 			actions, err := resolve.ApplyPrepared(ctx, server, resources, stack.Levels, opts)
 			for _, a := range actions {
 				fmt.Fprintln(cmd.OutOrStdout(), a)
@@ -395,6 +421,7 @@ says on_image_change: rebuild; see docs/image-updates.md.`, resolve.DefaultFile)
 			return err
 		},
 	}
+	cmd.Flags().BoolVar(&adopt, "adopt", false, "first stamp the declared objects that exist and have no ownership stamp (user.tink.stack) with the stack's name, writing that one key and restarting nothing; the stack must have a name")
 	return cmd
 }
 

@@ -66,15 +66,17 @@ func TestAStackIsNamedOnceAndWithAUsableName(t *testing.T) {
 	}
 }
 
-func TestVolumesAreStampedWithTheStackThatAppliedThem(t *testing.T) {
+// The stamp of a volume is the ownership stamp (ownership.go): written when the volume is created, outside the diff, so a volume made before stamps is
+// not a "would update" and an unnamed stack never touches the pointer. Creating one with the stamp is tested in ownership_test.go.
+func TestAVolumeStampIsOutsideTheDiff(t *testing.T) {
 	env := volumeEnv{targets: policyTargets(), stack: "immich"}
 	optOut := Resource{Kind: KindStorageVolume, Name: "v", Backup: &backupmeta.VolumeBackup{None: "x"}}
 
-	if p := decideVolume(optOut, nil, env); p.Action != ActionCreate || !strings.Contains(strings.Join(p.Changes, "|"), backupmeta.StackKey) {
-		t.Errorf("every volume is stamped, even one that opts out of backup: %v %v", p.Action, p.Changes)
+	if p := decideVolume(optOut, nil, env); p.Action != ActionCreate || strings.Contains(strings.Join(p.Changes, "|"), backupmeta.StackKey) {
+		t.Errorf("a create is planned without listing the stamp: %v %v", p.Action, p.Changes)
 	}
-	if p := decideVolume(optOut, liveVolume(map[string]string{}), env); p.Action != ActionUpdate {
-		t.Errorf("a volume applied before the stack was named is updated with the pointer: %v %v", p.Action, p.Changes)
+	if p := decideVolume(optOut, liveVolume(map[string]string{}), env); p.Action != ActionNone {
+		t.Errorf("a volume applied before the stack was named is not an update: %v %v", p.Action, p.Changes)
 	}
 	if p := decideVolume(optOut, liveVolume(map[string]string{backupmeta.StackKey: "immich"}), env); p.Action != ActionNone {
 		t.Errorf("already stamped is converged: %v %v", p.Action, p.Changes)
@@ -83,19 +85,19 @@ func TestVolumesAreStampedWithTheStackThatAppliedThem(t *testing.T) {
 	if p := decideVolume(optOut, liveVolume(map[string]string{backupmeta.StackKey: "immich"}), volumeEnv{}); p.Action != ActionNone {
 		t.Errorf("an unnamed stack leaves another's pointer alone: %v %v", p.Action, p.Changes)
 	}
-	if set, _, _ := volumeBackupConfig(optOut, volumeEnv{}); set[backupmeta.StackKey] != "" {
-		t.Errorf("an unnamed stack writes no pointer: %v", set)
+	if set, _, _ := volumeBackupConfig(optOut, env); set[backupmeta.StackKey] != "" {
+		t.Errorf("the stamp is not part of what the declaration converges to: %v", set)
 	}
 }
 
-func TestApplyingAVolumeAnotherStackOwnsWarnsAndSaysWhoseItWas(t *testing.T) {
+func TestAVolumeAnotherStackOwnsWarnsAndSaysWhoseItWas(t *testing.T) {
 	r := Resource{Kind: KindStorageVolume, Name: "v", Backup: &backupmeta.VolumeBackup{None: "x"}}
 	p := decideVolume(r, liveVolume(map[string]string{backupmeta.StackKey: "nextcloud"}), volumeEnv{stack: "immich"})
-	if p.Action != ActionUpdate {
-		t.Errorf("it is taken over: %v", p.Action)
+	if p.Action != ActionNone {
+		t.Errorf("applying does not take it over (the stamp is not part of what apply converges): %v %v", p.Action, p.Changes)
 	}
-	if w := strings.Join(p.Warnings, "|"); !strings.Contains(w, `"nextcloud"`) || !strings.Contains(w, `"immich"`) {
-		t.Errorf("the warning names both stacks: %q", w)
+	if w := strings.Join(p.Warnings, "|"); !strings.Contains(w, `"nextcloud"`) || !strings.Contains(w, "does not change the stamp") {
+		t.Errorf("the warning names the owner and says the stamp stays: %q", w)
 	}
 	if p := decideVolume(r, liveVolume(map[string]string{backupmeta.StackKey: "immich"}), volumeEnv{stack: "immich"}); len(p.Warnings) != 0 {
 		t.Errorf("no warning for its own volume: %v", p.Warnings)

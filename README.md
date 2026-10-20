@@ -29,7 +29,7 @@ comment for the working bash it's replacing.
 |---|---|---|
 | `tink deploy` | verified live | `incus-host/scripts/deploy.sh` |
 | `tink run` | verified live against a real, disposable test host | (new - the manual per-tenant "mental docker-run into `incus launch` plus a sequence of `incus config`/`incus config device add` calls" dance) |
-| `tink plan` / `tink plan apply` | live-verified against real stacks: Nextcloud and Nightscout, and the Immich, mosquitto and Matter stacks on the lab host; the primary way to describe a stack. The changes of 2026-10-20 were run live on a disposable Incus 7.5.1 server with tink 22db2a2: a stopped instance is planned a start and a missing profile blocks; concurrent exec trigger hashes; the exec deadline and 1 MiB output cap; Ctrl-C during plan, apply, an exec and a rebuild; every failure of a level printed; `--extras` for profiles, volumes, networks and projects. Not run live: the 5 and 30 minute deadlines on the other Incus calls and their `OUTCOME UNKNOWN` report. Found: a cancelled exec leaves its child processes running in the guest (#166), and `--extras` is noisy about a network (#165) ([docs](docs/resolver-architecture.md)) | (new - hand-running a sequence of `incus` commands in the right order from memory or a prose runbook) |
+| `tink plan` / `tink plan apply` | live-verified against real stacks: Nextcloud and Nightscout, and the Immich, mosquitto and Matter stacks on the lab host; the primary way to describe a stack. The changes of 2026-10-20 were run live on a disposable Incus 7.5.1 server with tink 22db2a2: a stopped instance is planned a start and a missing profile blocks; concurrent exec trigger hashes; the exec deadline and 1 MiB output cap; Ctrl-C during plan, apply, an exec and a rebuild; every failure of a level printed; `--extras` for profiles, volumes, networks and projects. Ownership stamps (phase 1, #127; [docs](docs/ownership.md)) were run live on a local test host on 2026-10-20: objects created by `plan apply` carry `user.tink.stack` from birth, `--adopt` on a running `restart: true` container left its PID, start time and uptime alone, a profile under it, a bridge in use, a running VM and an image (profiles kept) were stamped, and the next plan read "no changes". Not run live: the 5 and 30 minute deadlines on the other Incus calls and their `OUTCOME UNKNOWN` report. Found: a cancelled exec leaves its child processes running in the guest (#166), and `--extras` is noisy about a network (#165) ([docs](docs/resolver-architecture.md)) | (new - hand-running a sequence of `incus` commands in the right order from memory or a prose runbook) |
 | `tink export` | run live against the lab host: an instance made with `tink run`, and the real Mosquitto, each came back as a stack that plans as no changes ([docs](docs/export.md)) | (new - writing down by hand what a `tink run` or `incus` session had built) |
 | `tink daemon run` | the backup scheduler and job executor, run by the helper on the lab host ([docs](docs/daemon-jobs.md)) | (new) |
 | `tink backup run` / `restore` / `verify` / `forget` | verified live on the lab host: pool targets (a TrueNAS-backed pool included) and an Incus remote over a tunnel ([docs](docs/volume-backup.md)) | (new) |
@@ -52,6 +52,8 @@ level concurrently - see
 [`docs/resolver-architecture.md`](docs/resolver-architecture.md) for the
 full design and why its own YAML, not a Kubernetes-Pod-spec or
 docker-run-flags translation, is the primary way to author one of these.
+Every object `plan apply` creates for a named stack (a `kind: stack` document) carries the stack's name in `user.tink.stack` from the creation request on; an object that already exists is not touched, `plan` says in one line how many declared ones have no stamp, and `plan apply --adopt` stamps them in one pass that restarts nothing - see
+[`docs/ownership.md`](docs/ownership.md).
 `plan` also compares the image each instance was built from with the
 image its YAML names, and `plan apply` exits non-zero when it leaves
 anything blocked; an instance's `on_image_change` field says whether
@@ -126,6 +128,7 @@ internal/bootstrap/  tink deploy
 internal/run/        tink run - see internal/run/DESIGN.md
 internal/prepare/    the one preparation `plan` and `plan apply` share: load, secrets, connect, qualify images, build the levels, in that order
 internal/resolve/    tink plan / tink plan apply - see docs/resolver-architecture.md
+internal/ownership/  the ownership stamp (user.tink.stack): its key and what an object's config says about whose it is; imports nothing here - see docs/ownership.md
 internal/secrets/    tink secret, ${secret:NAME} references, the output redactor - see docs/secrets.md
 internal/backupext/  the seam between the resolver and backup: the backup block's declaration types and the interface the resolver asks; imports nothing here
 internal/backupmeta/ what tink records on a volume (policy key, stamps, markers), the backup block's rules, the copy policy a volume carries (how it is written, read and put in words) and the schedule arithmetic; implements backupext, depends on nothing else here

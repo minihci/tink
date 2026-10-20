@@ -236,9 +236,9 @@ func Run(opts Options) (*Result, error) {
 // itself reads and writes -- see internal/bootstrap/registries.go for
 // the same reasoning applied to a read-only remote lookup.
 //
-// The creation request carries the profiles, the ephemeral flag and, when
-// spec.RootDiskAtCreate is set, the root disk; config and every other
-// device come afterwards, from ApplyConfig.
+// The creation request carries the profiles, the ephemeral flag, spec.CreateConfig
+// and, when spec.RootDiskAtCreate is set, the root disk; the rest of the config
+// and every other device come afterwards, from ApplyConfig.
 func Create(server incus.InstanceServer, spec *Spec, project string) error {
 	scoped := server
 	if project != "" {
@@ -269,6 +269,7 @@ func Create(server incus.InstanceServer, spec *Spec, project string) error {
 				Profiles:  spec.Profiles,
 				Ephemeral: spec.Ephemeral,
 				Devices:   creationDevices(spec),
+				Config:    spec.CreateConfig,
 			},
 		})
 		if err != nil {

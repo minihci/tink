@@ -9,6 +9,7 @@ import (
 	"github.com/lxc/incus/v7/shared/api"
 
 	"github.com/minihci/tink/internal/backupext"
+	"github.com/minihci/tink/internal/ownership"
 )
 
 // volumeBackupConfig is everything a storage volume's declaration converges its config to: the snapshot keys, and the
@@ -26,12 +27,8 @@ func volumeBackupConfig(r Resource, env volumeEnv) (set map[string]string, remov
 			set[k] = v
 		}
 	}
-	if env.stack != "" { // the pointer back to the stack that applied it; never removed (see backupext.Keys.Stack)
-		if set == nil {
-			set = map[string]string{}
-		}
-		set[keys.Stack] = env.stack
-	}
+	// The pointer back to the stack that applied the volume is not here: it is the ownership stamp, written when the volume is created and when a
+	// person adopts it, and outside the diff (ownership.go), so that a volume made before stamps is not a "would update".
 	policy, err := BuildPolicy(r, env.targets)
 	if err != nil {
 		return nil, nil, err
@@ -149,9 +146,9 @@ func decideVolume(r Resource, current *api.StorageVolume, env volumeEnv) Planned
 	}
 
 	if current != nil && env.stack != "" {
-		if owner := current.Config[keys.Stack]; owner != "" && owner != env.stack {
-			warnings = append(warnings, fmt.Sprintf("this volume is stamped as belonging to stack %q, and applying takes it over for %q (%s) -- if two stacks declare it they will keep taking it from each other",
-				owner, env.stack, keys.Stack))
+		if owner := ownership.Owner(current.Config); owner != "" && owner != env.stack {
+			warnings = append(warnings, fmt.Sprintf("this volume is stamped as belonging to stack %q (%s), and this stack declares it too: applying does not change the stamp, so the two stacks "+
+				"will both converge it", owner, ownership.Key))
 		}
 	}
 
@@ -241,8 +238,8 @@ func validateVolumeConfig(r Resource) error {
 		switch {
 		case strings.HasPrefix(k, "volatile."):
 			return fmt.Errorf("storage-volume %q: config.%s belongs to Incus", r.Name, k)
-		case strings.HasPrefix(k, keys.Prefix) || k == keys.Stack:
-			return fmt.Errorf("storage-volume %q: config.%s is written by tink itself (the backup block, or the stack that applied the volume)", r.Name, k)
+		case strings.HasPrefix(k, keys.Prefix):
+			return fmt.Errorf("storage-volume %q: config.%s is written by tink itself (the backup block)", r.Name, k)
 		case (k == keys.SnapshotSchedule || k == keys.SnapshotExpiry) && r.Backup != nil && r.Backup.Snapshots != nil:
 			return fmt.Errorf("storage-volume %q: config.%s is set by its backup: snapshots block: use one or the other", r.Name, k)
 		}

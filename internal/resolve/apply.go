@@ -17,6 +17,7 @@ import (
 	yaml "go.yaml.in/yaml/v4"
 
 	"github.com/minihci/tink/internal/incusapi"
+	"github.com/minihci/tink/internal/ownership"
 	"github.com/minihci/tink/internal/run"
 )
 
@@ -33,18 +34,18 @@ func createOne(server incus.InstanceServer, r Resource, env volumeEnv) error {
 		return bound(false, func() error {
 			return server.CreateProject(api.ProjectsPost{
 				Name:       r.Name,
-				ProjectPut: api.ProjectPut{Config: r.Config},
+				ProjectPut: api.ProjectPut{Config: ownership.With(r.Config, env.stack)},
 			})
 		})
 	case KindNetwork:
-		return bound(false, func() error { return createNetwork(server, r) })
+		return bound(false, func() error { return createNetwork(server, r, env.stack) })
 	case KindNetworkACL:
-		return bound(false, func() error { return createNetworkACL(server, r) })
+		return bound(false, func() error { return createNetworkACL(server, r, env.stack) })
 	case KindProfile:
 		return bound(false, func() error {
 			return scopedServer(server, r).CreateProfile(api.ProfilesPost{
 				Name:       r.Name,
-				ProfilePut: api.ProfilePut{Config: r.Config, Devices: r.Devices},
+				ProfilePut: api.ProfilePut{Config: ownership.With(r.Config, env.stack), Devices: r.Devices},
 			})
 		})
 	case KindStorageVolume:
@@ -56,6 +57,7 @@ func createOne(server incus.InstanceServer, r Resource, env volumeEnv) error {
 		if err != nil {
 			return err
 		}
+		config = ownership.With(config, env.stack)
 		return bound(false, func() error {
 			return scopedServer(server, r).CreateStoragePoolVolume(pool, api.StorageVolumesPost{
 				StorageVolumePut: api.StorageVolumePut{Config: config},
@@ -106,7 +108,7 @@ func createImage(server incus.InstanceServer, r Resource, env volumeEnv) error {
 	metaYAML, err := yaml.Marshal(api.ImageMetadata{
 		Architecture: r.Architecture,
 		CreationDate: time.Now().Unix(),
-		Properties:   r.Properties,
+		Properties:   ownership.With(r.Properties, env.stack), // the stamp is an image property, the one place Incus lets a client keep a key of its own
 	})
 	if err != nil {
 		return fmt.Errorf("building metadata.yaml for %s: %w", r.Name, err)
@@ -202,6 +204,8 @@ func createInstance(server incus.InstanceServer, r Resource, env volumeEnv) erro
 		Ephemeral: r.Ephemeral,
 		OpTimeout: env.limit(false),
 	}
+	// the stamp goes in the creation request, so an instance never exists unstamped (and a crash between two calls cannot leave one)
+	spec.CreateConfig = ownership.With(nil, env.stack)
 	creating := *spec
 	creating.OpTimeout = env.limit(true)
 	s := scopedServer(server, r)

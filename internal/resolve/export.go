@@ -13,6 +13,7 @@ import (
 
 	"github.com/minihci/tink/internal/backupext"
 	"github.com/minihci/tink/internal/incusapi"
+	"github.com/minihci/tink/internal/ownership"
 	"github.com/minihci/tink/internal/run"
 	"github.com/minihci/tink/internal/secrets"
 )
@@ -103,7 +104,8 @@ func Export(server incus.InstanceServer, opts ExportOptions) (*ExportResult, err
 		if !found {
 			return nil, fmt.Errorf("project %q does not exist", project)
 		}
-		docs = append(docs, exportDoc{res: Resource{Kind: KindProject, Name: project, Config: copyMap(p.Config)}})
+		// the ownership stamp is state, not declaration: it is never written, so an exported stack can be applied under any name
+		docs = append(docs, exportDoc{res: Resource{Kind: KindProject, Name: project, Config: withoutOwnershipKey(copyMap(p.Config))}})
 	}
 
 	var instDocs, pubDocs []exportDoc
@@ -210,7 +212,7 @@ func exportVolumes(scoped incus.InstanceServer, inst *api.Instance, project stri
 			case k == keys.Policy:
 				d.trailing = append(d.trailing, "this volume carries a copy policy (user.tink.backup.policy); the backup-target resources it names cannot be rebuilt from the volume, declare them in the stack")
 				res.Notes = append(res.Notes, fmt.Sprintf("volume %s: carries a copy policy; copies and their targets are not exported", key))
-			case strings.HasPrefix(k, keys.Prefix) || k == keys.Stack:
+			case strings.HasPrefix(k, keys.Prefix) || k == ownership.Key:
 				// tink's own stamps (last copy, failures, owning stack): state, not declaration
 			default:
 				d.res.Config[k] = v
@@ -282,6 +284,8 @@ func exportInstance(server, scoped incus.InstanceServer, env *imageEnv, inst *ap
 		switch {
 		case strings.HasPrefix(k, "volatile."), strings.HasPrefix(k, "image."):
 			continue
+		case k == ownership.Key:
+			continue // state, not declaration: which stack made the instance is not something a stack declares (and validate refuses the key)
 		case strings.HasPrefix(k, PublishStampPrefix):
 			continue // written as a kind: publish document (exportPublishes): a stack that declared the key itself would be refused
 		case derived[k]:

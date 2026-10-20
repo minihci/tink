@@ -11,6 +11,7 @@ import (
 	"github.com/lxc/incus/v7/shared/api"
 
 	"github.com/minihci/tink/internal/incusapi"
+	"github.com/minihci/tink/internal/ownership"
 )
 
 // A kind: network resource declares an Incus MANAGED BRIDGE: the thing an instance's NIC names with `network:`. Until now a stack could name a bridge
@@ -150,16 +151,18 @@ func planNetwork(server incus.InstanceServer, r Resource) (PlannedResource, erro
 
 	wanted := networkWanted(current.Config, r.Config)
 	changes := diffConfig(current.Config, wanted, nil)
-	// The guard counts a change only if it touches something other than the ACL keys (see isACLKey for why those are not disruption).
-	configChanged := len(diffConfig(current.Config, withoutACLKeys(wanted), nil)) > 0
+	// The guard counts a change only if it touches something other than the ACL keys (see isACLKey for why those are not disruption) and the
+	// ownership stamp, which is a user.* key Incus does not apply to the bridge at all (ownership.go). The stamp is not in the desired config
+	// today; the exemption is here so that it can never be what blocks a bridge that instances use.
+	configChanged := len(diffConfig(current.Config, withoutOwnershipKey(withoutACLKeys(wanted)), nil)) > 0
 	if r.Description != "" && r.Description != current.Description {
 		changes = append(changes, fmt.Sprintf("description: %q -> %q", current.Description, r.Description))
 	}
 	if len(changes) == 0 {
-		return PlannedResource{Resource: r, Action: ActionNone}, nil
+		return observed(PlannedResource{Resource: r, Action: ActionNone}, current.Config), nil
 	}
 
-	plan := PlannedResource{Resource: r, Action: ActionUpdate, Changes: changes}
+	plan := observed(PlannedResource{Resource: r, Action: ActionUpdate, Changes: changes}, current.Config)
 	if users := networkInstances(current.UsedBy); configChanged && len(users) > 0 {
 		list := strings.Join(users, ", ")
 		if !r.AllowDisruption {
@@ -172,11 +175,12 @@ func planNetwork(server incus.InstanceServer, r Resource) (PlannedResource, erro
 	return plan, nil
 }
 
-func createNetwork(server incus.InstanceServer, r Resource) error {
+// createNetwork creates the bridge with the ownership stamp of stack (ownership.go) in the creation request itself; a stack with no name stamps nothing.
+func createNetwork(server incus.InstanceServer, r Resource, stack string) error {
 	return server.CreateNetwork(api.NetworksPost{
 		Name:       r.Name,
 		Type:       "bridge",
-		NetworkPut: api.NetworkPut{Config: r.Config, Description: r.Description},
+		NetworkPut: api.NetworkPut{Config: ownership.With(r.Config, stack), Description: r.Description},
 	})
 }
 

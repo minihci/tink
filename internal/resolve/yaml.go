@@ -61,6 +61,9 @@ type yamlResource struct {
 	Instance string `yaml:"instance"`
 	Path     string `yaml:"path"`
 
+	// Stack-only (see ownership.go): "explicit" (the default) or "adopt-on-apply".
+	Ownership string `yaml:"ownership"`
+
 	// Publish-only (see publish.go).
 	Offer string   `yaml:"offer"`
 	Allow []string `yaml:"allow"`
@@ -407,6 +410,7 @@ func (d yamlResource) toResource(dir string) (Resource, error) {
 		Config:          d.Config,
 		Devices:         d.Devices,
 		Instance:        d.Instance,
+		Ownership:       d.Ownership,
 		Offer:           d.Offer,
 		Allow:           d.Allow,
 		Network:         d.Network,

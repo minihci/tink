@@ -25,6 +25,7 @@ An Incus instance carries about twenty-five config keys for every one a person s
 | `environment.HOME=/root`, `environment.TERM=xterm` | left out: set by Incus at creation |
 | `ephemeral` | `ephemeral: true` |
 | the instance's own `devices`, `profiles`, every other `config` key | kept (`root` comes from the profile and is not the instance's) |
+| `user.tink.stack` (the ownership stamp, on the project, a volume or the instance) | never written, for any kind: it says which stack made the object, which a stack does not declare, and `validate` refuses it in `config:` ([ownership.md](ownership.md)) |
 | `user.tink.run.command` | not config: written as a `# created by:` comment |
 | `user.tink.publish.<name>` (a stamp of a `kind: publish`) | not config: written as a `kind: publish` document (`name`, `instance`, `offer`, `allow`) after the instances, because `plan` derives the stamps back from it and removes any it does not derive. A stamp that cannot be read is left out with a note, and the export then does not verify |
 | a custom volume an instance's disk device attaches | a `kind: storage-volume`, in the same project and pool |

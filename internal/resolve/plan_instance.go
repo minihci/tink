@@ -208,7 +208,7 @@ func planInstance(server incus.InstanceServer, r Resource, opts PlanOptions) (Pl
 	if r.onImageChangePolicy() == OnImageChangeRebuild && len(chk.Drift) > 0 && len(chk.Unverified) == 0 {
 		pre = rebuildPreflight(server, current, r, env)
 	}
-	p := decideInstance(r, changes, chk, pre, missingProfileBlockers(current, r)...)
+	p := observed(decideInstance(r, changes, chk, pre, missingProfileBlockers(current, r)...), current.Config)
 	if opts.extras {
 		ex := instanceExtras(server, env, current, r, opts.Offline)
 		p.Extras = &ex

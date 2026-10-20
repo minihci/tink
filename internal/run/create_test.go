@@ -118,3 +118,20 @@ func TestHasRootDisk(t *testing.T) {
 		})
 	}
 }
+
+// CreateConfig is in the creation request itself, so the instance is never without it, and nothing else of Config is: the rest waits for ApplyConfig.
+func TestCreateSendsCreateConfigInTheRequestAndNothingElseOfConfig(t *testing.T) {
+	t.Setenv("INCUS_CONF", t.TempDir())
+	f := &createFake{readFake: readFake{aliasErr: errNotFound}}
+	spec := &Spec{Name: "web", Image: "local-image", Config: map[string]string{"environment.A": "b"}, CreateConfig: map[string]string{"user.tink.stack": "lab"}}
+	if err := Create(f, spec, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.posted[0].Config; !reflect.DeepEqual(map[string]string(got), map[string]string{"user.tink.stack": "lab"}) {
+		t.Errorf("the request's config = %v, want only the create config", got)
+	}
+	f = &createFake{readFake: readFake{aliasErr: errNotFound}}
+	if err := Create(f, &Spec{Name: "web", Image: "local-image", Config: map[string]string{"a": "b"}}, ""); err != nil || f.posted[0].Config != nil {
+		t.Errorf("without CreateConfig the request carries no config: %v %v", f.posted[0].Config, err)
+	}
+}

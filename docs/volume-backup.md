@@ -234,7 +234,7 @@ whatever runs the copies (the daemon's scheduler) needs no copy of your stack:
 |---|---|---|
 | Snapshot `schedule` and `retain` | Incus's own keys `snapshots.schedule` and `snapshots.expiry` (Incus enforces them) | `apply` |
 | The copy policy: `copies` (each target resolved inline), `verify` | one key, `user.tink.backup.policy`, a one-line JSON document | `apply` |
-| Which stack applied the volume | `user.tink.stack`, the name from the stack's `kind: stack` document (below) | `apply` |
+| Which stack applied the volume | `user.tink.stack`, the name from the stack's `kind: stack` document (below); the same ownership stamp every kind tink creates carries ([ownership.md](ownership.md)) | `apply`, when it creates the volume; `apply --adopt` for one that exists |
 | What has happened: copies, failures, verifications | `user.tink.backup.copy.<target>.*`, `.verified-*` stamps on the volume | `backup run`, `backup verify` |
 | What a restore point is | `user.tink.backup.copy-*` markers on the restore point | `backup run` |
 
@@ -265,7 +265,7 @@ $ incus storage volume get immich-library user.tink.backup.policy
   config), and the scheduler never schedules a volume that carries a restore point's or an in-progress copy's marker, so a backup is not scheduled for backup.
 - **A policy the scheduler cannot read is skipped, not guessed at.** Another `proto`, an unknown field or a schedule that does not parse is reported (once) and that volume is
   left alone; the others carry on.
-- **A volume points back at its stack.** Give a stack a name with a document of its own, and `apply` stamps every storage volume it applies with it:
+- **A volume points back at its stack.** Give a stack a name with a document of its own, and `apply` stamps every storage volume it creates with it (and, with `plan apply --adopt`, the ones that exist and have no stamp; see [ownership.md](ownership.md)):
 
   ```yaml
   kind: stack
@@ -274,7 +274,7 @@ $ incus storage volume get immich-library user.tink.backup.policy
 
   So `incus storage volume show` says whose YAML to edit, and the stack can find its own volumes exactly. The declaration is a name, plus an optional default `project:` (see resolver-architecture.md); the name is lower case letters, digits, `.`, `_`,
   `-`; the declaration is not a resource, so it may share a name with an instance or volume in the stack, and a stack names itself once. It is optional. An unnamed stack writes no
-  pointer and never removes one; a named stack that applies a volume stamped by another stack takes it over and `plan` warns you first.
+  pointer and never removes one. A volume that exists is not stamped by an ordinary apply, and a stamp-only difference is not a change `plan` reports (it says in one line how many declared objects have no stamp); a named stack that declares a volume stamped by another stack leaves the stamp as it is, and `plan` warns that two stacks now converge it.
 - **A volume taken out of the YAML keeps being copied.** Tink never removes what it is no longer told about, and cannot tell a volume dropped from this stack from one that
   belongs to another. `plan` and `plan apply` end with a **note** (never a failure) listing the volumes that carry a policy this stack does not declare. A volume stamped with
   this stack's name is certain: the stack applied it and dropped it, wherever it is. A volume with no stamp can only be guessed at (it sits in a project and pool this stack
