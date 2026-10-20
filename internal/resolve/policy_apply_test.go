@@ -172,6 +172,34 @@ func TestApplyLevelsFailureStopsLaterLevels(t *testing.T) {
 	}
 }
 
+// Every failure in a level is reported, in the level's resource order, not just the first.
+func TestApplyLevelsReportsEveryFailureOfALevel(t *testing.T) {
+	levels := [][]Resource{{inst("A"), inst("B"), inst("C")}, {inst("D")}}
+	errB, errC := errors.New("boom B"), errors.New("boom C")
+	notes, err := applyLevels(context.Background(), levels, func(r Resource, _ func(string, ...any)) (outcome, error) {
+		switch r.Name {
+		case "B":
+			return outConverged, errB
+		case "C":
+			return outConverged, errC
+		}
+		return outConverged, nil
+	})
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if !errors.Is(err, errB) || !errors.Is(err, errC) {
+		t.Errorf("err = %q; it must wrap both failures", err)
+	}
+	lines := strings.Split(err.Error(), "\n")
+	if len(lines) != 2 || lines[0] != "instance/B: boom B" || lines[1] != "instance/C: boom C" {
+		t.Errorf("err = %q; want one line per failure in the level's order", err)
+	}
+	if !strings.Contains(notes[len(notes)-1], "2 failed") {
+		t.Errorf("summary = %q", notes[len(notes)-1])
+	}
+}
+
 // ---- validation and parsing
 
 func TestValidateOnImageChange(t *testing.T) {
