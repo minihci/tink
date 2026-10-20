@@ -119,7 +119,7 @@ The Immich stack has a database password in a placeholder-rendered file and in p
   `/proc`. An ordinary unprivileged user on the host cannot. Tink protects git, its own output, shell history and `ps`, and
   ordinary users. It does not hide a secret from the machine it runs on.
 - **Instance snapshots and exports** carry the value (in the instance config), as they carry anything in it.
-- **Every recipient can read every secret in a store.** One store is one trust domain: a VPS that should not see Tron's
+- **Every recipient can read every secret in a store.** One store is one trust domain: a public VPS that should not see a homelab host's
   secrets should have its own stack and store, not a recipient key in this one. Removing a recipient re-encrypts everything
   but does not take back what they could already decrypt from the repository's history; rotate the secrets too.
 - **Anyone who can commit can replace a value with one of their own**, since the recipients are public keys. Review changes to

@@ -7,10 +7,10 @@ explicitly. With `--remote` (or `$TINK_REMOTE`) it manages a **remote** instead:
 reached over the Incus network API. That is what lets `tink` run from a laptop against a server.
 
 ```
-tink --remote tron plan  stack.yaml
-tink --remote tron apply stack.yaml
-TINK_REMOTE=tron tink backup verify immich-library
-tink --remote tron export --project tink-play kuma-play > tink.yaml    # reads only ([export.md](export.md))
+tink --remote homelab plan  stack.yaml
+tink --remote homelab apply stack.yaml
+TINK_REMOTE=homelab tink backup verify immich-library
+tink --remote homelab export --project tink-play kuma-play > tink.yaml    # reads only ([export.md](export.md))
 ```
 
 `--remote` is a global flag and wins over `$TINK_REMOTE`. **There is no ambient default**: without either, tink uses the local
@@ -28,8 +28,8 @@ certificate. `tink remote` manages those entries, with no Incus client installed
 incus config trust add my-laptop > token.txt
 
 # on the client
-tink remote add tron --token-file token.txt          # the token supplies the address and verifies the server
-tink --remote tron plan stack.yaml
+tink remote add homelab --token-file token.txt          # the token supplies the address and verifies the server
+tink --remote homelab plan stack.yaml
 ```
 
 - **The server is verified before anything secret is sent to it**, one of three ways: the token's own fingerprint, `--fingerprint FP`, or

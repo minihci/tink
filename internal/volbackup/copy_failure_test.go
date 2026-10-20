@@ -18,7 +18,7 @@ func at(h, m int) func() time.Time {
 // A copy that fails leaves a mark on the source volume (when and how many in a row, never why), and a later
 // success clears it.
 func TestFailedCopiesAreCountedAndASuccessClearsThem(t *testing.T) {
-	local := newFake("tron", "default")
+	local := newFake("homelab", "default")
 	local.add("default", "lib", nil)
 	remote := newFake("vps", "default")
 	useRemote(t, "vps", remote)
@@ -69,7 +69,7 @@ func TestFailedCopiesAreCountedAndASuccessClearsThem(t *testing.T) {
 }
 
 func TestCountsAreTrackedPerTarget(t *testing.T) {
-	local := newFake("tron", "default", "nas")
+	local := newFake("homelab", "default", "nas")
 	local.add("default", "lib", nil)
 	remote := newFake("vps", "default")
 	useRemote(t, "vps", remote)
@@ -85,7 +85,7 @@ func TestCountsAreTrackedPerTarget(t *testing.T) {
 }
 
 func TestAnUnreachableRemoteCountsAsAFailure(t *testing.T) {
-	local := newFake("tron", "default")
+	local := newFake("homelab", "default")
 	local.add("default", "lib", nil)
 	useRemote(t, "elsewhere", newFake("x")) // "vps" is not configured: the target cannot be reached at all
 	if _, err := Copy(local, Volume{Name: "lib"}, remoteTarget(), CopyOptions{Now: at(10, 0)}); err == nil {
@@ -97,7 +97,7 @@ func TestAnUnreachableRemoteCountsAsAFailure(t *testing.T) {
 }
 
 func TestADryRunNeverRecordsAFailure(t *testing.T) {
-	local := newFake("tron", "default")
+	local := newFake("homelab", "default")
 	local.add("default", "lib", nil)
 	useRemote(t, "elsewhere", newFake("x"))
 	if _, err := Copy(local, Volume{Name: "lib"}, remoteTarget(), CopyOptions{DryRun: true, Now: at(10, 0)}); err == nil {
@@ -111,7 +111,7 @@ func TestADryRunNeverRecordsAFailure(t *testing.T) {
 // The copy worked and the source is stamped; only removing OLD restore points failed. That is a different problem
 // from a failed copy, and must not put the copy into backoff.
 func TestAPruneFailureIsNotAFailedCopy(t *testing.T) {
-	local := newFake("tron", "default")
+	local := newFake("homelab", "default")
 	local.add("default", "lib", nil)
 	remote := newFake("vps", "default")
 	useRemote(t, "vps", remote)
@@ -134,7 +134,7 @@ func TestAPruneFailureIsNotAFailedCopy(t *testing.T) {
 }
 
 func TestAFailureThatCannotBeRecordedSaysSo(t *testing.T) {
-	local := newFake("tron", "default") // the source volume does not exist, so nothing can be stamped
+	local := newFake("homelab", "default") // the source volume does not exist, so nothing can be stamped
 	_, err := Copy(local, Volume{Name: "lib"}, Target{Name: "nas", Pool: "nas"}, CopyOptions{Now: at(10, 0)})
 	if err == nil || !strings.Contains(err.Error(), "could not be recorded") {
 		t.Errorf("both problems must be reported: %v", err)
@@ -142,7 +142,7 @@ func TestAFailureThatCannotBeRecordedSaysSo(t *testing.T) {
 }
 
 func TestRecordFailureOnlyCountsAFailureNewerThanTheLastSuccess(t *testing.T) {
-	local := newFake("tron", "default")
+	local := newFake("homelab", "default")
 	// a stale failure (older than the last success) must not inflate the count
 	local.add("default", "lib", map[string]string{
 		backupmeta.CopyStampAt("nas"):   "2026-10-07T09:00:00Z",

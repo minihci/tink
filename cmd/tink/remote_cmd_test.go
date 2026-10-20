@@ -82,7 +82,7 @@ func TestRemoteCommandsOnAnEmptyConfiguration(t *testing.T) {
 		t.Error("the local remote cannot be removed")
 	}
 	// no address and no token: nothing to connect to
-	if _, err := run("remote", "add", "tron"); err == nil || !strings.Contains(err.Error(), "no server address") {
+	if _, err := run("remote", "add", "homelab"); err == nil || !strings.Contains(err.Error(), "no server address") {
 		t.Errorf("add without an address: %v", err)
 	}
 	// an address, nothing to verify it, and (under test) nobody to ask

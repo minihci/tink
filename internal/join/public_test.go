@@ -238,7 +238,7 @@ func TestOneNICThatIsMeshAndPublicIsAdmittedOnce(t *testing.T) {
 	if res.Errors() != 0 {
 		t.Fatalf("errors: %s", messages(res, Error))
 	}
-	if len(res.Sources) != 1 || res.Sources[0] != "10.10.50.3" || res.PublicAddress != "10.10.50.3" || res.MeshAddress != "10.10.50.3" {
+	if len(res.Sources) != 1 || res.Sources[0] != "192.0.2.3" || res.PublicAddress != "192.0.2.3" || res.MeshAddress != "192.0.2.3" {
 		t.Errorf("sources %v public %q mesh %q", res.Sources, res.PublicAddress, res.MeshAddress)
 	}
 	if res.ACL != golden(t, "acl") {
@@ -257,10 +257,10 @@ func TestAMeshLegAndASeparatePublicLegAreBothAdmitted(t *testing.T) {
 	if res.Errors() != 0 {
 		t.Fatalf("errors: %s", messages(res, Error))
 	}
-	if got := strings.Join(res.Sources, ","); got != "10.0.99.5,10.10.50.3" {
+	if got := strings.Join(res.Sources, ","); got != "10.0.99.5,192.0.2.3" {
 		t.Errorf("sources = %s", got)
 	}
-	if !strings.Contains(res.ACL, "source: 10.0.99.5/32,10.10.50.3/32,") {
+	if !strings.Contains(res.ACL, "source: 10.0.99.5/32,192.0.2.3/32,") {
 		t.Errorf("acl =\n%s\nwant both sources in one rule", res.ACL)
 	}
 	if res.DNS != golden(t, "dns") || res.Mesh != golden(t, "mesh") {

@@ -56,7 +56,7 @@ func TestAddRefusesAnInvalidName(t *testing.T) {
 func TestABareSecretCannotPinTheServerButIsStillPresented(t *testing.T) {
 	f := newFake(t, false, "bare", "default")
 	conf, _ := emptyConf(t)
-	res, err := Add(conf, AddOptions{Name: "tron", Addr: f.addr(), Fingerprint: f.fingerprint(), Token: "bare"})
+	res, err := Add(conf, AddOptions{Name: "homelab", Addr: f.addr(), Fingerprint: f.fingerprint(), Token: "bare"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,14 +71,14 @@ func TestABareSecretCannotPinTheServerButIsStillPresented(t *testing.T) {
 func TestABareSecretIsNotAVerification(t *testing.T) {
 	f := newFake(t, false, "bare", "default")
 	conf, dir := emptyConf(t)
-	_, err := Add(conf, AddOptions{Name: "tron", Addr: f.addr(), Token: "bare"})
+	_, err := Add(conf, AddOptions{Name: "homelab", Addr: f.addr(), Token: "bare"})
 	if err == nil || !strings.Contains(err.Error(), f.fingerprint()) || !strings.Contains(err.Error(), "--fingerprint") {
 		t.Fatalf("a bare secret verifies nothing, so the refusal must show the fingerprint: %v", err)
 	}
 	if len(f.posted) != 0 {
 		t.Error("the secret must not be sent to a server that was never verified")
 	}
-	nothingLeft(t, dir, "tron")
+	nothingLeft(t, dir, "homelab")
 }
 
 func TestNoAddressAnywhereIsRefused(t *testing.T) {
@@ -88,7 +88,7 @@ func TestNoAddressAnywhereIsRefused(t *testing.T) {
 		"a bare secret":             "bare",
 		"a token with no addresses": tokenAt(t, "s", strings.Repeat("ab", 32)),
 	} {
-		_, err := Add(conf, AddOptions{Name: "tron", Token: token})
+		_, err := Add(conf, AddOptions{Name: "homelab", Token: token})
 		if err == nil || !strings.Contains(err.Error(), "no server address") {
 			t.Errorf("%s: err = %v", name, err)
 		}
@@ -97,11 +97,11 @@ func TestNoAddressAnywhereIsRefused(t *testing.T) {
 
 func TestAnAddressThatIsNotHTTPSIsRefusedFromTheOptionAndFromTheToken(t *testing.T) {
 	conf, _ := emptyConf(t)
-	_, err := Add(conf, AddOptions{Name: "tron", Addr: "http://tron:8443", AcceptCertificate: true})
+	_, err := Add(conf, AddOptions{Name: "homelab", Addr: "http://homelab:8443", AcceptCertificate: true})
 	if err == nil || !strings.Contains(err.Error(), "only https") {
 		t.Errorf("from the option: %v", err)
 	}
-	_, err = Add(conf, AddOptions{Name: "tron", Token: tokenAt(t, "s", strings.Repeat("ab", 32), "http://tron:8443")})
+	_, err = Add(conf, AddOptions{Name: "homelab", Token: tokenAt(t, "s", strings.Repeat("ab", 32), "http://homelab:8443")})
 	if err == nil || !strings.Contains(err.Error(), "only https") {
 		t.Errorf("from the token: %v", err)
 	}
@@ -111,23 +111,23 @@ func TestAServerThatCannotBeReachedIsRefusedNamingEveryAddressTried(t *testing.T
 	conf, dir := emptyConf(t)
 	tok := tokenAt(t, "s", strings.Repeat("ab", 32), "127.0.0.1:1", "127.0.0.1:2")
 	fetch := fetchWithDead(map[string]string{"https://127.0.0.1:1": "first is down", "https://127.0.0.1:2": "second is down"})
-	_, err := Add(conf, AddOptions{Name: "tron", Token: tok, fetchCert: fetch})
+	_, err := Add(conf, AddOptions{Name: "homelab", Token: tok, fetchCert: fetch})
 	if err == nil || !strings.Contains(err.Error(), "could not reach the server") || !strings.Contains(err.Error(), "first is down") || !strings.Contains(err.Error(), "second is down") {
 		t.Fatalf("every address tried must be in the error: %v", err)
 	}
-	nothingLeft(t, dir, "tron")
+	nothingLeft(t, dir, "homelab")
 }
 
 func TestTheFirstAddressThatAnswersIsTheOneSaved(t *testing.T) {
 	f := newFake(t, false, "s3cret", "default")
 	conf, _ := emptyConf(t)
 	tok := tokenAt(t, "s3cret", f.fingerprint(), "127.0.0.1:1", f.addr())
-	res, err := Add(conf, AddOptions{Name: "tron", Token: tok, fetchCert: fetchWithDead(map[string]string{"https://127.0.0.1:1": "down"})})
+	res, err := Add(conf, AddOptions{Name: "homelab", Token: tok, fetchCert: fetchWithDead(map[string]string{"https://127.0.0.1:1": "down"})})
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := "https://" + f.addr()
-	if saved := reload(t).Remotes["tron"]; res.Addr != want || len(saved.Addrs) != 1 || saved.Addrs[0] != want {
+	if saved := reload(t).Remotes["homelab"]; res.Addr != want || len(saved.Addrs) != 1 || saved.Addrs[0] != want {
 		t.Errorf("result %q, saved %v: only the address that answered is kept, want %s", res.Addr, saved.Addrs, want)
 	}
 }
@@ -135,11 +135,11 @@ func TestTheFirstAddressThatAnswersIsTheOneSaved(t *testing.T) {
 func TestAConfirmationThatFailsIsAnError(t *testing.T) {
 	f := newFake(t, true, "", "default")
 	conf, dir := emptyConf(t)
-	_, err := Add(conf, AddOptions{Name: "tron", Addr: f.addr(), Confirm: func(string) (bool, error) { return false, errors.New("terminal gone") }})
+	_, err := Add(conf, AddOptions{Name: "homelab", Addr: f.addr(), Confirm: func(string) (bool, error) { return false, errors.New("terminal gone") }})
 	if err == nil || !strings.Contains(err.Error(), "terminal gone") {
 		t.Fatalf("%v", err)
 	}
-	nothingLeft(t, dir, "tron")
+	nothingLeft(t, dir, "homelab")
 }
 
 func TestAServerCertificateThatCannotBeStoredLeavesNothingBehind(t *testing.T) {
@@ -153,7 +153,7 @@ func TestAServerCertificateThatCannotBeStoredLeavesNothingBehind(t *testing.T) {
 			}
 		}, "creating the server certificate directory"},
 		"the certificate path is a directory": {func(t *testing.T, dir string) {
-			if err := os.MkdirAll(filepath.Join(dir, "servercerts", "tron.crt"), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Join(dir, "servercerts", "homelab.crt"), 0o755); err != nil {
 				t.Fatal(err)
 			}
 		}, "storing the server certificate"},
@@ -165,14 +165,14 @@ func TestAServerCertificateThatCannotBeStoredLeavesNothingBehind(t *testing.T) {
 				t.Fatal(err)
 			}
 			tc.block(t, dir)
-			_, err := Add(conf, AddOptions{Name: "tron", Token: token(t, f, "s3cret", f.fingerprint())})
+			_, err := Add(conf, AddOptions{Name: "homelab", Token: token(t, f, "s3cret", f.fingerprint())})
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v, want %q", err, tc.want)
 			}
 			if len(f.posted) != 0 {
 				t.Error("the secret must not be sent before the server's certificate is safely stored")
 			}
-			if _, ok := conf.Remotes["tron"]; ok {
+			if _, ok := conf.Remotes["homelab"]; ok {
 				t.Error("the remote must not be left in the configuration")
 			}
 		})
@@ -183,14 +183,14 @@ func TestAServerThatAcceptsTheTokenButStillDoesNotTrustUs(t *testing.T) {
 	f := newFake(t, false, "s3cret", "default")
 	f.stayUntrusted = true
 	conf, dir := emptyConf(t)
-	_, err := Add(conf, AddOptions{Name: "tron", Token: token(t, f, "s3cret", f.fingerprint())})
+	_, err := Add(conf, AddOptions{Name: "homelab", Token: token(t, f, "s3cret", f.fingerprint())})
 	if err == nil || !strings.Contains(err.Error(), "still does not trust this machine") {
 		t.Fatalf("%v", err)
 	}
 	if len(f.posted) != 1 {
 		t.Errorf("the token is presented once: %v", f.posted)
 	}
-	nothingLeft(t, dir, "tron")
+	nothingLeft(t, dir, "homelab")
 }
 
 // The certificate is fetched and verified, the server then stops answering: what was stored for it is removed again.
@@ -198,11 +198,11 @@ func TestAServerThatStopsAnsweringAfterItsCertificateWasFetched(t *testing.T) {
 	f := newFake(t, true, "", "default")
 	conf, dir := emptyConf(t)
 	fetch := func(string) (*x509.Certificate, error) { return f.Certificate(), nil }
-	_, err := Add(conf, AddOptions{Name: "tron", Addr: "127.0.0.1:1", Fingerprint: f.fingerprint(), fetchCert: fetch})
+	_, err := Add(conf, AddOptions{Name: "homelab", Addr: "127.0.0.1:1", Fingerprint: f.fingerprint(), fetchCert: fetch})
 	if err == nil || !strings.Contains(err.Error(), "connecting to https://127.0.0.1:1") {
 		t.Fatalf("%v", err)
 	}
-	nothingLeft(t, dir, "tron")
+	nothingLeft(t, dir, "homelab")
 }
 
 func TestAConfigThatCannotBeSavedLeavesNoCertificateAndNoRemote(t *testing.T) {
@@ -211,14 +211,14 @@ func TestAConfigThatCannotBeSavedLeavesNoCertificateAndNoRemote(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "config.yml"), 0o755); err != nil { // a directory where the file should go
 		t.Fatal(err)
 	}
-	_, err := Add(conf, AddOptions{Name: "tron", Addr: f.addr(), Fingerprint: f.fingerprint()})
+	_, err := Add(conf, AddOptions{Name: "homelab", Addr: f.addr(), Fingerprint: f.fingerprint()})
 	if err == nil || !strings.Contains(err.Error(), "saving the Incus client configuration") {
 		t.Fatalf("%v", err)
 	}
-	if _, statErr := os.Stat(filepath.Join(dir, "servercerts", "tron.crt")); statErr == nil {
+	if _, statErr := os.Stat(filepath.Join(dir, "servercerts", "homelab.crt")); statErr == nil {
 		t.Error("the stored server certificate must be removed when saving fails")
 	}
-	if _, ok := conf.Remotes["tron"]; ok {
+	if _, ok := conf.Remotes["homelab"]; ok {
 		t.Error("the remote must not stay in the configuration when saving fails")
 	}
 }

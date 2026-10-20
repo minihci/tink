@@ -36,9 +36,3 @@ someone's first evening would go. Install command, from the project's `docker-co
   `plan apply` writes none). `kind: stack` exists for volumes (`user.tink.stack`); instances could carry it too, which would also let `plan` say "this instance belongs to no stack".
 - **N8. Good, and worth keeping:** `export` needed no special handling for a non-Docker-Hub registry, mixed bind and managed volumes, or a port mapped to 80; the first
   `plan` after `apply` was clean; and the secret/pinning machinery from round two was not even exercised, because this app takes no secrets.
-
-## State left on tron
-
-Project `tink-play`: `kuma-play` (round one/two), `abs-play` (running, http://tron.local:13378, rebuilt from `export`'s file), volumes `kuma-data`, `abs-config`, `abs-metadata`,
-cached images for both, and **host directories `/tmp/abs-media/{audiobooks,podcasts}`** (not an Incus object). Remove with the commands at the end of `explore-uptime-kuma.md`, plus
-`incus delete -f abs-play`, the two volumes, the image, and `rm -r /tmp/abs-media`.

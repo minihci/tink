@@ -77,14 +77,14 @@ func route(b *bridgeHost, opts InstallOptions) (apiRoute, error) {
 }
 
 func TestTheWayToTheAPIIsChosenFromTheBridgeAndTheListener(t *testing.T) {
-	unmanaged := bridge("br0", "10.10.50.1/24")
+	unmanaged := bridge("br0", "192.0.2.1/24")
 	unmanaged.Managed = false
-	ovn := bridge("ovn0", "10.10.50.1/24")
+	ovn := bridge("ovn0", "192.0.2.1/24")
 	ovn.Type = "ovn"
 	noV4 := bridge("v6only", "none")
 	unsetV4 := &api.Network{Name: "unset", Type: "bridge", Managed: true}
 	v6inV4 := bridge("odd", "fd42:1::1/64") // an IPv6 prefix where an IPv4 address belongs is no gateway the IPv4 rules can use
-	tink0 := bridge("tink0", "10.10.50.1/24")
+	tink0 := bridge("tink0", "192.0.2.1/24")
 
 	const (
 		viaNetwork = APIViaNetwork
@@ -102,18 +102,18 @@ func TestTheWayToTheAPIIsChosenFromTheBridgeAndTheListener(t *testing.T) {
 		err        string // a piece of the error (then nothing else is checked)
 	}{
 		// the listener covers the bridge's address
-		{name: "a managed bridge and a wildcard listener", listen: ":8443", net: tink0, want: viaNetwork, remote: "https://10.10.50.1:8443", note: "over the network"},
-		{name: "0.0.0.0 is a wildcard", listen: "0.0.0.0:8443", net: tink0, want: viaNetwork, remote: "https://10.10.50.1:8443"},
-		{name: "[::] is a wildcard", listen: "[::]:8443", net: tink0, want: viaNetwork, remote: "https://10.10.50.1:8443"},
-		{name: "a listener on exactly the bridge's address (what tink deploy sets)", listen: "10.10.50.1:9443", net: tink0, want: viaNetwork, remote: "https://10.10.50.1:9443"},
-		{name: "the stated default is auto", listen: ":8443", net: tink0, via: "", want: viaNetwork, remote: "https://10.10.50.1:8443"},
-		{name: "auto said out loud", listen: ":8443", net: tink0, via: APIViaAuto, want: viaNetwork, remote: "https://10.10.50.1:8443"},
-		{name: "the network is the default profile's NIC", listen: ":8443", net: tink0, profileNIC: map[string]string{"type": "nic", "network": "tink0"}, want: viaNetwork, remote: "https://10.10.50.1:8443"},
+		{name: "a managed bridge and a wildcard listener", listen: ":8443", net: tink0, want: viaNetwork, remote: "https://192.0.2.1:8443", note: "over the network"},
+		{name: "0.0.0.0 is a wildcard", listen: "0.0.0.0:8443", net: tink0, want: viaNetwork, remote: "https://192.0.2.1:8443"},
+		{name: "[::] is a wildcard", listen: "[::]:8443", net: tink0, want: viaNetwork, remote: "https://192.0.2.1:8443"},
+		{name: "a listener on exactly the bridge's address (what tink deploy sets)", listen: "192.0.2.1:9443", net: tink0, want: viaNetwork, remote: "https://192.0.2.1:9443"},
+		{name: "the stated default is auto", listen: ":8443", net: tink0, via: "", want: viaNetwork, remote: "https://192.0.2.1:8443"},
+		{name: "auto said out loud", listen: ":8443", net: tink0, via: APIViaAuto, want: viaNetwork, remote: "https://192.0.2.1:8443"},
+		{name: "the network is the default profile's NIC", listen: ":8443", net: tink0, profileNIC: map[string]string{"type": "nic", "network": "tink0"}, want: viaNetwork, remote: "https://192.0.2.1:8443"},
 
 		// it does not: a proxy device, and the note says why
-		{name: "a listener on another address", listen: "192.168.1.5:8443", net: tink0, want: viaProxy, remote: "https://127.0.0.1:8443", note: "does not include 10.10.50.1"},
+		{name: "a listener on another address", listen: "192.168.1.5:8443", net: tink0, want: viaProxy, remote: "https://127.0.0.1:8443", note: "does not include 192.0.2.1"},
 		{name: "a loopback listener", listen: "127.0.0.1:8443", net: tink0, want: viaProxy, remote: "https://127.0.0.1:8443", note: "127.0.0.1:8443 (core.https_address)"},
-		{name: "an IPv6-only listener", listen: "[fd42:1::1]:8443", net: tink0, want: viaProxy, remote: "https://127.0.0.1:8443", note: "does not include 10.10.50.1"},
+		{name: "an IPv6-only listener", listen: "[fd42:1::1]:8443", net: tink0, want: viaProxy, remote: "https://127.0.0.1:8443", note: "does not include 192.0.2.1"},
 		{name: "a NIC on a network Incus does not manage", listen: ":8443", net: unmanaged, want: viaProxy, remote: "https://127.0.0.1:8443", note: "network br0 is not managed by Incus"},
 		{name: "a managed network that is not a bridge", listen: ":8443", net: ovn, want: viaProxy, remote: "https://127.0.0.1:8443", note: "ovn network"},
 		{name: "a bridge without an IPv4 address", listen: ":8443", net: noV4, want: viaProxy, remote: "https://127.0.0.1:8443", note: "no IPv4 address (ipv4.address is none)"},
@@ -124,9 +124,9 @@ func TestTheWayToTheAPIIsChosenFromTheBridgeAndTheListener(t *testing.T) {
 
 		// asked for outright
 		{name: "forced proxy, though the network would do", listen: ":8443", net: tink0, via: viaProxy, want: viaProxy, remote: "https://127.0.0.1:8443"},
-		{name: "forced network, and it can", listen: ":8443", net: tink0, via: viaNetwork, want: viaNetwork, remote: "https://10.10.50.1:8443"},
+		{name: "forced network, and it can", listen: ":8443", net: tink0, via: viaNetwork, want: viaNetwork, remote: "https://192.0.2.1:8443"},
 		{name: "forced network, listener elsewhere", listen: "127.0.0.1:8443", net: tink0, via: viaNetwork,
-			err: "--api-via network: the host's API listens on 127.0.0.1:8443 (core.https_address), which does not include 10.10.50.1"},
+			err: "--api-via network: the host's API listens on 127.0.0.1:8443 (core.https_address), which does not include 192.0.2.1"},
 		{name: "forced network, and the error says what to set", listen: "192.168.1.5:8443", net: tink0, via: viaNetwork,
 			err: "incus config set core.https_address :8443"},
 		{name: "forced network, and the error says what the wildcard costs", listen: "192.168.1.5:8443", net: tink0, via: viaNetwork,
@@ -180,10 +180,10 @@ func TestTheWayToTheAPIIsChosenFromTheBridgeAndTheListener(t *testing.T) {
 }
 
 func TestListenerCoversTheGatewayOnlyWhenItAcceptsConnectionsThere(t *testing.T) {
-	gw := netip.MustParseAddr("10.10.50.1")
+	gw := netip.MustParseAddr("192.0.2.1")
 	for listen, covers := range map[string]bool{
-		":8443": true, "0.0.0.0:8443": true, "[::]:8443": true, "10.10.50.1:8443": true, "[::ffff:10.10.50.1]:8443": true,
-		"127.0.0.1:8443": false, "10.10.50.2:8443": false, "[::1]:8443": false, "[fd42::1]:8443": false, "incus.lan:8443": false,
+		":8443": true, "0.0.0.0:8443": true, "[::]:8443": true, "192.0.2.1:8443": true, "[::ffff:192.0.2.1]:8443": true,
+		"127.0.0.1:8443": false, "192.0.2.2:8443": false, "[::1]:8443": false, "[fd42::1]:8443": false, "incus.lan:8443": false,
 		"nonsense": false, "": false,
 	} {
 		if got := listenerCovers(listen, gw, "tink0") == nil; got != covers {
@@ -205,7 +205,7 @@ func TestParseAPIVia(t *testing.T) {
 
 // The instance itself: in network mode it has no proxy device, and the remote it is enrolled at is the bridge's address.
 func TestNetworkModeGivesTheHelperNoProxyDeviceAndEnrolsItAtTheBridgesAddress(t *testing.T) {
-	b := hostWith(":8443", bridge("tink0", "10.10.50.1/24"))
+	b := hostWith(":8443", bridge("tink0", "192.0.2.1/24"))
 	var specs []*run.Spec
 	in, out := bridgeInstaller(b, &specs)
 	if err := in.Install(InstallOptions{Image: "x", Network: "tink0", Wait: -1}); err != nil {
@@ -226,20 +226,20 @@ func TestNetworkModeGivesTheHelperNoProxyDeviceAndEnrolsItAtTheBridgesAddress(t 
 	if s.Devices["root"]["type"] != "disk" || s.Devices["config"]["source"] != configVolume || s.Devices["data"]["source"] != dataVolume {
 		t.Errorf("the rest of the devices are as they were: %v", s.Devices)
 	}
-	if got := s.Config[MarkerKey+".remote"]; got != "https://10.10.50.1:8443" {
+	if got := s.Config[MarkerKey+".remote"]; got != "https://192.0.2.1:8443" {
 		t.Errorf("the instance records where it reaches the API: %q", got)
 	}
 	if len(b.execs) != 1 {
 		t.Fatalf("one enrolment: %v", b.execs)
 	}
 	e := b.execs[0]
-	if strings.Join(e.command, " ") != "/usr/local/bin/tink remote add host https://10.10.50.1:8443 --token-file -" {
+	if strings.Join(e.command, " ") != "/usr/local/bin/tink remote add host https://192.0.2.1:8443 --token-file -" {
 		t.Errorf("only the address differs from the proxy path's enrolment: %v", e.command)
 	}
 	if e.stdin == "" || strings.Contains(strings.Join(e.command, " "), e.stdin) {
 		t.Errorf("the token is still on standard input, never on the command line: %q", e.stdin)
 	}
-	if !strings.Contains(out.String(), "over the network, at https://10.10.50.1:8443 (no proxy device)") {
+	if !strings.Contains(out.String(), "over the network, at https://192.0.2.1:8443 (no proxy device)") {
 		t.Errorf("it says which way it chose:\n%s", out.String())
 	}
 	if len(b.certs) != 1 || b.certs[0].Name != TrustName {
@@ -248,7 +248,7 @@ func TestNetworkModeGivesTheHelperNoProxyDeviceAndEnrolsItAtTheBridgesAddress(t 
 }
 
 func TestTheDefaultIsTheNetworkWhenTheDefaultProfilesNICIsOnAManagedBridge(t *testing.T) {
-	b := hostWith("10.10.50.1:8443", bridge("tink0", "10.10.50.1/24"))
+	b := hostWith("192.0.2.1:8443", bridge("tink0", "192.0.2.1/24"))
 	b.profileNIC = map[string]string{"type": "nic", "network": "tink0"}
 	var specs []*run.Spec
 	in, _ := bridgeInstaller(b, &specs)
@@ -261,7 +261,7 @@ func TestTheDefaultIsTheNetworkWhenTheDefaultProfilesNICIsOnAManagedBridge(t *te
 	if _, has := specs[0].Devices["eth0"]; has {
 		t.Errorf("and no second NIC: the profile gives one: %v", specs[0].Devices)
 	}
-	if got := b.execs[0].command; got[len(got)-3] != "https://10.10.50.1:8443" {
+	if got := b.execs[0].command; got[len(got)-3] != "https://192.0.2.1:8443" {
 		t.Errorf("%v", got)
 	}
 }
@@ -275,13 +275,13 @@ func TestProxyModeKeepsTheProxyDeviceAndTheLoopbackAddress(t *testing.T) {
 		note    string
 	}{
 		"asked for": {":8443", APIViaProxy, "8443", "127.0.0.1:8443", ""},
-		"asked for, with a listener on the gateway": {"10.10.50.1:8443", APIViaProxy, "8443", "10.10.50.1:8443", ""},
-		"auto, and the listener is loopback":        {"127.0.0.1:8443", APIViaAuto, "8443", "127.0.0.1:8443", "does not include 10.10.50.1"},
-		"auto, and the listener is elsewhere":       {"192.168.1.5:9443", "", "9443", "192.168.1.5:9443", "does not include 10.10.50.1"},
+		"asked for, with a listener on the gateway": {"192.0.2.1:8443", APIViaProxy, "8443", "192.0.2.1:8443", ""},
+		"auto, and the listener is loopback":        {"127.0.0.1:8443", APIViaAuto, "8443", "127.0.0.1:8443", "does not include 192.0.2.1"},
+		"auto, and the listener is elsewhere":       {"192.168.1.5:9443", "", "9443", "192.168.1.5:9443", "does not include 192.0.2.1"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			b := hostWith(tc.listen, bridge("tink0", "10.10.50.1/24"))
+			b := hostWith(tc.listen, bridge("tink0", "192.0.2.1/24"))
 			var specs []*run.Spec
 			in, out := bridgeInstaller(b, &specs)
 			if err := in.Install(InstallOptions{Image: "x", Network: "tink0", APIVia: tc.via, Wait: -1}); err != nil {
@@ -311,7 +311,7 @@ func TestProxyModeKeepsTheProxyDeviceAndTheLoopbackAddress(t *testing.T) {
 }
 
 func TestANetworkInstallThatCannotBeDoneSaysSoBeforeCreatingAnything(t *testing.T) {
-	b := hostWith("127.0.0.1:8443", bridge("tink0", "10.10.50.1/24"))
+	b := hostWith("127.0.0.1:8443", bridge("tink0", "192.0.2.1/24"))
 	var specs []*run.Spec
 	in, _ := bridgeInstaller(b, &specs)
 	err := in.Install(InstallOptions{Image: "x", Network: "tink0", APIVia: APIViaNetwork, Wait: -1})
@@ -325,7 +325,7 @@ func TestANetworkInstallThatCannotBeDoneSaysSoBeforeCreatingAnything(t *testing.
 
 // What exists is left alone: a helper keeps the way it has, and install says how to change it instead of doing it.
 func TestInstallingAgainFollowsTheHelperThatExistsNotTheServerAsItIsNow(t *testing.T) {
-	b := hostWith(":8443", bridge("tink0", "10.10.50.1/24"))
+	b := hostWith(":8443", bridge("tink0", "192.0.2.1/24"))
 	in, _ := bridgeInstaller(b, new([]*run.Spec))
 	if err := in.Install(InstallOptions{Image: "x", Network: "tink0", Wait: -1}); err != nil {
 		t.Fatal(err)
@@ -336,7 +336,7 @@ func TestInstallingAgainFollowsTheHelperThatExistsNotTheServerAsItIsNow(t *testi
 		t.Fatalf("an existing network helper is not re-judged against the listener: %v", err)
 	}
 	got := commandsRun(b.fakeHost)
-	if last := got[len(got)-1]; last != "remote add host https://10.10.50.1:8443 --token-file -" {
+	if last := got[len(got)-1]; last != "remote add host https://192.0.2.1:8443 --token-file -" {
 		t.Errorf("enrolled again at the address it was installed with: %v", got)
 	}
 	if _, has := b.instances["helper"].Devices["api"]; has {
@@ -351,7 +351,7 @@ func TestInstallingAgainFollowsTheHelperThatExistsNotTheServerAsItIsNow(t *testi
 }
 
 func TestAnExistingProxyHelperStaysAProxyHelperWhateverTheNetworkWouldAllow(t *testing.T) {
-	b := hostWith(":8443", bridge("tink0", "10.10.50.1/24"))
+	b := hostWith(":8443", bridge("tink0", "192.0.2.1/24"))
 	in, _ := bridgeInstaller(b, new([]*run.Spec))
 	if err := in.Install(InstallOptions{Image: "x", Network: "tink0", APIVia: APIViaProxy, Wait: -1}); err != nil {
 		t.Fatal(err)
@@ -379,7 +379,7 @@ func TestAnImageUpgradeKeepsAHelperThatReachesTheAPIOverTheNetworkWithoutAProxyD
 	inst := h.instances["helper"]
 	delete(inst.Devices, "api")
 	inst.Devices["eth0"] = map[string]string{"type": "nic", "network": "tink0", "name": "eth0"}
-	inst.Config[MarkerKey+".remote"] = "https://10.10.50.1:8443"
+	inst.Config[MarkerKey+".remote"] = "https://192.0.2.1:8443"
 	if got := (Found{Devices: inst.Devices}).APIRoute(); got != APIViaNetwork {
 		t.Fatalf("the fixture is a network helper: %v", got)
 	}
@@ -412,7 +412,7 @@ func TestAnImageUpgradeKeepsAHelperThatReachesTheAPIOverTheNetworkWithoutAProxyD
 	if got.Devices["eth0"]["network"] != "tink0" || got.Devices["data"]["source"] != dataVolume {
 		t.Errorf("the same devices: %v", got.Devices)
 	}
-	if got.Config[MarkerKey+".remote"] != "https://10.10.50.1:8443" {
+	if got.Config[MarkerKey+".remote"] != "https://192.0.2.1:8443" {
 		t.Errorf("and the same address: %v", got.Config)
 	}
 	if h.tokens != 0 || len(h.execs) != 0 {
@@ -438,9 +438,9 @@ func TestAProxyHelperIsRecognisedFromItsDevices(t *testing.T) {
 }
 
 func TestAFirstConnectionThatFailsOverTheNetworkSaysWhatToCheck(t *testing.T) {
-	overNet := apiRoute{Via: APIViaNetwork, Remote: "https://10.10.50.1:8443"}
+	overNet := apiRoute{Via: APIViaNetwork, Remote: "https://192.0.2.1:8443"}
 	proxy := apiRoute{Via: APIViaProxy, Remote: "https://127.0.0.1:8443"}
-	unreached := errors.New("enrolling the helper failed (exit 1): Error: could not reach the server: dial tcp 10.10.50.1:8443: i/o timeout")
+	unreached := errors.New("enrolling the helper failed (exit 1): Error: could not reach the server: dial tcp 192.0.2.1:8443: i/o timeout")
 	if err := overNet.explain(unreached); !strings.Contains(err.Error(), "firewall") || !strings.Contains(err.Error(), "--api-via proxy") || !errors.Is(err, unreached) {
 		t.Errorf("%v", err)
 	}
@@ -457,8 +457,8 @@ func TestAFirstConnectionThatFailsOverTheNetworkSaysWhatToCheck(t *testing.T) {
 }
 
 func TestEnrolmentThatCannotReachTheBridgeAddressFailsWithTheHint(t *testing.T) {
-	b := hostWith(":8443", bridge("tink0", "10.10.50.1/24"))
-	b.execCode, b.execOut = 1, "Error: could not reach the server: dial tcp 10.10.50.1:8443: connect: connection refused\n"
+	b := hostWith(":8443", bridge("tink0", "192.0.2.1/24"))
+	b.execCode, b.execOut = 1, "Error: could not reach the server: dial tcp 192.0.2.1:8443: connect: connection refused\n"
 	in, _ := bridgeInstaller(b, new([]*run.Spec))
 	err := in.Install(InstallOptions{Image: "x", Network: "tink0", Wait: -1})
 	if err == nil || !strings.Contains(err.Error(), "could not reach the server") || !strings.Contains(err.Error(), "--api-via proxy") {

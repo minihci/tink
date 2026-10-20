@@ -4,7 +4,7 @@
 
 ## The question
 
-The ingress helper is a container on a private bridge. On a LAN host (tron) it has its own LAN address on a bridged NIC (`user.tink.leg.<nic>: serves`), and clients reach it directly. On a VPS with **one public address and no routed block**, something has to carry ports 80 and 443 from that address into the container. The VPS this was measured on does it today with two firewall redirects for a rootless Caddy (`/etc/iptables/rules.v4`, `/etc/nftables.conf`), which is the right trade for rootless Podman, where nothing is privileged enough to do it any other way. Incus is the privileged agent, so the same job is a device on the instance.
+The ingress helper is a container on a private bridge. On a LAN host it has its own LAN address on a bridged NIC (`user.tink.leg.<nic>: serves`), and clients reach it directly. On a VPS with **one public address and no routed block**, something has to carry ports 80 and 443 from that address into the container. A host that runs its proxy rootless does it with two firewall redirects, which is the right trade for rootless Podman, where nothing is privileged enough to do it any other way. Incus is the privileged agent, so the same job is a device on the instance.
 
 ## What Incus gives, as measured [lab]
 
@@ -41,7 +41,7 @@ Run against a real server on 2026-10-17 **[lab]**, as a read-only `plan`: a corr
 
 **Built here, then: `join` describes a public-only site (item 3).**
 
-- **Each rendering needs only what it renders.** The dns records need a dns helper and a `serves` leg; the mesh records a mesh helper and a `mesh` leg; the Caddy routes, sign-on rules and ACL rules need the ingress and sign-on helpers. A dns helper or a mesh helper is now optional, and a leg is required only when the helper it serves is there. The tron site renders byte-for-byte as before.
+- **Each rendering needs only what it renders.** The dns records need a dns helper and a `serves` leg; the mesh records a mesh helper and a `mesh` leg; the Caddy routes, sign-on rules and ACL rules need the ingress and sign-on helpers. A dns helper or a mesh helper is now optional, and a leg is required only when the helper it serves is there. A LAN-only site renders byte-for-byte as before.
 - **A `public` leg** (`user.tink.leg.<nic>: public`) says "the internet reaches the ingress helper on this NIC, through the host's address". It renders nothing, because the names live in public DNS outside tink; the join warns with the names that need records. A NIC may have several purposes (`mesh, public`).
 - **The ACL source** is the set of the ingress helper's `mesh` and `public` addresses, sorted, without repeats, written as one comma-separated Incus source list. It was the `mesh` leg's address alone, which a host with no mesh gateway does not have. A site with neither leg is an error: an ACL that admits nobody is not what anyone meant.
 - **The zone** is stated on the dns helper, or, when there is none, on the ingress helper (`user.tink.dns.zone`); stated on both, they must agree.

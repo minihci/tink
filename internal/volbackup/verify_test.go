@@ -62,7 +62,7 @@ type madeInstance struct {
 const hostProject = "default"
 
 func newVerifyFake(pool string) *verifyFake {
-	f := &verifyFake{fakeIncus: newFake("tron", pool), devices: map[string]map[string]map[string]string{}, profileErr: map[string]error{}, instances: map[string]*madeInstance{}}
+	f := &verifyFake{fakeIncus: newFake("homelab", pool), devices: map[string]map[string]map[string]string{}, profileErr: map[string]error{}, instances: map[string]*madeInstance{}}
 	f.add(pool, "lib", nil)
 	f.snaps[pool+"/lib"] = []string{"snap0"}
 	// a host as `incus admin init` leaves it: the default project's default profile has a root disk

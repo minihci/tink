@@ -87,7 +87,7 @@ Verdicts: ✅ covered, ◐ partial, ❌ gap (Incus can; tink's `run` cannot say 
 |---|---|---|---|---|---|
 | `--device /dev/x:/dev/x` | 3 | ✅ **done** (character devices) | ✅ | `unix-char` **live** (`/dev/null` appeared in the container); `required=false` hotplugs docs; `usb`, `gpu` device types docs | ✅ |
 | `--privileged` | 2 | ✅ **done** | ✅ | `security.privileged` **live** (identity uid map). Not Docker's: no extra devices or capabilities | ✅ **live** |
-| `--network host` | 2 | ⛔ | ⛔ | none. The nearest is a LAN address: `nic` `nictype=bridged parent=br0`. **Your `lan` profile on tron already is this**, and `tink run --profile lan` works | ◐ docs only: say so |
+| `--network host` | 2 | ⛔ | ⛔ | none. The nearest is a LAN address: `nic` `nictype=bridged parent=br0`. **A `lan` profile like that on a homelab host already is this**, and `tink run --profile lan` works | ◐ docs only: say so |
 | `--cap-add` | 1 | ⛔ | ⛔ | none in instance options docs. Unprivileged containers have a fixed capability set; `raw.lxc` is a raw escape docs | ⛔ |
 | `-m` / `--cpus` | 1 (6 of 6 of yours) | ✅ **done** | ✅ | `limits.memory` **live** (cgroup `memory.max` = 128MiB); `limits.cpu` (a count) and `limits.cpu.allowance` (a share) docs | ✅ |
 | `--tmpfs` / `type: tmpfs` | 1 | ◐ `--incus-device 'cache type=disk source=tmpfs: ...'` **live** | ✅ | `disk` `source=tmpfs:` with `size` **live** (64MiB tmpfs, size enforced). Only added while the instance is stopped; refused when running | ◐ |

@@ -252,7 +252,7 @@ func TestCancellationStopsBetweenCopies(t *testing.T) {
 
 func TestTheRelayNoteIsPrintedOncePerRemoteTarget(t *testing.T) {
 	rs := []resolve.Resource{vol("a", "far"), vol("b", "far"), vol("c", "near"), target("far", "vps"), target("near", "")}
-	_, out, _ := run(t, &stub{}, rs, Options{Remote: "tron"})
+	_, out, _ := run(t, &stub{}, rs, Options{Remote: "homelab"})
 	if strings.Count(out, "is relayed through this machine") != 1 {
 		t.Errorf("one note, for the remote target only:\n%s", out)
 	}

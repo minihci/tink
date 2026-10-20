@@ -7,7 +7,7 @@ file `export` writes is what you keep and apply from then on.
 
 ```
 tink export [--project P] [--offline] [--no-pin] INSTANCE...        # YAML on stdout, notes and the check on stderr
-tink --remote tron export --project tink-play kuma-play > tink.yaml
+tink --remote homelab export --project tink-play kuma-play > tink.yaml
 ```
 
 It only reads, and it works under `--remote` ([remote.md](remote.md)).

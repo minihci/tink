@@ -24,7 +24,7 @@ config:
   user.tink.offer.web.proto: http
   # user.tink.offer.web.listen: eth0     # only needed when the instance has more than one NIC
 devices:
-  eth0: {name: eth0, type: nic, network: canary0, ipv4.address: 10.10.60.10}   # the address must be static (see below)
+  eth0: {name: eth0, type: nic, network: canary0, ipv4.address: 198.51.100.10}   # the address must be static (see below)
 ```
 
 **A publish** gives one offer a name in the site's zone and says which groups may use it. The same offer can be published twice, to different groups.
@@ -98,7 +98,7 @@ Each argument is one stack (that is what gives its resources the stack's default
 @whoami host whoami.home.example.org
 handle @whoami {
 	import sso
-	reverse_proxy 10.10.60.10:80 {
+	reverse_proxy 198.51.100.10:80 {
 		import no_portal_cookie
 	}
 }
@@ -111,7 +111,7 @@ handle @whoami {
 == acl: rules for the ACLs on the apps' bridges, under ingress:
 # network-acl canary0-in (network canary0)
 ingress:
-  - {action: allow, source: 10.10.50.3/32, protocol: tcp, destination_port: "80", state: enabled, description: "ingress helper publishes whoami, whoami-admin"}
+  - {action: allow, source: 192.0.2.3/32, protocol: tcp, destination_port: "80", state: enabled, description: "ingress helper publishes whoami, whoami-admin"}
 ```
 
 ### From the server

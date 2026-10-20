@@ -75,7 +75,7 @@ name: svc
 description: the service bridge
 allow_disruption: true
 config:
-  ipv4.address: 10.10.20.1/24
+  ipv4.address: 203.0.113.1/24
   ipv4.nat: "true"
   ipv6.address: none
 `))
@@ -89,7 +89,7 @@ config:
 	if r.Kind != KindNetwork || r.Name != "svc" || r.Description != "the service bridge" || !r.AllowDisruption {
 		t.Errorf("resource = %+v", r)
 	}
-	if got := r.Config["ipv4.address"]; got != "10.10.20.1/24" {
+	if got := r.Config["ipv4.address"]; got != "203.0.113.1/24" {
 		t.Errorf("ipv4.address = %q", got)
 	}
 }
@@ -167,7 +167,7 @@ func TestLevels_NICOnANetworkTheStackDoesNotDeclareStaysLenient(t *testing.T) {
 }
 
 func TestPlanNetwork_NotFoundCreates(t *testing.T) {
-	p, err := planNetwork(&netServer{}, netResource(map[string]string{"ipv4.address": "10.10.20.1/24"}))
+	p, err := planNetwork(&netServer{}, netResource(map[string]string{"ipv4.address": "203.0.113.1/24"}))
 	if err != nil || p.Action != ActionCreate {
 		t.Fatalf("planNetwork() = %v, %v; want ActionCreate", p.Action, err)
 	}
@@ -181,8 +181,8 @@ func TestPlanNetwork_ForbiddenIsNotAbsent(t *testing.T) {
 }
 
 func TestPlanNetwork_ExtraLiveKeysAreNotDrift(t *testing.T) {
-	live := liveBridge(map[string]string{"ipv4.address": "10.10.20.1/24", "ipv4.nat": "true", "ipv6.address": "none", "volatile.network.ipv4.address": "10.10.20.1"})
-	p, err := planNetwork(&netServer{live: live}, netResource(map[string]string{"ipv4.address": "10.10.20.1/24", "ipv4.nat": "true"}))
+	live := liveBridge(map[string]string{"ipv4.address": "203.0.113.1/24", "ipv4.nat": "true", "ipv6.address": "none", "volatile.network.ipv4.address": "203.0.113.1"})
+	p, err := planNetwork(&netServer{live: live}, netResource(map[string]string{"ipv4.address": "203.0.113.1/24", "ipv4.nat": "true"}))
 	if err != nil || p.Action != ActionNone {
 		t.Fatalf("planNetwork() = %v (%v), %v; want ActionNone", p.Action, p.Changes, err)
 	}
@@ -302,7 +302,7 @@ func TestNetworkInstances(t *testing.T) {
 
 func TestCreateOne_NetworkCreatesABridge(t *testing.T) {
 	s := &netServer{}
-	r := netResource(map[string]string{"ipv4.address": "10.10.20.1/24"})
+	r := netResource(map[string]string{"ipv4.address": "203.0.113.1/24"})
 	r.Description = "the service bridge"
 	if err := createOne(s, r, volumeEnv{}); err != nil {
 		t.Fatalf("createOne() error = %v", err)
@@ -311,7 +311,7 @@ func TestCreateOne_NetworkCreatesABridge(t *testing.T) {
 		t.Fatalf("CreateNetwork called %d times, want 1", len(s.created))
 	}
 	got := s.created[0]
-	if got.Name != "svc" || got.Type != "bridge" || got.Description != "the service bridge" || got.Config["ipv4.address"] != "10.10.20.1/24" {
+	if got.Name != "svc" || got.Type != "bridge" || got.Description != "the service bridge" || got.Config["ipv4.address"] != "203.0.113.1/24" {
 		t.Errorf("CreateNetwork got %+v", got)
 	}
 }

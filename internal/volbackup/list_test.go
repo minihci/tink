@@ -9,7 +9,7 @@ import (
 )
 
 func TestListVolumesFindsEveryCustomVolumeInEveryProjectAndPool(t *testing.T) {
-	f := newFake("tron", "default", "nas")
+	f := newFake("homelab", "default", "nas")
 	f.add("default", "lib", map[string]string{"user.x": "1"})
 	f.add("default", "lib2", nil)
 	f.add("nas", "docs", nil)
@@ -43,7 +43,7 @@ func TestListVolumesFindsEveryCustomVolumeInEveryProjectAndPool(t *testing.T) {
 }
 
 func TestAPoolThatCannotBeListedDoesNotHideTheOthers(t *testing.T) {
-	f := newFake("tron", "default", "nas")
+	f := newFake("homelab", "default", "nas")
 	f.add("default", "lib", nil)
 	f.add("nas", "docs", nil)
 	f.failPool = map[string]error{"nas": errors.New("the NAS is unreachable")}
@@ -61,7 +61,7 @@ func TestAPoolThatCannotBeListedDoesNotHideTheOthers(t *testing.T) {
 }
 
 func TestForgetClearsOnlyThePolicyAndSaysWhoseItWas(t *testing.T) {
-	f := newFake("tron", "default")
+	f := newFake("homelab", "default")
 	f.add("default", "lib", map[string]string{
 		backupmeta.PolicyKey: somePolicy, backupmeta.StackKey: "immich",
 		"snapshots.schedule": "@daily", "user.tink.backup.copy.bk.at": "2026-10-07T00:00:00Z", "user.tink.backup.verified-at": "2026-10-01T00:00:00Z"})

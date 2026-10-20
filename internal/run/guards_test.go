@@ -32,7 +32,7 @@ func TestPublishedPortsWithNoNICAreRefusedBeforeAnythingIsCreated(t *testing.T) 
 	f := &profileFake{profiles: map[string]map[string]map[string]string{"default": rootOnly}}
 	_, err := checkNetwork(f, &Spec{Name: "kuma", Devices: published})
 	if err == nil {
-		t.Fatal("a proxy to an instance with no address can never work, and tron's default profile has no NIC")
+		t.Fatal("a proxy to an instance with no address can never work, and homelab's default profile has no NIC")
 	}
 	for _, want := range []string{"kuma", "default", "--network"} {
 		if !strings.Contains(err.Error(), want) {

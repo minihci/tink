@@ -36,7 +36,7 @@ func TestOCINICWarnings(t *testing.T) {
 			[]string{"sets ipv6.address but has no name:"}},
 		{"several settings on one NIC give one warning listing them", nicInstance("docker-oci:eclipse-mosquitto:2", map[string]map[string]string{"lan": {"type": "nic", "ipv4.address": "10.0.0.5/24", "ipv4.gateway": "none"}}),
 			[]string{"sets ipv4.address, ipv4.gateway but has no name:"}},
-		{"a bare address is a DHCP reservation, dynamic either way", nicInstance("docker-oci:eclipse-mosquitto:2", map[string]map[string]string{"eth0": {"type": "nic", "network": "svc", "ipv4.address": "10.10.20.5"}}), nil},
+		{"a bare address is a DHCP reservation, dynamic either way", nicInstance("docker-oci:eclipse-mosquitto:2", map[string]map[string]string{"eth0": {"type": "nic", "network": "svc", "ipv4.address": "203.0.113.5"}}), nil},
 		{"an unnamed NIC with no static setting behaves the same named or not", nicInstance("docker-oci:eclipse-mosquitto:2", map[string]map[string]string{"eth0": {"type": "nic", "network": "svc"}}), nil},
 		{"a system container image is not an OCI container", nicInstance("images:debian/12", map[string]map[string]string{"lan": cidr}), nil},
 		{"a local alias is not an OCI container", nicInstance("haos-x86-64-18.3", map[string]map[string]string{"lan": cidr}), nil},

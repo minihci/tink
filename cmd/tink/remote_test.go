@@ -23,25 +23,25 @@ func runRoot(t *testing.T, args ...string) error {
 
 func TestHostLocalCommandsRefuseUnderARemote(t *testing.T) {
 	for _, args := range [][]string{
-		{"--remote", "tron", "deploy"},
+		{"--remote", "homelab", "deploy"},
 	} {
 		err := runRoot(t, args...)
-		if err == nil || !strings.Contains(err.Error(), `remote "tron"`) || !strings.Contains(err.Error(), "works on the host it runs on") {
+		if err == nil || !strings.Contains(err.Error(), `remote "homelab"`) || !strings.Contains(err.Error(), "works on the host it runs on") {
 			t.Errorf("%v: expected a refusal naming the remote, got %v", args, err)
 		}
 	}
 }
 
 func TestEnvironmentChoosesTheRemoteToo(t *testing.T) {
-	t.Setenv("TINK_REMOTE", "tron")
+	t.Setenv("TINK_REMOTE", "homelab")
 	err := runRoot(t, "deploy")
-	if err == nil || !strings.Contains(err.Error(), `remote "tron"`) {
+	if err == nil || !strings.Contains(err.Error(), `remote "homelab"`) {
 		t.Errorf("$TINK_REMOTE must apply: %v", err)
 	}
 }
 
 func TestTheFlagBeatsTheEnvironment(t *testing.T) {
-	t.Setenv("TINK_REMOTE", "tron")
+	t.Setenv("TINK_REMOTE", "homelab")
 	err := runRoot(t, "--remote", "other", "deploy")
 	if err == nil || !strings.Contains(err.Error(), `remote "other"`) {
 		t.Errorf("--remote must win over $TINK_REMOTE: %v", err)

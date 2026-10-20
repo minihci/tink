@@ -145,7 +145,7 @@ func TestAddWithATokenPinsTheServerAndGetsTrusted(t *testing.T) {
 	var out bytes.Buffer
 
 	// No address: the token carries it.
-	res, err := Add(conf, AddOptions{Name: "tron", Token: token(t, f, "s3cret", f.fingerprint()), Out: &out})
+	res, err := Add(conf, AddOptions{Name: "homelab", Token: token(t, f, "s3cret", f.fingerprint()), Out: &out})
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
@@ -155,18 +155,18 @@ func TestAddWithATokenPinsTheServerAndGetsTrusted(t *testing.T) {
 	if got := f.posted; len(got) != 1 || got[0] == "" {
 		t.Errorf("the trust token must be presented exactly once: %v", got)
 	}
-	saved := reload(t).Remotes["tron"]
+	saved := reload(t).Remotes["homelab"]
 	if saved.AuthType != "tls" || saved.Protocol != "incus" || len(saved.Addrs) != 1 || saved.Addrs[0] != "https://"+f.addr() {
 		t.Errorf("saved remote = %+v", saved)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "servercerts", "tron.crt")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, "servercerts", "homelab.crt")); err != nil {
 		t.Errorf("the server certificate must be stored so later connections are pinned: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "client.crt")); err != nil {
 		t.Errorf("a client certificate must have been generated: %v", err)
 	}
 	// and the stored remote really connects, trusted
-	d, err := reload(t).GetInstanceServer("tron")
+	d, err := reload(t).GetInstanceServer("homelab")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,20 +179,20 @@ func TestATokenForADifferentServerIsRefused(t *testing.T) {
 	f := newFake(t, false, "s3cret", "default")
 	conf, dir := emptyConf(t)
 	wrong := strings.Repeat("ab", 32)
-	_, err := Add(conf, AddOptions{Name: "tron", Token: token(t, f, "s3cret", wrong)})
+	_, err := Add(conf, AddOptions{Name: "homelab", Token: token(t, f, "s3cret", wrong)})
 	if err == nil || !strings.Contains(err.Error(), "refusing to trust") {
 		t.Fatalf("a certificate that does not match the token must be refused: %v", err)
 	}
 	if len(f.posted) != 0 {
 		t.Error("the secret must never be sent to a server that failed verification")
 	}
-	nothingLeft(t, dir, "tron")
+	nothingLeft(t, dir, "homelab")
 }
 
 func TestAddAServerThatAlreadyTrustsUs(t *testing.T) {
 	f := newFake(t, true, "", "default")
 	conf, _ := emptyConf(t)
-	res, err := Add(conf, AddOptions{Name: "tron", Addr: f.addr(), Fingerprint: strings.ToUpper(f.fingerprint())})
+	res, err := Add(conf, AddOptions{Name: "homelab", Addr: f.addr(), Fingerprint: strings.ToUpper(f.fingerprint())})
 	if err != nil || res.Verified != "fingerprint" || !res.Trusted {
 		t.Fatalf("%v %+v", err, res)
 	}
@@ -204,11 +204,11 @@ func TestAddAServerThatAlreadyTrustsUs(t *testing.T) {
 func TestNothingVerifyingTheServerIsRefusedWithTheFingerprint(t *testing.T) {
 	f := newFake(t, true, "", "default")
 	conf, dir := emptyConf(t)
-	_, err := Add(conf, AddOptions{Name: "tron", Addr: f.addr()})
+	_, err := Add(conf, AddOptions{Name: "homelab", Addr: f.addr()})
 	if err == nil || !strings.Contains(err.Error(), f.fingerprint()) || !strings.Contains(err.Error(), "--fingerprint") {
 		t.Fatalf("the refusal must show the fingerprint and how to proceed: %v", err)
 	}
-	nothingLeft(t, dir, "tron")
+	nothingLeft(t, dir, "homelab")
 }
 
 func TestConfirmationAndTrustOnFirstUse(t *testing.T) {
@@ -226,13 +226,13 @@ func TestConfirmationAndTrustOnFirstUse(t *testing.T) {
 		f := newFake(t, true, "", "default")
 		conf, dir := emptyConf(t)
 		o := tc.opts(f.fingerprint())
-		o.Name, o.Addr = "tron", f.addr()
+		o.Name, o.Addr = "homelab", f.addr()
 		res, err := Add(conf, o)
 		if tc.wantErr {
 			if err == nil {
 				t.Errorf("%s: expected a refusal", name)
 			}
-			nothingLeft(t, dir, "tron")
+			nothingLeft(t, dir, "homelab")
 			continue
 		}
 		if err != nil || res.Verified != tc.want {
@@ -244,32 +244,32 @@ func TestConfirmationAndTrustOnFirstUse(t *testing.T) {
 func TestAServerThatDoesNotTrustUsAndNoToken(t *testing.T) {
 	f := newFake(t, false, "s3cret", "default")
 	conf, dir := emptyConf(t)
-	_, err := Add(conf, AddOptions{Name: "tron", Addr: f.addr(), Fingerprint: f.fingerprint()})
+	_, err := Add(conf, AddOptions{Name: "homelab", Addr: f.addr(), Fingerprint: f.fingerprint()})
 	if err == nil || !strings.Contains(err.Error(), "does not trust this machine") || !strings.Contains(err.Error(), "client.crt") {
 		t.Fatalf("the error must explain what to ask for: %v", err)
 	}
-	nothingLeft(t, dir, "tron")
+	nothingLeft(t, dir, "homelab")
 }
 
 func TestAWrongTrustTokenLeavesNothingBehind(t *testing.T) {
 	f := newFake(t, false, "s3cret", "default")
 	conf, dir := emptyConf(t)
-	_, err := Add(conf, AddOptions{Name: "tron", Token: token(t, f, "not-the-secret", f.fingerprint())})
+	_, err := Add(conf, AddOptions{Name: "homelab", Token: token(t, f, "not-the-secret", f.fingerprint())})
 	if err == nil || !strings.Contains(err.Error(), "trust token") {
 		t.Fatalf("%v", err)
 	}
-	nothingLeft(t, dir, "tron")
+	nothingLeft(t, dir, "homelab")
 }
 
 func TestAddRefusesWhatIsNotAManageableServer(t *testing.T) {
 	f := newFake(t, true, "", "default")
 	f.authMethods = []string{"oidc"} // TLS is not offered
 	conf, dir := emptyConf(t)
-	_, err := Add(conf, AddOptions{Name: "tron", Addr: f.addr(), Fingerprint: f.fingerprint()})
+	_, err := Add(conf, AddOptions{Name: "homelab", Addr: f.addr(), Fingerprint: f.fingerprint()})
 	if err == nil || !strings.Contains(err.Error(), "TLS") {
 		t.Fatalf("a server without TLS authentication must be refused clearly: %v", err)
 	}
-	nothingLeft(t, dir, "tron")
+	nothingLeft(t, dir, "homelab")
 
 	g := newFake(t, true, "", "default")
 	g.public = true
@@ -282,10 +282,10 @@ func TestAddRefusesWhatIsNotAManageableServer(t *testing.T) {
 func TestAddRefusesAnExistingName(t *testing.T) {
 	f := newFake(t, true, "", "default")
 	conf, _ := emptyConf(t)
-	if _, err := Add(conf, AddOptions{Name: "tron", Addr: f.addr(), AcceptCertificate: true}); err != nil {
+	if _, err := Add(conf, AddOptions{Name: "homelab", Addr: f.addr(), AcceptCertificate: true}); err != nil {
 		t.Fatal(err)
 	}
-	_, err := Add(reload(t), AddOptions{Name: "tron", Addr: f.addr(), AcceptCertificate: true})
+	_, err := Add(reload(t), AddOptions{Name: "homelab", Addr: f.addr(), AcceptCertificate: true})
 	if err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("%v", err)
 	}
@@ -306,34 +306,34 @@ func TestProjectChoice(t *testing.T) {
 	} {
 		f := newFake(t, true, "", tc.projects...)
 		conf, _ := emptyConf(t)
-		res, err := Add(conf, AddOptions{Name: "tron", Addr: f.addr(), AcceptCertificate: true, Project: tc.asked})
+		res, err := Add(conf, AddOptions{Name: "homelab", Addr: f.addr(), AcceptCertificate: true, Project: tc.asked})
 		if tc.wantErr != "" {
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Errorf("%s: %v", name, err)
 			}
 			continue
 		}
-		if err != nil || res.Project != tc.want || reload(t).Remotes["tron"].Project != tc.want {
-			t.Errorf("%s: %v project=%q saved=%q", name, err, res.Project, reload(t).Remotes["tron"].Project)
+		if err != nil || res.Project != tc.want || reload(t).Remotes["homelab"].Project != tc.want {
+			t.Errorf("%s: %v project=%q saved=%q", name, err, res.Project, reload(t).Remotes["homelab"].Project)
 		}
 	}
 }
 
 func TestNormalizeAddr(t *testing.T) {
 	for in, want := range map[string]string{
-		"tron":                   "https://tron:8443",
-		"tron:9443":              "https://tron:9443",
-		"https://tron":           "https://tron:8443",
+		"homelab":                "https://homelab:8443",
+		"homelab:9443":           "https://homelab:9443",
+		"https://homelab":        "https://homelab:8443",
 		"https://10.0.0.1:8443/": "https://10.0.0.1:8443",
 		"[fd42::1]:8443":         "https://[fd42::1]:8443",
-		" tron ":                 "https://tron:8443",
+		" homelab ":              "https://homelab:8443",
 	} {
 		got, err := NormalizeAddr(in)
 		if err != nil || got != want {
 			t.Errorf("NormalizeAddr(%q) = %q, %v; want %q", in, got, err, want)
 		}
 	}
-	for _, bad := range []string{"", "http://tron", "unix:///var/lib/incus/unix.socket", "https://"} {
+	for _, bad := range []string{"", "http://homelab", "unix:///var/lib/incus/unix.socket", "https://"} {
 		if _, err := NormalizeAddr(bad); err == nil {
 			t.Errorf("NormalizeAddr(%q) must fail", bad)
 		}
@@ -341,7 +341,7 @@ func TestNormalizeAddr(t *testing.T) {
 }
 
 func TestValidName(t *testing.T) {
-	for _, ok := range []string{"tron", "my-vps", "a.b"} {
+	for _, ok := range []string{"homelab", "my-vps", "a.b"} {
 		if err := ValidName(ok); err != nil {
 			t.Errorf("%q: %v", ok, err)
 		}
@@ -356,12 +356,12 @@ func TestValidName(t *testing.T) {
 func TestRemoveAndList(t *testing.T) {
 	f := newFake(t, true, "", "default")
 	conf, dir := emptyConf(t)
-	if _, err := Add(conf, AddOptions{Name: "tron", Addr: f.addr(), AcceptCertificate: true}); err != nil {
+	if _, err := Add(conf, AddOptions{Name: "homelab", Addr: f.addr(), AcceptCertificate: true}); err != nil {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
 	List(reload(t), []string{"docker-oci", "ghcr"}, &out)
-	if !strings.Contains(out.String(), "tron") || !strings.Contains(out.String(), "built in, used when not configured: docker-oci, ghcr") {
+	if !strings.Contains(out.String(), "homelab") || !strings.Contains(out.String(), "built in, used when not configured: docker-oci, ghcr") {
 		t.Errorf("list output:\n%s", out.String())
 	}
 
@@ -371,10 +371,10 @@ func TestRemoveAndList(t *testing.T) {
 	if err := Remove(reload(t), "nope"); err == nil {
 		t.Error("an unknown remote must be an error")
 	}
-	if err := Remove(reload(t), "tron"); err != nil {
+	if err := Remove(reload(t), "homelab"); err != nil {
 		t.Fatal(err)
 	}
-	nothingLeft(t, dir, "tron")
+	nothingLeft(t, dir, "homelab")
 }
 
 func TestNormalizeFingerprint(t *testing.T) {

@@ -271,7 +271,7 @@ var remoteNow = time.Date(2026, 10, 7, 4, 0, 0, 0, time.UTC)
 func remoteTarget() Target { return Target{Name: "vps", Remote: "vps"} }
 
 func TestCopyToARemoteServer(t *testing.T) {
-	local := newFake("tron", "default")
+	local := newFake("homelab", "default")
 	local.add("default", "lib", nil)
 	remote := newFake("vps", "default")
 	useRemote(t, "vps", remote)
@@ -326,7 +326,7 @@ func TestCopyToARemoteServer(t *testing.T) {
 }
 
 func TestCopyToARemoteThatIsCutOffLeavesNoRestorePoint(t *testing.T) {
-	local := newFake("tron", "default")
+	local := newFake("homelab", "default")
 	local.add("default", "lib", nil)
 	remote := newFake("vps", "default")
 	remote.failCopy = errors.New("tunnel dropped")
@@ -348,7 +348,7 @@ func TestCopyToARemoteThatIsCutOffLeavesNoRestorePoint(t *testing.T) {
 }
 
 func TestCutOffCopyThatCannotBeCleanedUpIsNeverARestorePoint(t *testing.T) {
-	local := newFake("tron", "default")
+	local := newFake("homelab", "default")
 	local.add("default", "lib", nil)
 	remote := newFake("vps", "default")
 	remote.failCopy = errors.New("tunnel dropped")
@@ -370,7 +370,7 @@ func TestCutOffCopyThatCannotBeCleanedUpIsNeverARestorePoint(t *testing.T) {
 }
 
 func TestUnreachableRemoteFailsBeforeTouchingTheSource(t *testing.T) {
-	local := newFake("tron", "default")
+	local := newFake("homelab", "default")
 	local.add("default", "lib", nil)
 	useRemote(t, "elsewhere", newFake("x")) // "vps" is not configured
 
@@ -391,7 +391,7 @@ func TestUnreachableRemoteFailsBeforeTouchingTheSource(t *testing.T) {
 }
 
 func TestRemoteDryRunChangesNothing(t *testing.T) {
-	local := newFake("tron", "default")
+	local := newFake("homelab", "default")
 	local.add("default", "lib", nil)
 	remote := newFake("vps", "default")
 	useRemote(t, "vps", remote)
@@ -409,7 +409,7 @@ func TestRemoteDryRunChangesNothing(t *testing.T) {
 }
 
 func TestRestoreFromARemoteScrubsMarkersAndNeedsNoSourceVolume(t *testing.T) {
-	local := newFake("tron", "default") // the source volume is GONE
+	local := newFake("homelab", "default") // the source volume is GONE
 	remote := newFake("vps", "default")
 	useRemote(t, "vps", remote)
 	owner := backupmeta.CopyOf("", "default", "lib")
@@ -434,7 +434,7 @@ func TestRestoreFromARemoteScrubsMarkersAndNeedsNoSourceVolume(t *testing.T) {
 }
 
 func TestRestoreFromARemoteThatFailsLeavesNoPartialVolume(t *testing.T) {
-	local := newFake("tron", "default")
+	local := newFake("homelab", "default")
 	local.failCopy = errors.New("tunnel dropped")
 	remote := newFake("vps", "default")
 	useRemote(t, "vps", remote)
@@ -451,7 +451,7 @@ func TestRestoreFromARemoteThatFailsLeavesNoPartialVolume(t *testing.T) {
 }
 
 func TestPoolTargetsAreUnchangedByRemoteSupport(t *testing.T) {
-	local := newFake("tron", "default", "nas")
+	local := newFake("homelab", "default", "nas")
 	local.add("default", "lib", nil)
 	res, err := Copy(local, Volume{Name: "lib"}, Target{Name: "nas", Pool: "nas"}, CopyOptions{Now: func() time.Time { return remoteNow }})
 	if err != nil {

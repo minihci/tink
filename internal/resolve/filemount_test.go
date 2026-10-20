@@ -207,7 +207,7 @@ func TestDecideFileTarget(t *testing.T) {
 // What plan says for a file, and where it looked. The instance's own copy under the mount is deliberately stale or different in each case where the
 // volume is the right place, so a read from the wrong one shows.
 func TestPlanPlacedFile(t *testing.T) {
-	want := "http:\n  server_host: [10.10.20.10]\n"
+	want := "http:\n  server_host: [203.0.113.10]\n"
 	f := fileAt("ha-yaml", "/config/configuration.yaml")
 	f.Content = want
 
