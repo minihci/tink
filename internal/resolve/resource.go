@@ -211,11 +211,7 @@ type Resource struct {
 	// state change -- the Caddy reload this platform already hit once,
 	// documented in docs/resolver-architecture.md's "one real gap, found
 	// and fixed" section, needed exactly this and got it from Terraform's
-	// state file at the time; internal/ingress's own real Caddy reload,
-	// by contrast, never needed this at all -- its apply() diffs its own
-	// generated route files against what's already on disk, a Check in
-	// every way that matters, just computed by the caller before apply()
-	// is ever called rather than passed in as a field here). Converging
+	// state file at the time). Converging
 	// here still costs a state file nowhere else in resolve pays -- see
 	// execConverged's own doc comment in exec.go for what that costs and
 	// why it's scoped to only this one field rather than reopening the

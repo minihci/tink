@@ -147,7 +147,6 @@ func TestStatusWithoutCheckPrintsDetailsAndExitsZero(t *testing.T) {
 	st := goodStatus(func(s *helper.Status) {
 		s.Failing = []helper.Failing{{Volume: "lib", Target: "nas", Count: 3, Since: helperNow.Add(-time.Hour)}}
 		s.LastJob = &helper.LastJob{ID: "20261007T110000Z-abc", State: "failed", Finished: helperNow.Add(-5 * time.Minute)}
-		s.Ingress = &helper.IngressState{OK: true, At: helperNow.Add(-time.Minute)}
 		s.Remotes = []helper.Remote{{Name: "host"}, {Name: "nas2"}}
 	})
 	out, err := statusRun(t, instancesServer{all: []api.Instance{helperInstance("tink-helper", "helper", "Running", st)}}, "", "", false, false)
@@ -157,7 +156,7 @@ func TestStatusWithoutCheckPrintsDetailsAndExitsZero(t *testing.T) {
 	for _, want := range []string{
 		"helper tink-helper/helper: degraded", "1 copy(ies) failing", "version:     v1", "copy policies up to protocol 1",
 		"last heard:  2m ago (it writes at least every 10m)", "skipped:     none", "lib -> nas, 3 in a row",
-		"20261007T110000Z-abc failed, 5m ago", "ingress:     ok, 1m ago", "remotes:     host; nas2",
+		"20261007T110000Z-abc failed, 5m ago", "remotes:     host; nas2",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the details must contain %q:\n%s", want, out)
@@ -467,24 +466,5 @@ func TestPlanPrintsNotesAfterWarnings(t *testing.T) {
 		"      note: file/ha-yaml: not placed before the first start, because /media is a mounted host directory (device media); it is written right after the start, so the app may read its config first\n"
 	if out.String() != want {
 		t.Errorf("got:\n%s\nwant:\n%s", out.String(), want)
-	}
-}
-
-func TestHelperStatusSaysWhenInstancesStillUseTheOldIngressKeys(t *testing.T) {
-	st := goodStatus(func(s *helper.Status) {
-		s.Ingress = &helper.IngressState{OK: true, At: helperNow.Add(-time.Minute), Legacy: 2}
-	})
-	out, err := statusRun(t, instancesServer{all: []api.Instance{helperInstance("tink-helper", "helper", "Running", st)}}, "", "", false, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out, "2 instance(s) still register with the old user.ingress.* keys") || !strings.Contains(out, "user.tink.ingress.*") {
-		t.Errorf("%s", out)
-	}
-	// an older helper's document has no such field, and says nothing about it
-	st.Ingress.Legacy = 0
-	out, _ = statusRun(t, instancesServer{all: []api.Instance{helperInstance("tink-helper", "helper", "Running", st)}}, "", "", false, false)
-	if strings.Contains(out, "old user.ingress") {
-		t.Errorf("%s", out)
 	}
 }

@@ -76,8 +76,8 @@ func DefaultOptions() Options {
 }
 
 // Result reports what Build produced and, unless DryRun, what Run
-// actually did -- one line per action, matching tink deploy's and tink
-// ingress reconcile's existing --dry-run convention.
+// actually did -- one line per action, matching tink deploy's existing
+// --dry-run convention.
 type Result struct {
 	Spec    *Spec
 	Actions []string

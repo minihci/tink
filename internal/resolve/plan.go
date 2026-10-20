@@ -35,8 +35,8 @@ const (
 )
 
 // PlannedResource is one resource's computed action, with human-readable
-// changes for preview -- the same idea as tink deploy's/tink ingress
-// reconcile's own dry-run output, generalized across resource kinds.
+// changes for preview -- the same idea as tink deploy's own dry-run
+// output, generalized across resource kinds.
 type PlannedResource struct {
 	Resource Resource
 	Action   Action

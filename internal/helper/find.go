@@ -151,9 +151,6 @@ func Evaluate(f Found, now time.Time) Report {
 	if len(st.Failing) > 0 {
 		degrade("%d copy(ies) failing: %s", len(st.Failing), failList(st.Failing))
 	}
-	if st.Ingress != nil && !st.Ingress.OK {
-		degrade("the last ingress reconcile failed")
-	}
 	if st.Draining {
 		degrade("draining: it is not starting new work (an upgrade is in progress, or one did not finish: remove /data/jobs/DRAIN)")
 	}

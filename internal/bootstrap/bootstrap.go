@@ -39,10 +39,7 @@ type Result struct {
 
 // Run validates deploy.env and the required secret files, then converges
 // the host to its declared state: registries, storage volumes, profiles,
-// incus-ui, authelia, ingress, the Incus daemon's own config, and finally
-// installing/enabling "tink daemon run" under the host's real init
-// system (superseding deploy.sh's original cron-based reconciler step --
-// removing any leftover legacy cron entry from an older run first).
+// incus-ui, authelia, ingress, and the Incus daemon's own config.
 func Run(opts Options) (*Result, error) {
 	if err := opts.Config.Validate(); err != nil {
 		return &Result{}, err
@@ -64,7 +61,6 @@ func Run(opts Options) (*Result, error) {
 		{"authelia", applyAuthelia},
 		{"ingress", applyIngress},
 		{"daemon config", applyDaemonConfig},
-		{"reconciler daemon", applyReconcilerDaemon},
 	}
 
 	for _, step := range steps {

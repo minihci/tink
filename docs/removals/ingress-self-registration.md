@@ -47,7 +47,7 @@ If the first command prints nothing and the generated directory is empty or abse
 - **Proxy devices.** If the ingress instance's ports are carried by userspace proxy devices (`connect: tcp:127.0.0.1:80`), every app behind it sees the client as `127.0.0.1`. That is how it was before and is unchanged by this removal; moving to `nat: "true"` proxy devices on a static address is a separate change, and is what keeps the real client address.
 - **Keys with the old names.** Apps registered with the older `user.ingress.*` keys, not `user.tink.ingress.*`. The conversion is the same.
 
-Do not run `tink deploy` again from a build that has dropped this: its reconcile-daemon step is removed with the feature. The host keeps what deploy built.
+Do not run `tink deploy` again from a build that has dropped this: its reconcile-daemon step is removed with the feature, and the Caddyfile template it pushes no longer imports `routes/generated/*.caddy`, so any route still only in that directory would stop being served. Convert them first. The host keeps what deploy built.
 
 ## Replace it by hand, one instance at a time
 

@@ -1,14 +1,5 @@
-// Package daemon implements "tink daemon": a long-running process that
-// manages running tink's periodic actions itself (starting with ingress
-// reconciliation), plus generating the init-system unit files needed to
-// actually supervise it -- a persistent process needs real supervision
-// (restart-on-crash, start-on-boot), which is exactly what an init
-// system is for. Generating files for whichever init system the host
-// already runs, rather than shipping one systemd unit and calling it
-// done, keeps this consistent with not assuming any one host's init
-// system -- the same reasoning that kept the reconciler on cron instead
-// of a systemd timer in the first place, just applied to what happens
-// once running it as a persistent process is the actual goal.
+// Package daemon implements "tink daemon run": a long-running process that runs the helper's periodic work -- the backup scheduler
+// and the job executor -- and publishes the status document about them.
 //
 // This is a subcommand of the same tink binary, not a separate "tinkd"
 // binary or a client/server split -- considered both and rejected them:
@@ -27,20 +18,12 @@ import (
 	"fmt"
 	"io"
 	"runtime/debug"
-	"strings"
 	"sync"
 	"time"
-
-	"github.com/minihci/tink/internal/ingress"
 )
 
 // RunOptions configures the daemon.
 type RunOptions struct {
-	Interval       time.Duration
-	IngressOptions ingress.Options
-	// NoIngress leaves the ingress reconcile loop out (a helper that only runs backups, beside an ingress daemon that
-	// already exists).
-	NoIngress bool
 	// Helper, if set, adds the backup scheduler and the job executor.
 	Helper *Helper
 	// RestartBackoff is the first wait before a crashed worker is restarted (default 5s; it doubles up to a minute).
@@ -69,21 +52,6 @@ func Run(ctx context.Context, out io.Writer, opts RunOptions) error {
 			opts.Helper.Live = live
 		}
 	}
-	if !opts.NoIngress {
-		start("ingress", func(ctx context.Context) error {
-			return run(ctx, out, opts.Interval, func() (*ingress.Result, error) {
-				res, err := ingress.Reconcile(opts.IngressOptions)
-				if live != nil {
-					warnings, legacy := 0, 0
-					if res != nil {
-						warnings, legacy = len(res.Warnings), len(res.Legacy)
-					}
-					live.setIngress(err == nil, warnings, legacy, time.Now())
-				}
-				return res, err
-			})
-		})
-	}
 	if h := opts.Helper; h != nil {
 		if h.Logf == nil {
 			h.Logf = func(format string, args ...any) { fmt.Fprintf(out, "tink daemon: "+format+"\n", args...) }
@@ -99,9 +67,7 @@ func Run(ctx context.Context, out io.Writer, opts RunOptions) error {
 		start("status", func(ctx context.Context) error { return runStatus(ctx, out, so, live, started) })
 	}
 	wg.Wait()
-	if opts.NoIngress {
-		fmt.Fprintln(out, "tink daemon: shutting down")
-	}
+	fmt.Fprintln(out, "tink daemon: shutting down")
 	return nil
 }
 
@@ -192,61 +158,4 @@ func (s *syncWriter) Write(p []byte) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.w.Write(p)
-}
-
-// run holds the actual loop mechanics, independent of what "reconcile"
-// means -- reconcileOnce is injectable so the loop's own behavior (does
-// it respect cancellation, does it survive a failed pass, does it run
-// once immediately rather than waiting a full interval first) is
-// testable without a live Incus daemon.
-// ingressRetryAfter is how soon a pass that failed is tried again, instead of waiting out the interval: a helper's first pass races its own
-// enrolment, and the proxy to the host's API that it uses comes up a moment after its process. A variable so a test can shorten it.
-var ingressRetryAfter = 5 * time.Second
-
-func run(ctx context.Context, out io.Writer, interval time.Duration, reconcileOnce func() (*ingress.Result, error)) error {
-	fmt.Fprintf(out, "tink daemon: reconciling ingress every %s\n", interval)
-
-	var lastLegacy string
-	doOnePass := func() (ok bool) {
-		result, err := reconcileOnce()
-		if err != nil {
-			// A failed pass logs and keeps running rather than exiting --
-			// matching reconcile.sh's own cron-based resilience, where a
-			// bad pass just means cron tries again in 60s; a persistent
-			// loop should retry on its own schedule instead of dying.
-			fmt.Fprintf(out, "tink daemon: reconcile error: %v\n", err)
-			return false
-		}
-		for _, w := range result.Warnings {
-			fmt.Fprintf(out, "tink daemon: WARN: %s\n", w)
-		}
-		// Said when the set of instances changes, not every pass: it is the same few names until someone renames them.
-		if key := strings.Join(result.Legacy, ","); key != lastLegacy {
-			lastLegacy = key
-			if len(result.Legacy) > 0 {
-				fmt.Fprintf(out, "tink daemon: NOTE: %s\n", ingress.LegacyNotice(result.Legacy))
-			}
-		}
-		if result.Applied {
-			fmt.Fprintf(out, "tink daemon: applied: +%d -%d ~%d\n",
-				len(result.Diff.Added), len(result.Diff.Removed), len(result.Diff.Changed))
-		}
-		return true
-	}
-
-	timer := time.NewTimer(0) // the first pass is immediate, not after waiting a full interval
-	defer timer.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			fmt.Fprintln(out, "tink daemon: shutting down")
-			return nil
-		case <-timer.C:
-		}
-		next := interval
-		if !doOnePass() && ingressRetryAfter < interval {
-			next = ingressRetryAfter // a pass that failed is not left for a whole interval
-		}
-		timer.Reset(next)
-	}
 }

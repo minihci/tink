@@ -56,9 +56,8 @@ type Status struct {
 	// pool it cannot list. A volume that stops being copied for one of these must not do it silently.
 	Skipped []Skip `json:"skipped,omitempty"`
 	// Failing are copies that have failed since their last success.
-	Failing []Failing     `json:"failing,omitempty"`
-	LastJob *LastJob      `json:"last_job,omitempty"`
-	Ingress *IngressState `json:"ingress,omitempty"`
+	Failing []Failing `json:"failing,omitempty"`
+	LastJob *LastJob  `json:"last_job,omitempty"`
 
 	// Running and Queued are the jobs in the job directory right now, and Draining says the helper is not starting any: an upgrade
 	// waits for Running to reach zero.
@@ -100,15 +99,6 @@ type LastJob struct {
 	Finished time.Time `json:"finished,omitzero"`
 }
 
-// IngressState is the ingress reconcile's last pass. It is present only when the helper runs the ingress half.
-type IngressState struct {
-	OK       bool      `json:"ok"`
-	At       time.Time `json:"at,omitzero"`
-	Warnings int       `json:"warnings,omitempty"`
-	// Legacy is how many registered instances still use the old user.ingress.* keys. Older readers ignore it.
-	Legacy int `json:"legacy_keys,omitempty"`
-}
-
 // Encode is the one-line text that is stored.
 func Encode(s Status) (string, error) {
 	var buf bytes.Buffer
@@ -137,14 +127,9 @@ func Parse(text string) (Status, error) {
 }
 
 // changeKey is what decides whether a write is worth an event: the document without the things that change every time it is
-// written (the tick, and when the ingress pass ran).
+// written (the tick).
 func changeKey(s Status) string {
 	s.Tick = time.Time{}
-	if s.Ingress != nil {
-		i := *s.Ingress
-		i.At = time.Time{}
-		s.Ingress = &i
-	}
 	text, _ := Encode(s)
 	return text
 }

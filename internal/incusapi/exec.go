@@ -68,16 +68,10 @@ const (
 // them back -- skip that wait and a fast-exiting command's output can
 // still be arriving after Wait() already returned.
 //
-// Lives here, not in the package that first needed it (internal/resolve's
-// kind: exec), because internal/ingress's own apply() needed the exact
-// same thing for the exact same reason: reloading Caddy after a route
-// change is also a guest-side command, and its own doc comment already
-// named this WebSocket exec protocol as "scope beyond what this first
-// port needs" rather than shelling out to the incus binary -- this is
-// that scope, now needed for real by a second caller, so it belongs in
-// incusapi (already the shared home for anything both packages need to
-// do against a live daemon) rather than duplicated or awkwardly
-// cross-imported between sibling packages.
+// Lives here, not in the package that needs it (internal/resolve's kind: exec),
+// because incusapi is the shared home for anything more than one package
+// needs to do against a live daemon: a guest-side command is a WebSocket exec
+// protocol, not a shell-out to the incus binary.
 //
 // Retries internally, briefly, on one specific condition: a VM (never a
 // container -- containers attach directly into host-visible namespaces,

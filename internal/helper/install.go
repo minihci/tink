@@ -70,10 +70,6 @@ type InstallOptions struct {
 	// It is how a helper runs where the helper image cannot be pulled, and what a development build is tried with.
 	Binary string
 	TZ     string
-	// Ingress makes the helper run the ingress reconcile as well, for the instance named IngressInstance (default "ingress"): through that
-	// instance's file API, so it needs no mount of the host's storage and no host path.
-	Ingress         bool
-	IngressInstance string
 	// Reissue enrols the helper again: it removes the old certificate from the trust store and redeems a fresh token.
 	Reissue bool
 	// StatusOnInstance makes the helper publish its status document on its own instance, as every helper did before the status volume
@@ -98,9 +94,6 @@ func (o *InstallOptions) defaults() {
 	}
 	if o.Wait == 0 {
 		o.Wait = 90 * time.Second
-	}
-	if o.Ingress && o.IngressInstance == "" {
-		o.IngressInstance = "ingress"
 	}
 }
 
@@ -335,11 +328,6 @@ func (in *Installer) ensureProject(name string) error {
 // spec is the helper instance: what it runs, what it mounts, how it reaches the host's API.
 func (in *Installer) spec(o InstallOptions, route apiRoute, network string) *run.Spec {
 	entry := []string{binaryPath, "daemon", "run", "--remote", RemoteName, "--jobs", dataMount + "/jobs"}
-	if o.Ingress {
-		entry = append(entry, "--ingress-via-api", "--ingress-instance", o.IngressInstance)
-	} else {
-		entry = append(entry, "--no-ingress")
-	}
 	entry = append(entry, statusArgs(o)...)
 	if o.TZ != "" {
 		entry = append(entry, "--timezone", o.TZ)
@@ -358,9 +346,6 @@ func (in *Installer) spec(o InstallOptions, route apiRoute, network string) *run
 		cfg["environment.TZ"] = o.TZ
 	}
 	addStatusPointer(cfg, o)
-	if o.Ingress {
-		cfg[MarkerKey+".ingress"] = o.IngressInstance
-	}
 	dev := map[string]map[string]string{
 		"root":   {"type": "disk", "path": "/", "pool": o.Pool},
 		"config": {"type": "disk", "pool": o.Pool, "source": configVolume, "path": configMount},

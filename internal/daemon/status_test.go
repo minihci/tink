@@ -35,7 +35,7 @@ func TestATickTellsTheStatusDocumentWhatItCouldNotDoAndWhatIsFailing(t *testing.
 
 	var st SchedulerState
 	r.h.Tick(&st)
-	skipped, failing, ingress := r.h.Live.snapshot()
+	skipped, failing := r.h.Live.snapshot()
 
 	if len(failing) != 1 || failing[0].Volume != "lib" || failing[0].Target != "nas" || failing[0].Count != 3 {
 		t.Errorf("failing = %+v", failing)
@@ -55,9 +55,6 @@ func TestATickTellsTheStatusDocumentWhatItCouldNotDoAndWhatIsFailing(t *testing.
 			t.Errorf("an Incus error's text must never reach the status document: %+v", s)
 		}
 	}
-	if ingress != nil {
-		t.Errorf("no ingress pass has run: %+v", ingress)
-	}
 }
 
 func TestATickWithNothingWrongLeavesTheDocumentClean(t *testing.T) {
@@ -66,18 +63,18 @@ func TestATickWithNothingWrongLeavesTheDocumentClean(t *testing.T) {
 	r.volume(t, "lib")
 	r.eng.live["lib"] = map[string]string{backupmeta.CopyStampAt("nas"): now0.Add(-5 * time.Minute).UTC().Format(time.RFC3339)}
 	r.h.Tick(&SchedulerState{})
-	if skipped, failing, _ := r.h.Live.snapshot(); len(skipped) != 0 || len(failing) != 0 {
+	if skipped, failing := r.h.Live.snapshot(); len(skipped) != 0 || len(failing) != 0 {
 		t.Errorf("%+v %+v", skipped, failing)
 	}
 	// and a recovery clears it: the volume that could not be read can be again
 	r.eng.liveErr["lib"] = errors.New("busy")
 	r.h.Tick(&SchedulerState{})
-	if skipped, _, _ := r.h.Live.snapshot(); len(skipped) != 1 {
+	if skipped, _ := r.h.Live.snapshot(); len(skipped) != 1 {
 		t.Fatalf("%+v", skipped)
 	}
 	delete(r.eng.liveErr, "lib")
 	r.h.Tick(&SchedulerState{})
-	if skipped, _, _ := r.h.Live.snapshot(); len(skipped) != 0 {
+	if skipped, _ := r.h.Live.snapshot(); len(skipped) != 0 {
 		t.Errorf("a volume that can be read again is no longer skipped: %+v", skipped)
 	}
 }
@@ -90,7 +87,6 @@ func TestBuildStatusSaysWhatTheHelperIsAndWhatItLastDid(t *testing.T) {
 	r.runJobs(t) // the real executor: the job fails because its copy does
 
 	live := &Live{}
-	live.setIngress(true, 2, 1, now0)
 	st := buildStatus(StatusOptions{Version: "v1.2.3", Zone: time.UTC, Store: r.h.Store}, live, now0.Add(-time.Hour), now0)
 
 	if st.Version != "v1.2.3" || st.TZ != "UTC" || st.JobProto != jobs.Proto || st.PolicyProto != backupmeta.PolicyProto {
@@ -104,9 +100,6 @@ func TestBuildStatusSaysWhatTheHelperIsAndWhatItLastDid(t *testing.T) {
 	}
 	if strings.Contains(st.LastJob.ID, "full") {
 		t.Error("the job's error text is not in the document")
-	}
-	if st.Ingress == nil || !st.Ingress.OK || st.Ingress.Warnings != 2 {
-		t.Errorf("ingress: %+v", st.Ingress)
 	}
 	// a job that has not finished is not "the last job"
 	r.h.Store.Enqueue(jobs.Request{Kind: KindBackupRun, Origin: jobs.OriginSchedule}, now0.Add(time.Hour))
@@ -221,7 +214,7 @@ func TestRunStartsTheStatusWorkerBesideTheOthersAndTheHelperFeedsIt(t *testing.T
 	var out bytes.Buffer
 	done := make(chan error, 1)
 	go func() {
-		done <- Run(ctx, &out, RunOptions{NoIngress: true, Helper: r.h, RestartBackoff: time.Millisecond, Status: &StatusOptions{
+		done <- Run(ctx, &out, RunOptions{Helper: r.h, RestartBackoff: time.Millisecond, Status: &StatusOptions{
 			Publisher: &helper.Publisher{Patch: rec.patch, Heartbeat: time.Hour}, Interval: 10 * time.Millisecond, Version: "vtest", Store: r.h.Store}})
 	}()
 	deadline := time.Now().Add(10 * time.Second)
