@@ -119,7 +119,7 @@ Each step is done when its check passes. Steps in a phase can run in parallel; p
 - *Done when* each of those has a test that fails without it, and `go test -race ./...` is clean.
 
 ### Phase 2: one pipeline, with defaults (M)
-- Consolidate preparation into a single function used by `plan` and `plan apply`; the pass order lives in one place. The flags both commands share (`--socket`, `--offline`, `--secrets`, `--identity`) are declared once, as persistent flags on `plan`, so `apply` and the future `plan explain` inherit them.
+- Consolidate preparation into a single function used by `plan` and `plan apply`; the pass order lives in one place. The flags both commands share (`--socket`, `--offline`, `--secrets`, `--identity`) are declared once, as persistent flags on `plan`, so `apply` and the future `plan explain` inherit them. *Done (#125):* `internal/prepare` runs load, secrets, connect, image qualification and `Levels` in that order for both commands, and apply uses the connection it made instead of opening a second one; a pass is added in `prepare` and nowhere else.
 - **Ownership stamps, phase 1:** stamp what tink creates (instances, profiles, networks and the rest, as volumes are today) from the moment it is created, with an explicit adopt for what already exists. It makes "what is tink's to remove" answerable, which "not in the stack" cannot. Reporting and pruning stay out until something needs them.
 - Add the stack-level `defaults:` pass (restart flags, NIC name, limits, the backup block, role stamps), local to the converger.
 - Move capability knowledge out of `resolve` behind the three extension points, starting with backup (`backupmeta` is imported by the core today).

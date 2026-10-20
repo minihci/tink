@@ -265,9 +265,7 @@ which Docker flags map to which key or device.`,
 }
 
 func newPlanCmd() *cobra.Command {
-	var socket string
-	var offline bool
-	var secretFlags stackSecretFlags
+	var flags stackFlags
 
 	cmd := &cobra.Command{
 		Use:   "plan [flags] [FILE...]",
@@ -315,34 +313,16 @@ stack". It changes nothing and removes nothing; Incus's and tink's own keys are
 not counted. See docs/plan-extras.md.`, resolve.DefaultFile),
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resources, err := resolve.LoadFiles(args)
+			stack, err := flags.prepare(cmd, args)
 			if err != nil {
 				return err
 			}
-			if resources, err = secretFlags.expand(resources, args); err != nil {
-				return err
-			}
-			server, err := incusapi.Connect(socket)
-			if err != nil {
-				return fmt.Errorf("connecting to incus: %w", err)
-			}
-			// before the graph is built: it rewrites each instance's image: to the form Incus resolves
-			notices, err := resolve.QualifyImages(server, resources)
-			if err != nil {
-				return err
-			}
-			for _, n := range notices {
-				fmt.Fprintln(cmd.ErrOrStderr(), n)
-			}
-			levels, err := resolve.Levels(resources)
-			if err != nil {
-				return err
-			}
+			server, resources, levels := stack.Server, stack.Resources, stack.Levels
 			// Planned one dependency level at a time, but a volume's 3-2-1 check needs the
 			// backup targets from an earlier level, so hand the options the whole stack.
 			ctx, stop := interruptContext(cmd.Context())
 			defer stop()
-			opts := helperPolicyOptions(server, resolve.NewPlanOptions(offline).WithExtras().ForResources(resources)).WithContext(ctx)
+			opts := helperPolicyOptions(server, resolve.NewPlanOptions(flags.offline).WithExtras().ForResources(resources)).WithContext(ctx)
 			withExtras := 0
 			defer func() { noteExtras(cmd.OutOrStdout(), withExtras) }()
 			for i, level := range levels {
@@ -367,18 +347,14 @@ not counted. See docs/plan-extras.md.`, resolve.DefaultFile),
 		},
 	}
 
-	cmd.Flags().StringVar(&socket, "socket", "", "Incus daemon unix socket path (default: Incus's own resolution)")
-	cmd.Flags().BoolVar(&offline, "offline", false, "do not consult OCI registries; images that cannot then be verified are blocked under on_image_change: rebuild and only warned about otherwise")
-	secretFlags.bind(cmd)
-	cmd.AddCommand(newPlanApplyCmd())
+	// declared once, here, for `plan apply` and the commands to come under `plan` to inherit
+	flags.bind(cmd)
+	cmd.AddCommand(newPlanApplyCmd(&flags))
 	return cmd
 }
 
-func newPlanApplyCmd() *cobra.Command {
-	var socket string
-	var offline bool
-	var secretFlags stackSecretFlags
-
+// newPlanApplyCmd takes the flags it shares with `plan`, which declares them as persistent flags and so owns them.
+func newPlanApplyCmd(flags *stackFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "apply [flags] [FILE...]",
 		Short: "Converge a set of resources declared in YAML to match",
@@ -401,43 +377,24 @@ An instance with image drift is only converged by apply if its YAML
 says on_image_change: rebuild; see docs/image-updates.md.`, resolve.DefaultFile),
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resources, err := resolve.LoadFiles(args)
+			stack, err := flags.prepare(cmd, args)
 			if err != nil {
 				return err
 			}
-			if resources, err = secretFlags.expand(resources, args); err != nil {
-				return err
-			}
+			server, resources := stack.Server, stack.Resources
 			// what the helper can read is asked once, before anything is written: a policy it would skip is refused, not applied
-			opts := resolve.NewPlanOptions(offline)
-			server, cerr := incusapi.Connect(socket)
-			if cerr == nil {
-				opts = helperPolicyOptions(server, opts)
-				notices, err := resolve.QualifyImages(server, resources)
-				if err != nil {
-					return err
-				}
-				for _, n := range notices {
-					fmt.Fprintln(cmd.ErrOrStderr(), n)
-				}
-			}
+			opts := helperPolicyOptions(server, resolve.NewPlanOptions(flags.offline))
 			ctx, stop := interruptContext(cmd.Context())
 			defer stop()
-			actions, err := resolve.ApplyWithOptions(ctx, socket, resources, opts)
+			actions, err := resolve.ApplyPrepared(ctx, server, resources, stack.Levels, opts)
 			for _, a := range actions {
 				fmt.Fprintln(cmd.OutOrStdout(), a)
 			}
-			if cerr == nil {
-				noteUndeclaredPolicies(cmd.OutOrStdout(), backuprun.ServerEngine{Server: server}, resources)
-				noteHelper(cmd.OutOrStdout(), server, time.Now(), resources)
-			}
+			noteUndeclaredPolicies(cmd.OutOrStdout(), backuprun.ServerEngine{Server: server}, resources)
+			noteHelper(cmd.OutOrStdout(), server, time.Now(), resources)
 			return err
 		},
 	}
-
-	cmd.Flags().StringVar(&socket, "socket", "", "Incus daemon unix socket path (default: Incus's own resolution)")
-	cmd.Flags().BoolVar(&offline, "offline", false, "do not consult OCI registries; images that cannot then be verified are blocked under on_image_change: rebuild and only warned about otherwise")
-	secretFlags.bind(cmd)
 	return cmd
 }
 

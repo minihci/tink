@@ -123,6 +123,7 @@ internal/incusapi/   shared Incus API client, used by every capability
 internal/incusconf/  the Incus client configuration (and built-in image remotes), for --remote
 internal/bootstrap/  tink deploy
 internal/run/        tink run - see internal/run/DESIGN.md
+internal/prepare/    the one preparation `plan` and `plan apply` share: load, secrets, connect, qualify images, build the levels, in that order
 internal/resolve/    tink plan / tink plan apply - see docs/resolver-architecture.md
 internal/secrets/    tink secret, ${secret:NAME} references, the output redactor - see docs/secrets.md
 internal/backupmeta/ what tink records on a volume (policy key, stamps, markers), the backup block's rules, the copy policy a volume carries (how it is written, read and put in words) and the schedule arithmetic; depends on nothing here
