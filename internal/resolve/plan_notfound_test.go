@@ -1,6 +1,7 @@
 package resolve
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -210,7 +211,7 @@ func TestRunExecDoesNotRunWhenTheInstanceLookupFails(t *testing.T) {
 	for _, tc := range notAbsent {
 		t.Run(tc.name, func(t *testing.T) {
 			// Reaching ExecInstance would panic on the nil embedded interface.
-			if err := runExec(&lookupServer{err: tc.err}, r); !errors.Is(err, tc.err) {
+			if err := runExec(context.Background(), &lookupServer{err: tc.err}, r); !errors.Is(err, tc.err) {
 				t.Errorf("runExec error = %v, want it to wrap %q", err, tc.err)
 			}
 		})

@@ -452,3 +452,30 @@ func TestLoadFileRejectsUnknownFields(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadFile_ExecTimeout(t *testing.T) {
+	load := func(t *testing.T, stack string) ([]Resource, error) {
+		t.Helper()
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "stack.yaml"), []byte(stack), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return LoadFile(filepath.Join(dir, "stack.yaml"))
+	}
+	const base = "kind: exec\nname: x\ninstance: caddy\ncheck: [true]\ncommand: [true]\n"
+	if rs, err := load(t, base+"timeout: 90s\n"); err != nil || len(rs) != 1 || rs[0].Timeout != 90*time.Second {
+		t.Errorf("timeout: 90s = %+v, %v", rs, err)
+	}
+	if rs, err := load(t, base); err != nil || rs[0].Timeout != 0 {
+		t.Errorf("no timeout = %+v, %v; want zero (the package default)", rs, err)
+	}
+	if _, err := load(t, base+"timeout: -5s\n"); err == nil {
+		t.Error("a negative timeout must be an error, not a silent default")
+	}
+	if _, err := load(t, base+"timeout: soon\n"); err == nil {
+		t.Error("an unparseable timeout must be an error")
+	}
+	if _, err := load(t, "kind: project\nname: x\ntimeout: 5s\n"); err == nil {
+		t.Error("timeout is exec-only")
+	}
+}

@@ -61,7 +61,7 @@ func createOne(server incus.InstanceServer, r Resource, env volumeEnv) error {
 	case KindImage:
 		return createImage(server, r)
 	case KindExec:
-		return runExec(server, r)
+		return runExec(env.context(), server, r)
 	default:
 		return fmt.Errorf("unknown kind %q", r.Kind)
 	}

@@ -1,6 +1,7 @@
 package resolve
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -98,14 +99,14 @@ func triggerHashConfigKey(name string) string {
 // there yet, and without this guard that surfaced as a hard Plan error
 // instead of the "would create" every other kind already reports
 // correctly in exactly this situation.
-func execConverged(server incus.InstanceServer, r Resource, attempts int, delay time.Duration) (bool, error) {
-	converged, _, err := execState(server, r, attempts, delay)
+func execConverged(ctx context.Context, server incus.InstanceServer, r Resource, attempts int, delay time.Duration) (bool, error) {
+	converged, _, err := execState(ctx, server, r, attempts, delay)
 	return converged, err
 }
 
 // execState is execConverged with the reason it is not converged, for the guard that has one to give (check_output). A guard that has none
 // returns an empty reason.
-func execState(server incus.InstanceServer, r Resource, attempts int, delay time.Duration) (converged bool, why string, err error) {
+func execState(ctx context.Context, server incus.InstanceServer, r Resource, attempts int, delay time.Duration) (converged bool, why string, err error) {
 	inst, _, found, err := incusapi.LookupInstance(server, r.Instance)
 	if err != nil {
 		return false, "", fmt.Errorf("reading %s: %w", r.Instance, err)
@@ -115,7 +116,7 @@ func execState(server incus.InstanceServer, r Resource, attempts int, delay time
 	}
 
 	if len(r.Check) > 0 {
-		code, _, err := incusapi.ExecInGuestWithRetry(server, r.Instance, r.Check, attempts, delay)
+		code, _, err := incusapi.ExecInGuestContext(ctx, server, r.Instance, r.Check, attempts, delay, r.Timeout)
 		if err != nil {
 			return false, "", err
 		}
@@ -124,7 +125,7 @@ func execState(server incus.InstanceServer, r Resource, attempts int, delay time
 
 	if r.CheckOutput != nil {
 		return outputCheckConverged(func(command []string) (int, string, error) {
-			return incusapi.ExecInGuestWithRetry(server, r.Instance, command, attempts, delay)
+			return incusapi.ExecInGuestContext(ctx, server, r.Instance, command, attempts, delay, r.Timeout)
 		}, r.CheckOutput)
 	}
 
@@ -144,8 +145,8 @@ func execState(server incus.InstanceServer, r Resource, attempts int, delay time
 // not-yet-existing instance ("would run"), not a hard Plan error: the
 // guest simply hasn't finished booting yet, which Apply (with the real
 // budget) is expected to wait out for real.
-func planExec(server incus.InstanceServer, r Resource) (PlannedResource, error) {
-	converged, why, err := execState(server, r, planCheckAttempts, planCheckDelay)
+func planExec(ctx context.Context, server incus.InstanceServer, r Resource) (PlannedResource, error) {
+	converged, why, err := execState(ctx, server, r, planCheckAttempts, planCheckDelay)
 	if err != nil {
 		if errors.Is(err, incusapi.ErrAgentNotReady) {
 			return PlannedResource{Resource: r, Action: ActionCreate, Changes: []string{fmt.Sprintf("would run: %v (guest agent not ready yet)", r.Command)}}, nil
@@ -168,11 +169,11 @@ func planExec(server incus.InstanceServer, r Resource) (PlannedResource, error) 
 // whole reason for having a Check/Triggers guard at all is that it's
 // unsafe to double-run deserves that guard actually enforced at the
 // moment it runs, not assumed still true from a moment earlier.
-func runExec(server incus.InstanceServer, r Resource) error {
+func runExec(ctx context.Context, server incus.InstanceServer, r Resource) error {
 	s := scopedServer(server, r)
 	attempts, delay := agentRetry(r)
 
-	converged, err := execConverged(s, r, attempts, delay)
+	converged, err := execConverged(ctx, s, r, attempts, delay)
 	if err != nil {
 		return err
 	}
@@ -180,7 +181,7 @@ func runExec(server incus.InstanceServer, r Resource) error {
 		return nil
 	}
 
-	code, output, err := incusapi.ExecInGuestWithRetry(s, r.Instance, r.Command, attempts, delay)
+	code, output, err := incusapi.ExecInGuestContext(ctx, s, r.Instance, r.Command, attempts, delay, r.Timeout)
 	if err != nil {
 		return err
 	}
@@ -191,7 +192,7 @@ func runExec(server incus.InstanceServer, r Resource) error {
 	// The check_output guard can say, right away and for free, whether the command took effect; a change reported as made that did not take effect
 	// would otherwise only show up as the next plan's surprise.
 	if r.CheckOutput != nil {
-		ok, why, err := execState(s, r, attempts, delay)
+		ok, why, err := execState(ctx, s, r, attempts, delay)
 		if err != nil {
 			return fmt.Errorf("checking %s after running %v: %w", r.Instance, r.Command, err)
 		}

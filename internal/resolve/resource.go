@@ -251,6 +251,11 @@ type Resource struct {
 	// wall-clock terms instead of two coupled, cadence-shaped ones.
 	AgentTimeout time.Duration
 
+	// Exec-only. How long one guest command (check, check_output's command, or command) may run before it is abandoned and the resource
+	// fails. Zero means incusapi.DefaultExecTimeout. Without a bound, one check that hangs hangs the whole plan. It is per attempt, so it
+	// is separate from AgentTimeout, which is how long to wait for a booting VM's agent.
+	Timeout time.Duration
+
 	// Image-only: wraps an already-complete VM disk image (a qcow2 or
 	// similar file -- never built from a rootfs; that stays out of
 	// scope on purpose, the same non-goal internal/run/DESIGN.md already

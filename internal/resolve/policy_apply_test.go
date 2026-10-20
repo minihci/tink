@@ -1,6 +1,7 @@
 package resolve
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -115,7 +116,7 @@ func TestApplyLevelsBlockedPropagation(t *testing.T) {
 		{file("fA", "A"), file("fB", "B"), inst("C")},
 	}
 	outcomes := map[string]outcome{"A": outBlocked, "B": outConverged, "fB": outChanged, "C": outConverged}
-	notes, err := applyLevels(levels, func(r Resource, note func(string, ...any)) (outcome, error) {
+	notes, err := applyLevels(context.Background(), levels, func(r Resource, note func(string, ...any)) (outcome, error) {
 		rec.did(r.Name)
 		return outcomes[r.Name], nil
 	})
@@ -137,7 +138,7 @@ func TestApplyLevelsBlockedPropagation(t *testing.T) {
 }
 
 func TestApplyLevelsAllConvergedIsNilError(t *testing.T) {
-	notes, err := applyLevels([][]Resource{{inst("A")}}, func(Resource, func(string, ...any)) (outcome, error) { return outChanged, nil })
+	notes, err := applyLevels(context.Background(), [][]Resource{{inst("A")}}, func(Resource, func(string, ...any)) (outcome, error) { return outChanged, nil })
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
@@ -149,7 +150,7 @@ func TestApplyLevelsAllConvergedIsNilError(t *testing.T) {
 func TestApplyLevelsFailureStopsLaterLevels(t *testing.T) {
 	var rec recorder
 	levels := [][]Resource{{inst("A"), inst("B")}, {inst("C")}}
-	notes, err := applyLevels(levels, func(r Resource, _ func(string, ...any)) (outcome, error) {
+	notes, err := applyLevels(context.Background(), levels, func(r Resource, _ func(string, ...any)) (outcome, error) {
 		rec.did(r.Name)
 		if r.Name == "B" {
 			return outConverged, errors.New("boom")
@@ -218,5 +219,33 @@ func TestLoadFileParsesOnImageChangeFields(t *testing.T) {
 	}
 	if rs[1].OnImageChange != "" || rs[1].onImageChangePolicy() != OnImageChangeReport {
 		t.Errorf("default policy should be report, got %q", rs[1].onImageChangePolicy())
+	}
+}
+
+// Ctrl-C during an apply: the level in flight finishes, no later level starts, and the summary says the apply was interrupted.
+func TestApplyLevelsStopsBetweenLevelsWhenTheContextIsCancelled(t *testing.T) {
+	levels := [][]Resource{
+		{{Kind: KindProfile, Name: "one"}},
+		{{Kind: KindProfile, Name: "two"}},
+		{{Kind: KindProfile, Name: "three"}},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	var ran []string
+	notes, err := applyLevels(ctx, levels, func(r Resource, note func(string, ...any)) (outcome, error) {
+		ran = append(ran, r.Name)
+		if r.Name == "one" {
+			cancel() // the signal arrives while level 0 is running
+		}
+		return outChanged, nil
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want it to wrap context.Canceled", err)
+	}
+	if len(ran) != 1 || ran[0] != "one" {
+		t.Errorf("ran %v; the level in flight must finish and nothing after it may start", ran)
+	}
+	last := notes[len(notes)-1]
+	if !strings.Contains(last, "1 changed") || !strings.Contains(last, "interrupted") {
+		t.Errorf("summary %q should count what was done and say the apply was interrupted", last)
 	}
 }

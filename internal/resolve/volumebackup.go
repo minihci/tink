@@ -1,6 +1,7 @@
 package resolve
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -46,7 +47,17 @@ func volumeBackupConfig(r Resource, env volumeEnv) (set map[string]string, remov
 
 // volumeEnv is what deciding a storage volume needs from the rest of the stack, which one dependency level on its own
 // does not have: the backup targets its copies name, and the name the stack gives itself.
+// context is the context to run under, never nil.
+func (e volumeEnv) context() context.Context {
+	if e.ctx == nil {
+		return context.Background()
+	}
+	return e.ctx
+}
+
 type volumeEnv struct {
+	// ctx ends an exec early (see PlanOptions.WithContext); nil means never.
+	ctx     context.Context
 	targets map[string]Resource
 	stack   string
 	// helperReads and helperLabel are what the helper says it can read (see PlanOptions); policyProto is the protocol this tink writes

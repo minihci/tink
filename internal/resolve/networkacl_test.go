@@ -1,6 +1,7 @@
 package resolve
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"reflect"
@@ -906,7 +907,7 @@ func TestRecipe_TheDocsExampleReproducesTheLabRecipeAndConverges(t *testing.T) {
 	var notes []string
 	run := func() ([]string, error) {
 		notes = nil
-		return applyLevels(levels, func(r Resource, note func(string, ...any)) (outcome, error) {
+		return applyLevels(context.Background(), levels, func(r Resource, note func(string, ...any)) (outcome, error) {
 			return applyOne(server, r, opts, func(f string, a ...any) {
 				notes = append(notes, fmt.Sprintf(f, a...))
 				note(f, a...)
