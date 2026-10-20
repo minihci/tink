@@ -3,6 +3,7 @@ package run
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/minihci/tink/internal/secrets"
 )
@@ -37,6 +38,11 @@ type Spec struct {
 	// carry. Everywhere else ApplyConfig only sets, and a key that is no longer declared is left alone; an owned prefix is the one place a key tink wrote is
 	// taken back when nothing derives it any more (the stamps of `kind: publish`, resolve/publishstamp.go). Empty for anything else.
 	OwnedConfigPrefixes []string
+
+	// OpTimeout bounds each call Create and ApplyConfig make to change the server: past it the call is abandoned, not cancelled, and the error wraps
+	// incusapi.ErrTimeout (see incusapi.Bounded for what that does and does not mean). Zero is no bound, as `tink run` and the helper have always had it;
+	// the resolver sets it.
+	OpTimeout time.Duration
 }
 
 // HasRootDisk reports whether devices holds a root disk: Incus's own test (a disk with path / and no source, whatever the device is called).

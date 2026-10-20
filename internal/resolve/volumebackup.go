@@ -73,6 +73,8 @@ type volumeEnv struct {
 	firstStart map[string][]Resource
 	profiles   map[string]Resource
 	report     func(instance string, o firstStartOutcome)
+	// opTimeout, when set, replaces the deadlines on the calls that change the server (opbounds.go). A field so a test can use a short one.
+	opTimeout time.Duration
 }
 
 func (e volumeEnv) writes() int {

@@ -394,7 +394,7 @@ func TestPushFile_WhereTheContentGoes(t *testing.T) {
 			if f.Name == "ha-yaml" || f.Name == "caddy" {
 				f.Content = f.Name // so a file already right can be set up by name
 			}
-			err := pushFile(tc.fake, f)
+			err := pushFile(tc.fake, f, 0)
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("err = %v, want one containing %q", err, tc.wantErr)
@@ -437,7 +437,7 @@ func TestPushFile_RestartIsAsItWas(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := fileAt("ha-yaml", "/config/configuration.yaml")
 			f.Restart = tc.restart
-			if err := pushFile(tc.fake, f); err != nil {
+			if err := pushFile(tc.fake, f, 0); err != nil {
 				t.Fatal(err)
 			}
 			if !reflect.DeepEqual(tc.fake.log, tc.want) {

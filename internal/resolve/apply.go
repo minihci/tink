@@ -16,26 +16,36 @@ import (
 	"github.com/lxc/incus/v7/shared/archive"
 	yaml "go.yaml.in/yaml/v4"
 
+	"github.com/minihci/tink/internal/incusapi"
 	"github.com/minihci/tink/internal/run"
 )
 
+// createOne creates r. Every call that changes the server has a deadline (opbounds.go); where one kind takes several steps, each step has its own,
+// so a step that is abandoned stops the ones after it.
 func createOne(server incus.InstanceServer, r Resource, env volumeEnv) error {
+	bound := func(slow bool, fn func() error) error {
+		return incusapi.BoundedDo(env.limit(slow), fmt.Sprintf("creating %s/%s", r.Kind, r.Name), fn)
+	}
 	switch r.Kind {
 	case KindHelper:
-		return createHelper(server, r)
+		return bound(true, func() error { return createHelper(server, r) })
 	case KindProject:
-		return server.CreateProject(api.ProjectsPost{
-			Name:       r.Name,
-			ProjectPut: api.ProjectPut{Config: r.Config},
+		return bound(false, func() error {
+			return server.CreateProject(api.ProjectsPost{
+				Name:       r.Name,
+				ProjectPut: api.ProjectPut{Config: r.Config},
+			})
 		})
 	case KindNetwork:
-		return createNetwork(server, r)
+		return bound(false, func() error { return createNetwork(server, r) })
 	case KindNetworkACL:
-		return createNetworkACL(server, r)
+		return bound(false, func() error { return createNetworkACL(server, r) })
 	case KindProfile:
-		return scopedServer(server, r).CreateProfile(api.ProfilesPost{
-			Name:       r.Name,
-			ProfilePut: api.ProfilePut{Config: r.Config, Devices: r.Devices},
+		return bound(false, func() error {
+			return scopedServer(server, r).CreateProfile(api.ProfilesPost{
+				Name:       r.Name,
+				ProfilePut: api.ProfilePut{Config: r.Config, Devices: r.Devices},
+			})
 		})
 	case KindStorageVolume:
 		pool := r.Pool
@@ -46,20 +56,22 @@ func createOne(server incus.InstanceServer, r Resource, env volumeEnv) error {
 		if err != nil {
 			return err
 		}
-		return scopedServer(server, r).CreateStoragePoolVolume(pool, api.StorageVolumesPost{
-			StorageVolumePut: api.StorageVolumePut{Config: config},
-			Name:             r.Name,
-			Type:             "custom",
-			ContentType:      "filesystem",
+		return bound(false, func() error {
+			return scopedServer(server, r).CreateStoragePoolVolume(pool, api.StorageVolumesPost{
+				StorageVolumePut: api.StorageVolumePut{Config: config},
+				Name:             r.Name,
+				Type:             "custom",
+				ContentType:      "filesystem",
+			})
 		})
 	case KindInstance:
 		return createInstance(server, r, env)
 	case KindFile:
-		return pushFile(server, r)
+		return pushFile(server, r, env.limit(false))
 	case KindIncus:
 		return runIncus(r)
 	case KindImage:
-		return createImage(server, r)
+		return createImage(server, r, env)
 	case KindExec:
 		return runExec(env.context(), server, r)
 	default:
@@ -88,7 +100,7 @@ func runIncus(r Resource) error {
 // routine reused just below for VM-vs-container detection) accepts a
 // plain uncompressed tar directly (ustar magic), confirmed by reading
 // that function's own source rather than assumed.
-func createImage(server incus.InstanceServer, r Resource) error {
+func createImage(server incus.InstanceServer, r Resource, env volumeEnv) error {
 	s := scopedServer(server, r)
 
 	metaYAML, err := yaml.Marshal(api.ImageMetadata{
@@ -131,30 +143,38 @@ func createImage(server incus.InstanceServer, r Resource) error {
 		return fmt.Errorf("rewinding %s: %w", r.Source, err)
 	}
 
-	op, err := s.CreateImage(api.ImagesPost{Filename: "metadata.yaml"}, &incus.ImageCreateArgs{
-		MetaFile:   metaBuf,
-		MetaName:   "metadata.yaml",
-		RootfsFile: rootfs,
-		RootfsName: filepath.Base(r.Source),
-		Type:       imageType,
+	// The upload and the wait for the import are one bounded call (slow: the disk is uploaded whole); the alias that follows is a quick one of its own.
+	fingerprint, err := incusapi.Bounded(env.limit(true), "importing image for "+r.Name, func() (string, error) {
+		op, err := s.CreateImage(api.ImagesPost{Filename: "metadata.yaml"}, &incus.ImageCreateArgs{
+			MetaFile:   metaBuf,
+			MetaName:   "metadata.yaml",
+			RootfsFile: rootfs,
+			RootfsName: filepath.Base(r.Source),
+			Type:       imageType,
+		})
+		if err != nil {
+			return "", fmt.Errorf("importing image for %s: %w", r.Name, err)
+		}
+		if err := op.Wait(); err != nil {
+			return "", fmt.Errorf("importing image for %s: %w", r.Name, err)
+		}
+		fingerprint, _ := op.Get().Metadata["fingerprint"].(string)
+		return fingerprint, nil
 	})
 	if err != nil {
-		return fmt.Errorf("importing image for %s: %w", r.Name, err)
+		return err
 	}
-	if err := op.Wait(); err != nil {
-		return fmt.Errorf("importing image for %s: %w", r.Name, err)
-	}
-
-	fingerprint, _ := op.Get().Metadata["fingerprint"].(string)
 	if fingerprint == "" {
 		return fmt.Errorf("importing image for %s: daemon returned no fingerprint", r.Name)
 	}
 
-	return s.CreateImageAlias(api.ImageAliasesPost{
-		ImageAliasesEntry: api.ImageAliasesEntry{
-			Name:                 r.Alias,
-			ImageAliasesEntryPut: api.ImageAliasesEntryPut{Target: fingerprint},
-		},
+	return incusapi.BoundedDo(env.limit(false), "creating the alias "+r.Alias, func() error {
+		return s.CreateImageAlias(api.ImageAliasesPost{
+			ImageAliasesEntry: api.ImageAliasesEntry{
+				Name:                 r.Alias,
+				ImageAliasesEntryPut: api.ImageAliasesEntryPut{Target: fingerprint},
+			},
+		})
 	})
 }
 
@@ -167,6 +187,9 @@ func createImage(server incus.InstanceServer, r Resource) error {
 //
 // The instance's own files are placed between configuring it and starting it (see firststart.go, and firststartmount.go for the ones a mount would
 // hide). env.report, when set, is told what was done with them.
+//
+// Each step has its own deadline (opbounds.go), and a step that is abandoned ends the creation there: the later steps are not run on top of work whose
+// state is unknown. Creating is the slow one (the server may fetch the image first); the rest are quick.
 func createInstance(server incus.InstanceServer, r Resource, env volumeEnv) error {
 	spec := &run.Spec{
 		Name:     r.Name,
@@ -177,7 +200,10 @@ func createInstance(server incus.InstanceServer, r Resource, env volumeEnv) erro
 		VM:       r.VM,
 
 		Ephemeral: r.Ephemeral,
+		OpTimeout: env.limit(false),
 	}
+	creating := *spec
+	creating.OpTimeout = env.limit(true)
 	s := scopedServer(server, r)
 	var pl placement
 	if candidates := env.firstStart[instanceKey(r.Project, r.Name)]; len(candidates) > 0 {
@@ -185,10 +211,12 @@ func createInstance(server incus.InstanceServer, r Resource, env volumeEnv) erro
 	}
 	pr := newPlacer(server, pl)
 	names, err := createInOrder(instanceSteps{
-		create: func() error { return run.Create(server, spec, r.Project) },
+		create: func() error { return run.Create(server, &creating, r.Project) },
 		config: func() error { return run.ApplyConfig(s, spec) },
-		place:  pr.place,
-		start:  func() error { return run.EnsureRunning(s, spec.Name) },
+		place: func(f Resource) error {
+			return incusapi.BoundedDo(env.limit(false), "placing file/"+f.Name+" before the first start", func() error { return pr.place(f) })
+		},
+		start: func() error { return run.EnsureRunningWithin(s, spec.Name, env.limit(false)) },
 	}, pl.files())
 	if out := pr.outcome(names); env.report != nil && (len(out.Placed) > 0 || len(out.Skipped) > 0) {
 		env.report(r.Name, out)
@@ -211,27 +239,46 @@ func createInstance(server incus.InstanceServer, r Resource, env volumeEnv) erro
 // why this doesn't attempt a stop/update/start sequence to work around
 // that; that's real downtime, a bigger decision than this function
 // makes for you.
-func updateInstance(server incus.InstanceServer, r Resource) error {
-	spec := &run.Spec{Name: r.Name, Config: r.Config, Devices: r.Devices, Ephemeral: r.Ephemeral, OwnedConfigPrefixes: ownedConfigPrefixes}
+//
+// limit is the deadline of each call to the server (zero: none); a call abandoned at it ends the update there.
+func updateInstance(server incus.InstanceServer, r Resource, limit time.Duration) error {
+	spec := &run.Spec{Name: r.Name, Config: r.Config, Devices: r.Devices, Ephemeral: r.Ephemeral, OwnedConfigPrefixes: ownedConfigPrefixes, OpTimeout: limit}
 	if err := run.ApplyConfig(server, spec); err != nil {
 		return err
 	}
 	if r.Restart {
-		return run.EnsureRunning(server, r.Name)
+		return run.EnsureRunningWithin(server, r.Name, limit)
 	}
 	// A stopped instance is planned a start (planInstance); EnsureRunning starts what is not running.
-	inst, _, err := server.GetInstance(r.Name)
+	inst, err := incusapi.Bounded(limit, "checking "+r.Name+"'s state", func() (*api.Instance, error) {
+		inst, _, err := server.GetInstance(r.Name)
+		return inst, err
+	})
 	if err != nil {
 		return fmt.Errorf("checking %s's state: %w", r.Name, err)
 	}
 	if inst.Status != "Stopped" {
 		return nil
 	}
-	return run.EnsureRunning(server, r.Name)
+	return run.EnsureRunningWithin(server, r.Name, limit)
 }
 
 func updateOne(server incus.InstanceServer, r Resource, env volumeEnv) error {
 	s := scopedServer(server, r)
+	// An instance and a file take several steps, each with its own deadline; the rest are one change, bounded as a whole.
+	switch r.Kind {
+	case KindInstance:
+		return updateInstance(s, r, env.limit(false))
+	case KindFile:
+		// Pushing is the same operation whether the file is new or just
+		// changed -- CreateInstanceFile overwrites either way.
+		return pushFile(server, r, env.limit(false))
+	}
+	return incusapi.BoundedDo(env.limit(false), fmt.Sprintf("updating %s/%s", r.Kind, r.Name), func() error { return updateInPlace(s, r, env) })
+}
+
+// updateInPlace is updateOne for the kinds whose update is one read and one write.
+func updateInPlace(s incus.InstanceServer, r Resource, env volumeEnv) error {
 	switch r.Kind {
 	case KindNetwork:
 		return updateNetwork(s, r)
@@ -281,12 +328,6 @@ func updateOne(server incus.InstanceServer, r Resource, env volumeEnv) error {
 			delete(put.Config, k)
 		}
 		return s.UpdateStoragePoolVolume(pool, "custom", r.Name, put, etag)
-	case KindInstance:
-		return updateInstance(s, r)
-	case KindFile:
-		// Pushing is the same operation whether the file is new or just
-		// changed -- CreateInstanceFile overwrites either way.
-		return pushFile(server, r)
 	default:
 		// Not implemented yet: projects are create-only so far,
 		// matching every real deployment on this platform to date --
@@ -306,14 +347,17 @@ func updateOne(server incus.InstanceServer, r Resource, env volumeEnv) error {
 //
 // Where the file goes follows the instance (filemount.go): a file under a disk-device mount of an instance that is not running goes into the volume
 // behind the mount, never into the root filesystem beneath it. Whether the instance is restarted afterwards is not affected by that.
-func pushFile(server incus.InstanceServer, r Resource) error {
-	if err := placeFileAt(server, r); err != nil {
+//
+// limit is the deadline of the push and of the restart, each (zero: none). A push abandoned at it is not followed by the restart.
+func pushFile(server incus.InstanceServer, r Resource, limit time.Duration) error {
+	err := incusapi.BoundedDo(limit, fmt.Sprintf("pushing %s to %s", r.Path, r.Instance), func() error { return placeFileAt(server, r) })
+	if err != nil {
 		return err
 	}
 	if !r.Restart {
 		return nil
 	}
-	return run.EnsureRunning(scopedServer(server, r), r.Instance)
+	return run.EnsureRunningWithin(scopedServer(server, r), r.Instance, limit)
 }
 
 // placeFile writes r.Content to r.Path inside r.Instance and does nothing more: no restart. It is what pushFile does first (through placeFileAt), and

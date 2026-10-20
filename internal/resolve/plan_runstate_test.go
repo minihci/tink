@@ -82,7 +82,7 @@ func TestPlanInstanceThatIsNotStoppedHasNoStateChange(t *testing.T) {
 // Applying the plan starts it (and only starts it: restart: true would restart a running instance, not a stopped one).
 func TestApplyStartsAStoppedInstance(t *testing.T) {
 	s := newStateFake("Stopped", "default")
-	if err := updateInstance(s, appRes("default")); err != nil {
+	if err := updateInstance(s, appRes("default"), 0); err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.Join(s.actions, ","); got != "start" {
@@ -99,7 +99,7 @@ func TestApplyStartsAStoppedInstance(t *testing.T) {
 
 func TestApplyDoesNotTouchARunningInstanceWithoutRestart(t *testing.T) {
 	s := newStateFake("Running", "default")
-	if err := updateInstance(s, appRes("default")); err != nil {
+	if err := updateInstance(s, appRes("default"), 0); err != nil {
 		t.Fatal(err)
 	}
 	if len(s.actions) != 0 {

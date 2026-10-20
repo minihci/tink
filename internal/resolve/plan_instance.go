@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
@@ -59,6 +60,8 @@ type PlanOptions struct {
 	// listenerNotes are, by instance name, the notes about host-side proxy listeners that overlap another instance's in the stack (proxydev.go),
 	// computed from the full stack with targets, because the two instances that clash land in different levels.
 	listenerNotes map[string][]string
+	// opTimeout, when set, replaces the deadlines on every call to the server (opbounds.go). Unexported: a test seam, not a setting.
+	opTimeout time.Duration
 }
 
 // ForResources returns the options carrying the backup targets of the full
