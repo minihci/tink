@@ -58,7 +58,7 @@ The first guess named six facts (how clients reach ingress, how certificates are
 2. **Backup targets**, and the honesty that goes with them (`same-host` versus `other-host`, so the 3-2-1 check judges the truth).
 3. **Which secrets are minted and which are supplied.** A user who must hand-mint seven secrets is maintaining the stack. First apply needs generation (`tink secret --generate` exists **[docs]**) and one clear list of what only a person can give.
 4. **A site is more than one server.** The home site's control plane, its offsite backup target and, in the watching design, its alert endpoint all live on the VPS. So the recipe is **per server**, selecting the roles that server hosts, and servers refer to each other by URL or remote name, never by cross-stack reference (which tink does not have **[docs]**). The VPS is not "the VPS template"; it is `{mesh control plane, offsite target, alerts}` plus whatever public ingress the site wants. That also removes most of the homelab-versus-VPS worry: one recipe, different role selections, different facts.
-5. **Reach is a set of legs**, not a mode. tron serves a LAN leg and a mesh leg and has no public one. A public host would have a `public` leg, which `tink join` models (`serves`, `mesh`, `public`, `discovery` **[code]**, [public-exposure.md](public-exposure.md)).
+5. **Reach is a set of legs**, not a mode. A home site serves a LAN leg and a mesh leg and has no public one. A public host would have a `public` leg, which `tink join` models (`serves`, `mesh`, `public`, `discovery` **[code]**, [public-exposure.md](public-exposure.md)).
 6. **Where the Incus API may listen**, because it is a security fact that depends on the host: this VPS has a public IP and no host firewall, so a wildcard listener would expose the API; the live run used the bridge's own address **[lab]**.
 
 ## Escape hatches, cheapest first
@@ -140,7 +140,7 @@ These are gaps in tink today, in the order they block a shipped recipe:
 
 ## Proving it
 
-The author has two real sites, which is the test. **(1)** `recipe(tron's facts)` must `plan` as *no changes* against the live tron stack (the criterion of the opinion-as-code note's stage 3: run the platform stack's `plan` read-only against the live server until it reports no changes). **(2)** `recipe(the VPS's facts)` must produce something sound on a clean VPS. If one function does both, the axes are right; if one site needs another knob, that knob is a real axis. Both become golden fixtures, as reference sites, not as templates anyone maintains.
+The author has two real sites, which is the test. **(1)** `recipe(the home site's facts)` must `plan` as *no changes* against that site's live stack (the criterion of the opinion-as-code note's stage 3: run the platform stack's `plan` read-only against the live server until it reports no changes). **(2)** `recipe(the VPS's facts)` must produce something sound on a clean VPS. If one function does both, the axes are right; if one site needs another knob, that knob is a real axis. Both become golden fixtures, as reference sites, not as templates anyone maintains.
 
 Stages, each checkable on its own:
 
