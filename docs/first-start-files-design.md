@@ -1,6 +1,6 @@
 # Design: put an instance's files in place before its first start
 
-**Status: a design note, 2026-10-13. Built** (#78) and measured in the lab (see "Measured"). It fixes a race found in the Headscale lab (the 2026-10-12 assessment, in #131). A gap found in the next lab, files under a disk-device mount, is closed by "Files under a mount" below: **built, and run against a real server on 2026-10-13** (the Home Assistant stack that found it); two cases are still only covered by fakes, listed there. The same hazard on a later *update*, while the instance is not running, was found in a third lab and is handled by "Later applies: the instance is not running" below: **built, and so far run only against fakes**. Claims are marked **[lab]**, **[code]**, **[proposed]** or **[verify]**.
+**Status: describes what is built, 2026-10-13. Built** (#78) and measured in the lab (see "Measured"). It fixes a race found in the Headscale lab (the 2026-10-12 assessment, in #131). A gap found in the next lab, files under a disk-device mount, is closed by "Files under a mount" below: **built, and run against a real server on 2026-10-13** (the Home Assistant stack that found it); two cases are still only covered by fakes, listed there. The same hazard on a later *update*, while the instance is not running, was found in a third lab and is handled by "Later applies: the instance is not running" below: **built, and so far run only against fakes**. Claims are marked **[lab]**, **[code]** or **[verify]**.
 
 ## The problem
 
@@ -18,7 +18,7 @@ The same first-start sequence is how any OCI service with a config file is broug
 
 An instance that was created and never started accepts file pushes (the call tink already uses) and gives them back, and the first start then finds them: a throwaway Headscale, created with `init`, given its config while `STOPPED`, started once, came up cleanly. So the ordering "create, place the files, start" is available; it is only not what tink does.
 
-## The shape **[proposed]**
+## The shape **[code]**
 
 **When tink creates an instance, it places the instance's files before starting it.** Inside `createInstance`: create, apply config and devices, push the files that belong to this instance, start. Nothing else about the graph changes.
 

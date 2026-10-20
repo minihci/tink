@@ -1,8 +1,8 @@
 # Volume backup: design
 
-**Status: the Incus-native path is built; the off-site engine is design only.** Steps 1 to 3b of [Phasing](#phasing) are done: `kind: backup-target`,
+**Status: describes what is built.** The off-site engine is not built and lives in #154. Steps 1 to 3b of [Phasing](#phasing) are done: `kind: backup-target`,
 the 3-2-1 check, `backup restore` and `verify`, copies to pool and remote targets, and a scheduler (the daemon's, which [the helper](helper.md) runs).
-[`volume-backup.md`](volume-backup.md) is how to use what exists. Step 4, the restic job engine, is not built (nothing in the code refers to it). This
+[`volume-backup.md`](volume-backup.md) is how to use what exists. Step 4, the restic job engine, is not built and is proposed in #154. This
 document keeps the reasoning and the live findings behind those steps; where it was written before something was built, the notes under
 [Phasing](#phasing) say how the build differed.
 
@@ -16,9 +16,9 @@ this), **[docs]** (read in upstream documentation, not tried), or **[hypothesis]
 Replicating a volume to another Incus server, or to another storage pool on the same
 server (including the `truenas` driver), and restoring from either.
 
-**Designed but sequenced later:** an off-site engine for hosts with no second Incus
-box to talk to (the "ephemeral restic job", see [below](#the-ephemeral-job-engine)).
-The mechanism was prototyped, and its findings are recorded here so the Incus-native
+**Not built:** an off-site engine for hosts with no second Incus
+box to talk to (the "ephemeral restic job", #154).
+The mechanism was prototyped, and its findings are recorded there so the Incus-native
 path is shaped to leave room for it.
 
 **Non-goals:** tink does not become a backup engine. No dedup, no encryption, no
@@ -147,7 +147,7 @@ removed from the package repo), with the Incus pool created by `incus storage cr
 | Does restore from the NAS work (NAS snapshot to a new local volume)? | **Yes [verified].** Correct point-in-time contents (a file added after the snapshot was absent), identical hash, ~4 s. |
 | Do the snapshots exist on the NAS itself? | **Yes [verified].** As real ZFS snapshots (`tank/incus/custom/<project>_<vol>@snapshot-<name>`), so the NAS's own tooling can see them. |
 | Does tier-1 (`snapshots.schedule`/`expiry`) work on a NAS-backed volume? | **Yes [verified].** Scheduled snapshots appeared with the expected expiry. |
-| Can a **snapshot be cloned** on the NAS pool (needed for the ephemeral job engine's read-only clone)? | **No, through Incus [verified on 7.2 and 7.5.1].** With the bundled `truenas_incus_ctl` 0.7.7 (still the newest release) and TrueNAS 25.10.7, the default ZFS-clone path fails with `[EINVAL] properties.managedby ... cannot be inherited` (7.5.1 also names `properties.comments`). With `truenas.clone_copy=false` the fallback `replication start` call is rejected by the tool's own argument parser (it prints its usage). **TrueNAS itself can clone:** calling `truenas_incus_ctl snapshot clone <ds>@<snap> <dest>` directly produces a correct clone with the snapshot as its origin. The failure is the *next* step: right after a successful clone the driver runs `truenas_incus_ctl dataset update --user-props=incus:content_type=<type> <clone>` (to re-add a property clones don't keep), and TrueNAS 25.10.7 rejects it with `properties.comments/managedby: Property does not exist and cannot be inherited`; Incus then rolls the clone back, so nothing is left behind. Replayed by hand with only the ctl tool on an Incus-made volume, the same `--user-props` update fails on the clone **and on the original volume**, even when `--managedby`/`--comments` are passed explicitly, while `dataset update --comments x` on the same dataset succeeds. **It is a TrueNAS-version regression [verified].** Same host, same Incus 7.5.1, same `truenas_incus_ctl` 0.7.7, same script, two NAS VMs side by side: on **TrueNAS 25.04.2.6** the snapshot clone through Incus succeeds (~1.5 s) and the bare `dataset update --user-props=...` call succeeds on both the clone and the original; on **25.10.7** the clone fails and that same call fails on both.
+| Can a **snapshot be cloned** on the NAS pool (needed for the proposed off-site engine's read-only clone, #154)? | **No, through Incus [verified on 7.2 and 7.5.1].** With the bundled `truenas_incus_ctl` 0.7.7 (still the newest release) and TrueNAS 25.10.7, the default ZFS-clone path fails with `[EINVAL] properties.managedby ... cannot be inherited` (7.5.1 also names `properties.comments`). With `truenas.clone_copy=false` the fallback `replication start` call is rejected by the tool's own argument parser (it prints its usage). **TrueNAS itself can clone:** calling `truenas_incus_ctl snapshot clone <ds>@<snap> <dest>` directly produces a correct clone with the snapshot as its origin. The failure is the *next* step: right after a successful clone the driver runs `truenas_incus_ctl dataset update --user-props=incus:content_type=<type> <clone>` (to re-add a property clones don't keep), and TrueNAS 25.10.7 rejects it with `properties.comments/managedby: Property does not exist and cannot be inherited`; Incus then rolls the clone back, so nothing is left behind. Replayed by hand with only the ctl tool on an Incus-made volume, the same `--user-props` update fails on the clone **and on the original volume**, even when `--managedby`/`--comments` are passed explicitly, while `dataset update --comments x` on the same dataset succeeds. **It is a TrueNAS-version regression [verified].** Same host, same Incus 7.5.1, same `truenas_incus_ctl` 0.7.7, same script, two NAS VMs side by side: on **TrueNAS 25.04.2.6** the snapshot clone through Incus succeeds (~1.5 s) and the bare `dataset update --user-props=...` call succeeds on both the clone and the original; on **25.10.7** the clone fails and that same call fails on both.
 
 **Root cause, found in TrueNAS's source (`truenas/middleware`) [verified by reading both releases and by a runtime check].** The trigger is not the clone and not really the ctl: it is TrueNAS's `pool.dataset.update` mishandling `user_properties` on any dataset that carries TrueNAS-internal properties (every Incus-made volume does, via `--managedby`/`--comments`):
 
@@ -167,7 +167,7 @@ This explains every observation: it fails on originals as well as clones, it fai
 - The newest 25.10 branch, `release/25.10.8` (2026-10-10), has the same code, so a point release does not change it.
 
 What this means for the design: **the replicate and restore legs work on a NAS pool
-today; the job engine's clone-then-attach step does not**, so on a NAS pool the engine
+today; the proposed engine's clone-then-attach step does not**, so on a NAS pool the engine
 would have to read from a *local* clone and push to the NAS, not the other way round.
 That fits the direction anyway (copy first, engine later). It was re-checked on Incus
 7.5.1 and still fails, so treat NAS-pool cloning as unavailable on TrueNAS 25.10 for good:
@@ -250,83 +250,9 @@ backup" becomes a visible state of the stack instead of a discovery during an ou
 The check step is the reason the ephemeral-instance mechanism below matters even for
 the Incus-native path.
 
-## The ephemeral job engine
+## The off-site engine
 
-This is the off-site engine, sequenced after the Incus-native work, and also the
-mechanism `verify` wants. It was prototyped on a lab host (Incus 7.2, btrfs pool) with the
-real `restic/restic` image; findings below are the prototype's.
-
-### The idea
-
-Tink's world is Incus OCI app containers. A backup tool is just another OCI image, so
-instead of requiring restic installed on every host, tink runs it as a short-lived
-container whose only job is one backup, restore, or check:
-
-```
-volume ──snapshot──▶ read-only clone ──mounted ro──▶ [ restic container ] ──▶ repo
- (live)   (atomic)    (CoW, instant)                   (ephemeral, no NIC if the
-                                                       repo is a local volume)
-```
-
-Per job, tink:
-
-1. Takes (or picks) a snapshot of the volume.
-2. Makes a temporary volume as a copy-on-write clone of that snapshot.
-3. Creates an instance from the pinned restic image, with the clone attached
-   **read-only** at `/data`, plus the repository (a volume, or a NIC and
-   credentials for a remote repo) and an explicit `RESTIC_*` environment.
-4. Runs the command and gets its exit code.
-5. Always deletes the instance and the clone, including on failure.
-
-What this buys, compared with a host-installed tool:
-
-- **Tink stays one binary.** The restic version is a digest-pinned image reference in
-  YAML, the same as every other image, and upgrades the same way.
-- **The read-only attach is enforced by the kernel**, not by the tool behaving.
-- **The source is never touched**: the job reads a clone of a snapshot, so a backup
-  neither stalls the live workload nor sees it mid-write.
-- **Backup, restore, verify and `check` are one mechanism** with different argv.
-- It is the same pattern as `kind: exec`, which already runs commands in OCI
-  containers via the Incus exec API.
-
-### What the prototype verified
-
-All **[verified]** on a lab host, in a throwaway Incus project, since deleted:
-
-| Question | Result |
-|---|---|
-| Can a snapshot be attached directly as a disk device (`source=<vol>/<snap>`, `readonly=true`)? | **No, by design.** For a custom volume, `source=<vol>/<x>` means *subpath `x` inside the live volume*, not snapshot `x`. The container saw an empty directory, and Incus created an empty `<x>` directory inside the **live** volume as a side effect. Reproduced identically on btrfs and on the `truenas` pool, which rules out a driver quirk. **Never use it for backups.** |
-| Does a copy-on-write clone of the snapshot work instead? | Yes. `storage volume copy <vol>/<snap> <clone>` is instant, the clone mounts read-only (`touch` fails with EROFS), and it holds the point-in-time state (a file written after the snapshot is absent). |
-| Does restic back up a clone and restore it to a *fresh volume* faithfully? | Yes: identical sha256, uid/gid 1000 preserved, symlink and timestamps preserved. |
-| Do exit codes reach the caller? | Yes via exec: success was 0, a bad `restore` returned 1. |
-| Does a repeat backup of unchanged data cost anything? | `Added to the repository: 0 B`. |
-| Does `restic check` pass on the result? | Yes: "no errors were found". |
-| Does a job run with no network? | Yes, with a local repo volume. A remote repo needs a NIC; unaddressed. |
-
-### Gotchas it already found
-
-- **Pin `--host`.** restic finds the parent snapshot by hostname, and the container's
-  hostname is the instance name. The second backup recorded host `job` instead of
-  the host's name, so it would not have been treated as incremental of the first on a real
-  repo. Tink must pass `--host <volume>` (or similar) explicitly and never depend on
-  the container's hostname.
-- **Identity goes in tags.** `volume=<name>` and `snapshot=<name>` as restic tags let
-  `restore`/`verify` find the right snapshot without tink keeping any state.
-- **Job runs via exec, not the entrypoint.** The prototype set the container's
-  entrypoint to `sleep` and used exec for the real commands, because that path returns
-  exit codes and streams output. Whether an OCI container's own entrypoint exit code
-  is observable is **untested**; exec is the proven route.
-
-### Not yet answered
-
-- Credentials for off-site repos (restic password, S3 keys): the secrets problem
-  tink does not have an answer to yet. Likely its own small design.
-- How `retain:` maps onto `restic forget --keep-*`, which is count/calendar-based
-  rather than a single age. Probably a separate `keep:` block for this engine.
-- Orphan cleanup if tink dies mid-job: a `user.tink.job=true` marker on the instance
-  and clone, plus a reaper that deletes ones older than a bound.
-- Which Incus project the job and clone live in, and whether concurrent jobs on one
-  volume must serialise.
+Not built. An off-site engine for a host with no second Incus server (restic in a short-lived instance, run against a read-only clone of a snapshot) is proposed in #154, together with the prototype's findings. Nothing in this repository refers to it.
 
 ## Findings that shape everything else
 
@@ -403,7 +329,7 @@ Ordered so each step is useful alone, and the Incus-supported path comes first.
    - The remote server's `authorization.client.tls-restricted: scriptlet` made a *restricted* certificate see every project: scoping a
      certificate to a project is only as good as the server's authorization setting.
 
-4. **Off-site restic job engine**, built on the mechanism from step 2, for hosts with
+4. **Off-site restic job engine** (not built; #154), for hosts with
    no second Incus server.
 
 ## Open questions
@@ -423,7 +349,7 @@ Ordered so each step is useful alone, and the Incus-supported path comes first.
 - **Retention on a target:** do refreshed copies carry the source's snapshot expiry, or
   need their own `snapshots.expiry` on the target volume?
 - **Same-pool clones and quotas/space:** a clone is cheap on btrfs/ZFS, but a `dir`
-  pool has no copy-on-write; the job engine must refuse or warn there.
+  pool has no copy-on-write; the proposed job engine (#154) must refuse or warn there.
 - **Promoting the warnings to errors:** both the missing-block and 3-2-1 warnings are
   meant to graduate. Deciding when is a product call, not a technical one, and needs
   the instance-skip logic described in `volume-backup.md` brought back.

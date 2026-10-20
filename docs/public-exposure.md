@@ -1,6 +1,6 @@
 # Public exposure: how traffic reaches an ingress instance on a host with one public address
 
-**Status: a design note, 2026-10-17. The two plan-time checks and the `join` generalization (item 3) are built; the network-forward kind is proposed.** Claims are marked **[lab]** (measured on a real host, Incus 7.5.1, 2026-10-17), **[code]** (read in this repository), **[docs]** or **[proposed]**.
+**Status: describes what is built, 2026-10-17. The two plan-time checks and the `join` generalization (item 3) are built; the network-forward kind is not, and is proposed in #139.** Claims are marked **[lab]** (measured on a real host, Incus 7.5.1, 2026-10-17), **[code]** (read in this repository), **[docs]** or **[proposed]**.
 
 ## The question
 

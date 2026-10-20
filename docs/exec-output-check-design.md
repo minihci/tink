@@ -1,6 +1,6 @@
 # Design: an exec check that compares live output with a declared file
 
-**Status: a design note, 2026-10-13. Built** (#79) and **verified against a throwaway Headscale** with the four lab checks below. It closes the gap the Headscale lab found in getting a policy live ([identity-projector-design.md](identity-projector-design.md), "Experiments"). Claims are marked **[lab]**, **[code]**, **[proposed]** or **[verify]**.
+**Status: describes what is built, 2026-10-13. Built** (#79) and **verified against a throwaway Headscale** with the four lab checks below. It closes the gap the Headscale lab found in getting a policy live ([identity-projector-design.md](identity-projector-design.md), "Experiments"). Claims are marked **[lab]**, **[code]** or **[verify]**.
 
 ## The gap
 
@@ -15,7 +15,7 @@ Neither fits. A `check` is a command that exits 0 or not, and the Headscale imag
 
 But the policy case does have something live to inspect: `headscale policy get` prints what is in force. It prints the same bytes as the file that was set, plus one trailing newline (340 bytes against 339 in the lab) **[lab]**.
 
-## The shape **[proposed]**
+## The shape **[code]**
 
 A third guard, `check_output`: the work is done when a command's output equals the declared content of a file resource.
 
@@ -59,9 +59,9 @@ Rules:
 - A bad policy fails the **apply**, with Headscale's own message and its previous policy still in force **[lab]**, instead of a log line nobody reads.
 - The first policy is set by the same mechanism, which matters because Headscale is allow-all until then **[lab]**.
 
-## Where it goes in the code **[proposed]**
+## Where it is in the code **[code]**
 
-`internal/resolve`: a `CheckOutput` field on `Resource` (command and the name of the file resource); parsing in `yaml.go`; the exactly-one rule and the `equals` rule in `validate.go`; the comparison in `exec.go` (`planExec`, `execConverged`, `runExec` with the re-check); the implied edge where dependencies are collected. A page in the exec documentation.
+`internal/resolve/checkoutput.go` holds the guard: the `OutputCheck` type, the `equals` rule (`validateCheckOutputs`) and the copy of the file's declared content into the check (`resolveCheckOutputs`). The comparison and the re-check after the command are in `exec.go`; the exec guard is documented in [resolver-architecture.md](resolver-architecture.md#update-2026-10-13-an-exec-can-compare-live-output-with-a-declared-file-check_output).
 
 ## Tests
 
@@ -86,5 +86,4 @@ A `policy check` before the set: in database mode the set itself validates and i
 
 ## Open questions
 
-1. The field name: `check_output`, or a `check` that takes either a list (today) or a map.
-2. Whether the re-check after `command` should apply to the existing `check` as well.
+1. Whether the re-check after `command` should apply to the existing `check` as well.
