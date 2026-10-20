@@ -16,7 +16,7 @@ kind: network
 name: svclab0
 description: the smarthome services talk to each other on this bridge
 config:
-  ipv4.address: 10.10.20.1/24
+  ipv4.address: 203.0.113.1/24
   ipv4.nat: "true"
   ipv6.address: none
 ---

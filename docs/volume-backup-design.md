@@ -130,12 +130,12 @@ Why this is the right first engine:
 | A VPS running Incus | an Incus remote over the internet (an SSH tunnel to its API works) | [verified] copy to and from a `dir`-pool VPS over a two-hop SSH tunnel, relay mode, round-tripped byte for byte; see step 3b below. Bandwidth, not mechanics, is the concern |
 | A TrueNAS box | a *local* pool using Incus's `truenas` driver, copy across pools | [verified] against stock TrueNAS SCALE 25.10.7 and 25.04.2.6; see below, including what did **not** work |
 
-**TrueNAS.** Tron's Incus (7.2) lists the `truenas` driver (v0.7.7) as supported
+**TrueNAS.** A lab host's Incus (7.2) lists the `truenas` driver (v0.7.7) as supported
 **[verified]**. Per upstream it is block-based: each Incus volume becomes a ZFS volume
 on the NAS, reached over iSCSI **[docs]**; a NAS-backed pool is a different failure
-domain from Tron's own disk, but **not** off-site unless the NAS is.
+domain from the host's own disk, but **not** off-site unless the NAS is.
 
-Tested against a TrueNAS SCALE 25.10.7 VM on Tron (stable at the time; the beta then called 26 is now 27),
+Tested against a TrueNAS SCALE 25.10.7 VM on a lab host (stable at the time; the beta then called 26 is now 27),
 first on Incus 7.2 and then on 7.5.1 (the newest stable; 7.4 builds had already been
 removed from the package repo), with the Incus pool created by `incus storage create nas truenas source=tank/incus ...`:
 
@@ -253,7 +253,7 @@ the Incus-native path.
 ## The ephemeral job engine
 
 This is the off-site engine, sequenced after the Incus-native work, and also the
-mechanism `verify` wants. It was prototyped on Tron (Incus 7.2, btrfs pool) with the
+mechanism `verify` wants. It was prototyped on a lab host (Incus 7.2, btrfs pool) with the
 real `restic/restic` image; findings below are the prototype's.
 
 ### The idea
@@ -291,7 +291,7 @@ What this buys, compared with a host-installed tool:
 
 ### What the prototype verified
 
-All **[verified]** on Tron, in a throwaway Incus project, since deleted:
+All **[verified]** on a lab host, in a throwaway Incus project, since deleted:
 
 | Question | Result |
 |---|---|
@@ -307,7 +307,7 @@ All **[verified]** on Tron, in a throwaway Incus project, since deleted:
 
 - **Pin `--host`.** restic finds the parent snapshot by hostname, and the container's
   hostname is the instance name. The second backup recorded host `job` instead of
-  `tron`, so it would not have been treated as incremental of the first on a real
+  the host's name, so it would not have been treated as incremental of the first on a real
   repo. Tink must pass `--host <volume>` (or similar) explicitly and never depend on
   the container's hostname.
 - **Identity goes in tags.** `volume=<name>` and `snapshot=<name>` as restic tags let
@@ -392,7 +392,7 @@ Ordered so each step is useful alone, and the Incus-supported path comes first.
    - **What does fail on stock 25.10:** the local, tier-1 `tink backup restore VOLUME --snapshot S` of a volume that *lives* on a TrueNAS
      pool, because restoring a snapshot into the same pool is exactly that clone. This is the upstream bug, not tink; the error is
      Incus's, and it includes the TrueNAS API key on the command line, so treat tink's output for that failure as sensitive.
-   **3b, remote targets [verified]** on a VPS reached only through an SSH tunnel (Tron -> Mac -> VPS API):
+   **3b, remote targets [verified]** on a public VPS reached only through an SSH tunnel (lab host -> workstation -> VPS API):
    - Transfer modes with `incus storage volume copy`: **pull** is refused for a restricted project and could not dial back anyway;
      **push** and **relay** both worked in both directions. Tink always uses **relay**: the only machine known to reach both ends is tink.
    - `incus remote add` itself failed every time with `400 Bad Request {}` on its third request (with a token and with an already-trusted

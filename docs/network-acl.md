@@ -1,6 +1,6 @@
 # `kind: network-acl`: the firewall rules of a bridge, in the stack
 
-**Status: built, unit-tested against a fake Incus server, and run live once.** On 2026-10-13 the recipe below was first proven with raw `incus` commands in a lab, and then declared as a stack and applied by this kind from a Mac with `--remote` to the same lab bridge: plan, apply, a second plan of `no changes`, the same behaviour as the hand-run recipe, and rule drift found and converged (see [What has been run](#what-has-been-run)). The tron repo's `acl-lab/acl-lab.md` has both runs. Not yet run live: a default of `reject`, an ACL on a NIC, and the warning for an ACL that exists nowhere. Claims are marked **[code]** (read in this repo, or in the Incus 7.4.0 source), **[docs]** (upstream Incus documentation), **[lab]** (seen live) or **[hypothesis]**.
+**Status: built, unit-tested against a fake Incus server, and run live once.** On 2026-10-13 the recipe below was first proven with raw `incus` commands in a lab, and then declared as a stack and applied by this kind from a Mac with `--remote` to the same lab bridge: plan, apply, a second plan of `no changes`, the same behaviour as the hand-run recipe, and rule drift found and converged (see [What has been run](#what-has-been-run)). The raw output of both runs stays in the author's private notes. Not yet run live: a default of `reject`, an ACL on a NIC, and the warning for an ACL that exists nowhere. Claims are marked **[code]** (read in this repo, or in the Incus 7.4.0 source), **[docs]** (upstream Incus documentation), **[lab]** (seen live) or **[hypothesis]**.
 
 ## What it is for
 
@@ -14,7 +14,7 @@ The recipe, in raw Incus:
 
 ```
 incus network acl create svclab0-in
-incus network acl rule add svclab0-in ingress action=allow source=10.10.30.221/32 destination_port=8123 protocol=tcp state=enabled
+incus network acl rule add svclab0-in ingress action=allow source=198.51.100.221/32 destination_port=8123 protocol=tcp state=enabled
 incus network set svclab0 security.acls=svclab0-in
 incus network set svclab0 security.acls.default.egress.action=allow
 ```
@@ -27,7 +27,7 @@ name: svclab0-in
 description: only the ingress helper may reach the apps on svclab0
 ingress:
   - action: allow
-    source: 10.10.30.221/32          # the ingress helper's address; a bridge ACL takes CIDRs, not names
+    source: 198.51.100.221/32          # the ingress helper's address; a bridge ACL takes CIDRs, not names
     protocol: tcp
     destination_port: 8123
     state: enabled                   # the default; written here only to match the recipe
@@ -108,7 +108,7 @@ The reason: Incus applies these as a live change to its own firewall chains, not
   ```
   description: "old" -> "only the ingress helper may reach the apps on svclab0"
   config.user.owner: "" -> "smarthome"
-  ingress rule 1: add (action=allow source=10.10.30.5/32 protocol=tcp destination_port=1883 state=enabled)
+  ingress rule 1: add (action=allow source=198.51.100.5/32 protocol=tcp destination_port=1883 state=enabled)
   ingress rule 2 (in the live list): remove (action=reject source=10.0.0.0/8 state=enabled)
   ingress rule 0: destination_port: "8123" -> "8080"
   ```
@@ -147,7 +147,7 @@ So `project:` on a `kind: network-acl` is a load error, not something silently i
 
 ## What has been run
 
-**[lab]** 2026-10-13, tink `df6b15c` run from a Mac against the lab host with `--remote`, on the lab bridge `svclab0` (which had running instances on it), with the stack in the recipe section (the allowed source was the lab's ingress helper). The checks and the stack are in the tron repo (`acl-lab/acl-kind.yaml`, `acl-kind-checks.sh`; the scorecard is `acl-lab.md`, "Second run").
+**[lab]** 2026-10-13, tink `df6b15c` run from a Mac against the lab host with `--remote`, on the lab bridge `svclab0` (which had running instances on it), with the stack in the recipe section (the allowed source was the lab's ingress helper). The checks and the raw output stay in the author's private notes.
 
 | Check | Observed |
 |---|---|

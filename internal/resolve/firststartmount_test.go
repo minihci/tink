@@ -362,7 +362,7 @@ var haMount = mount{Device: "config", Path: "/config", Pool: "default", Volume: 
 
 func TestPlaceVolumeFile_WritesWhatIsNotThereAndLeavesWhatIsRight(t *testing.T) {
 	f := fileAt("ha-yaml", "/config/configuration.yaml")
-	f.Content = "http:\n  server_host: [10.10.20.10]\n"
+	f.Content = "http:\n  server_host: [203.0.113.10]\n"
 
 	t.Run("absent: it is written, relative to the volume root, as placeFile writes", func(t *testing.T) {
 		s := newMountFake()

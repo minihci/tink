@@ -9,7 +9,7 @@ func TestWhenATokenListsSeveralAddressesTheOthersAreReported(t *testing.T) {
 	f := newFake(t, false, "s3cret", "default")
 	conf, _ := emptyConf(t)
 	tok := tokenAt(t, "s3cret", f.fingerprint(), "127.0.0.1:1", f.addr(), "127.0.0.1:2")
-	res, err := Add(conf, AddOptions{Name: "tron", Token: tok, fetchCert: fetchWithDead(map[string]string{"https://127.0.0.1:1": "down"})})
+	res, err := Add(conf, AddOptions{Name: "homelab", Token: tok, fetchCert: fetchWithDead(map[string]string{"https://127.0.0.1:1": "down"})})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +26,7 @@ func TestAnAddressThePersonGaveIsNotSecondGuessed(t *testing.T) {
 	f := newFake(t, false, "s3cret", "default")
 	conf, _ := emptyConf(t)
 	tok := tokenAt(t, "s3cret", f.fingerprint(), f.addr(), "127.0.0.1:2")
-	res, err := Add(conf, AddOptions{Name: "tron", Addr: f.addr(), Token: tok})
+	res, err := Add(conf, AddOptions{Name: "homelab", Addr: f.addr(), Token: tok})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func TestAnAddressThePersonGaveIsNotSecondGuessed(t *testing.T) {
 func TestATokenWithOneAddressHasNoOthers(t *testing.T) {
 	f := newFake(t, false, "s3cret", "default")
 	conf, _ := emptyConf(t)
-	res, err := Add(conf, AddOptions{Name: "tron", Token: tokenAt(t, "s3cret", f.fingerprint(), f.addr())})
+	res, err := Add(conf, AddOptions{Name: "homelab", Token: tokenAt(t, "s3cret", f.fingerprint(), f.addr())})
 	if err != nil {
 		t.Fatal(err)
 	}

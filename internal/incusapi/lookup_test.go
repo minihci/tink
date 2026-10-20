@@ -150,7 +150,7 @@ func TestIsNotFound(t *testing.T) {
 		"a wrapped non-404 status":  {fmt.Errorf("x: %w", forbidden), false},
 		"a dropped connection":      {errors.New("read tcp: connection reset by peer"), false},
 		"text that says not found":  {errors.New("Image not found"), false},
-		"an unparsable 404 reply":   {errors.New("Failed to fetch https://tron:8443/1.0/profiles/web: 404 Not Found"), false},
+		"an unparsable 404 reply":   {errors.New("Failed to fetch https://homelab:8443/1.0/profiles/web: 404 Not Found"), false},
 	} {
 		if got := IsNotFound(tc.err); got != tc.want {
 			t.Errorf("%s: IsNotFound(%v) = %v, want %v", name, tc.err, got, tc.want)

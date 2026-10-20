@@ -90,7 +90,7 @@ func TestTheCanaryJoinsToTheHandWrittenPieces(t *testing.T) {
 	if len(res.Findings) != 0 {
 		t.Fatalf("the canary has findings: %v", res.Findings)
 	}
-	if res.Zone != "home.example.org" || res.LANAddress != "192.0.2.231" || res.MeshAddress != "10.10.50.3" || !res.HasMesh {
+	if res.Zone != "home.example.org" || res.LANAddress != "192.0.2.231" || res.MeshAddress != "192.0.2.3" || !res.HasMesh {
 		t.Errorf("facts = zone %q lan %q mesh %q hasMesh %v", res.Zone, res.LANAddress, res.MeshAddress, res.HasMesh)
 	}
 	for name, got := range map[string]string{"dns": res.DNS, "mesh": res.Mesh, "caddy": res.Caddy, "sso": res.SSO, "acl": res.ACL} {
@@ -141,12 +141,12 @@ func TestPublishesOfDifferentPortsGetOneRuleEach(t *testing.T) {
 		t.Fatal(res.Findings)
 	}
 	want := "# network-acl canary0-in (network canary0)\ningress:\n" +
-		"  - {action: allow, source: 10.10.50.3/32, protocol: tcp, destination_port: \"80\", state: enabled, description: \"ingress helper publishes whoami\"}\n" +
-		"  - {action: allow, source: 10.10.50.3/32, protocol: tcp, destination_port: \"8080\", state: enabled, description: \"ingress helper publishes whoami-admin\"}\n"
+		"  - {action: allow, source: 192.0.2.3/32, protocol: tcp, destination_port: \"80\", state: enabled, description: \"ingress helper publishes whoami\"}\n" +
+		"  - {action: allow, source: 192.0.2.3/32, protocol: tcp, destination_port: \"8080\", state: enabled, description: \"ingress helper publishes whoami-admin\"}\n"
 	if res.ACL != want {
 		t.Errorf("acl =\n%s\nwant\n%s", res.ACL, want)
 	}
-	if !strings.Contains(res.Caddy, "reverse_proxy 10.10.60.10:8080 {") {
+	if !strings.Contains(res.Caddy, "reverse_proxy 198.51.100.10:8080 {") {
 		t.Errorf("the second route must reach port 8080:\n%s", res.Caddy)
 	}
 }
@@ -154,18 +154,18 @@ func TestPublishesOfDifferentPortsGetOneRuleEach(t *testing.T) {
 func TestANICFromAProfileIsFoundAndAnInstanceDeviceReplacesIt(t *testing.T) {
 	stacks := load(t)
 	edit(t, stacks, resolve.KindProfile, "canary-base", func(r *resolve.Resource) {
-		setDevice(r, "eth0", map[string]string{"type": "nic", "name": "eth0", "network": "canary0", "ipv4.address": "10.10.60.77"})
+		setDevice(r, "eth0", map[string]string{"type": "nic", "name": "eth0", "network": "canary0", "ipv4.address": "198.51.100.77"})
 	})
 	edit(t, stacks, resolve.KindInstance, "whoami", func(r *resolve.Resource) { setDevice(r, "eth0", nil) })
 	res := Build(stacks)
-	if res.Errors() != 0 || !strings.Contains(res.Caddy, "10.10.60.77:80") {
+	if res.Errors() != 0 || !strings.Contains(res.Caddy, "198.51.100.77:80") {
 		t.Errorf("the NIC from the profile should be used: %v\n%s", res.Findings, res.Caddy)
 	}
 	// the instance's own device of the same name replaces the profile's whole device
 	edit(t, stacks, resolve.KindInstance, "whoami", func(r *resolve.Resource) {
-		setDevice(r, "eth0", map[string]string{"type": "nic", "name": "eth0", "network": "canary0", "ipv4.address": "10.10.60.10"})
+		setDevice(r, "eth0", map[string]string{"type": "nic", "name": "eth0", "network": "canary0", "ipv4.address": "198.51.100.10"})
 	})
-	if res := Build(stacks); !strings.Contains(res.Caddy, "10.10.60.10:80") {
+	if res := Build(stacks); !strings.Contains(res.Caddy, "198.51.100.10:80") {
 		t.Errorf("the instance's device should win:\n%s", res.Caddy)
 	}
 }
@@ -216,7 +216,7 @@ func TestErrorsStopTheRenderingAndSayWhy(t *testing.T) {
 		}, "not on a managed network"},
 		{"two NICs and no listen", func(t *testing.T, s []Stack) {
 			edit(t, s, resolve.KindInstance, "whoami", func(r *resolve.Resource) {
-				setDevice(r, "eth1", map[string]string{"type": "nic", "network": "canary0", "ipv4.address": "10.10.60.11"})
+				setDevice(r, "eth1", map[string]string{"type": "nic", "network": "canary0", "ipv4.address": "198.51.100.11"})
 			})
 		}, "has 2 NICs (eth0, eth1): name the one"},
 		{"a listen that is not a NIC", func(t *testing.T, s []Stack) {

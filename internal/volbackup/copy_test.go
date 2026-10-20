@@ -114,7 +114,7 @@ func TestPickRestorePoint(t *testing.T) {
 }
 
 func TestCopyRefusesWhatCannotBeABackup(t *testing.T) {
-	srv := newFake("tron", "default", "fast")
+	srv := newFake("homelab", "default", "fast")
 	srv.add("default", "lib", nil)
 	v := Volume{Name: "lib"}
 	if _, err := Copy(srv, v, Target{Name: "x"}, CopyOptions{}); err == nil || !strings.Contains(err.Error(), "no pool") {

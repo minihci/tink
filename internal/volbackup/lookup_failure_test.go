@@ -15,7 +15,7 @@ var forbidden = api.StatusErrorf(http.StatusForbidden, "not authorized")
 // A read that fails says nothing about whether the volume is there. These pin what each use of volumeExists does about that.
 
 func TestVolumeExistsSeparatesAbsentFromFailed(t *testing.T) {
-	f := newFake("tron", "default")
+	f := newFake("homelab", "default")
 	f.add("default", "lib", nil)
 	if ok, err := volumeExists(f, "default", "lib"); !ok || err != nil {
 		t.Errorf("present: %v %v", ok, err)
@@ -30,7 +30,7 @@ func TestVolumeExistsSeparatesAbsentFromFailed(t *testing.T) {
 }
 
 func TestRestoreWillNotGoAheadWhenItCannotTellWhetherTheNewVolumeExists(t *testing.T) {
-	f := newFake("tron", "default")
+	f := newFake("homelab", "default")
 	f.add("default", "lib", nil)
 	f.snaps["default/lib"] = []string{"snap0"}
 	f.getFails = map[string]getFail{"default/new": {err: forbidden}}
@@ -45,7 +45,7 @@ func TestRestoreWillNotGoAheadWhenItCannotTellWhetherTheNewVolumeExists(t *testi
 }
 
 func TestACopyThatFailsAndCannotCheckForItsPartialVolumeSaysSo(t *testing.T) {
-	local := newFake("tron", "default")
+	local := newFake("homelab", "default")
 	local.add("default", "lib", nil)
 	remote := newFake("vps", "default")
 	remote.failCopy = api.StatusErrorf(http.StatusInternalServerError, "the tunnel dropped")
@@ -67,7 +67,7 @@ func TestACopyThatFailsAndCannotCheckForItsPartialVolumeSaysSo(t *testing.T) {
 }
 
 func TestACopyWillNotStartWhenItCannotTellWhetherTheRestorePointNameIsTaken(t *testing.T) {
-	local := newFake("tron", "default")
+	local := newFake("homelab", "default")
 	local.add("default", "lib", nil)
 	remote := newFake("vps", "default")
 	useRemote(t, "vps", remote)

@@ -14,7 +14,7 @@ const somePolicy = `{"proto":1,"copies":[{"target":{"name":"vps","remote":"vps"}
 // discovers work by listing volumes would otherwise copy the copies.
 
 func TestARestorePointDoesNotCarryTheSourcesPolicy(t *testing.T) {
-	local := newFake("tron", "default")
+	local := newFake("homelab", "default")
 	local.add("default", "lib", map[string]string{backupmeta.PolicyKey: somePolicy})
 	remote := newFake("vps", "default")
 	remote.inherit = true // even if Incus copies the snapshot's config onto the new volume
@@ -37,7 +37,7 @@ func TestARestorePointDoesNotCarryTheSourcesPolicy(t *testing.T) {
 }
 
 func TestARestoredVolumeDoesNotCarryThePolicyFromARestorePoint(t *testing.T) {
-	local := newFake("tron", "default") // the source is gone
+	local := newFake("homelab", "default") // the source is gone
 	remote := newFake("vps", "default")
 	remote.inherit = true
 	useRemote(t, "vps", remote)
@@ -56,7 +56,7 @@ func TestARestoredVolumeDoesNotCarryThePolicyFromARestorePoint(t *testing.T) {
 }
 
 func TestARestoreFromALocalSnapshotDoesNotCarryThePolicy(t *testing.T) {
-	local := newFake("tron", "default")
+	local := newFake("homelab", "default")
 	local.inherit = true
 	local.add("default", "lib", map[string]string{backupmeta.PolicyKey: somePolicy, "snapshots.schedule": "@daily"})
 	local.snaps["default/lib"] = []string{"snap0"}

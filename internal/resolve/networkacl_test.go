@@ -80,8 +80,8 @@ func (s *aclServer) UpdateNetworkACL(name string, put api.NetworkACLPut, etag st
 
 // Rules of the lab recipe and a few more, written the way a stack would write them (no state), and the way Incus holds them (state enabled).
 var (
-	ruleHA    = api.NetworkACLRule{Action: "allow", Source: "10.10.30.221/32", Protocol: "tcp", DestinationPort: "8123"}
-	ruleMQTT  = api.NetworkACLRule{Action: "allow", Source: "10.10.30.5/32", Protocol: "tcp", DestinationPort: "1883"}
+	ruleHA    = api.NetworkACLRule{Action: "allow", Source: "198.51.100.221/32", Protocol: "tcp", DestinationPort: "8123"}
+	ruleMQTT  = api.NetworkACLRule{Action: "allow", Source: "198.51.100.5/32", Protocol: "tcp", DestinationPort: "1883"}
 	ruleDNS   = api.NetworkACLRule{Action: "allow", Protocol: "udp", DestinationPort: "53", Description: "name lookups"}
 	ruleBlock = api.NetworkACLRule{Action: "reject", Source: "10.0.0.0/8"}
 )
@@ -114,7 +114,7 @@ name: svclab0-in
 description: only the ingress helper may reach the apps
 ingress:
   - action: allow
-    source: 10.10.30.221/32
+    source: 198.51.100.221/32
     protocol: tcp
     destination_port: 8123
     description: the ingress helper to Home Assistant
@@ -140,7 +140,7 @@ config:
 	if len(r.Ingress) != 2 || len(r.Egress) != 1 {
 		t.Fatalf("rules = %d ingress, %d egress; want 2 and 1", len(r.Ingress), len(r.Egress))
 	}
-	want := api.NetworkACLRule{Action: "allow", Source: "10.10.30.221/32", Protocol: "tcp", DestinationPort: "8123", Description: "the ingress helper to Home Assistant", State: "enabled"}
+	want := api.NetworkACLRule{Action: "allow", Source: "198.51.100.221/32", Protocol: "tcp", DestinationPort: "8123", Description: "the ingress helper to Home Assistant", State: "enabled"}
 	if r.Ingress[0] != want {
 		t.Errorf("ingress[0] = %+v, want %+v (a port written as a bare number must load as the string Incus takes)", r.Ingress[0], want)
 	}
@@ -393,42 +393,42 @@ func TestPlanNetworkACL(t *testing.T) {
 		{
 			"a rule added at the end",
 			liveACL(held(ruleHA), nil), aclResource([]api.NetworkACLRule{ruleHA, ruleMQTT}), ActionUpdate,
-			[]string{"ingress rule 1: add (action=allow source=10.10.30.5/32 protocol=tcp destination_port=1883 state=enabled)"},
+			[]string{"ingress rule 1: add (action=allow source=198.51.100.5/32 protocol=tcp destination_port=1883 state=enabled)"},
 		},
 		{
 			"a rule added in the middle is one add, not a change to every rule after it",
 			liveACL(held(ruleHA, ruleBlock), nil), aclResource([]api.NetworkACLRule{ruleHA, ruleMQTT, ruleBlock}), ActionUpdate,
-			[]string{"ingress rule 1: add (action=allow source=10.10.30.5/32 protocol=tcp destination_port=1883 state=enabled)"},
+			[]string{"ingress rule 1: add (action=allow source=198.51.100.5/32 protocol=tcp destination_port=1883 state=enabled)"},
 		},
 		{
 			"a rule removed",
 			liveACL(held(ruleHA, ruleMQTT), nil), aclResource([]api.NetworkACLRule{ruleHA}), ActionUpdate,
-			[]string{"ingress rule 1 (in the live list): remove (action=allow source=10.10.30.5/32 protocol=tcp destination_port=1883 state=enabled)"},
+			[]string{"ingress rule 1 (in the live list): remove (action=allow source=198.51.100.5/32 protocol=tcp destination_port=1883 state=enabled)"},
 		},
 		{
 			"a rule changed names the field",
 			liveACL(held(ruleHA), nil),
-			aclResource([]api.NetworkACLRule{{Action: "allow", Source: "10.10.30.221/32", Protocol: "tcp", DestinationPort: "8080"}}), ActionUpdate,
+			aclResource([]api.NetworkACLRule{{Action: "allow", Source: "198.51.100.221/32", Protocol: "tcp", DestinationPort: "8080"}}), ActionUpdate,
 			[]string{`ingress rule 0: destination_port: "8123" -> "8080"`},
 		},
 		{
 			"a rule changed in several fields names each",
 			liveACL(held(ruleHA), nil),
-			aclResource([]api.NetworkACLRule{{Action: "reject", Source: "10.10.30.221/32", Protocol: "tcp", DestinationPort: "8123", State: "logged"}}), ActionUpdate,
+			aclResource([]api.NetworkACLRule{{Action: "reject", Source: "198.51.100.221/32", Protocol: "tcp", DestinationPort: "8123", State: "logged"}}), ActionUpdate,
 			[]string{`ingress rule 0: action: "allow" -> "reject"`, `ingress rule 0: state: "enabled" -> "logged"`},
 		},
 		{
 			"the second of three rules changed leaves the others out of the diff",
 			liveACL(held(ruleHA, ruleMQTT, ruleBlock), nil),
-			aclResource([]api.NetworkACLRule{ruleHA, {Action: "allow", Source: "10.10.30.6/32", Protocol: "tcp", DestinationPort: "1883"}, ruleBlock}), ActionUpdate,
-			[]string{`ingress rule 1: source: "10.10.30.5/32" -> "10.10.30.6/32"`},
+			aclResource([]api.NetworkACLRule{ruleHA, {Action: "allow", Source: "198.51.100.6/32", Protocol: "tcp", DestinationPort: "1883"}, ruleBlock}), ActionUpdate,
+			[]string{`ingress rule 1: source: "198.51.100.5/32" -> "198.51.100.6/32"`},
 		},
 		{
 			"the same rules reordered is an update, reported as a reorder",
 			liveACL(held(ruleHA, ruleBlock), nil), aclResource([]api.NetworkACLRule{ruleBlock, ruleHA}), ActionUpdate,
 			[]string{"ingress: rules reordered (the same 2; Incus applies drop, then reject, then allow whatever the order, so filtering is unchanged): " +
-				"[action=allow source=10.10.30.221/32 protocol=tcp destination_port=8123 state=enabled] [action=reject source=10.0.0.0/8 state=enabled] -> " +
-				"[action=reject source=10.0.0.0/8 state=enabled] [action=allow source=10.10.30.221/32 protocol=tcp destination_port=8123 state=enabled]"},
+				"[action=allow source=198.51.100.221/32 protocol=tcp destination_port=8123 state=enabled] [action=reject source=10.0.0.0/8 state=enabled] -> " +
+				"[action=reject source=10.0.0.0/8 state=enabled] [action=allow source=198.51.100.221/32 protocol=tcp destination_port=8123 state=enabled]"},
 		},
 		{
 			"egress is its own list",
@@ -673,9 +673,9 @@ func TestIsACLKey(t *testing.T) {
 }
 
 func TestPlanNetwork_AttachingAnACLToABridgeInUseIsNotDisruption(t *testing.T) {
-	live := liveBridge(map[string]string{"ipv4.address": "10.10.20.1/24", "ipv4.nat": "true"}, "/1.0/instances/mosquitto", "/1.0/instances/ha")
+	live := liveBridge(map[string]string{"ipv4.address": "203.0.113.1/24", "ipv4.nat": "true"}, "/1.0/instances/mosquitto", "/1.0/instances/ha")
 	r := netResource(map[string]string{
-		"ipv4.address":                        "10.10.20.1/24",
+		"ipv4.address":                        "203.0.113.1/24",
 		"security.acls":                       "svc-in",
 		"security.acls.default.egress.action": "allow",
 	})
@@ -873,8 +873,8 @@ func TestRecipe_TheDocsExampleReproducesTheLabRecipeAndConverges(t *testing.T) {
 		t.Fatalf("the example holds %d resources, want the ACL and the network", len(resources))
 	}
 
-	// What `incus network acl rule add svclab0-in ingress action=allow source=10.10.30.221/32 destination_port=8123 protocol=tcp state=enabled` stores.
-	wantRule := api.NetworkACLRule{Action: "allow", Source: "10.10.30.221/32", Protocol: "tcp", DestinationPort: "8123", State: "enabled"}
+	// What `incus network acl rule add svclab0-in ingress action=allow source=198.51.100.221/32 destination_port=8123 protocol=tcp state=enabled` stores.
+	wantRule := api.NetworkACLRule{Action: "allow", Source: "198.51.100.221/32", Protocol: "tcp", DestinationPort: "8123", State: "enabled"}
 	var acl, network Resource
 	for _, r := range resources {
 		switch r.Kind {
@@ -901,7 +901,7 @@ func TestRecipe_TheDocsExampleReproducesTheLabRecipeAndConverges(t *testing.T) {
 
 	// The bridge exists already, with two instances on it, as in the lab: attaching the ACL must go through without allow_disruption.
 	server := &stackServer{}
-	server.netServer.live = liveBridge(map[string]string{"ipv4.address": "10.10.20.1/24", "ipv4.nat": "true"}, "/1.0/instances/ha-lab?project=ha-eval", "/1.0/instances/mosquitto?project=ha-eval")
+	server.netServer.live = liveBridge(map[string]string{"ipv4.address": "203.0.113.1/24", "ipv4.nat": "true"}, "/1.0/instances/ha-lab?project=ha-eval", "/1.0/instances/mosquitto?project=ha-eval")
 	opts := PlanOptions{}.ForResources(resources)
 	var notes []string
 	run := func() ([]string, error) {
@@ -920,7 +920,7 @@ func TestRecipe_TheDocsExampleReproducesTheLabRecipeAndConverges(t *testing.T) {
 	if len(server.created) != 1 || len(server.netServer.updated) != 1 {
 		t.Fatalf("first apply: %d ACL creates, %d network updates; want 1 and 1 (%v)", len(server.created), len(server.netServer.updated), notes)
 	}
-	if got := server.netServer.updated[0].Config; got["security.acls"] != "svclab0-in" || got["ipv4.address"] != "10.10.20.1/24" || got["ipv4.nat"] != "true" {
+	if got := server.netServer.updated[0].Config; got["security.acls"] != "svclab0-in" || got["ipv4.address"] != "203.0.113.1/24" || got["ipv4.nat"] != "true" {
 		t.Errorf("the bridge was written %v: the ACL keys are set and its address and NAT are kept", got)
 	}
 	for _, n := range notes {

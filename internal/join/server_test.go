@@ -90,7 +90,7 @@ func TestTheServersStampsJoinToTheSamePiecesAsTheFiles(t *testing.T) {
 	if len(res.Findings) != 0 {
 		t.Fatalf("findings: %v", res.Findings)
 	}
-	if res.Zone != "home.example.org" || res.LANAddress != "192.0.2.231" || res.MeshAddress != "10.10.50.3" || !res.HasMesh {
+	if res.Zone != "home.example.org" || res.LANAddress != "192.0.2.231" || res.MeshAddress != "192.0.2.3" || !res.HasMesh {
 		t.Errorf("facts = zone %q lan %q mesh %q hasMesh %v", res.Zone, res.LANAddress, res.MeshAddress, res.HasMesh)
 	}
 	for name, got := range map[string]string{"dns": res.DNS, "mesh": res.Mesh, "caddy": res.Caddy, "sso": res.SSO, "acl": res.ACL} {
@@ -227,12 +227,12 @@ func TestFromServerSeesAnOfferNicThatComesFromAProfileAndAnUnmanagedBridgeAsTheJ
 		if f.profiles[i].Name == "canary-base" {
 			f.profiles[i].Devices = map[string]map[string]string{
 				"root": f.profiles[i].Devices["root"],
-				"eth0": {"type": "nic", "name": "eth0", "network": "canary0", "ipv4.address": "10.10.60.77"},
+				"eth0": {"type": "nic", "name": "eth0", "network": "canary0", "ipv4.address": "198.51.100.77"},
 			}
 		}
 	}
 	f.whoami(t).Devices = nil
-	if res := fromServer(t, f); res.Errors() != 0 || !strings.Contains(res.Caddy, "10.10.60.77:80") {
+	if res := fromServer(t, f); res.Errors() != 0 || !strings.Contains(res.Caddy, "198.51.100.77:80") {
 		t.Errorf("the NIC from the profile should be used: %v\n%s", res.Findings, res.Caddy)
 	}
 	// a NIC bridged to br0, which is on the server but is not a network Incus manages: no ACL can restrict it
@@ -246,7 +246,7 @@ func TestAnAppsNetworkWithNoAclIsStillAnErrorFromTheServer(t *testing.T) {
 	f := serverOf(t, load(t))
 	for i := range f.networks {
 		if f.networks[i].Name == "canary0" {
-			f.networks[i].Config = map[string]string{"ipv4.address": "10.10.60.1/24"}
+			f.networks[i].Config = map[string]string{"ipv4.address": "198.51.100.1/24"}
 		}
 	}
 	if res := fromServer(t, f); !strings.Contains(messages(res, Error), "has no ACL attached (security.acls)") {
@@ -293,7 +293,7 @@ func TestAStampBelongsToTheInstanceAndProjectThatCarryIt(t *testing.T) {
 			"user.tink.offer.web.port": "8080", "user.tink.offer.web.proto": "http",
 			"user.tink.publish.other-site": `{"allow":["kids"],"offer":"web"}`,
 		},
-		Devices: map[string]map[string]string{"eth0": {"type": "nic", "network": "canary0", "ipv4.address": "10.10.60.11"}},
+		Devices: map[string]map[string]string{"eth0": {"type": "nic", "network": "canary0", "ipv4.address": "198.51.100.11"}},
 	}})
 	res := fromServer(t, f)
 	if res.Errors() != 0 {
@@ -303,10 +303,10 @@ func TestAStampBelongsToTheInstanceAndProjectThatCarryIt(t *testing.T) {
 	for _, p := range res.Published {
 		got[p.Label] = p
 	}
-	if p := got["whoami"]; p.Project != "canary" || p.Instance != "whoami" || p.Address != "10.10.60.10" {
+	if p := got["whoami"]; p.Project != "canary" || p.Instance != "whoami" || p.Address != "198.51.100.10" {
 		t.Errorf("whoami = %+v", p)
 	}
-	if p := got["other-site"]; p.Project != "other" || p.Instance != "whoami" || p.Address != "10.10.60.11" || p.Offer.Port != 8080 || !reflect.DeepEqual(p.Allow, []string{"kids"}) {
+	if p := got["other-site"]; p.Project != "other" || p.Instance != "whoami" || p.Address != "198.51.100.11" || p.Offer.Port != 8080 || !reflect.DeepEqual(p.Allow, []string{"kids"}) {
 		t.Errorf("other-site = %+v", p)
 	}
 	if len(got) != 3 {

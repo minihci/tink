@@ -1,8 +1,7 @@
-# Exploration notes: Uptime Kuma on Tron via `tink run`, then back out to Tink YAML
+# Exploration notes: Uptime Kuma on a lab host via `tink run`, then back out to Tink YAML
 
-Started 2026-10-09. A path of discovery, not a race. Throwaway project `tink-play` on tron
-(Incus 7.5.1); everything here is deletable. Raw dumps live in the session scratchpad
-(`tron-meta.txt`).
+Started 2026-10-09. A path of discovery, not a race. Throwaway project `tink-play` on a lab host
+(Incus 7.5.1); everything here is deletable and was deleted.
 
 Why Uptime Kuma: popular, one image (`louislam/uptime-kuma:2`), and its README's whole install is
 one command: `docker run -d --restart=always -p 3001:3001 -v uptime-kuma:/app/data --name uptime-kuma louislam/uptime-kuma:2`.
@@ -13,7 +12,7 @@ Port + named volume + restart policy is exactly the docker-run surface `tink run
 ### 1. Getting it running
 
 ```
-tink --remote tron run --name kuma-play --project tink-play --restart unless-stopped \
+tink --remote homelab run --name kuma-play --project tink-play --restart unless-stopped \
   --network incusbr0 -p 3101:3001 -v kuma-data:/app/data docker-oci:louislam/uptime-kuma:2
 ```
 
@@ -29,8 +28,8 @@ Observations (O) and suggestions (S):
   (pool/name), not that it will be created *in project tink-play* (features.storage.volumes=true makes
   that so).
 - **O4. A project with its own profiles has an empty `default` profile** (no root disk, no NIC). I made the
-  project with `features.profiles=false` to inherit tron's default. Worth a sentence in `run` docs.
-- **O5 (important). The default profile on tron has no NIC, so the first run produced a RUNNING instance
+  project with `features.profiles=false` to inherit the server's default. Worth a sentence in `run` docs.
+- **O5 (important). The default profile on the lab host had no NIC, so the first run produced a RUNNING instance
   with no IPv4 at all and a proxy device that points at nothing.** `curl :3101` returned nothing;
   `incus list` showed the IPV4 column empty. Docker users expect networking by default. **S:** at plan
   time, compute the expanded devices (instance + profiles); if there is no `nic`, either warn loudly
@@ -46,7 +45,7 @@ Observations (O) and suggestions (S):
 - **O9. `-v name:/path` deleted instance keeps the volume** (as Docker does). Good, unsurprising.
 - After the fix: HTTP 302 on `:3101`, Uptime Kuma 2.5.6 on its first-run database-setup page.
 
-### 2. The metadata Incus holds (see `tron-meta.txt` for the raw dump)
+### 2. The metadata Incus holds
 
 Four objects came out of one `tink run`: **project** (made by hand), **instance**, **custom volume**, and a
 **cached image** (600 MB, `auto_update: true`, `update_source: docker.io/louislam/uptime-kuma:2`).
@@ -65,7 +64,7 @@ What is on the instance, sorted by who wrote it:
   Incus cannot tell a `tink run` instance from a hand-made one. (Volumes get `user.tink.backup.policy` only
   when a stack declares one.) **S:** `tink run` could stamp `user.tink.run.command` (the original flags, or
   better, the resolved Tink YAML) and a `description`. That is also the cheapest possible "export": read
-  back what you wrote. Costs one config key; and by the Incus lifecycle-event measurement in the tron notes
+  back what you wrote. Costs one config key; and by the Incus lifecycle-event measurement in the author's private notes
   (a config PATCH ~20 ms), the price is nothing.
 - **O11. `devices` vs `expanded_devices`.** The instance's *local* `devices` is exactly what was added
   (eth0, proxy0, volume0); `expanded_devices` also has `root` from the profile. Export from local only.
@@ -144,7 +143,7 @@ level 2:
 - **O23. A typo is a hard error with a good message** ("tink rejects fields it does not know ... check the
   spelling"): the strictness is the right call.
 - **O24. Running `tink plan` on the laptop without `--remote`** says `dial unix /var/lib/incus/unix.socket: no such
-  file`. A hint ("use --remote NAME or $TINK_REMOTE; remotes: tron...") would be kind.
+  file`. A hint ("use --remote NAME or $TINK_REMOTE; remotes: homelab...") would be kind.
 
 ## Where this points (suggestions, in priority order)
 
@@ -189,8 +188,3 @@ Still open: O3 (dry run does not say which project a volume lands in), O4 (proje
 names `proxy0`/`volume0` are exported as they are, which is lossless but uninformative), O14 (why Kuma's instance has no copied `environment.*` while Mosquitto's does, unexplained),
 O15 (a `tink status` is not designed), O19 (a volume's copy policy is noted, not rebuilt into `backup:` + `backup-target`), O22 (`plan` exits 0 when BLOCKED).
 A dry run still shows the image as typed, because resolving the fallback needs the server.
-
-## State left behind on tron
-
-Project `tink-play` holds: instance `kuma-play` (running, http://tron.local:3101, made by the branch's build), volume `kuma-data`, cached
-image `bc73ff04...`. To remove: `tink`-less, `ssh claude@tron.local 'sudo incus delete -f kuma-play --project tink-play < /dev/null; sudo incus storage volume delete default kuma-data --project tink-play < /dev/null; sudo incus image delete bc73ff045084eddb4c7250e186ecdd102bc7da1d01bceea0828e418863d1df15 --project tink-play < /dev/null; sudo incus project delete tink-play < /dev/null'`.

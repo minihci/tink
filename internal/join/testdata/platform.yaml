@@ -1,13 +1,13 @@
-# A trimmed copy of a real platform stack (tron's platform/platform.yaml): only what the join reads. The stamps are the point:
+# A trimmed platform stack: only what the join reads. The stamps are the point:
 # a role on every helper, the zone on the dns helper, and a leg on each of the ingress helper's NICs.
 kind: stack
-name: tron-platform
+name: homelab-platform
 project: tink
 ---
 kind: network
 name: tink0
 config:
-  ipv4.address: 10.10.50.1/24
+  ipv4.address: 192.0.2.1/24
   security.acls: tink0-in
 ---
 kind: profile
@@ -22,7 +22,7 @@ profiles: [tink-base]
 config:
   user.tink.role: identity
 devices:
-  eth0: {name: eth0, type: nic, network: tink0, ipv4.address: 10.10.50.10}
+  eth0: {name: eth0, type: nic, network: tink0, ipv4.address: 192.0.2.10}
 ---
 kind: instance
 name: sso
@@ -33,7 +33,7 @@ config:
   user.tink.offer.web.port: "9091"
   user.tink.offer.web.proto: http
 devices:
-  eth0: {name: eth0, type: nic, network: tink0, ipv4.address: 10.10.50.11}
+  eth0: {name: eth0, type: nic, network: tink0, ipv4.address: 192.0.2.11}
 ---
 kind: instance
 name: dns
@@ -54,7 +54,7 @@ config:
   user.tink.leg.eth0: mesh
   user.tink.leg.eth1: serves
 devices:
-  eth0: {name: eth0, type: nic, network: tink0, ipv4.address: 10.10.50.3}
+  eth0: {name: eth0, type: nic, network: tink0, ipv4.address: 192.0.2.3}
   eth1: {name: eth1, type: nic, nictype: bridged, parent: br0, hwaddr: "02:1a:2b:00:23:31", ipv4.address: 192.0.2.231/24, ipv4.gateway: none}
 ---
 kind: instance
@@ -64,4 +64,4 @@ profiles: [tink-base]
 config:
   user.tink.role: mesh
 devices:
-  eth0: {name: eth0, type: nic, network: tink0, ipv4.address: 10.10.50.12}
+  eth0: {name: eth0, type: nic, network: tink0, ipv4.address: 192.0.2.12}

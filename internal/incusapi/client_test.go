@@ -17,8 +17,8 @@ func TestWantsRemote(t *testing.T) {
 	}{
 		"no remote: the local daemon":                               {"", "", false, ""},
 		"no remote, any socket":                                     {"", "/run/x.sock", false, ""},
-		"a remote, no socket":                                       {"tron", "", true, ""},
-		"a remote and an explicit socket contradict":                {"tron", "/tmp/other.sock", false, "contradict"},
+		"a remote, no socket":                                       {"homelab", "", true, ""},
+		"a remote and an explicit socket contradict":                {"homelab", "/tmp/other.sock", false, "contradict"},
 		"the old default path is an explicit socket like any other": {"lab", "/var/lib/incus/unix.socket", false, "contradict"},
 		"the built-in 'local' remote means the daemon":              {"local", "", false, ""},
 		"'local' with an explicit socket is just local":             {"local", "/tmp/other.sock", false, ""},
@@ -56,8 +56,8 @@ func TestConnectWithoutASocketFollowsINCUS_SOCKET(t *testing.T) {
 
 func TestIsRemoteFollowsUseRemote(t *testing.T) {
 	t.Cleanup(func() { UseRemote("") })
-	UseRemote("tron")
-	if !IsRemote() || Remote() != "tron" {
+	UseRemote("homelab")
+	if !IsRemote() || Remote() != "homelab" {
 		t.Errorf("IsRemote=%v Remote=%q", IsRemote(), Remote())
 	}
 	UseRemote("local")

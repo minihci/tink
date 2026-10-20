@@ -156,7 +156,7 @@ func (f *verifyFake) restorePointOn(project, pool, name string) {
 		backupmeta.MarkerCopyAt:     "2026-10-12T03:00:00Z",
 		backupmeta.MarkerCopyTarget: "nas",
 		backupmeta.MarkerCopySnap:   "tink-copy-20261012-030000",
-		backupmeta.MarkerCopyServer: "tron",
+		backupmeta.MarkerCopyServer: "homelab",
 	})
 }
 
@@ -387,7 +387,7 @@ func TestVerifyFromATargetRestoresIntoTheCheckProject(t *testing.T) {
 				backupmeta.MarkerCopyAt:     "2026-10-12T03:00:00Z",
 				backupmeta.MarkerCopyTarget: "vps",
 				backupmeta.MarkerCopySnap:   "tink-copy-20261012-030000",
-				backupmeta.MarkerCopyServer: "tron",
+				backupmeta.MarkerCopyServer: "homelab",
 			})
 			useRemote(t, "vps", remote)
 		}

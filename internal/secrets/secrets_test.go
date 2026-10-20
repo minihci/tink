@@ -77,12 +77,12 @@ func TestSetGetRoundTripAndPersistence(t *testing.T) {
 }
 
 func TestEveryRecipientCanDecryptAndStrangersCannot(t *testing.T) {
-	mac, tron, stranger := newKey(t), newKey(t), newKey(t)
-	s := storeWith(t, mac, tron)
+	mac, homelab, stranger := newKey(t), newKey(t), newKey(t)
+	s := storeWith(t, mac, homelab)
 	if err := s.Set("x-secret", "a-long-enough-value"); err != nil {
 		t.Fatal(err)
 	}
-	for name, k := range map[string]keypair{"mac": mac, "tron": tron} {
+	for name, k := range map[string]keypair{"mac": mac, "homelab": homelab} {
 		if v, err := s.Get("x-secret", ids(k)); err != nil || v != "a-long-enough-value" {
 			t.Errorf("%s: Get = %q, %v", name, v, err)
 		}

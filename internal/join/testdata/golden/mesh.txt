@@ -2,11 +2,11 @@
   {
     "name": "whoami.home.example.org",
     "type": "A",
-    "value": "10.10.50.3"
+    "value": "192.0.2.3"
   },
   {
     "name": "whoami-admin.home.example.org",
     "type": "A",
-    "value": "10.10.50.3"
+    "value": "192.0.2.3"
   }
 ]

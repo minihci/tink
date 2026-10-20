@@ -8,7 +8,7 @@ For an instance that already exists, `plan` now adds one line under it:
 
 ```
   instance/ha-restore-b: would update
-      device.eth0.ipv4.address: "10.10.10.232" -> (unset)
+      device.eth0.ipv4.address: "203.0.113.232" -> (unset)
       not in the stack (left alone): device.config (disk), config.boot.autorestart, config.limits.cpu, config.limits.memory
 note: 1 instance carries devices, config keys or profiles that the stack does not declare (the "not in the stack" lines above).
       plan changes nothing because of it and apply never removes them; declare them to manage them, or ignore the line. See docs/plan-extras.md.

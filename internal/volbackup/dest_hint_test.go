@@ -23,7 +23,7 @@ func connectFailsWith(t *testing.T, err error) {
 func TestAMissingRemoteIsExplainedFromWhatTheTargetDeclared(t *testing.T) {
 	connectFailsWith(t, &incusapi.RemoteNotConfiguredError{Name: "vps", Advice: "add it with `incus remote add`"})
 	tgt := Target{Name: "offsite", Remote: "vps", Address: "https://vps.example.com:8443", Fingerprint: hintFingerprint}
-	_, err := tgt.dest(newFake("tron", "default"), Volume{Name: "lib"})
+	_, err := tgt.dest(newFake("homelab", "default"), Volume{Name: "lib"})
 	if err == nil {
 		t.Fatal("the remote is missing: want an error")
 	}
@@ -43,7 +43,7 @@ func TestAMissingRemoteIsExplainedFromWhatTheTargetDeclared(t *testing.T) {
 func TestAMissingRemoteWithNothingDeclaredGetsTheUsualMessageOnly(t *testing.T) {
 	cause := &incusapi.RemoteNotConfiguredError{Name: "vps", Advice: "add it with `incus remote add`"}
 	connectFailsWith(t, cause)
-	_, err := Target{Name: "offsite", Remote: "vps"}.dest(newFake("tron", "default"), Volume{Name: "lib"})
+	_, err := Target{Name: "offsite", Remote: "vps"}.dest(newFake("homelab", "default"), Volume{Name: "lib"})
 	want := `target "offsite": remote "vps": ` + cause.Error()
 	if err == nil || err.Error() != want {
 		t.Errorf("a target that opted in to nothing must read exactly as before:\n  got:  %v\n  want: %s", err, want)
@@ -53,7 +53,7 @@ func TestAMissingRemoteWithNothingDeclaredGetsTheUsualMessageOnly(t *testing.T) 
 // A remote that is configured but does not answer is not fixed by adding it again, so it must not be told to.
 func TestAnUnreachableRemoteIsNotToldToBeAddedAgain(t *testing.T) {
 	connectFailsWith(t, errors.New("dial tcp 10.0.0.7:8443: i/o timeout"))
-	_, err := Target{Name: "offsite", Remote: "vps", Address: "https://10.0.0.7:8443", Fingerprint: hintFingerprint}.dest(newFake("tron", "default"), Volume{Name: "lib"})
+	_, err := Target{Name: "offsite", Remote: "vps", Address: "https://10.0.0.7:8443", Fingerprint: hintFingerprint}.dest(newFake("homelab", "default"), Volume{Name: "lib"})
 	if err == nil || strings.Contains(err.Error(), "tink remote add") {
 		t.Errorf("only a missing remote gets the add command: %v", err)
 	}

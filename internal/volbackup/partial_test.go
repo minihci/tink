@@ -25,7 +25,7 @@ func partialCfg(volume, server string, started time.Time) map[string]string {
 // While a copy is going on, the new volume is marked in progress and is NOT a restore point; when it completes the
 // marks are swapped.
 func TestACopyIsMarkedInProgressUntilItCompletes(t *testing.T) {
-	local := newFake("tron", "default")
+	local := newFake("homelab", "default")
 	local.add("default", "lib", nil)
 	remote := newFake("vps", "default")
 	remote.entered, remote.release = make(chan struct{}), make(chan struct{})
@@ -79,26 +79,26 @@ func TestACopyIsMarkedInProgressUntilItCompletes(t *testing.T) {
 }
 
 func TestSweepRemovesOnlyAbandonedCopiesOfThisVolumeFromThisServer(t *testing.T) {
-	local := newFake("tron", "default")
+	local := newFake("homelab", "default")
 	local.add("default", "lib", nil)
 	remote := newFake("vps", "default")
 	useRemote(t, "vps", remote)
 	old := sweepNow.Add(-8 * 24 * time.Hour)
 	young := sweepNow.Add(-2 * time.Hour)
 
-	remote.add("default", "lib-bk-abandoned", partialCfg("lib", "tron", old))
+	remote.add("default", "lib-bk-abandoned", partialCfg("lib", "homelab", old))
 	remote.add("default", "lib-bk-abandoned-legacy", partialCfg("lib", "", old)) // no server recorded: treated as ours
 
 	keeps := map[string]map[string]string{
-		"lib-bk-young":        partialCfg("lib", "tron", young), // might still be running
+		"lib-bk-young":        partialCfg("lib", "homelab", young), // might still be running
 		"lib-bk-other-server": partialCfg("lib", "other-host", old),
-		"other-bk-abandoned":  partialCfg("other", "tron", old), // another volume's
-		"lib-bk-unmarked":     {},                               // looks like ours, has no mark: never touched
-		"lib-bk-no-time":      {backupmeta.MarkerPartialOf: backupmeta.CopyOf("", "default", "lib"), backupmeta.MarkerCopyServer: "tron"},
-		"lib-bk-bad-time":     {backupmeta.MarkerPartialOf: backupmeta.CopyOf("", "default", "lib"), backupmeta.MarkerPartialAt: "last tuesday", backupmeta.MarkerCopyServer: "tron"},
+		"other-bk-abandoned":  partialCfg("other", "homelab", old), // another volume's
+		"lib-bk-unmarked":     {},                                  // looks like ours, has no mark: never touched
+		"lib-bk-no-time":      {backupmeta.MarkerPartialOf: backupmeta.CopyOf("", "default", "lib"), backupmeta.MarkerCopyServer: "homelab"},
+		"lib-bk-bad-time":     {backupmeta.MarkerPartialOf: backupmeta.CopyOf("", "default", "lib"), backupmeta.MarkerPartialAt: "last tuesday", backupmeta.MarkerCopyServer: "homelab"},
 	}
 	// a RESTORE POINT that somehow still carries an in-progress mark: a finished copy is never swept
-	both := partialCfg("lib", "tron", old)
+	both := partialCfg("lib", "homelab", old)
 	both[backupmeta.MarkerCopyOf] = backupmeta.CopyOf("", "default", "lib")
 	both[backupmeta.MarkerCopyAt] = old.Format(time.RFC3339)
 	keeps["lib-bk-finished-but-marked"] = both
@@ -124,11 +124,11 @@ func TestSweepRemovesOnlyAbandonedCopiesOfThisVolumeFromThisServer(t *testing.T)
 }
 
 func TestSweepIsPlannedByADryRunAndDoesNothing(t *testing.T) {
-	local := newFake("tron", "default")
+	local := newFake("homelab", "default")
 	local.add("default", "lib", nil)
 	remote := newFake("vps", "default")
 	useRemote(t, "vps", remote)
-	remote.add("default", "lib-bk-abandoned", partialCfg("lib", "tron", sweepNow.Add(-8*24*time.Hour)))
+	remote.add("default", "lib-bk-abandoned", partialCfg("lib", "homelab", sweepNow.Add(-8*24*time.Hour)))
 	res, err := Copy(local, Volume{Name: "lib"}, remoteTarget(), CopyOptions{DryRun: true, Now: func() time.Time { return sweepNow }})
 	if err != nil {
 		t.Fatal(err)
@@ -143,11 +143,11 @@ func TestSweepIsPlannedByADryRunAndDoesNothing(t *testing.T) {
 
 // A sweep that cannot delete is like a prune that cannot: the copy happened, so it is not a failed copy.
 func TestASweepFailureIsNotAFailedCopy(t *testing.T) {
-	local := newFake("tron", "default")
+	local := newFake("homelab", "default")
 	local.add("default", "lib", nil)
 	remote := newFake("vps", "default")
 	useRemote(t, "vps", remote)
-	remote.add("default", "lib-bk-abandoned", partialCfg("lib", "tron", sweepNow.Add(-8*24*time.Hour)))
+	remote.add("default", "lib-bk-abandoned", partialCfg("lib", "homelab", sweepNow.Add(-8*24*time.Hour)))
 	remote.failDelete = true
 	_, err := Copy(local, Volume{Name: "lib"}, remoteTarget(), CopyOptions{Now: func() time.Time { return sweepNow }})
 	if err == nil || !errors.Is(err, errPrune) || !strings.Contains(err.Error(), "the copy succeeded") || !strings.Contains(err.Error(), "abandoned partial copy") {
@@ -164,7 +164,7 @@ func TestASweepFailureIsNotAFailedCopy(t *testing.T) {
 
 func TestSweepNeverRunsAgainstTheOtherServersCopyInFlight(t *testing.T) {
 	// another server started a copy of a same-named volume a moment ago: it is young, and it is theirs, so doubly safe
-	local := newFake("tron", "default")
+	local := newFake("homelab", "default")
 	local.add("default", "lib", nil)
 	remote := newFake("vps", "default")
 	useRemote(t, "vps", remote)
@@ -179,12 +179,12 @@ func TestAGraceOfSevenDays(t *testing.T) {
 	if PartialGrace != 7*24*time.Hour {
 		t.Errorf("PartialGrace = %s: a slow copy of a big volume must not be mistaken for an abandoned one", PartialGrace)
 	}
-	local := newFake("tron", "default")
+	local := newFake("homelab", "default")
 	local.add("default", "lib", nil)
 	remote := newFake("vps", "default")
 	useRemote(t, "vps", remote)
-	remote.add("default", "lib-bk-just-inside", partialCfg("lib", "tron", sweepNow.Add(-PartialGrace+time.Minute)))
-	remote.add("default", "lib-bk-just-outside", partialCfg("lib", "tron", sweepNow.Add(-PartialGrace-time.Minute)))
+	remote.add("default", "lib-bk-just-inside", partialCfg("lib", "homelab", sweepNow.Add(-PartialGrace+time.Minute)))
+	remote.add("default", "lib-bk-just-outside", partialCfg("lib", "homelab", sweepNow.Add(-PartialGrace-time.Minute)))
 	res, _ := Copy(local, Volume{Name: "lib"}, remoteTarget(), CopyOptions{Now: func() time.Time { return sweepNow }})
 	if len(res.Swept) != 1 || res.Swept[0] != "lib-bk-just-outside" {
 		t.Errorf("only the one older than the grace: %v", res.Swept)

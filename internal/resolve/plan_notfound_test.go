@@ -77,7 +77,7 @@ var (
 	errNotFound  = api.StatusErrorf(http.StatusNotFound, "not found")
 	errForbidden = api.StatusErrorf(http.StatusForbidden, "not authorized")
 	errServer    = api.StatusErrorf(http.StatusInternalServerError, "database is locked")
-	errDropped   = fmt.Errorf("Get \"https://tron:8443/1.0\": %w", &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")})
+	errDropped   = fmt.Errorf("Get \"https://homelab:8443/1.0\": %w", &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")})
 )
 
 // notAbsent are the failures that say nothing about whether the object exists.

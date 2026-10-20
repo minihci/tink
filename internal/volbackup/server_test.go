@@ -19,7 +19,7 @@ func point(name, server, at string) map[string]string {
 }
 
 func TestACopyRecordsWhichServerMadeIt(t *testing.T) {
-	local := newFake("tron", "default")
+	local := newFake("homelab", "default")
 	local.add("default", "lib", nil)
 	remote := newFake("vps", "default")
 	useRemote(t, "vps", remote)
@@ -28,14 +28,14 @@ func TestACopyRecordsWhichServerMadeIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	// the SOURCE server's name, not the target's and not this machine's
-	if got := remote.vols["default/"+res.Volume].Config[backupmeta.MarkerCopyServer]; got != "tron" {
-		t.Errorf("copy-server = %q, want the source server's name %q", got, "tron")
+	if got := remote.vols["default/"+res.Volume].Config[backupmeta.MarkerCopyServer]; got != "homelab" {
+		t.Errorf("copy-server = %q, want the source server's name %q", got, "homelab")
 	}
 }
 
 // Two servers copy a volume of the same name into one target. Each prunes only what it made.
 func TestPruneLeavesAnotherServersRestorePointsAlone(t *testing.T) {
-	local := newFake("tron", "default")
+	local := newFake("homelab", "default")
 	local.add("default", "lib", nil)
 	remote := newFake("vps", "default")
 	useRemote(t, "vps", remote)
@@ -44,7 +44,7 @@ func TestPruneLeavesAnotherServersRestorePointsAlone(t *testing.T) {
 	oldB := time.Date(2026, 8, 2, 4, 0, 0, 0, time.UTC).Format(time.RFC3339)
 	oldC := time.Date(2026, 8, 3, 4, 0, 0, 0, time.UTC).Format(time.RFC3339)
 	recent := time.Date(2026, 10, 6, 4, 0, 0, 0, time.UTC).Format(time.RFC3339)
-	remote.add("default", "lib-bk-mine-old", point("", "tron", oldA))
+	remote.add("default", "lib-bk-mine-old", point("", "homelab", oldA))
 	remote.add("default", "lib-bk-legacy-old", point("", "", oldB))           // made before the marker existed: treated as ours
 	remote.add("default", "lib-bk-theirs-old", point("", "other-host", oldC)) // another server's, and old enough to be pruned
 	remote.add("default", "lib-bk-theirs-recent", point("", "other-host", recent))
@@ -83,7 +83,7 @@ func sameSet(a, b []string) bool {
 }
 
 func TestADryRunPlansOnlyOurOwnPrunes(t *testing.T) {
-	local := newFake("tron", "default")
+	local := newFake("homelab", "default")
 	local.add("default", "lib", nil)
 	remote := newFake("vps", "default")
 	useRemote(t, "vps", remote)
@@ -102,8 +102,8 @@ func TestADryRunPlansOnlyOurOwnPrunes(t *testing.T) {
 }
 
 func TestSplitByServer(t *testing.T) {
-	pts := []RestorePoint{{Volume: "a", Server: "tron"}, {Volume: "b"}, {Volume: "c", Server: "zed"}, {Volume: "d", Server: "alpha"}, {Volume: "e", Server: "zed"}}
-	own, others := splitByServer(pts, "tron")
+	pts := []RestorePoint{{Volume: "a", Server: "homelab"}, {Volume: "b"}, {Volume: "c", Server: "zed"}, {Volume: "d", Server: "alpha"}, {Volume: "e", Server: "zed"}}
+	own, others := splitByServer(pts, "homelab")
 	if len(own) != 2 || own[0].Volume != "a" || own[1].Volume != "b" {
 		t.Errorf("own = %v: ours are the marked-as-us and the unmarked", own)
 	}
@@ -118,13 +118,13 @@ func TestRestoreFindsAnotherServersPointsAndSaysSo(t *testing.T) {
 	remote := newFake("vps", "default")
 	useRemote(t, "vps", remote)
 	at := time.Date(2026, 10, 1, 4, 0, 0, 0, time.UTC).Format(time.RFC3339)
-	remote.add("default", "lib-bk-20261001-040000", point("", "tron", at))
+	remote.add("default", "lib-bk-20261001-040000", point("", "homelab", at))
 
 	res, err := Restore(local, Volume{Name: "lib"}, RestoreOptions{From: &Target{Name: "vps", Remote: "vps"}, As: "lib-recovered"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.MadeBy != "tron" {
+	if res.MadeBy != "homelab" {
 		t.Errorf("the restore must say it used another server's backup: MadeBy = %q", res.MadeBy)
 	}
 	if local.vols["default/lib-recovered"] == nil {
@@ -132,10 +132,10 @@ func TestRestoreFindsAnotherServersPointsAndSaysSo(t *testing.T) {
 	}
 
 	// and from its own point nothing is said
-	local2 := newFake("tron", "default")
+	local2 := newFake("homelab", "default")
 	remote2 := newFake("vps", "default")
 	useRemote(t, "vps", remote2)
-	remote2.add("default", "lib-bk-20261001-040000", point("", "tron", at))
+	remote2.add("default", "lib-bk-20261001-040000", point("", "homelab", at))
 	res, err = Restore(local2, Volume{Name: "lib"}, RestoreOptions{From: &Target{Name: "vps", Remote: "vps"}, As: "x"})
 	if err != nil || res.MadeBy != "" {
 		t.Errorf("a restore of this server's own point says nothing: %v MadeBy=%q", err, res.MadeBy)
@@ -143,7 +143,7 @@ func TestRestoreFindsAnotherServersPointsAndSaysSo(t *testing.T) {
 }
 
 func TestTheSameCopyDoesNotRunTwiceAtOnce(t *testing.T) {
-	local := newFake("tron", "default")
+	local := newFake("homelab", "default")
 	local.add("default", "lib", nil)
 	remote := newFake("vps", "default")
 	remote.entered, remote.release = make(chan struct{}), make(chan struct{})
@@ -190,7 +190,7 @@ func TestTheSameCopyDoesNotRunTwiceAtOnce(t *testing.T) {
 }
 
 func TestTheGuardIsReleasedAfterAFailureToo(t *testing.T) {
-	local := newFake("tron", "default")
+	local := newFake("homelab", "default")
 	local.add("default", "lib", nil)
 	remote := newFake("vps", "default")
 	useRemote(t, "vps", remote)

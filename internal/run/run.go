@@ -495,8 +495,8 @@ func hasNIC(devices map[string]map[string]string) bool {
 }
 
 // checkNetwork looks for the one thing that makes a published port impossible: no network device at all, in the instance's own devices
-// or in any profile it will get (Incus uses "default" when none is named). An Incus profile does not have to carry a NIC, and tron's
-// default does not, so an instance made without --network is RUNNING with no address and a proxy that forwards to nothing, which looks
+// or in any profile it will get (Incus uses "default" when none is named). An Incus profile does not have to carry a NIC, and a
+// default profile does not, so an instance made without --network is RUNNING with no address and a proxy that forwards to nothing, which looks
 // like a bug in the app. Published ports without a NIC are refused; no NIC and no ports only warns, since an isolated app is legitimate.
 func checkNetwork(scoped incus.InstanceServer, spec *Spec) (warning string, err error) {
 	if hasNIC(spec.Devices) {

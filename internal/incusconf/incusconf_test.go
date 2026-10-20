@@ -11,13 +11,13 @@ import (
 func TestWithBuiltinsFillsOnlyWhatIsMissing(t *testing.T) {
 	conf := &cliconfig.Config{Remotes: map[string]cliconfig.Remote{
 		"docker-oci": {Addrs: []string{"https://registry.example"}, Protocol: "oci", Public: true}, // the user's own
-		"tron":       {Addrs: []string{"https://tron:8443"}, Protocol: "incus"},
+		"homelab":    {Addrs: []string{"https://homelab:8443"}, Protocol: "incus"},
 	}}
 	WithBuiltins(conf)
 	if got := conf.Remotes["docker-oci"].Addrs[0]; got != "https://registry.example" {
 		t.Errorf("a remote the client defines must win over the built-in, got %q", got)
 	}
-	for _, name := range []string{"ghcr", "images", "tron"} {
+	for _, name := range []string{"ghcr", "images", "homelab"} {
 		if _, ok := conf.Remotes[name]; !ok {
 			t.Errorf("remote %q missing after WithBuiltins", name)
 		}

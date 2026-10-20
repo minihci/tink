@@ -20,7 +20,7 @@ var (
 
 // poolCopy is the plainest copy: a volume to a second pool on the same server, at a fixed time.
 func poolCopy() (*fakeIncus, Volume, Target, CopyOptions) {
-	local := newFake("tron", "default", "nas")
+	local := newFake("homelab", "default", "nas")
 	local.add("default", "lib", nil)
 	return local, Volume{Name: "lib"}, Target{Name: "nas", Pool: "nas"}, CopyOptions{Now: func() time.Time { return remoteNow }}
 }
@@ -44,7 +44,7 @@ func TestACopyReportsEachStepItTakes(t *testing.T) {
 }
 
 func TestACopyOfAVolumeThatCannotBeReadSaysSo(t *testing.T) {
-	local := newFake("tron", "default", "nas")
+	local := newFake("homelab", "default", "nas")
 	_, _, tg, opts := poolCopy()
 	_, err := copyTo(local, Volume{Name: "lib"}, tg, opts)
 	if err == nil || !strings.Contains(err.Error(), "volume default/lib:") {
@@ -80,11 +80,11 @@ func TestADryRunSaysWhatItWouldPruneAndSweepAndChangesNothing(t *testing.T) {
 	local, v, tg, opts := poolCopy()
 	of := backupmeta.CopyOf("", "default", "lib")
 	point := func(at string) map[string]string {
-		return map[string]string{backupmeta.MarkerCopyOf: of, backupmeta.MarkerCopyAt: at, backupmeta.MarkerCopyTarget: "nas", backupmeta.MarkerCopyServer: "tron"}
+		return map[string]string{backupmeta.MarkerCopyOf: of, backupmeta.MarkerCopyAt: at, backupmeta.MarkerCopyTarget: "nas", backupmeta.MarkerCopyServer: "homelab"}
 	}
 	local.add("nas", "lib-bk-20260801-040000", point("2026-08-01T04:00:00Z")) // expired under 30d, and not the newest
 	local.add("nas", "lib-bk-20261006-040000", point("2026-10-06T04:00:00Z")) // the newest: never pruned
-	local.add("nas", "lib-bk-20260901-040000", partialCfg("lib", "tron", time.Date(2026, 9, 1, 4, 0, 0, 0, time.UTC)))
+	local.add("nas", "lib-bk-20260901-040000", partialCfg("lib", "homelab", time.Date(2026, 9, 1, 4, 0, 0, 0, time.UTC)))
 	before := strings.Join(local.names("nas"), ",")
 	opts.DryRun, opts.Retain = true, "30d"
 	res, err := copyTo(local, v, tg, opts)
@@ -245,7 +245,7 @@ func TestAFinishedRestorePointCarriesExactlyItsMarkers(t *testing.T) {
 		backupmeta.MarkerCopyAt:     remoteNow.UTC().Format(time.RFC3339),
 		backupmeta.MarkerCopyTarget: "nas",
 		backupmeta.MarkerCopySnap:   wantSnapshot,
-		backupmeta.MarkerCopyServer: "tron",
+		backupmeta.MarkerCopyServer: "homelab",
 	}
 	for k, w := range want {
 		if got[k] != w {

@@ -128,7 +128,7 @@ The helper is a client of its own host, so it needs the host's HTTPS API. There 
 | who can reach the API port | every container on the bridge (see below) | only the helper |
 
 - **`auto`, the default:** network when both conditions hold, otherwise a proxy device, with one line saying why (`note: the helper will reach the host's API
-  through a proxy device, not over the network, because the host's API listens on 127.0.0.1:8443 (core.https_address), which does not include 10.10.50.1, the
+  through a proxy device, not over the network, because the host's API listens on 127.0.0.1:8443 (core.https_address), which does not include 192.0.2.1, the
   host's address on tink0`). The reasons it can give: the NIC's network is not managed by Incus or not a bridge, it has no IPv4 address, the default profile's
   NIC names no network, or the listener does not cover the bridge's address (loopback, another interface's address, an IPv6 address).
 - **`network`** insists, and fails before anything is created, saying what to change. For a listener that does not cover the bridge, that is
@@ -203,8 +203,8 @@ next attempt works: the scheduler retries a failing copy with a growing delay (u
 data passes through it, including copies to another server.
 
 ```
-tink --remote tron backup run                # the stack's volumes; hands them to the helper and follows; Ctrl-C stops following, not the run
-tink --remote tron backup run lib --due      # one volume, only if its copy is due
+tink --remote homelab backup run             # the stack's volumes; hands them to the helper and follows; Ctrl-C stops following, not the run
+tink --remote homelab backup run lib --due   # one volume, only if its copy is due
 tink backup run --local                      # run it here, whatever (a copy to another server is relayed through this machine)
 tink backup run --helper                     # hand it to the helper or fail; never run it here
 ```
@@ -230,10 +230,10 @@ helper instance's file API, so they work from any machine that can reach the ser
 to be running, and find it the way `status` does (`--instance` and `--project` choose between several).
 
 ```
-tink --remote tron helper jobs              # newest first: id, state, kind, origin (schedule or trigger), age, error
-tink --remote tron helper log ID            # the job's status document and its log
-tink --remote tron helper log -f ID         # keep printing the log until the job is over; exits non-zero if it failed or was cancelled
-tink --remote tron helper cancel ID         # takes effect between copies; a copy under way finishes
+tink --remote homelab helper jobs           # newest first: id, state, kind, origin (schedule or trigger), age, error
+tink --remote homelab helper log ID         # the job's status document and its log
+tink --remote homelab helper log -f ID      # keep printing the log until the job is over; exits non-zero if it failed or was cancelled
+tink --remote homelab helper cancel ID      # takes effect between copies; a copy under way finishes
 ```
 
 `log -f` reads the job every 2 seconds at first and backs off to every 30 while nothing changes, because **each read is a request to the server that leaves an
