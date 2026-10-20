@@ -1,6 +1,6 @@
 # Design: reading groups from the directory and projecting them into the mesh policy
 
-**Status: a design note, 2026-10-13. The reader, the projector and the command are built** (#80; user page [identity.md](identity.md)), tested, and run live against a lab LLDAP. The experiments below were run against a throwaway Headscale on the same day. It is the first slice of the identity role described in #131: the smallest piece that makes "tink reads groups from the directory" real. Claims are marked **[lab]** (seen on a real host), **[docs]**, **[code]** (this repository), **[proposed]** or **[verify]**.
+**Status: describes what is built, 2026-10-13. The reader, the projector and the command are built** (#80; user page [identity.md](identity.md)), tested, and run live against a lab LLDAP. The experiments below were run against a throwaway Headscale on the same day. It is the first slice of the identity role described in #131: the smallest piece that makes "tink reads groups from the directory" real. Claims are marked **[lab]** (seen on a real host), **[docs]**, **[code]** (this repository) or **[verify]**.
 
 ## The job
 
@@ -27,7 +27,7 @@ The same shape (a role package, an engine package, a pure projector) is what the
 
 ## How the reader reaches the directory
 
-**Default: through the Incus exec API on the directory's instance. [proposed]**
+**Default: through the Incus exec API on the directory's instance. [code]**
 
 tink runs a fixed script inside the LLDAP container with `incusapi.ExecWithStdin`, which exists for "handing a command something that must not appear on a command line" **[code]**. The script logs in with a read-only user and runs one GraphQL query with `curl` and `jq`, and prints the JSON. The Go side parses it.
 
@@ -37,7 +37,7 @@ tink runs a fixed script inside the LLDAP container with `incusapi.ExecWithStdin
 
 ## The credential
 
-**A read-only directory user, kept as a tink secret, passed on standard input. [proposed]**
+**A read-only directory user, kept as a tink secret, passed on standard input. [code]**
 
 - In the lab, a member of `lldap_strict_readonly` could log in, read every group with its members, read every user with their groups, and was **refused** a write with `Unauthorized group creation` **[lab]**. So the reader needs no administrator.
 - The password is a tink secret (`--password-secret NAME`), resolved by the existing secrets package and written to the script's stdin. It never appears on a command line, in the instance's config or in Incus's operation record. Output is passed through the existing redactor.
@@ -111,4 +111,3 @@ A `kind: identity` resource and grants; the Authelia projector; writing to the d
 
 1. The member-name format for OIDC-created Headscale users.
 2. Whether a group with no members should still be emitted (an empty group in a policy is legal; it may hide a mistake).
-3. The command's name: `tink identity groups` reads naturally now, and should survive the arrival of `kind: identity`.
