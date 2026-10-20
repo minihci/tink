@@ -30,7 +30,7 @@ tink is one binary of about 24,500 lines (plus about 28,000 of tests) with seven
 | 3 recipe | not built | 0 |
 | to retire | `bootstrap` (`tink deploy`) 1,097, `ingress` 640, `backup` 18, and `cmd/tink/join.go` 332 | about 2,100 |
 
-**The rule that makes the rings real:** the converger knows about *kinds*, never about capabilities. Today it does: `resolve` imports `backupmeta`, `helper` and `run` **[code]**, so the core cannot be read or changed without understanding backup and the helper. The boundary to draw is that a capability reaches the converger through a small, fixed set of extension points, and the converger imports none of them.
+**The rule that makes the rings real:** the converger knows about *kinds*, never about capabilities. Until #128 it did: `resolve` imported `backupmeta`, `helper` and `run`. Backup has moved behind a seam (`backupext`); `run` is the converger's own instance engine, in ring 1 in the table above, so that import is within the ring; `resolve` still imports `helper` for `kind: helper` **[code]**. The boundary to draw is that a capability reaches the converger through a small, fixed set of extension points, and the converger imports none of them. `internal/resolve/imports_test.go` lists what it may import, so a new import of a capability fails the build.
 
 ### Three extension points, and no more
 
@@ -122,7 +122,7 @@ Each step is done when its check passes. Steps in a phase can run in parallel; p
 - Consolidate preparation into a single function used by `plan` and `plan apply`; the pass order lives in one place. The flags both commands share (`--socket`, `--offline`, `--secrets`, `--identity`) are declared once, as persistent flags on `plan`, so `apply` and the future `plan explain` inherit them. *Done (#125):* `internal/prepare` runs load, secrets, connect, image qualification and `Levels` in that order for both commands, and apply uses the connection it made instead of opening a second one; a pass is added in `prepare` and nowhere else.
 - **Ownership stamps, phase 1:** stamp what tink creates (instances, profiles, networks and the rest, as volumes are today) from the moment it is created, with an explicit adopt for what already exists. It makes "what is tink's to remove" answerable, which "not in the stack" cannot. Reporting and pruning stay out until something needs them.
 - Add the stack-level `defaults:` pass (restart flags, NIC name, limits, the backup block, role stamps), local to the converger.
-- Move capability knowledge out of `resolve` behind the three extension points, starting with backup (`backupmeta` is imported by the core today).
+- Move capability knowledge out of `resolve` behind the three extension points, starting with backup. Backup is done (#128; `backupext`, see [resolver-architecture.md](resolver-architecture.md), "Update, 2026-10-20: the converger imports no capability"). What remains is `kind: helper`, which needs a kind extension point (decode, validate, plan and apply per kind) before `helper` can leave the converger.
 - *Done when* `plan` output is identical for every existing stack file with the old and new pipeline, and a helper stack file is about half its present length.
 
 ### Phase 3: the derive stage (L)

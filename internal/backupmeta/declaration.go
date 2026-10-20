@@ -5,81 +5,30 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/minihci/tink/internal/backupext"
 )
 
-// VolumeBackup is a storage-volume's answer to "how is this backed up?".
-// Every custom volume should give one: either a snapshot policy, or an explicit
-// opt-out with a reason. A volume that says nothing gets a warning from plan --
-// the point is to force the backup question at authoring time, not to discover
-// at restore time that nobody asked it. The warning is a stepping stone: it
-// exists so stacks written before this field keep applying, and is meant to
-// become an error (BLOCKED, like image drift) once the feature has matured.
-//
-// Tier 1 only: local, Incus-native snapshots. Same pool, same disk, so this
-// protects against mistakes (a bad upgrade, a deleted file), not against
-// losing the disk. See docs/volume-backup.md.
-type VolumeBackup struct {
-	// Snapshots is a scheduled-snapshot policy (tier 1: a rollback aid on the
-	// live pool, not a copy). Mutually exclusive with None.
-	Snapshots *SnapshotPolicy
-	// Copies are independent replicas in other failure domains, each to a
-	// kind: backup-target. Mutually exclusive with None. Declared and checked
-	// against 3-2-1 by plan; nothing executes them yet.
-	Copies []BackupCopy
-	// Verify is how often a restore of the backups should be rehearsed:
-	// daily, weekly or monthly. `tink backup verify` does the rehearsal and
-	// stamps the volume; `plan` warns when the stamp is missing or older than
-	// this.
-	Verify string
-	// VerifyCheck is what `tink backup verify` runs against the restored data,
-	// beyond proving the snapshot can be restored at all.
-	VerifyCheck *VerifyCheck
-	// None is the reason this volume is deliberately not backed up. A
-	// non-empty string is the opt-out: a bare "none" with no reason would be
-	// indistinguishable from not having thought about it.
-	None string
-}
-
-// VerifyCheck runs inside a throwaway instance with the restored volume mounted
-// read-only. Exit status 0 means the data is good.
-type VerifyCheck struct {
-	// Image is an OCI image (e.g. docker-oci:library/alpine:3) that has `sleep`: the
-	// throwaway instance's entrypoint is replaced with a sleep so it can be exec'd into.
-	Image string
-	// Command is argv, run inside the instance. No shell unless you ask for one.
-	Command []string
-	// Mount is where the restored volume appears. Defaults to /data.
-	Mount string
-}
+// The declaration types are the schema of a field of the storage-volume kind, which the converger decodes and carries, so they are declared in
+// backupext (the seam between the two) and named here as before.
+type (
+	// VolumeBackup is a storage-volume's answer to "how is this backed up?": see backupext.VolumeBackup.
+	VolumeBackup = backupext.VolumeBackup
+	// VerifyCheck is what `tink backup verify` runs against the restored volume.
+	VerifyCheck = backupext.VerifyCheck
+	// BackupCopy is one replica of the volume, to a kind: backup-target.
+	BackupCopy = backupext.BackupCopy
+	// SnapshotPolicy maps one-to-one onto Incus's snapshots.schedule and snapshots.expiry volume keys.
+	SnapshotPolicy = backupext.SnapshotPolicy
+)
 
 // DefaultVerifyMount is where a verify check sees the restored volume.
 const DefaultVerifyMount = "/data"
-
-// BackupCopy is one replica of the volume: where (Target names a
-// kind: backup-target), how often, and how long its snapshots are kept there.
-type BackupCopy struct {
-	Target   string
-	Schedule string // same syntax as SnapshotPolicy.Schedule
-	Retain   string // same syntax as SnapshotPolicy.Retain
-}
 
 var verifyCadences = map[string]bool{"daily": true, "weekly": true, "monthly": true}
 
 // IsVerifyCadence reports whether c is a cadence a volume may declare for rehearsing a restore: daily, weekly or monthly.
 func IsVerifyCadence(c string) bool { return verifyCadences[c] }
-
-// SnapshotPolicy maps one-to-one onto Incus's own snapshots.schedule and
-// snapshots.expiry volume keys, so Incus does the work and tink only converges
-// the config -- no daemon, no state of its own.
-type SnapshotPolicy struct {
-	// Schedule is a cron expression (5 fields) or a comma-separated list of
-	// @hourly/@daily/@midnight/@weekly/@monthly/@annually/@yearly.
-	Schedule string
-	// Retain is how long a snapshot lives, in Incus's expiry syntax
-	// ("14d", "1w 3d", "6m"). Required: a schedule with no expiry fills the
-	// pool forever.
-	Retain string
-}
 
 const (
 	KeySnapshotSchedule = "snapshots.schedule"

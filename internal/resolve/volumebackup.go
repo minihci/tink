@@ -8,15 +8,16 @@ import (
 
 	"github.com/lxc/incus/v7/shared/api"
 
-	"github.com/minihci/tink/internal/backupmeta"
+	"github.com/minihci/tink/internal/backupext"
 )
 
 // volumeBackupConfig is everything a storage volume's declaration converges its config to: the snapshot keys, and the
-// copy policy (backupmeta.PolicyKey). set is what to write; remove is the keys tink owns outright that must not be there, which
+// copy policy (backupext.Keys.Policy). set is what to write; remove is the keys tink owns outright that must not be there, which
 // today is the policy when the declaration has none. It errors when a copy names a target that is not in targets, which
 // loading a stack already rejects.
 func volumeBackupConfig(r Resource, env volumeEnv) (set map[string]string, remove []string, err error) {
-	set = backupmeta.SnapshotConfig(r.Backup)
+	keys := backupext.Get().Keys()
+	set = backupext.Get().SnapshotConfig(r.Backup)
 	if len(r.Config) > 0 { // the volume's own settings, declared in the stack (validateVolumeConfig has kept them clear of the keys below)
 		if set == nil {
 			set = map[string]string{}
@@ -25,23 +26,23 @@ func volumeBackupConfig(r Resource, env volumeEnv) (set map[string]string, remov
 			set[k] = v
 		}
 	}
-	if env.stack != "" { // the pointer back to the stack that applied it; never removed (see backupmeta.StackKey)
+	if env.stack != "" { // the pointer back to the stack that applied it; never removed (see backupext.Keys.Stack)
 		if set == nil {
 			set = map[string]string{}
 		}
-		set[backupmeta.StackKey] = env.stack
+		set[keys.Stack] = env.stack
 	}
 	policy, err := BuildPolicy(r, env.targets)
 	if err != nil {
 		return nil, nil, err
 	}
 	if policy == "" {
-		return set, []string{backupmeta.PolicyKey}, nil
+		return set, []string{keys.Policy}, nil
 	}
 	if set == nil {
 		set = map[string]string{}
 	}
-	set[backupmeta.PolicyKey] = policy
+	set[keys.Policy] = policy
 	return set, nil, nil
 }
 
@@ -61,7 +62,7 @@ type volumeEnv struct {
 	targets map[string]Resource
 	stack   string
 	// helperReads and helperLabel are what the helper says it can read (see PlanOptions); policyProto is the protocol this tink writes
-	// (0 means backupmeta.PolicyProto: it is a field only so a test can ask what happens when a newer one is written).
+	// (0 means backupext.Backup.PolicyProto: it is a field only so a test can ask what happens when a newer one is written).
 	helperReads int
 	helperLabel string
 	// helperRemotes are the remotes the helper can reach (nil: it has not said, so none is checked).
@@ -81,7 +82,7 @@ func (e volumeEnv) writes() int {
 	if e.policyProto > 0 {
 		return e.policyProto
 	}
-	return backupmeta.PolicyProto
+	return backupext.Get().PolicyProto()
 }
 
 // helperCannotRead is the reason a policy must not be written, or "" when it may be: the helper reads older policies than this tink
@@ -134,22 +135,23 @@ func decideVolume(r Resource, current *api.StorageVolume, env volumeEnv) Planned
 	if err != nil {
 		return PlannedResource{Resource: r, Action: ActionBlocked, Blocked: []string{err.Error()}}
 	}
+	keys := backupext.Get().Keys()
 	var warnings []string
 	if r.Backup == nil {
 		warnings = append(warnings, "no backup declared -- add `backup: {snapshots: {schedule: ..., retain: ...}}`, "+
 			"or `backup: {none: \"<why this volume needs no backup>\"}` if it really does not need one; "+
 			"this will become an error in a future release")
 	}
-	if r.Backup != nil && r.Backup.None != "" && current != nil && current.Config[backupmeta.KeySnapshotSchedule] != "" {
+	if r.Backup != nil && r.Backup.None != "" && current != nil && current.Config[keys.SnapshotSchedule] != "" {
 		warnings = append(warnings, fmt.Sprintf(
 			"backup: none, but the volume still has %s=%q set live -- tink does not remove it; clear it with `incus storage volume unset`",
-			backupmeta.KeySnapshotSchedule, current.Config[backupmeta.KeySnapshotSchedule]))
+			keys.SnapshotSchedule, current.Config[keys.SnapshotSchedule]))
 	}
 
 	if current != nil && env.stack != "" {
-		if owner := current.Config[backupmeta.StackKey]; owner != "" && owner != env.stack {
+		if owner := current.Config[keys.Stack]; owner != "" && owner != env.stack {
 			warnings = append(warnings, fmt.Sprintf("this volume is stamped as belonging to stack %q, and applying takes it over for %q (%s) -- if two stacks declare it they will keep taking it from each other",
-				owner, env.stack, backupmeta.StackKey))
+				owner, env.stack, keys.Stack))
 		}
 	}
 
@@ -162,15 +164,15 @@ func decideVolume(r Resource, current *api.StorageVolume, env volumeEnv) Planned
 
 	// The policy is one escaped line of JSON, which is for the volume and not for a reader: it is described in words, and left out of the
 	// raw config diff.
-	wantPolicy := desired[backupmeta.PolicyKey]
+	wantPolicy := desired[keys.Policy]
 	rest := make(map[string]string, len(desired))
 	for k, v := range desired {
-		if k != backupmeta.PolicyKey {
+		if k != keys.Policy {
 			rest[k] = v
 		}
 	}
 	if current == nil {
-		return PlannedResource{Resource: r, Action: ActionCreate, Changes: append(diffConfig(nil, rest, nil), backupmeta.DescribePolicyChange("", wantPolicy)...), Warnings: warnings}
+		return PlannedResource{Resource: r, Action: ActionCreate, Changes: append(diffConfig(nil, rest, nil), backupext.Get().DescribePolicyChange("", wantPolicy)...), Warnings: warnings}
 	}
 	// A creation-only key (initial.uid...) says how a volume is made, and Incus does nothing with it afterwards: it is a warning when the
 	// volume was made otherwise, not a change that apply could converge.
@@ -181,9 +183,9 @@ func decideVolume(r Resource, current *api.StorageVolume, env volumeEnv) Planned
 		}
 	}
 	changes := diffConfig(current.Config, rest, nil)
-	changes = append(changes, backupmeta.DescribePolicyChange(current.Config[backupmeta.PolicyKey], wantPolicy)...)
+	changes = append(changes, backupext.Get().DescribePolicyChange(current.Config[keys.Policy], wantPolicy)...)
 	for _, k := range remove {
-		if _, there := current.Config[k]; there && k != backupmeta.PolicyKey { // the policy's removal is said above
+		if _, there := current.Config[k]; there && k != keys.Policy { // the policy's removal is said above
 			changes = append(changes, fmt.Sprintf("config.%s: removed (the declaration no longer has one)", k))
 		}
 	}
@@ -196,16 +198,21 @@ func decideVolume(r Resource, current *api.StorageVolume, env volumeEnv) Planned
 // timeNow is overridable so the staleness rule can be tested.
 var timeNow = time.Now
 
-// The backup block's own rules live in backupmeta, as functions of the volume's name and its block; these adapt a Resource to them.
+// The backup block's own rules belong to the backup capability (backupext.Backup), as functions of the volume's name and its block; these adapt a Resource to them.
 
-func validateBackup(r Resource) error { return backupmeta.ValidateBackup(r.Name, r.Backup) }
+func validateBackup(r Resource) error {
+	if r.Backup == nil { // no block is a plan-time warning, not a load error
+		return nil
+	}
+	return backupext.Get().Validate(r.Name, r.Backup)
+}
 
 func copyWarnings(r Resource, current map[string]string, now time.Time) []string {
-	return backupmeta.CopyWarnings(r.Name, r.Backup, current, now)
+	return backupext.Get().CopyWarnings(r.Name, r.Backup, current, now)
 }
 
 func verifyWarning(r Resource, current map[string]string, now time.Time) string {
-	return backupmeta.VerifyWarning(r.Name, r.Backup, current, now)
+	return backupext.Get().VerifyWarning(r.Name, r.Backup, current, now)
 }
 
 // creationOnlyPrefix marks the volume config keys Incus reads only when it creates the volume (initial.uid, initial.gid, initial.mode...).
@@ -229,13 +236,14 @@ func validateVolumeConfig(r Resource) error {
 	if r.Kind != KindStorageVolume {
 		return nil
 	}
+	keys := backupext.Get().Keys()
 	for _, k := range sortedKeys(r.Config) {
 		switch {
 		case strings.HasPrefix(k, "volatile."):
 			return fmt.Errorf("storage-volume %q: config.%s belongs to Incus", r.Name, k)
-		case strings.HasPrefix(k, "user.tink.backup.") || k == backupmeta.StackKey:
+		case strings.HasPrefix(k, keys.Prefix) || k == keys.Stack:
 			return fmt.Errorf("storage-volume %q: config.%s is written by tink itself (the backup block, or the stack that applied the volume)", r.Name, k)
-		case (k == backupmeta.KeySnapshotSchedule || k == backupmeta.KeySnapshotExpiry) && r.Backup != nil && r.Backup.Snapshots != nil:
+		case (k == keys.SnapshotSchedule || k == keys.SnapshotExpiry) && r.Backup != nil && r.Backup.Snapshots != nil:
 			return fmt.Errorf("storage-volume %q: config.%s is set by its backup: snapshots block: use one or the other", r.Name, k)
 		}
 	}
