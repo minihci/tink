@@ -125,7 +125,8 @@ internal/bootstrap/  tink deploy
 internal/run/        tink run - see internal/run/DESIGN.md
 internal/resolve/    tink plan / tink plan apply - see docs/resolver-architecture.md
 internal/secrets/    tink secret, ${secret:NAME} references, the output redactor - see docs/secrets.md
-internal/backupmeta/ what tink records on a volume (policy key, stamps, markers), the backup block's rules, the copy policy a volume carries (how it is written, read and put in words) and the schedule arithmetic; depends on nothing here
+internal/backupext/  the seam between the resolver and backup: the backup block's declaration types and the interface the resolver asks; imports nothing here
+internal/backupmeta/ what tink records on a volume (policy key, stamps, markers), the backup block's rules, the copy policy a volume carries (how it is written, read and put in words) and the schedule arithmetic; implements backupext, depends on nothing else here
 internal/volbackup/  copy, restore and verify a storage volume - see docs/volume-backup.md
 internal/backuprun/  tink backup run: decide which copies are due, make them
 internal/identity/   the identity role (people and groups), its LLDAP reader, and tink identity groups - see docs/identity.md

@@ -12,7 +12,7 @@ import (
 
 	incus "github.com/lxc/incus/v7/client"
 
-	"github.com/minihci/tink/internal/backupmeta"
+	"github.com/minihci/tink/internal/backupext"
 	"github.com/minihci/tink/internal/incusapi"
 	"github.com/minihci/tink/internal/secrets"
 )
@@ -238,7 +238,8 @@ func planStorageVolume(server incus.InstanceServer, r Resource, env volumeEnv) (
 	// not found leaves current nil: decideVolume plans a create (or blocks it)
 	// A policy this tink would write, and the helper cannot read, is not written: the volume's copies would stop and nothing would say so.
 	if why := env.helperCannotRead(); why != "" {
-		if want, _, err := volumeBackupConfig(r, env); err == nil && want[backupmeta.PolicyKey] != "" && (current == nil || current.Config[backupmeta.PolicyKey] != want[backupmeta.PolicyKey]) {
+		policy := backupext.Get().Keys().Policy
+		if want, _, err := volumeBackupConfig(r, env); err == nil && want[policy] != "" && (current == nil || current.Config[policy] != want[policy]) {
 			return PlannedResource{Resource: r, Action: ActionBlocked, Blocked: []string{why}}, nil
 		}
 	}

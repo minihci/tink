@@ -61,10 +61,12 @@ several files to see are below.
 - **Plan also judges drift and policy**, not just existence: image drift by fingerprint (`volatile.base_image`, not `image.id`,
   see `imagedrift.go`) driven by an instance's `on_image_change`, and each storage volume's declared backup policy
   (`policy.go`, `volumebackup.go`).
-- **Volume backup is split across five packages.** `backupmeta` (what is recorded on a volume, the policy and schedule
-  arithmetic; depends on nothing else here) is used by `volbackup` (copy/restore/verify), `backuprun` (which copies are due),
-  `resolve` (writes the policy onto the volume at `plan apply`) and `daemon` (schedules from the volumes themselves). See
-  `docs/volume-backup.md`.
+- **Volume backup is split across six packages.** `backupmeta` (what is recorded on a volume, the policy and schedule
+  arithmetic; depends on nothing else here but `backupext`) is used by `volbackup` (copy/restore/verify), `backuprun` (which copies
+  are due) and `daemon` (schedules from the volumes themselves). `resolve` does not import it: it asks `backupext.Get()`, the
+  interface `backupmeta` registers in its `init` (the declaration types live in `backupext` too), to write the policy onto the
+  volume at `plan apply`. `resolve/imports_test.go` fails if the converger imports a package that is not on its list; do not add a
+  capability to it. See `docs/volume-backup.md`.
 - **The helper is an Incus instance, not a service.** `tink helper install` creates an instance running `tink daemon run`.
   `internal/jobs` is its work queue, a directory where `READY` is written last so a half-pushed job is never read. The helper
   publishes a status document as a config key (`user.tink.helper.status`) on a custom volume that its instance points at

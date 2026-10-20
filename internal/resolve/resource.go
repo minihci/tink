@@ -14,6 +14,24 @@
 // expression language with deferred-value resolution -- real usage on
 // this platform has never needed a computed cross-resource value, only
 // "this must exist before that."
+//
+// # Extension points
+//
+// The resolver knows about kinds, never about capabilities (docs/roadmap.md, "Three extension points"): a capability reaches it through one of
+// three things, and the resolver imports none of the capabilities (TestTheConvergerImportsNoCapability fails if it does). A kind is decoded,
+// validated, planned and applied here (yaml.go, validate.go, plan.go, apply.go). A pass derives something into the resources (applyStackProject,
+// derivePublishStamps, volumeBackupConfig). A check returns findings beside the resource they concern (decideVolume's warnings).
+//
+// Where a pass or a check is a capability's own knowledge, the resolver asks it through an interface that a package importing nothing of tink's
+// declares, and the capability registers itself with. Today that is backup: backupext holds the shape of a storage volume's backup block and the
+// Backup interface (the config keys it owns, validating the block, the snapshot config and copy policy it converges to, the findings about its
+// copies and its restore rehearsals), and internal/backupmeta implements it. A program has backup by linking backupmeta (cmd/tink/capabilities.go);
+// resolve's own tests do so in backupwiring_test.go. What stays here is what the volume's kind needs whatever the capability says: the dependency of
+// a copy on its backup-target, the "no backup declared" warning, the helper's protocol and remotes (plan.go, volumebackup.go), and reading a live
+// volume back into a declaration (export.go).
+//
+// Two imports of packages outside rings 0 and 1 are not capability-free, and the list in imports_test.go says why: run is the instance engine that
+// applying an instance is (ring 1), and helper is imported by kind: helper (helperkind.go), which needs a kind extension point before it can move.
 package resolve
 
 import (
@@ -21,7 +39,7 @@ import (
 
 	"github.com/lxc/incus/v7/shared/api"
 
-	"github.com/minihci/tink/internal/backupmeta"
+	"github.com/minihci/tink/internal/backupext"
 )
 
 // Kind identifies which Incus object a Resource describes. Scoped to
@@ -115,8 +133,8 @@ type Resource struct {
 	Fingerprint string
 
 	// Backup (storage-volume-only) is the volume's mandatory answer to "how is
-	// this backed up?". Nil means unanswered, which plan BLOCKS. See backupmeta.VolumeBackup.
-	Backup *backupmeta.VolumeBackup
+	// this backed up?". Nil means unanswered, which plan BLOCKS. See backupext.VolumeBackup.
+	Backup *backupext.VolumeBackup
 
 	// Publish-only (see publish.go): Instance is the instance that makes the offer, Offer is which of its offers is shown, and Allow lists the GROUPS
 	// that may use it. Name is the host label: the published name is Name plus the dns helper's zone.
