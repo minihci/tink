@@ -204,18 +204,12 @@ func runExec(server incus.InstanceServer, r Resource) error {
 		return nil
 	}
 
-	inst, etag, err := s.GetInstance(r.Instance)
-	if err != nil {
-		return fmt.Errorf("reading %s to record %s's trigger hash: %w", r.Instance, r.Name, err)
-	}
-	put := inst.Writable()
-	if put.Config == nil {
-		put.Config = map[string]string{}
-	}
-	put.Config[triggerHashConfigKey(r.Name)] = triggerHash(r.Triggers)
-	op, err := s.UpdateInstance(r.Instance, put, etag)
-	if err != nil {
-		return fmt.Errorf("recording %s's trigger hash on %s: %w", r.Name, r.Instance, err)
-	}
-	return op.Wait()
+	return recordTriggerHash(s, r)
+}
+
+// recordTriggerHash stores r's trigger hash on its instance with a PATCH of that one key. Two exec resources with triggers on one instance
+// share a dependency level and so record at the same time; a read of the whole instance and a PUT back with the etag would be refused for
+// one of them, because the other's write changed the instance in between. A PATCH merges only the key it names, so both land.
+func recordTriggerHash(s incus.InstanceServer, r Resource) error {
+	return incusapi.PatchInstanceConfig(s, r.Project, r.Instance, map[string]string{triggerHashConfigKey(r.Name): triggerHash(r.Triggers)})
 }
