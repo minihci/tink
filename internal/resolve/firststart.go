@@ -12,8 +12,11 @@ package resolve
 // mounted at the start. Those files go into the volume, or wait for the start; see firststartmount.go.
 
 import (
+	"errors"
 	"strconv"
 	"strings"
+
+	"github.com/minihci/tink/internal/incusapi"
 )
 
 // instanceKey identifies an instance by project and name, since two projects may each have one of the same name.
@@ -93,6 +96,9 @@ type instanceSteps struct {
 // were placed. Placing is an ordering improvement, never a new way to fail: a push that fails is skipped (and not named), the instance is still
 // started, and the file resource fails in its own turn with the message it has always had. A failed create or config stops everything, and places
 // nothing.
+//
+// A step that is abandoned at its deadline (incusapi.ErrTimeout) is not a failure of that kind: it may yet be done. It stops everything after it, a
+// push included (a push the server never answered is not a push that failed), and the instance is not started on top of it.
 func createInOrder(s instanceSteps, files []Resource) (placed []string, err error) {
 	if err := s.create(); err != nil {
 		return nil, err
@@ -101,7 +107,11 @@ func createInOrder(s instanceSteps, files []Resource) (placed []string, err erro
 		return nil, err
 	}
 	for _, f := range files {
-		if s.place(f) == nil {
+		err := s.place(f)
+		if errors.Is(err, incusapi.ErrTimeout) {
+			return placed, err
+		}
+		if err == nil {
 			placed = append(placed, f.Name)
 		}
 	}

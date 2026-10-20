@@ -22,6 +22,7 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"sync"
 
 	incus "github.com/lxc/incus/v7/client"
 
@@ -256,6 +257,8 @@ type placer struct {
 	server incus.InstanceServer
 	pl     placement
 	mounts map[string]*mount // by file name; absent for a file that goes into the instance
+	// mu guards failed: a write that was abandoned at its deadline may finish, and be recorded, while the outcome is being read.
+	mu     sync.Mutex
 	failed []skippedFile
 }
 
@@ -277,13 +280,17 @@ func (p *placer) place(f Resource) error {
 	}
 	err := placeVolumeFile(p.server, f, *m)
 	if err != nil {
+		p.mu.Lock()
 		p.failed = append(p.failed, skippedFile{File: f, Why: "because " + err.Error()})
+		p.mu.Unlock()
 	}
 	return err
 }
 
 // outcome is what happened, given the names of the files that were placed.
 func (p *placer) outcome(placed []string) firstStartOutcome {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	out := firstStartOutcome{Skipped: append(append([]skippedFile(nil), p.pl.Skipped...), p.failed...)}
 	for _, name := range placed {
 		if m := p.mounts[name]; m != nil {

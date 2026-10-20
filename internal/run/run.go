@@ -6,6 +6,7 @@
 package run
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -259,19 +260,22 @@ func Create(server incus.InstanceServer, spec *Spec, project string) error {
 		instanceType = api.InstanceTypeVM
 	}
 
-	op, err := scoped.CreateInstanceFromImage(imgServer, imgInfo, api.InstancesPost{
-		Name: spec.Name,
-		Type: instanceType,
-		InstancePut: api.InstancePut{
-			Profiles:  spec.Profiles,
-			Ephemeral: spec.Ephemeral,
-			Devices:   creationDevices(spec),
-		},
+	// The request and the wait are one bounded call: a daemon that never answers the request is the same as one that never finishes the operation.
+	return incusapi.BoundedDo(spec.OpTimeout, "creating "+spec.Name, func() error {
+		op, err := scoped.CreateInstanceFromImage(imgServer, imgInfo, api.InstancesPost{
+			Name: spec.Name,
+			Type: instanceType,
+			InstancePut: api.InstancePut{
+				Profiles:  spec.Profiles,
+				Ephemeral: spec.Ephemeral,
+				Devices:   creationDevices(spec),
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("creating %s: %w", spec.Name, err)
+		}
+		return op.Wait()
 	})
-	if err != nil {
-		return fmt.Errorf("creating %s: %w", spec.Name, err)
-	}
-	return op.Wait()
 }
 
 // creationDevices is what a creation request carries besides the profiles: the spec's root disk when it asks for one (Spec.RootDiskAtCreate), else
@@ -363,10 +367,18 @@ func ApplyConfig(server incus.InstanceServer, spec *Spec) error {
 		return err
 	}
 
-	inst, etag, err := server.GetInstance(spec.Name)
+	type read struct {
+		inst *api.Instance
+		etag string
+	}
+	got, err := incusapi.Bounded(spec.OpTimeout, "reading "+spec.Name, func() (read, error) {
+		inst, etag, err := server.GetInstance(spec.Name)
+		return read{inst, etag}, err
+	})
 	if err != nil {
 		return fmt.Errorf("reading %s after creation: %w", spec.Name, err)
 	}
+	inst, etag := got.inst, got.etag
 
 	put := inst.Writable()
 	if spec.Ephemeral { // only ever turned on here, like every other declared field: not declaring it changes nothing
@@ -388,11 +400,13 @@ func ApplyConfig(server incus.InstanceServer, spec *Spec) error {
 		put.Devices[name] = dev
 	}
 
-	op, err := server.UpdateInstance(spec.Name, put, etag)
-	if err != nil {
-		return fmt.Errorf("updating %s config/devices: %w", spec.Name, err)
-	}
-	return op.Wait()
+	return incusapi.BoundedDo(spec.OpTimeout, "updating "+spec.Name+" config/devices", func() error {
+		op, err := server.UpdateInstance(spec.Name, put, etag)
+		if err != nil {
+			return fmt.Errorf("updating %s config/devices: %w", spec.Name, err)
+		}
+		return op.Wait()
+	})
 }
 
 // StaleOwnedKeys are the keys of live that start with one of prefixes and that declared does not carry, sorted. It is the whole of what "tink owns this
@@ -429,7 +443,10 @@ func ensureManagedVolumes(server incus.InstanceServer, spec *Spec) error {
 		}
 
 		pool, name := dev["pool"], dev["source"]
-		_, _, found, err := incusapi.LookupVolume(server, pool, "custom", name)
+		found, err := incusapi.Bounded(spec.OpTimeout, "looking for volume "+pool+"/"+name, func() (bool, error) {
+			_, _, found, err := incusapi.LookupVolume(server, pool, "custom", name)
+			return found, err
+		})
 		if err != nil {
 			// Not "does not exist": creating on a failed read would fail confusingly, or hide the real problem.
 			return fmt.Errorf("checking whether managed volume %s/%s exists: %w", pool, name, err)
@@ -444,7 +461,7 @@ func ensureManagedVolumes(server incus.InstanceServer, spec *Spec) error {
 			ContentType:      "filesystem",
 			StorageVolumePut: api.StorageVolumePut{Config: spec.VolumeConfig},
 		}
-		if err := server.CreateStoragePoolVolume(pool, post); err != nil {
+		if err := incusapi.BoundedDo(spec.OpTimeout, "creating volume "+pool+"/"+name, func() error { return server.CreateStoragePoolVolume(pool, post) }); err != nil {
 			return fmt.Errorf("creating managed volume %s/%s: %w", pool, name, err)
 		}
 	}
@@ -459,10 +476,20 @@ func ensureManagedVolumes(server incus.InstanceServer, spec *Spec) error {
 // internal/bootstrap.ensureRunning's own logic, reproduced here rather
 // than shared across packages.
 func EnsureRunning(server incus.InstanceServer, name string) error {
+	return EnsureRunningWithin(server, name, 0)
+}
+
+// EnsureRunningWithin is EnsureRunning that abandons each call to the server at timeout (zero: no bound), with an error wrapping
+// incusapi.ErrTimeout. A start that timed out is NOT retried: it may still complete, and a second state change on top of it is a race. Only the busy
+// rejection above is retried.
+func EnsureRunningWithin(server incus.InstanceServer, name string, timeout time.Duration) error {
 	const maxAttempts = 5
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		inst, _, err := server.GetInstance(name)
+		inst, err := incusapi.Bounded(timeout, "checking "+name+"'s state", func() (*api.Instance, error) {
+			inst, _, err := server.GetInstance(name)
+			return inst, err
+		})
 		if err != nil {
 			return fmt.Errorf("checking %s's state: %w", name, err)
 		}
@@ -472,11 +499,18 @@ func EnsureRunning(server incus.InstanceServer, name string) error {
 			action = "restart"
 		}
 
-		op, err := server.UpdateInstanceState(name, api.InstanceStatePut{Action: action, Timeout: 30}, "")
-		if err == nil {
-			if err = op.Wait(); err == nil {
-				return nil
+		err = incusapi.BoundedDo(timeout, action+" of "+name, func() error {
+			op, err := server.UpdateInstanceState(name, api.InstanceStatePut{Action: action, Timeout: 30}, "")
+			if err != nil {
+				return err
 			}
+			return op.Wait()
+		})
+		if err == nil {
+			return nil
+		}
+		if errors.Is(err, incusapi.ErrTimeout) {
+			return fmt.Errorf("starting/restarting %s to apply its config: %w", name, err)
 		}
 		lastErr = err
 		time.Sleep(time.Second)

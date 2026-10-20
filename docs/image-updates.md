@@ -148,6 +148,16 @@ deleted and not yet recreated, so the rebuild runs to its end (a second Ctrl-C
 still kills the process). Re-run `plan apply` after either: the drift is still
 there until a rebuild succeeds.
 
+**A server that stops answering during a rebuild.** Every call of a rebuild has a
+deadline (five minutes for the stop, config and start; thirty for the volume
+snapshot and the rebuild itself; thirty for the pull, which is cancelled).
+For the pull, the rebuild stops with `nothing was changed`. For any later step the
+deadline only stops waiting: the server may still be stopping, snapshotting or
+rebuilding, so tink does **not** restart the instance (that would run it under an
+unfinished rebuild), says the outcome is unknown, and leaves the instance as it is.
+Run `tink plan` to see what the server reached before applying again. See
+[`resolver-architecture.md`](resolver-architecture.md).
+
 **What a rebuild discards.** Everything written to the instance's root
 filesystem. When a rebuild is planned for an instance with no attached data
 volume, `plan` warns, since the rebuild would then lose all of its state. Files placed by `kind: file`

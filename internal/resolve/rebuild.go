@@ -137,6 +137,10 @@ type rebuildOps interface {
 // new image. Every failure is recoverable by re-running apply, because drift
 // persists until the rebuild succeeds.
 //
+// A step that is abandoned at its deadline (incusapi.TimeoutError) is not a failed step: it may still be running on the server. So none of the
+// recoveries below is done for it (restarting the instance under a snapshot or a rebuild that has not finished is the opposite of recovering), and the
+// error says the outcome is unknown, what state the instance may be in, and that `tink plan` shows what the server reached.
+//
 // ctx (Ctrl-C) is honoured only until the instance is stopped: before that nothing has been changed, so the pull (the long step) is
 // abandoned and the rebuild stops with "nothing was changed". From the stop on, ctx is not consulted again. A rebuild stopped between its stop and
 // its restart would leave the instance down on a root filesystem that is deleted and not yet recreated, which is worse than the wait.
@@ -175,6 +179,9 @@ func runRebuild(ctx context.Context, ops rebuildOps, r Resource, now func() time
 
 	if was {
 		if err := ops.Stop(r.Name); err != nil {
+			if abandoned(err) {
+				return fmt.Errorf("stopping %s: %w; %s may be stopped, stopping, or still running, and the rebuild went no further", r.Name, err, r.Name)
+			}
 			return fmt.Errorf("stopping %s: %w (nothing was changed)", r.Name, err)
 		}
 	}
@@ -189,6 +196,9 @@ func runRebuild(ctx context.Context, ops rebuildOps, r Resource, now func() time
 	if r.SnapshotVolumes {
 		snap := "tink-pre-rebuild-" + now().UTC().Format("20060102T150405Z")
 		vols, err := ops.SnapshotVolumes(r.Name, snap)
+		if abandoned(err) {
+			return fmt.Errorf("snapshotting volumes: %w; %s is left stopped, not restarted, because the snapshot may still be running; the rebuild went no further", err, r.Name)
+		}
 		if err != nil {
 			if rerr := restore(); rerr != nil {
 				return fmt.Errorf("snapshotting volumes: %w; and restarting %s failed too: %v", err, r.Name, rerr)
@@ -199,6 +209,10 @@ func runRebuild(ctx context.Context, ops rebuildOps, r Resource, now func() time
 	}
 
 	if err := ops.Rebuild(r.Name, fp); err != nil {
+		if abandoned(err) {
+			return fmt.Errorf("rebuild: %w; %s is left stopped, not restarted, because the rebuild may still be running: its root filesystem may be deleted, recreated, or part way between (volumes are intact). "+
+				"Re-run apply once tink plan shows the instance has settled", err, r.Name)
+		}
 		if rerr := restore(); rerr != nil {
 			return fmt.Errorf("rebuild failed: %w; %s did not restart (%v) -- its root filesystem may have been destroyed (volumes are intact), re-run apply to retry the rebuild", err, r.Name, rerr)
 		}
@@ -206,6 +220,9 @@ func runRebuild(ctx context.Context, ops rebuildOps, r Resource, now func() time
 	}
 
 	if err := ops.ApplyConfig(r); err != nil {
+		if abandoned(err) {
+			return fmt.Errorf("rebuilt onto the new image, but applying config was abandoned: %w; %s is left stopped, not started, because its config may still be being written", err, r.Name)
+		}
 		return fmt.Errorf("rebuilt onto the new image, but applying config failed: %w; %s was left stopped -- fix and re-run apply", err, r.Name)
 	}
 	if was {
@@ -219,12 +236,22 @@ func runRebuild(ctx context.Context, ops rebuildOps, r Resource, now func() time
 	return nil
 }
 
+// abandoned reports whether err is a step given up on at its deadline, whose outcome is therefore not known (as opposed to one that failed).
+func abandoned(err error) bool {
+	var te *incusapi.TimeoutError
+	return errors.As(err, &te)
+}
+
 // incusRebuildOps is the real thing. server must already be scoped to the
 // instance's project.
 type incusRebuildOps struct {
 	server incus.InstanceServer
 	env    *imageEnv
+	// opTimeout, when set, replaces the deadlines (opbounds.go); a field so a test can use a short one.
+	opTimeout time.Duration
 }
+
+func (o incusRebuildOps) limit(slow bool) time.Duration { return opLimit(o.opTimeout, slow) }
 
 func (o incusRebuildOps) InstanceRunning(name string) (bool, error) {
 	inst, _, err := o.server.GetInstance(name)
@@ -270,16 +297,29 @@ func (o incusRebuildOps) PullImage(ctx context.Context, image string) (string, e
 		return "", fmt.Errorf("remote %q: %w", remoteName, err)
 	}
 	addr := authed.Addrs[0]
-	op, err := o.server.CreateImage(api.ImagesPost{Source: &api.ImagesPostSource{
-		ImageSource: api.ImageSource{Protocol: "oci", Server: addr, Alias: ref},
-		Mode:        "pull",
-		Type:        "image",
-	}}, nil)
+	// The one call in a rebuild that is cancelled, not just abandoned, at its deadline: the pull changes no instance, so there is nothing to leave half done.
+	limit := o.limit(true)
+	pullCtx, cancel := context.WithTimeout(ctx, limit)
+	defer cancel()
+	// The deadline cannot be taken from pullCtx for the request: a client call that is not an operation has no context to end.
+	op, err := incusapi.Bounded(limit, "pulling "+image, func() (incus.Operation, error) {
+		return o.server.CreateImage(api.ImagesPost{Source: &api.ImagesPostSource{
+			ImageSource: api.ImageSource{Protocol: "oci", Server: addr, Alias: ref},
+			Mode:        "pull",
+			Type:        "image",
+		}}, nil)
+	})
 	if err != nil {
+		if abandoned(err) {
+			return "", pullTimeout(image, limit)
+		}
 		return "", scrubCredentials(err, addr)
 	}
-	// Ending ctx makes the client cancel the server's download as well. That is safe here: the pull changes no instance.
-	if err := op.WaitContext(ctx); err != nil {
+	// Ending pullCtx makes the client cancel the server's download as well. That is safe here: the pull changes no instance.
+	if err := op.WaitContext(pullCtx); err != nil {
+		if errors.Is(pullCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+			return "", pullTimeout(image, limit)
+		}
 		return "", scrubCredentials(err, addr)
 	}
 	fp, _ := op.Get().Metadata["fingerprint"].(string)
@@ -289,19 +329,31 @@ func (o incusRebuildOps) PullImage(ctx context.Context, image string) (string, e
 	return fp, nil
 }
 
-func (o incusRebuildOps) Stop(name string) error {
-	op, err := o.server.UpdateInstanceState(name, api.InstanceStatePut{Action: "stop", Timeout: 60}, "")
-	if err != nil {
-		return err
-	}
-	return op.Wait()
+// pullTimeout is the error of a pull that did not finish in time and was cancelled.
+func pullTimeout(image string, after time.Duration) error {
+	return fmt.Errorf("%w: pulling %s did not finish within %s, so it was cancelled (a pull changes no instance, so nothing is left running)", incusapi.ErrTimeout, image, after)
 }
 
-func (o incusRebuildOps) Start(name string) error { return run.EnsureRunning(o.server, name) }
+func (o incusRebuildOps) Stop(name string) error {
+	return incusapi.BoundedDo(o.limit(false), "stopping "+name, func() error {
+		op, err := o.server.UpdateInstanceState(name, api.InstanceStatePut{Action: "stop", Timeout: 60}, "")
+		if err != nil {
+			return err
+		}
+		return op.Wait()
+	})
+}
+
+func (o incusRebuildOps) Start(name string) error {
+	return run.EnsureRunningWithin(o.server, name, o.limit(false))
+}
 
 // SnapshotVolumes snapshots every custom volume attached to the instance.
 func (o incusRebuildOps) SnapshotVolumes(name, snapshot string) ([]string, error) {
-	inst, _, err := o.server.GetInstance(name)
+	inst, err := incusapi.Bounded(o.limit(false), "reading "+name, func() (*api.Instance, error) {
+		inst, _, err := o.server.GetInstance(name)
+		return inst, err
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -311,11 +363,14 @@ func (o incusRebuildOps) SnapshotVolumes(name, snapshot string) ([]string, error
 		if dev["type"] != "disk" || pool == "" || src == "" || strings.HasPrefix(src, "/") {
 			continue
 		}
-		op, err := o.server.CreateStoragePoolVolumeSnapshot(pool, "custom", src, api.StorageVolumeSnapshotsPost{Name: snapshot})
+		err := incusapi.BoundedDo(o.limit(true), "snapshotting volume "+pool+"/"+src, func() error {
+			op, err := o.server.CreateStoragePoolVolumeSnapshot(pool, "custom", src, api.StorageVolumeSnapshotsPost{Name: snapshot})
+			if err != nil {
+				return err
+			}
+			return op.Wait()
+		})
 		if err != nil {
-			return done, fmt.Errorf("volume %s/%s: %w", pool, src, err)
-		}
-		if err := op.Wait(); err != nil {
 			return done, fmt.Errorf("volume %s/%s: %w", pool, src, err)
 		}
 		done = append(done, pool+"/"+src)
@@ -324,13 +379,15 @@ func (o incusRebuildOps) SnapshotVolumes(name, snapshot string) ([]string, error
 }
 
 func (o incusRebuildOps) Rebuild(name, fingerprint string) error {
-	op, err := o.server.RebuildInstance(name, api.InstanceRebuildPost{Source: api.InstanceSource{Type: "image", Fingerprint: fingerprint}})
-	if err != nil {
-		return err
-	}
-	return op.Wait()
+	return incusapi.BoundedDo(o.limit(true), "rebuilding "+name, func() error {
+		op, err := o.server.RebuildInstance(name, api.InstanceRebuildPost{Source: api.InstanceSource{Type: "image", Fingerprint: fingerprint}})
+		if err != nil {
+			return err
+		}
+		return op.Wait()
+	})
 }
 
 func (o incusRebuildOps) ApplyConfig(r Resource) error {
-	return run.ApplyConfig(o.server, &run.Spec{Name: r.Name, Config: r.Config, Devices: r.Devices, OwnedConfigPrefixes: ownedConfigPrefixes})
+	return run.ApplyConfig(o.server, &run.Spec{Name: r.Name, Config: r.Config, Devices: r.Devices, OwnedConfigPrefixes: ownedConfigPrefixes, OpTimeout: o.limit(false)})
 }

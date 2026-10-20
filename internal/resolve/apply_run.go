@@ -139,6 +139,14 @@ func applyLevels(ctx context.Context, levels [][]Resource, do applyFunc) ([]stri
 			for i, err := range errs {
 				if err != nil {
 					failures = append(failures, fmt.Errorf("%s/%s: %w", level[i].Kind, level[i].Name, err))
+					// A change given up on at its deadline is not a failure like the others: it may still be done. Say so apart from the error, which is
+					// printed after the notes, and say what that means for the rest of the apply.
+					var te *incusapi.TimeoutError
+					if errors.As(err, &te) {
+						notes = append(notes, fmt.Sprintf("%s/%s: OUTCOME UNKNOWN: the server did not answer within %s and tink stopped waiting, without cancelling; "+
+							"it may be done, still running, or about to finish. Nothing that depends on it was started and no later level was applied. "+
+							"Run `tink plan` to see what the server reached", level[i].Kind, level[i].Name, te.After))
+					}
 				}
 			}
 			notes = append(notes, summary(failed))
@@ -182,7 +190,7 @@ func applyOne(server incus.InstanceServer, r Resource, opts PlanOptions, note fu
 		return outBlocked, nil
 	case ActionCreate:
 		var first firstStartOutcome
-		env := volumeEnv{ctx: opts.ctx, targets: opts.targets, stack: opts.stack, firstStart: opts.firstStart, profiles: opts.profiles,
+		env := volumeEnv{ctx: opts.ctx, targets: opts.targets, stack: opts.stack, firstStart: opts.firstStart, profiles: opts.profiles, opTimeout: opts.opTimeout,
 			report: func(_ string, o firstStartOutcome) { first = o }}
 		if err := createOne(server, r, env); err != nil {
 			return outConverged, err
@@ -198,7 +206,7 @@ func applyOne(server incus.InstanceServer, r Resource, opts PlanOptions, note fu
 		}
 		return outChanged, nil
 	case ActionUpdate:
-		if err := updateOne(server, r, volumeEnv{targets: opts.targets, stack: opts.stack}); err != nil {
+		if err := updateOne(server, r, volumeEnv{targets: opts.targets, stack: opts.stack, opTimeout: opts.opTimeout}); err != nil {
 			return outConverged, err
 		}
 		if r.Kind == KindInstance && r.Restart {
@@ -218,7 +226,7 @@ func applyOne(server incus.InstanceServer, r Resource, opts PlanOptions, note fu
 			return outConverged, err
 		}
 		defer unlockRebuild()
-		ops := incusRebuildOps{server: scopedServer(server, r), env: opts.env}
+		ops := incusRebuildOps{server: scopedServer(server, r), env: opts.env, opTimeout: opts.opTimeout}
 		if err := runRebuild(ctx, ops, r, time.Now, note); err != nil {
 			return outConverged, err
 		}

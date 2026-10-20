@@ -1,11 +1,14 @@
 package resolve
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 
 	incus "github.com/lxc/incus/v7/client"
+
+	"github.com/minihci/tink/internal/incusapi"
 )
 
 // takesDefaultProject says which kinds live inside an Incus project and so receive the stack's default one. A project is not inside
@@ -116,8 +119,21 @@ func mixedProjectNotes(resources []Resource) map[string]string {
 }
 
 // planOne plans one resource and adds the stack-level note about its project, if there is one. planKind does the work per kind.
+//
+// Planning only reads, so a read the server never answers is abandoned at a deadline (opbounds.go) with nothing to account for: the error says nothing
+// was changed.
 func planOne(server incus.InstanceServer, r Resource, opts PlanOptions) (PlannedResource, error) {
-	p, err := planKind(server, r, opts)
+	var p PlannedResource
+	var err error
+	if boundsPlan(r) {
+		p, err = incusapi.Bounded(opLimit(opts.opTimeout, false), "planning "+string(r.Kind)+"/"+r.Name, func() (PlannedResource, error) { return planKind(server, r, opts) })
+		var te *incusapi.TimeoutError
+		if errors.As(err, &te) {
+			err = fmt.Errorf("%w: the server did not answer a read within %s; nothing was changed", incusapi.ErrTimeout, te.After)
+		}
+	} else {
+		p, err = planKind(server, r, opts)
+	}
 	if err == nil {
 		if note := opts.projectNotes[r.Name]; note != "" {
 			p.Warnings = append(p.Warnings, note)
