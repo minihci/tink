@@ -1,6 +1,7 @@
 package resolve
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -193,7 +194,7 @@ func TestTheServersPullIsGivenTheHelpersCredentials(t *testing.T) {
 	t.Run("the address sent carries them", func(t *testing.T) {
 		srv := newPullServer()
 		srv.storedAs = fp
-		if got, err := (incusRebuildOps{server: srv, env: envWithHelper()}).PullImage("reg:team/private:1"); err != nil || got != fp {
+		if got, err := (incusRebuildOps{server: srv, env: envWithHelper()}).PullImage(context.Background(), "reg:team/private:1"); err != nil || got != fp {
 			t.Fatalf("%q %v", got, err)
 		}
 		if len(srv.pulled) != 1 || srv.pulled[0].Source.Server != "http://puller:s3cret@"+host {
@@ -205,7 +206,7 @@ func TestTheServersPullIsGivenTheHelpersCredentials(t *testing.T) {
 		before := len(callsTo(t, calls))
 		srv := newPullServer()
 		srv.local[fp] = true
-		if _, err := (incusRebuildOps{server: srv, env: envWithHelper()}).PullImage("reg:team/private:1"); err != nil {
+		if _, err := (incusRebuildOps{server: srv, env: envWithHelper()}).PullImage(context.Background(), "reg:team/private:1"); err != nil {
 			t.Fatal(err)
 		}
 		if after := len(callsTo(t, calls)); after != before+1 {
@@ -223,7 +224,7 @@ func TestTheServersPullIsGivenTheHelpersCredentials(t *testing.T) {
 			srv := newPullServer()
 			srv.storedAs = fp
 			set(srv)
-			_, err := incusRebuildOps{server: srv, env: envWithHelper()}.PullImage("reg:team/private:1")
+			_, err := incusRebuildOps{server: srv, env: envWithHelper()}.PullImage(context.Background(), "reg:team/private:1")
 			if err == nil || strings.Contains(err.Error(), "s3cret") || !strings.Contains(err.Error(), "***") {
 				t.Errorf("%s: err = %v, want the failure with the password replaced", name, err)
 			}
@@ -236,7 +237,7 @@ func TestTheServersPullIsGivenTheHelpersCredentials(t *testing.T) {
 		env.conf.Remotes["reg"] = withHelper(host, failing)
 		env.images["reg:team/private:1"] = registryResult{img: registryImage{Fingerprint: fp}} // as if the lookup had been made
 		srv := newPullServer()
-		_, err := incusRebuildOps{server: srv, env: env}.PullImage("reg:team/private:1")
+		_, err := incusRebuildOps{server: srv, env: env}.PullImage(context.Background(), "reg:team/private:1")
 		if err == nil || !strings.Contains(err.Error(), `remote "reg"`) || !strings.Contains(err.Error(), "keychain is locked") {
 			t.Errorf("err = %v", err)
 		}

@@ -1,10 +1,10 @@
 package resolve
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	incus "github.com/lxc/incus/v7/client"
@@ -31,9 +31,22 @@ const (
 	OnImageChangeRebuild = "rebuild"
 )
 
-// rebuildMu serializes rebuilds across a whole apply, so two instances are
-// never down for a rebuild at once.
-var rebuildMu sync.Mutex
+// rebuildSlot serializes rebuilds across a whole apply, so two instances are
+// never down for a rebuild at once. It is a channel rather than a sync.Mutex so that a rebuild waiting its turn can give up when the run is
+// interrupted.
+var rebuildSlot = make(chan struct{}, 1)
+
+// lockRebuild waits for the rebuild slot, or for ctx to end, in which case the caller has changed nothing and must not unlock.
+func lockRebuild(ctx context.Context) error {
+	select {
+	case rebuildSlot <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("interrupted while waiting for another rebuild to finish; nothing was changed: %w", ctx.Err())
+	}
+}
+
+func unlockRebuild() { <-rebuildSlot }
 
 // preflight is the read-only part: everything that can be checked before
 // anything is pulled, stopped or deleted.
@@ -111,7 +124,7 @@ func hasDataVolume(devices map[string]map[string]string) bool {
 type rebuildOps interface {
 	InstanceRunning(name string) (bool, error)
 	InstanceSnapshots(name string) ([]string, error)
-	PullImage(image string) (fingerprint string, err error)
+	PullImage(ctx context.Context, image string) (fingerprint string, err error)
 	Stop(name string) error
 	Start(name string) error
 	SnapshotVolumes(name, snapshot string) ([]string, error)
@@ -123,7 +136,20 @@ type rebuildOps interface {
 // Config goes on after the rebuild so the new config is always paired with the
 // new image. Every failure is recoverable by re-running apply, because drift
 // persists until the rebuild succeeds.
-func runRebuild(ops rebuildOps, r Resource, now func() time.Time, note func(string, ...any)) error {
+//
+// ctx (Ctrl-C) is honoured only until the instance is stopped: before that nothing has been changed, so the pull (the long step) is
+// abandoned and the rebuild stops with "nothing was changed". From the stop on, ctx is not consulted again. A rebuild stopped between its stop and
+// its restart would leave the instance down on a root filesystem that is deleted and not yet recreated, which is worse than the wait.
+func runRebuild(ctx context.Context, ops rebuildOps, r Resource, now func() time.Time, note func(string, ...any)) error {
+	interrupted := func() error {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("rebuild of %s interrupted (nothing was changed): %w", r.Name, err)
+		}
+		return nil
+	}
+	if err := interrupted(); err != nil {
+		return err
+	}
 	was, err := ops.InstanceRunning(r.Name)
 	if err != nil {
 		return fmt.Errorf("checking %s: %w", r.Name, err)
@@ -134,12 +160,18 @@ func runRebuild(ops rebuildOps, r Resource, now func() time.Time, note func(stri
 		return fmt.Errorf("%s gained instance snapshots (%s) since planning; nothing was changed", r.Name, strings.Join(snaps, ", "))
 	}
 
+	if err := interrupted(); err != nil {
+		return err
+	}
 	// Before stopping anything: downtime must not include the download.
-	fp, err := ops.PullImage(r.Image)
+	fp, err := ops.PullImage(ctx, r.Image)
 	if err != nil {
 		return fmt.Errorf("pulling the new image: %w (nothing was changed)", err)
 	}
 	note("%s/%s: new image %.12s is in the local store", r.Kind, r.Name, fp)
+	if err := interrupted(); err != nil {
+		return err
+	}
 
 	if was {
 		if err := ops.Stop(r.Name); err != nil {
@@ -210,7 +242,7 @@ func (o incusRebuildOps) InstanceSnapshots(name string) ([]string, error) {
 // download. The registry is asked for the image's fingerprint first, for the server's architecture, to see whether it is already there;
 // if not, the SERVER is told to pull it by reference, with its own tools, so no image data and no tool of ours is involved, from a laptop
 // as on the server. (Naming the image by fingerprint instead does not work: the server would try to resolve the hash as a registry name.)
-func (o incusRebuildOps) PullImage(image string) (string, error) {
+func (o incusRebuildOps) PullImage(ctx context.Context, image string) (string, error) {
 	remoteName, ref, _ := strings.Cut(image, ":")
 	if o.env == nil {
 		return "", errors.New("no registry access")
@@ -246,7 +278,8 @@ func (o incusRebuildOps) PullImage(image string) (string, error) {
 	if err != nil {
 		return "", scrubCredentials(err, addr)
 	}
-	if err := op.Wait(); err != nil {
+	// Ending ctx makes the client cancel the server's download as well. That is safe here: the pull changes no instance.
+	if err := op.WaitContext(ctx); err != nil {
 		return "", scrubCredentials(err, addr)
 	}
 	fp, _ := op.Get().Metadata["fingerprint"].(string)
