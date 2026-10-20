@@ -216,7 +216,15 @@ func updateInstance(server incus.InstanceServer, r Resource) error {
 	if err := run.ApplyConfig(server, spec); err != nil {
 		return err
 	}
-	if !r.Restart {
+	if r.Restart {
+		return run.EnsureRunning(server, r.Name)
+	}
+	// A stopped instance is planned a start (planInstance); EnsureRunning starts what is not running.
+	inst, _, err := server.GetInstance(r.Name)
+	if err != nil {
+		return fmt.Errorf("checking %s's state: %w", r.Name, err)
+	}
+	if inst.Status != "Stopped" {
 		return nil
 	}
 	return run.EnsureRunning(server, r.Name)

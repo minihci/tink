@@ -196,7 +196,7 @@ func TestPlanOne_NoRootDiskWarnsAndPlanStillCompletes(t *testing.T) {
 		warns  int
 	}{
 		{"an instance that does not exist yet", []Resource{noRoot, dns}, &profileServer{}, ActionCreate, 1},
-		{"it is about the stack, so an instance that exists is told too", []Resource{noRoot, dns}, &profileServer{instance: &api.Instance{Name: "dns"}}, ActionNone, 1},
+		{"it is about the stack, so an instance that exists is told too", []Resource{noRoot, dns}, &profileServer{instance: &api.Instance{Name: "dns", InstancePut: api.InstancePut{Profiles: []string{"base"}}}}, ActionNone, 1},
 		{"a root disk in the profile silences it", []Resource{withRoot, dns}, &profileServer{}, ActionCreate, 0},
 	}
 	for _, c := range cases {

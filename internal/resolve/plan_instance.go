@@ -3,8 +3,10 @@ package resolve
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	incus "github.com/lxc/incus/v7/client"
+	"github.com/lxc/incus/v7/shared/api"
 
 	"github.com/minihci/tink/internal/incusapi"
 )
@@ -167,6 +169,12 @@ func planInstance(server incus.InstanceServer, r Resource, opts PlanOptions) (Pl
 	if r.Ephemeral && !current.Ephemeral {
 		changes = append(changes, "ephemeral: false -> true")
 	}
+	// A stack declares its instances running (there is no field to declare one stopped), so one that exists and is Stopped is a start to plan. It is
+	// what a create that failed between the instance existing and its first successful start leaves. Only Stopped counts: the other statuses are
+	// not something a start fixes.
+	if current.Status == "Stopped" {
+		changes = append(changes, "state: Stopped -> Running (start)")
+	}
 
 	env := opts.env
 	if env == nil {
@@ -178,7 +186,7 @@ func planInstance(server incus.InstanceServer, r Resource, opts PlanOptions) (Pl
 	if r.onImageChangePolicy() == OnImageChangeRebuild && len(chk.Drift) > 0 && len(chk.Unverified) == 0 {
 		pre = rebuildPreflight(server, current, r, env)
 	}
-	p := decideInstance(r, changes, chk, pre)
+	p := decideInstance(r, changes, chk, pre, missingProfileBlockers(current, r)...)
 	if opts.extras {
 		ex := instanceExtras(server, env, current, r, opts.Offline)
 		p.Extras = &ex
@@ -186,15 +194,30 @@ func planInstance(server incus.InstanceServer, r Resource, opts PlanOptions) (Pl
 	return p, nil
 }
 
+// missingProfileBlockers are the reasons to block an instance that lacks a profile its stack names. Apply never changes an instance's profile list
+// (ApplyConfig writes config and devices only), so planning it as an update would promise a change that does not happen. Profiles the instance has
+// beyond the stack's are not drift (Extras reports them) and the order is not compared; a stack that names no profiles says nothing about them.
+func missingProfileBlockers(current *api.Instance, r Resource) []string {
+	if len(r.Profiles) == 0 {
+		return nil
+	}
+	missing := difference(r.Profiles, current.Profiles)
+	if len(missing) == 0 {
+		return nil
+	}
+	return []string{fmt.Sprintf("profile(s) %s are in the stack's profiles list but not on the instance, and apply does not change an instance's profiles (add them with `incus profile add`, or recreate the instance)", strings.Join(missing, ", "))}
+}
+
 // decideInstance turns the findings into a disposition. Pure, so the policy
-// table is directly testable.
+// table is directly testable. blockers are further reasons to block that do
+// not depend on the policy (a profile the instance lacks).
 //
 //	policy   confirmed drift             could not verify
 //	report   BLOCKED, nothing applied    warning, proceeds
 //	ignore   warning, proceeds           warning, proceeds
 //	rebuild  would rebuild (or BLOCKED   BLOCKED -- never rebuild blind
 //	         if a preflight check fails)
-func decideInstance(r Resource, changes []string, chk imageCheck, pre preflight) PlannedResource {
+func decideInstance(r Resource, changes []string, chk imageCheck, pre preflight, blockers ...string) PlannedResource {
 	p := PlannedResource{Resource: r, Changes: changes, Drift: chk.Drift}
 	if len(changes) > 0 {
 		p.Action = ActionUpdate
@@ -231,6 +254,13 @@ func decideInstance(r Resource, changes []string, chk imageCheck, pre preflight)
 			block("image drift with on_image_change: report -- nothing on this instance is changed (set on_image_change: ignore to accept it, or on_image_change: rebuild to converge it)")
 		}
 		p.Warnings = append(p.Warnings, chk.Unverified...)
+	}
+	if len(blockers) > 0 {
+		if p.Action == ActionBlocked { // the withheld count is already there
+			p.Blocked = append(p.Blocked, blockers...)
+		} else {
+			block(blockers...)
+		}
 	}
 	return p
 }
