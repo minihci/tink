@@ -1,11 +1,13 @@
 package incusapi
 
 import (
+	"context"
 	"errors"
 	"io"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
@@ -100,5 +102,100 @@ func TestExecWithStdinReturnsAFailureToStart(t *testing.T) {
 	s := &execServer{err: errors.New("instance is not running")}
 	if _, _, err := ExecWithStdin(s, "helper", []string{"x"}, strings.NewReader(""), nil); err == nil || !strings.Contains(err.Error(), "not running") {
 		t.Errorf("%v", err)
+	}
+}
+
+// hangOp is an exec that never finishes: Wait blocks until the operation is cancelled, as the real one does when a guest command never exits.
+type hangOp struct {
+	incus.Operation
+	cancelled chan struct{}
+}
+
+func (o hangOp) Wait() error { <-o.cancelled; return errors.New("operation cancelled") }
+func (o hangOp) Cancel() error {
+	close(o.cancelled)
+	return nil
+}
+func (o hangOp) Get() api.Operation { return api.Operation{} }
+
+type hangServer struct {
+	incus.InstanceServer
+	op hangOp
+}
+
+func (s *hangServer) ExecInstance(_ string, _ api.InstanceExecPost, _ *incus.InstanceExecArgs) (incus.Operation, error) {
+	return s.op, nil
+}
+
+func TestExecInGuestReturnsAtTheDeadlineWhenTheGuestNeverAnswers(t *testing.T) {
+	s := &hangServer{op: hangOp{cancelled: make(chan struct{})}}
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := ExecInGuestContext(context.Background(), s, "vm", []string{"sleep", "infinity"}, 1, 0, 50*time.Millisecond)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrExecTimeout) {
+			t.Fatalf("want ErrExecTimeout, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the exec did not return at its deadline")
+	}
+	select {
+	case <-s.op.cancelled:
+	default:
+		t.Error("the operation was not cancelled, so the command keeps running in the guest")
+	}
+}
+
+func TestExecInGuestStopsWhenTheContextIsCancelled(t *testing.T) {
+	s := &hangServer{op: hangOp{cancelled: make(chan struct{})}}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := ExecInGuestContext(ctx, s, "vm", []string{"sleep", "infinity"}, 1, 0, time.Hour)
+		done <- err
+	}()
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) || errors.Is(err, ErrExecTimeout) {
+			t.Fatalf("want context.Canceled and not a timeout, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the exec did not return after the context was cancelled")
+	}
+}
+
+func TestExecInGuestDoesNotWaitOutTheAgentRetryDelayOnceCancelled(t *testing.T) {
+	s := &execServer{err: errors.New(agentOfflineMessage)}
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(50*time.Millisecond, cancel)
+	start := time.Now()
+	_, _, err := ExecInGuestContext(ctx, s, "vm", []string{"true"}, 30, time.Hour, time.Minute)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("want context.Canceled, got %v", err)
+	}
+	if time.Since(start) > 5*time.Second {
+		t.Fatal("the retry loop slept through the cancellation")
+	}
+}
+
+func TestExecOutputIsCapped(t *testing.T) {
+	big := strings.Repeat("x", MaxExecOutput+4096)
+	s := &execServer{out: big}
+	_, out, err := ExecInGuest(s, "vm", []string{"cat", "/big"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) > MaxExecOutput+200 {
+		t.Fatalf("output is %d bytes, want it capped near %d", len(out), MaxExecOutput)
+	}
+	if !strings.Contains(out, "output truncated") {
+		t.Error("a truncated output must say so")
+	}
+	if !strings.HasPrefix(out, "xxxx") {
+		t.Error("the start of the output must be kept")
 	}
 }

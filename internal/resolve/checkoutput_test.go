@@ -1,6 +1,7 @@
 package resolve
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -8,9 +9,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
+
+	"github.com/minihci/tink/internal/incusapi"
 )
 
 func TestOutputMatches_IgnoresOnlyTrailingWhitespace(t *testing.T) {
@@ -288,7 +292,7 @@ func TestPlanExec_CheckOutput(t *testing.T) {
 		"the instance does not exist yet":     {&execFake{missing: true}, ActionCreate, "would run"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			p, err := planExec(c.s, r)
+			p, err := planExec(context.Background(), c.s, r)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -310,7 +314,7 @@ func TestRunExec_CheckOutput(t *testing.T) {
 
 	// not converged: runs the command, then the re-check passes
 	s := &execFake{live: "{}\n", setTo: "{ \"grants\": [] }\n"}
-	if err := runExec(s, r); err != nil {
+	if err := runExec(context.Background(), s, r); err != nil {
 		t.Fatalf("runExec: %v", err)
 	}
 	if got := strings.Join(s.ran, " | "); got != "headscale policy get | headscale policy set | headscale policy get" {
@@ -319,7 +323,7 @@ func TestRunExec_CheckOutput(t *testing.T) {
 
 	// already converged: the command is not run
 	s = &execFake{live: "{ \"grants\": [] }\n"}
-	if err := runExec(s, r); err != nil {
+	if err := runExec(context.Background(), s, r); err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.Join(s.ran, " | "); got != "headscale policy get" {
@@ -328,14 +332,14 @@ func TestRunExec_CheckOutput(t *testing.T) {
 
 	// the command succeeds but does not make the declared policy live: an error, not a silent success
 	s = &execFake{live: "{}\n", setTo: "{ \"other\": 1 }\n"}
-	err := runExec(s, r)
+	err := runExec(context.Background(), s, r)
 	if err == nil || !strings.Contains(err.Error(), "did not take effect") || !strings.Contains(err.Error(), "differs from file/policy") {
 		t.Errorf("err = %v, want a did-not-take-effect error", err)
 	}
 
 	// the command fails (a rejected policy): its own error, and no re-check
 	s = &execFake{live: "{}\n", setCode: 1}
-	err = runExec(s, r)
+	err = runExec(context.Background(), s, r)
 	if err == nil || !strings.Contains(err.Error(), "exit 1") {
 		t.Errorf("err = %v, want the command's exit status", err)
 	}
@@ -345,7 +349,45 @@ func TestRunExec_CheckOutput(t *testing.T) {
 
 	// no policy yet (the check exits non-zero): the first set
 	s = &execFake{liveCode: 1, live: "acl policy not found", setTo: "{ \"grants\": [] }\n"}
-	if err := runExec(s, r); err != nil {
+	if err := runExec(context.Background(), s, r); err != nil {
 		t.Fatalf("the first set: %v", err)
+	}
+}
+
+// hangOp is an exec that never finishes until it is cancelled, as a guest command that never exits.
+type hangOp struct {
+	incus.Operation
+	cancelled chan struct{}
+}
+
+func (o hangOp) Wait() error        { <-o.cancelled; return errors.New("operation cancelled") }
+func (o hangOp) Cancel() error      { close(o.cancelled); return nil }
+func (o hangOp) Get() api.Operation { return api.Operation{} }
+
+// hangFake is an instance whose every exec hangs.
+type hangFake struct {
+	execFake
+	op hangOp
+}
+
+func (s *hangFake) ExecInstance(string, api.InstanceExecPost, *incus.InstanceExecArgs) (incus.Operation, error) {
+	return s.op, nil
+}
+
+func TestPlanExec_ACheckThatHangsFailsAtTheResourcesTimeout(t *testing.T) {
+	s := &hangFake{op: hangOp{cancelled: make(chan struct{})}}
+	r := Resource{Kind: KindExec, Name: "hung", Instance: "vm", Check: []string{"sleep", "infinity"}, Command: []string{"true"}, Timeout: 50 * time.Millisecond}
+	done := make(chan error, 1)
+	go func() {
+		_, err := planExec(context.Background(), s, r)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, incusapi.ErrExecTimeout) {
+			t.Fatalf("want ErrExecTimeout, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("plan hung on a check that never returns")
 	}
 }

@@ -100,6 +100,9 @@ type yamlResource struct {
 	// duration rather than separate attempts/delay fields.
 	AgentTimeout string `yaml:"agent_timeout"`
 
+	// Exec-only. A duration string: how long one guest command may run. See Resource.Timeout.
+	Timeout string `yaml:"timeout"`
+
 	// Image-only. Source is read at load time like SourcePath above --
 	// relative to this YAML file's own directory. Architecture defaults
 	// to "x86_64" when left empty. Properties is its own field (not
@@ -284,7 +287,7 @@ func (d yamlResource) toResource(dir string) (Resource, error) {
 		return Resource{}, fmt.Errorf("resource %q: kind incus requires both check and command", d.Name)
 	}
 
-	var agentTimeout time.Duration
+	var agentTimeout, timeout time.Duration
 	if kind == KindExec {
 		if d.Instance == "" {
 			return Resource{}, fmt.Errorf("resource %q: kind exec requires instance", d.Name)
@@ -323,8 +326,20 @@ func (d yamlResource) toResource(dir string) (Resource, error) {
 				return Resource{}, fmt.Errorf("resource %q: agent_timeout: must not be negative, got %s", d.Name, d.AgentTimeout)
 			}
 		}
+		if d.Timeout != "" {
+			var err error
+			timeout, err = time.ParseDuration(d.Timeout)
+			if err != nil {
+				return Resource{}, fmt.Errorf("resource %q: timeout: %w", d.Name, err)
+			}
+			if timeout < 0 {
+				return Resource{}, fmt.Errorf("resource %q: timeout: must not be negative, got %s", d.Name, d.Timeout)
+			}
+		}
 	} else if d.AgentTimeout != "" {
 		return Resource{}, fmt.Errorf("resource %q: agent_timeout is exec-only", d.Name)
+	} else if d.Timeout != "" {
+		return Resource{}, fmt.Errorf("resource %q: timeout is exec-only", d.Name)
 	}
 
 	source := d.Source
@@ -377,6 +392,7 @@ func (d yamlResource) toResource(dir string) (Resource, error) {
 		Triggers:        d.Triggers,
 		CheckOutput:     checkOutputOf(d.CheckOutput),
 		AgentTimeout:    agentTimeout,
+		Timeout:         timeout,
 		Alias:           d.Alias,
 		Source:          source,
 		Architecture:    architecture,

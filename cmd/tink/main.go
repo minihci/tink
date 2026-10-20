@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -339,10 +340,15 @@ not counted. See docs/plan-extras.md.`, resolve.DefaultFile),
 			}
 			// Planned one dependency level at a time, but a volume's 3-2-1 check needs the
 			// backup targets from an earlier level, so hand the options the whole stack.
-			opts := helperPolicyOptions(server, resolve.NewPlanOptions(offline).WithExtras().ForResources(resources))
+			ctx, stop := interruptContext(cmd.Context())
+			defer stop()
+			opts := helperPolicyOptions(server, resolve.NewPlanOptions(offline).WithExtras().ForResources(resources)).WithContext(ctx)
 			withExtras := 0
 			defer func() { noteExtras(cmd.OutOrStdout(), withExtras) }()
 			for i, level := range levels {
+				if err := ctx.Err(); err != nil {
+					return fmt.Errorf("plan interrupted: %w", err)
+				}
 				fmt.Fprintf(cmd.OutOrStdout(), "level %d:\n", i)
 				plans, err := resolve.PlanWithOptions(server, level, opts)
 				if err != nil {
@@ -415,7 +421,9 @@ says on_image_change: rebuild; see docs/image-updates.md.`, resolve.DefaultFile)
 					fmt.Fprintln(cmd.ErrOrStderr(), n)
 				}
 			}
-			actions, err := resolve.ApplyWithOptions(socket, resources, opts)
+			ctx, stop := interruptContext(cmd.Context())
+			defer stop()
+			actions, err := resolve.ApplyWithOptions(ctx, socket, resources, opts)
 			for _, a := range actions {
 				fmt.Fprintln(cmd.OutOrStdout(), a)
 			}
@@ -583,4 +591,15 @@ func refuseUnderRemote(what string) func(*cobra.Command, []string) error {
 		}
 		return nil
 	}
+}
+
+// interruptContext is parent that ends on the first Ctrl-C (or SIGTERM). The signal is then handed back to its default action, so a second
+// Ctrl-C kills the process at once for a user who does not want to wait for the level in flight to finish.
+func interruptContext(parent context.Context) (context.Context, context.CancelFunc) {
+	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-ctx.Done()
+		stop()
+	}()
+	return ctx, stop
 }

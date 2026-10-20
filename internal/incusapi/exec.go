@@ -2,6 +2,7 @@ package incusapi
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -23,6 +24,19 @@ import (
 // should always be treated as a hard error.
 var ErrAgentNotReady = errors.New("VM agent did not come up within the given retry budget")
 
+// ErrExecTimeout wraps the error of a guest exec that was still running when its deadline passed. The command has been asked to stop
+// (the operation is cancelled), but a guest that ignores that may still be running it.
+var ErrExecTimeout = errors.New("guest exec exceeded its deadline")
+
+// DefaultExecTimeout is how long one guest exec may run before it is abandoned, when the caller gives no deadline. It is generous on
+// purpose: a deadline that cuts off a slow but healthy command is a worse failure than a long wait, and a stack that knows better says so
+// with timeout: on the exec resource. It is per attempt, so the VM-agent retry budget is not counted against it.
+const DefaultExecTimeout = 5 * time.Minute
+
+// MaxExecOutput is how many bytes of a guest command's output are kept. The rest is read and dropped, so a command that prints without end
+// costs time (bounded by the deadline) but not memory, and the output says it was cut.
+const MaxExecOutput = 1 << 20
+
 // agentOfflineMessage is the exact text of Incus's own internal
 // errQemuAgentOffline sentinel (internal/server/instance/drivers/
 // driver_qemu.go), confirmed by reading that source directly. It never
@@ -31,6 +45,8 @@ var ErrAgentNotReady = errors.New("VM agent did not come up within the given ret
 // -- so a substring match on err.Error() is the only signal a client
 // actually has. Fragile against Incus ever changing this exact wording;
 // the honest cost of there being no better signal available at all.
+// Nothing here can notice the wording change, so re-check it at each Incus upgrade (docs/resolver-architecture.md, "Re-check at each Incus
+// upgrade").
 const agentOfflineMessage = "VM agent isn't currently running"
 
 // DefaultAgentRetryAttempts/DefaultAgentRetryDelay use the same
@@ -100,12 +116,21 @@ func ExecInGuest(server incus.InstanceServer, instance string, command []string)
 // skip the retry loop entirely and wrap a nil lastErr in the "giving up"
 // error below.
 func ExecInGuestWithRetry(server incus.InstanceServer, instance string, command []string, attempts int, delay time.Duration) (exitCode int, output string, err error) {
+	return ExecInGuestContext(context.Background(), server, instance, command, attempts, delay, 0)
+}
+
+// ExecInGuestContext is ExecInGuestWithRetry that stops when ctx does and gives each attempt a deadline of timeout (DefaultExecTimeout when
+// zero). On a deadline the error wraps ErrExecTimeout; on cancellation it wraps ctx's error. Either way the output so far comes back with it.
+func ExecInGuestContext(ctx context.Context, server incus.InstanceServer, instance string, command []string, attempts int, delay, timeout time.Duration) (exitCode int, output string, err error) {
 	if attempts < 1 {
 		attempts = 1
 	}
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {
-		exitCode, output, err = execInGuestOnce(server, instance, command)
+		if err := ctx.Err(); err != nil {
+			return 0, "", fmt.Errorf("running %v on %s: %w", command, instance, err)
+		}
+		exitCode, output, err = execOnce(ctx, server, instance, command, bytes.NewReader(nil), nil, timeout)
 		if err == nil || !strings.Contains(err.Error(), agentOfflineMessage) {
 			return exitCode, output, err
 		}
@@ -116,29 +141,35 @@ func ExecInGuestWithRetry(server incus.InstanceServer, instance string, command 
 			// (resolve's planExec, checking convergence for a plan preview
 			// rather than actually converging) would otherwise pay a full
 			// delay for no reason.
-			time.Sleep(delay)
+			select {
+			case <-time.After(delay):
+			case <-ctx.Done():
+				return 0, "", fmt.Errorf("waiting for %s's VM agent to come up: %w", instance, ctx.Err())
+			}
 		}
 	}
 	return 0, "", fmt.Errorf("waiting for %s's VM agent to come up: giving up after %d attempts: %w: %w", instance, attempts, ErrAgentNotReady, lastErr)
-}
-
-func execInGuestOnce(server incus.InstanceServer, instance string, command []string) (exitCode int, output string, err error) {
-	return execOnce(server, instance, command, bytes.NewReader(nil), nil)
 }
 
 // ExecWithStdin runs command in the instance with stdin as its standard input and env added to its environment, and returns its exit
 // status and what it printed. It is for handing a command something that must not appear on a command line (a trust token) and has no
 // business being written to disk. It makes one attempt: the VM-agent retry of ExecInGuest is about a guest that is still booting.
 func ExecWithStdin(server incus.InstanceServer, instance string, command []string, stdin io.Reader, env map[string]string) (exitCode int, output string, err error) {
-	return execOnce(server, instance, command, stdin, env)
+	return execOnce(context.Background(), server, instance, command, stdin, env, 0)
 }
 
-func execOnce(server incus.InstanceServer, instance string, command []string, stdin io.Reader, env map[string]string) (exitCode int, output string, err error) {
+func execOnce(ctx context.Context, server incus.InstanceServer, instance string, command []string, stdin io.Reader, env map[string]string, timeout time.Duration) (exitCode int, output string, err error) {
+	if timeout <= 0 {
+		timeout = DefaultExecTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	// Incus copies stdout and stderr from two goroutines, and both go here so the output reads as one
 	// stream. A bare bytes.Buffer is not safe for that: with it, most runs (about 60% in testing, for a
 	// plain `echo`) came back with the output EMPTY while the exit status was right, so a failing command's
 	// error carried no output and a passing one printed nothing.
-	var buf syncBuffer
+	buf := syncBuffer{max: MaxExecOutput}
 	args := incus.InstanceExecArgs{
 		Stdin:    stdin,
 		Stdout:   &buf,
@@ -154,7 +185,17 @@ func execOnce(server incus.InstanceServer, instance string, command []string, st
 		return 0, "", fmt.Errorf("starting exec of %v on %s: %w", command, instance, err)
 	}
 
-	waitErr := op.Wait()
+	// op.Wait has no deadline of its own, so it runs beside the context. Cancelling the operation is what makes it return, and what asks
+	// the daemon to stop the command.
+	waited := make(chan error, 1)
+	go func() { waited <- op.Wait() }()
+	var waitErr error
+	select {
+	case waitErr = <-waited:
+	case <-ctx.Done():
+		_ = op.Cancel()
+		return 0, buf.String(), execStopped(ctx, command, instance, timeout)
+	}
 
 	if opAPI := op.Get(); opAPI.Metadata != nil {
 		if code, ok := opAPI.Metadata["return"].(float64); ok {
@@ -173,24 +214,49 @@ func execOnce(server incus.InstanceServer, instance string, command []string, st
 		// same condition for the first time against a real dead agent.
 		return exitCode, buf.String(), fmt.Errorf("running %v on %s: %w", command, instance, waitErr)
 	}
-	<-args.DataDone
+	select {
+	case <-args.DataDone:
+	case <-ctx.Done():
+		return exitCode, buf.String(), execStopped(ctx, command, instance, timeout)
+	}
 	return exitCode, buf.String(), nil
 }
 
-// syncBuffer is a bytes.Buffer that is safe for concurrent writers, which keep their arrival order.
+// execStopped is the error for an exec abandoned because ctx ended: a deadline names ErrExecTimeout, a cancellation keeps ctx's error.
+func execStopped(ctx context.Context, command []string, instance string, timeout time.Duration) error {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("running %v on %s: %w (after %s)", command, instance, ErrExecTimeout, timeout)
+	}
+	return fmt.Errorf("running %v on %s: %w", command, instance, ctx.Err())
+}
+
+// syncBuffer is a bytes.Buffer that is safe for concurrent writers, which keep their arrival order. With max set it keeps only the first max
+// bytes and says so in String; the zero value is unlimited.
 type syncBuffer struct {
-	mu  sync.Mutex
-	buf bytes.Buffer
+	mu        sync.Mutex
+	buf       bytes.Buffer
+	max       int
+	truncated bool
 }
 
 func (b *syncBuffer) Write(p []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.buf.Write(p)
+	n := len(p)
+	if b.max > 0 && b.buf.Len()+n > b.max {
+		// Report everything as written: an error here would stop Incus copying and leave the command blocked on a full pipe.
+		p = p[:max(b.max-b.buf.Len(), 0)]
+		b.truncated = true
+	}
+	b.buf.Write(p)
+	return n, nil
 }
 
 func (b *syncBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.truncated {
+		return b.buf.String() + fmt.Sprintf("\n[output truncated at %d bytes]\n", b.max)
+	}
 	return b.buf.String()
 }

@@ -1,6 +1,7 @@
 package resolve
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -19,6 +20,10 @@ type PlanOptions struct {
 	Offline bool
 
 	env *imageEnv
+
+	// ctx ends the run early: an exec stops waiting for its guest command when it does. Set by WithContext; nil means never. It is carried
+	// here, with the run's other per-run state, because planning reaches an exec through planOne and planKind, which already take opts.
+	ctx context.Context
 
 	// targets are the WHOLE stack's backup-target resources, which a volume's
 	// 3-2-1 check needs. Set by ForResources; a caller that plans one dependency
@@ -92,6 +97,20 @@ func (o PlanOptions) withTargets(resources []Resource) PlanOptions {
 		o.firstStart = firstStartFiles(resources)
 	}
 	return o
+}
+
+// WithContext makes planning and applying stop when ctx ends: a guest exec in flight is abandoned, and apply starts no further level.
+func (o PlanOptions) WithContext(ctx context.Context) PlanOptions {
+	o.ctx = ctx
+	return o
+}
+
+// context is the context to run under, never nil.
+func (o PlanOptions) context() context.Context {
+	if o.ctx == nil {
+		return context.Background()
+	}
+	return o.ctx
 }
 
 // WithHelperPolicy tells planning what the server's helper can read. Without it nothing is checked: a server with no helper has

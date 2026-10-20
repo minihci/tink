@@ -169,7 +169,7 @@ func planKind(server incus.InstanceServer, r Resource, opts PlanOptions) (Planne
 	case KindImage:
 		return planImage(s, r)
 	case KindExec:
-		return planExec(s, r)
+		return planExec(opts.context(), s, r)
 	default:
 		return PlannedResource{}, fmt.Errorf("unknown kind %q", r.Kind)
 	}

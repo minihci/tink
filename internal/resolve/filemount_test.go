@@ -1,6 +1,7 @@
 package resolve
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -561,7 +562,7 @@ func TestApplyOne_AFileUnderAMountOfAnInstanceThatIsNotRunning(t *testing.T) {
 // A deferred file is not a failure and not a block: the exit status is the apply's, and the summary says how many were left.
 func TestApplyLevels_ADeferredFileIsNotAFailure(t *testing.T) {
 	levels := [][]Resource{{{Kind: KindFile, Name: "a"}, {Kind: KindFile, Name: "b"}}}
-	notes, err := applyLevels(levels, func(r Resource, _ func(string, ...any)) (outcome, error) {
+	notes, err := applyLevels(context.Background(), levels, func(r Resource, _ func(string, ...any)) (outcome, error) {
 		if r.Name == "a" {
 			return outDeferred, nil
 		}
@@ -575,7 +576,7 @@ func TestApplyLevels_ADeferredFileIsNotAFailure(t *testing.T) {
 	}
 
 	// and the line is exactly what it was when nothing is deferred
-	notes, err = applyLevels(levels, func(Resource, func(string, ...any)) (outcome, error) { return outConverged, nil })
+	notes, err = applyLevels(context.Background(), levels, func(Resource, func(string, ...any)) (outcome, error) { return outConverged, nil })
 	if last := notes[len(notes)-1]; err != nil || last != "summary: 2 converged, 0 changed, 0 blocked, 0 failed" {
 		t.Errorf("summary = %q err %v", last, err)
 	}

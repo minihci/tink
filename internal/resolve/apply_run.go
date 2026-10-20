@@ -1,6 +1,7 @@
 package resolve
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -31,14 +32,17 @@ func (e *NotConvergedError) Error() string {
 
 // Apply converges resources with default options.
 func Apply(socket string, resources []Resource) ([]string, error) {
-	return ApplyWithOptions(socket, resources, PlanOptions{})
+	return ApplyWithOptions(context.Background(), socket, resources, PlanOptions{})
 }
 
 // ApplyWithOptions converges resources level by level, every resource within a
 // level concurrently. It returns the notes to print (ending with a summary
 // line). A resource that errors stops the apply after its level, as before; a
 // resource that is blocked does not, but the final error is a *NotConvergedError.
-func ApplyWithOptions(socket string, resources []Resource, opts PlanOptions) ([]string, error) {
+//
+// When ctx ends (Ctrl-C), the level in flight is allowed to finish, so a resource is never left half-converged between two of its own
+// steps by tink's choice, no further level starts, and the error wraps ctx's error. A guest exec in flight is abandoned at once.
+func ApplyWithOptions(ctx context.Context, socket string, resources []Resource, opts PlanOptions) ([]string, error) {
 	levels, err := Levels(resources)
 	if err != nil {
 		return nil, err
@@ -50,8 +54,8 @@ func ApplyWithOptions(socket string, resources []Resource, opts PlanOptions) ([]
 	if opts.env == nil {
 		opts.env = newImageEnv(opts.Offline)
 	}
-	opts = opts.withTargets(resources)
-	return applyLevels(levels, func(r Resource, note func(string, ...any)) (outcome, error) {
+	opts = opts.withTargets(resources).WithContext(ctx)
+	return applyLevels(ctx, levels, func(r Resource, note func(string, ...any)) (outcome, error) {
 		return applyOne(server, r, opts, note)
 	})
 }
@@ -60,7 +64,7 @@ type applyFunc func(r Resource, note func(string, ...any)) (outcome, error)
 
 // applyLevels is the apply loop without the daemon, so the blocked-propagation
 // and exit-status rules can be tested.
-func applyLevels(levels [][]Resource, do applyFunc) ([]string, error) {
+func applyLevels(ctx context.Context, levels [][]Resource, do applyFunc) ([]string, error) {
 	var notes []string
 	var mu sync.Mutex
 	note := func(format string, args ...any) {
@@ -70,10 +74,14 @@ func applyLevels(levels [][]Resource, do applyFunc) ([]string, error) {
 	}
 
 	var converged, changed, blocked, deferred int
+	var interrupted bool
 	summary := func(failed int) string {
 		line := fmt.Sprintf("summary: %d converged, %d changed, %d blocked, %d failed", converged, changed, blocked, failed)
 		if deferred > 0 {
 			line += fmt.Sprintf(", %d deferred", deferred)
+		}
+		if interrupted {
+			line += ", interrupted: the levels after this point were not applied"
 		}
 		return line
 	}
@@ -82,6 +90,11 @@ func applyLevels(levels [][]Resource, do applyFunc) ([]string, error) {
 	blockedInstances := map[string]bool{}
 
 	for _, level := range levels {
+		if err := ctx.Err(); err != nil {
+			interrupted = true
+			notes = append(notes, summary(0))
+			return notes, fmt.Errorf("apply interrupted: %w", err)
+		}
 		outs := make([]outcome, len(level))
 		errs := make([]error, len(level))
 		var wg sync.WaitGroup
@@ -163,7 +176,7 @@ func applyOne(server incus.InstanceServer, r Resource, opts PlanOptions, note fu
 		return outBlocked, nil
 	case ActionCreate:
 		var first firstStartOutcome
-		env := volumeEnv{targets: opts.targets, stack: opts.stack, firstStart: opts.firstStart, profiles: opts.profiles,
+		env := volumeEnv{ctx: opts.ctx, targets: opts.targets, stack: opts.stack, firstStart: opts.firstStart, profiles: opts.profiles,
 			report: func(_ string, o firstStartOutcome) { first = o }}
 		if err := createOne(server, r, env); err != nil {
 			return outConverged, err
