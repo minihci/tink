@@ -85,8 +85,8 @@ themselves, with no stack for it to hold - see [`docs/daemon-jobs.md`](docs/daem
 `plan` also asks every storage volume to declare how it is backed up
 (scheduled snapshots, or an explicit opt-out with a reason), warning about any
 that does not - see [`docs/volume-backup.md`](docs/volume-backup.md).
-`plan` also says, for each instance that exists, what it carries that the stack does not declare (a line starting "not in the stack"), changing and
-removing nothing - see [`docs/plan-extras.md`](docs/plan-extras.md).
+`plan` also says, for each instance, profile, storage volume, network and project that exists, what it carries that the stack does not declare (a line
+starting "not in the stack"), changing and removing nothing - see [`docs/plan-extras.md`](docs/plan-extras.md).
 Public routes for apps are written by hand for now (a route file the ingress instance's Caddyfile imports). Ingress self-registration, which
 generated them from config keys on the instance, was removed; [how to replace it](docs/removals/ingress-self-registration.md).
 

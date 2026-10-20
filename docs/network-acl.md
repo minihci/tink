@@ -114,7 +114,7 @@ The reason: Incus applies these as a live change to its own firewall chains, not
   ```
 
   A rule is *added* (its index in your list), *removed* (its index in the live list), or *changed* (the fields that differ, at its index in your list). Rules that match are found as a longest common subsequence, so inserting one rule in the middle is one `add`, and not a change to every rule after it. Indices count from 0, as Incus's own error messages do.
-- **Never deletes an ACL, but does converge its rules.** Two different things. The ACL *object* is never deleted: one the stack no longer declares stays, and the extras report ([`plan-extras.md`](plan-extras.md)) covers instances only, so it is not mentioned either. The *rules inside* an ACL the stack declares are converged, not just reported: a rule you add is added, and a rule that is live and not in the stack, or that you drop from the stack, is **removed** on apply **[lab]**. Removing a rule from the YAML therefore removes it from the firewall.
+- **Never deletes an ACL, but does converge its rules.** Two different things. The ACL *object* is never deleted: one the stack no longer declares stays, and the extras report ([`plan-extras.md`](plan-extras.md)) covers instances, profiles, storage volumes, networks and projects but not ACLs, so it is not mentioned either. The *rules inside* an ACL the stack declares are converged, not just reported: a rule you add is added, and a rule that is live and not in the stack, or that you drop from the stack, is **removed** on apply **[lab]**. Removing a rule from the YAML therefore removes it from the firewall.
 
 ### Rules are a list, in order
 

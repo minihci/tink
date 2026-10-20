@@ -307,10 +307,11 @@ plan checks them against 3-2-1 and warns. Copies are run by the helper
 (tink helper install): plan notes when a stack declares copies and there is
 none, and when the helper is not well. See docs/volume-backup.md and docs/helper.md.
 
-For an instance that already exists, plan also says what it carries that the
-stack does not declare (devices, config keys and profiles), on a line that
-starts "not in the stack". It changes nothing and removes nothing; Incus's and
-the image's own keys are not counted. See docs/plan-extras.md.`, resolve.DefaultFile),
+For an instance, profile, storage volume, network or project that already
+exists, plan also says what it carries that the stack does not declare (devices,
+config keys and, for an instance, profiles), on a line that starts "not in the
+stack". It changes nothing and removes nothing; Incus's and tink's own keys are
+not counted. See docs/plan-extras.md.`, resolve.DefaultFile),
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			resources, err := resolve.LoadFiles(args)
