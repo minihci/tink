@@ -1,6 +1,7 @@
 package resolve
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -12,17 +13,24 @@ type fakeOps struct {
 	snaps   []string
 	fail    map[string]error
 	calls   []string
+	// hook, when set, runs as each call is recorded (a test ends its context from here).
+	hook func(call string)
 }
 
 func (f *fakeOps) rec(name string) error {
 	f.calls = append(f.calls, name)
+	if f.hook != nil {
+		f.hook(name)
+	}
 	return f.fail[name]
 }
 func (f *fakeOps) InstanceRunning(string) (bool, error)       { return f.running, f.rec("running") }
 func (f *fakeOps) InstanceSnapshots(string) ([]string, error) { return f.snaps, f.rec("snapshots") }
-func (f *fakeOps) PullImage(string) (string, error)           { return "abcdef012345", f.rec("pull") }
-func (f *fakeOps) Stop(string) error                          { return f.rec("stop") }
-func (f *fakeOps) Start(string) error                         { return f.rec("start") }
+func (f *fakeOps) PullImage(context.Context, string) (string, error) {
+	return "abcdef012345", f.rec("pull")
+}
+func (f *fakeOps) Stop(string) error  { return f.rec("stop") }
+func (f *fakeOps) Start(string) error { return f.rec("start") }
 func (f *fakeOps) SnapshotVolumes(string, string) ([]string, error) {
 	return []string{"default/ha-config"}, f.rec("snapshot-volumes")
 }
@@ -79,7 +87,7 @@ func TestRunRebuild(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ops := tc.ops
 			var notes []string
-			err := runRebuild(&ops, rebuildResource(tc.snapshot), fixedNow, func(f string, a ...any) { notes = append(notes, f) })
+			err := runRebuild(context.Background(), &ops, rebuildResource(tc.snapshot), fixedNow, func(f string, a ...any) { notes = append(notes, f) })
 			if ops.seq() != tc.wantSeq {
 				t.Errorf("calls:\n got  %s\n want %s", ops.seq(), tc.wantSeq)
 			}
@@ -112,7 +120,7 @@ func TestHasDataVolume(t *testing.T) {
 func TestSnapshotVolumesName(t *testing.T) {
 	var got string
 	ops := &namingOps{fakeOps: fakeOps{running: true}, name: &got}
-	if err := runRebuild(ops, rebuildResource(true), fixedNow, func(string, ...any) {}); err != nil {
+	if err := runRebuild(context.Background(), ops, rebuildResource(true), fixedNow, func(string, ...any) {}); err != nil {
 		t.Fatal(err)
 	}
 	if got != "tink-pre-rebuild-20261004T120000Z" {
@@ -128,4 +136,48 @@ type namingOps struct {
 func (n *namingOps) SnapshotVolumes(_, snapshot string) ([]string, error) {
 	*n.name = snapshot
 	return []string{"default/ha-config"}, nil
+}
+
+// A Ctrl-C reaches a rebuild only where nothing has been changed yet; once the instance is stopped the rebuild is finished, because stopping
+// half-way would leave it down on a root filesystem that may already be gone.
+func TestRunRebuildInterrupted(t *testing.T) {
+	tests := []struct {
+		name     string
+		running  bool
+		endAfter string // the call after which the context ends
+		fail     map[string]error
+		wantSeq  string
+		wantErr  string
+	}{
+		{"before the pull", true, "snapshots", nil, "running > snapshots", "nothing was changed"},
+		{"the pull ends with the context", true, "pull", map[string]error{"pull": context.Canceled}, "running > snapshots > pull", "nothing was changed"},
+		{"after the pull, before the stop", false, "pull", nil, "running > snapshots > pull", "nothing was changed"},
+		{"after the stop: the rebuild still runs to the end", true, "stop", nil, "running > snapshots > pull > stop > rebuild > config > start", ""},
+		{"during the rebuild: config and restart still follow", true, "rebuild", nil, "running > snapshots > pull > stop > rebuild > config > start", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			ops := &fakeOps{running: tc.running, fail: tc.fail, hook: func(call string) {
+				if call == tc.endAfter {
+					cancel()
+				}
+			}}
+			err := runRebuild(ctx, ops, rebuildResource(false), fixedNow, func(string, ...any) {})
+			if ops.seq() != tc.wantSeq {
+				t.Errorf("calls:\n got  %s\n want %s", ops.seq(), tc.wantSeq)
+			}
+			switch {
+			case tc.wantErr == "" && err != nil:
+				t.Errorf("unexpected error: %v", err)
+			case tc.wantErr != "":
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Errorf("error = %v, want it to contain %q", err, tc.wantErr)
+				} else if !errors.Is(err, context.Canceled) {
+					t.Errorf("error = %v, want it to wrap context.Canceled", err)
+				}
+			}
+		})
+	}
 }

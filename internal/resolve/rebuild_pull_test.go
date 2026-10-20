@@ -1,10 +1,12 @@
 package resolve
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
@@ -17,6 +19,7 @@ type pullServer struct {
 	getErr    error
 	createErr error
 	waitErr   error
+	hang      bool   // the pull never finishes unless its wait is cancelled
 	storedAs  string // the fingerprint it says it stored
 	pulled    []api.ImagesPost
 }
@@ -36,16 +39,26 @@ func (s *pullServer) CreateImage(post api.ImagesPost, _ *incus.ImageCreateArgs) 
 		return nil, s.createErr
 	}
 	s.pulled = append(s.pulled, post)
-	return pullOp{fp: s.storedAs, err: s.waitErr}, nil
+	return pullOp{fp: s.storedAs, err: s.waitErr, hang: s.hang}, nil
 }
 
 type pullOp struct {
 	incus.Operation
-	fp  string
-	err error
+	fp   string
+	err  error
+	hang bool
 }
 
 func (o pullOp) Wait() error { return o.err }
+
+// WaitContext is what a pull is waited on with. As in the real client, ending ctx abandons the wait and returns ctx's error.
+func (o pullOp) WaitContext(ctx context.Context) error {
+	if o.hang {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	return o.err
+}
 
 func (o pullOp) Get() api.Operation {
 	return api.Operation{Metadata: map[string]any{"fingerprint": o.fp}}
@@ -63,7 +76,7 @@ func TestPullingTheImageOfARebuildLeavesTheDownloadToTheServer(t *testing.T) {
 	t.Run("an image the server already has is not pulled again", func(t *testing.T) {
 		srv := newPullServer()
 		srv.local[fp] = true
-		got, err := incusRebuildOps{server: srv, env: envFor(host)}.PullImage("reg:team/app:1")
+		got, err := incusRebuildOps{server: srv, env: envFor(host)}.PullImage(context.Background(), "reg:team/app:1")
 		if err != nil || got != fp || len(srv.pulled) != 0 {
 			t.Errorf("%q %v, pulled %v: it is local, under the fingerprint the registry gave for the server's architecture", got, err, srv.pulled)
 		}
@@ -73,7 +86,7 @@ func TestPullingTheImageOfARebuildLeavesTheDownloadToTheServer(t *testing.T) {
 		srv := newPullServer()
 		srv.storedAs = fp
 		pinned := "team/app:1@" + digest.String()
-		got, err := incusRebuildOps{server: srv, env: envFor(host)}.PullImage("reg:" + pinned)
+		got, err := incusRebuildOps{server: srv, env: envFor(host)}.PullImage(context.Background(), "reg:"+pinned)
 		if err != nil || got != fp {
 			t.Fatalf("%q %v", got, err)
 		}
@@ -92,7 +105,7 @@ func TestPullingTheImageOfARebuildLeavesTheDownloadToTheServer(t *testing.T) {
 	t.Run("the fingerprint returned is the one the server stored, even if the tag moved after the lookup", func(t *testing.T) {
 		srv := newPullServer()
 		srv.storedAs = "feedface" + fp[8:]
-		got, err := incusRebuildOps{server: srv, env: envFor(host)}.PullImage("reg:team/app:1")
+		got, err := incusRebuildOps{server: srv, env: envFor(host)}.PullImage(context.Background(), "reg:team/app:1")
 		if err != nil || got != srv.storedAs {
 			t.Errorf("%q %v: the rebuild must use what is actually in the store", got, err)
 		}
@@ -118,7 +131,7 @@ func TestPullingTheImageOfARebuildLeavesTheDownloadToTheServer(t *testing.T) {
 		} {
 			srv := newPullServer()
 			tc.set(srv)
-			_, err := incusRebuildOps{server: srv, env: tc.env()}.PullImage(tc.image)
+			_, err := incusRebuildOps{server: srv, env: tc.env()}.PullImage(context.Background(), tc.image)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("%s: err = %v, want it to contain %q", name, err, tc.want)
 			}
@@ -137,9 +150,33 @@ func TestPullingTheImageOfARebuildLeavesTheDownloadToTheServer(t *testing.T) {
 			srv := newPullServer()
 			srv.storedAs = fp
 			set(srv)
-			if got, err := (incusRebuildOps{server: srv, env: envFor(host)}).PullImage("reg:team/app:1"); err == nil {
+			if got, err := (incusRebuildOps{server: srv, env: envFor(host)}).PullImage(context.Background(), "reg:team/app:1"); err == nil {
 				t.Errorf("%s: %q, want an error", name, got)
 			}
 		}
 	})
+}
+
+// A pull is the one long step of a rebuild before anything is stopped, so Ctrl-C ends the wait for it (and with it the server's download,
+// which changes nothing).
+func TestPullingTheImageOfARebuildStopsWhenTheContextEnds(t *testing.T) {
+	host := newRegistry(t, nil)
+	pushIndex(t, host, "team/app:1", "amd64")
+	srv := newPullServer()
+	srv.hang = true
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := incusRebuildOps{server: srv, env: envFor(host)}.PullImage(ctx, "reg:team/app:1")
+		done <- err
+	}()
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("err = %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the pull is still waiting 5s after its context ended")
+	}
 }

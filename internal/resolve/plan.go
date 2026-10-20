@@ -88,6 +88,11 @@ func PlanWithOptions(server incus.InstanceServer, resources []Resource, opts Pla
 		wg.Add(1)
 		go func(i int, r Resource) {
 			defer wg.Done()
+			// Planning only reads, so an interrupted run stops here without a half-done change to account for.
+			if err := opts.context().Err(); err != nil {
+				errs[i] = fmt.Errorf("planning interrupted: %w", err)
+				return
+			}
 			plans[i], errs[i] = planOne(server, r, opts)
 		}(i, r)
 	}

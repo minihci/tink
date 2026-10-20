@@ -213,10 +213,13 @@ func applyOne(server incus.InstanceServer, r Resource, opts PlanOptions, note fu
 		fileNotes()
 		return outChanged, nil
 	case ActionRebuild:
-		rebuildMu.Lock()
-		defer rebuildMu.Unlock()
+		ctx := opts.context()
+		if err := lockRebuild(ctx); err != nil {
+			return outConverged, err
+		}
+		defer unlockRebuild()
 		ops := incusRebuildOps{server: scopedServer(server, r), env: opts.env}
-		if err := runRebuild(ops, r, time.Now, note); err != nil {
+		if err := runRebuild(ctx, ops, r, time.Now, note); err != nil {
 			return outConverged, err
 		}
 		return outChanged, nil

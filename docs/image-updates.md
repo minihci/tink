@@ -139,6 +139,15 @@ Rebuilds run one at a time across a whole apply, so two instances are never
 down for a rebuild at once. A rebuild does not restart or touch other
 instances, including ones that depend on it.
 
+**Ctrl-C during a rebuild.** Before step 3 nothing has been changed, so the first
+Ctrl-C ends the wait for the pull (the server's download is cancelled with it),
+or the wait for another rebuild's turn, and the rebuild stops with `nothing was
+changed`. From step 3 on it is not interrupted: a rebuild stopped between the
+stop and the start would leave the instance down on a root filesystem that is
+deleted and not yet recreated, so the rebuild runs to its end (a second Ctrl-C
+still kills the process). Re-run `plan apply` after either: the drift is still
+there until a rebuild succeeds.
+
 **What a rebuild discards.** Everything written to the instance's root
 filesystem. When a rebuild is planned for an instance with no attached data
 volume, `plan` warns, since the rebuild would then lose all of its state. Files placed by `kind: file`
