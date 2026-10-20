@@ -2,6 +2,7 @@ package resolve
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -37,7 +38,7 @@ func Apply(socket string, resources []Resource) ([]string, error) {
 
 // ApplyWithOptions converges resources level by level, every resource within a
 // level concurrently. It returns the notes to print (ending with a summary
-// line). A resource that errors stops the apply after its level, as before; a
+// line). Resources that error stop the apply after their level, and every one of that level's errors is returned (joined, one per line, in the level's order); a
 // resource that is blocked does not, but the final error is a *NotConvergedError.
 //
 // When ctx ends (Ctrl-C), the level in flight is allowed to finish, so a resource is never left half-converged between two of its own
@@ -132,11 +133,16 @@ func applyLevels(ctx context.Context, levels [][]Resource, do applyFunc) ([]stri
 				deferred++
 			}
 		}
-		for i, err := range errs {
-			if err != nil {
-				notes = append(notes, summary(failed))
-				return notes, fmt.Errorf("%s/%s: %w", level[i].Kind, level[i].Name, err)
+		if failed > 0 {
+			// Every failure of the level, one line each in the level's order, so the count in the summary matches what is reported.
+			var failures []error
+			for i, err := range errs {
+				if err != nil {
+					failures = append(failures, fmt.Errorf("%s/%s: %w", level[i].Kind, level[i].Name, err))
+				}
 			}
+			notes = append(notes, summary(failed))
+			return notes, errors.Join(failures...)
 		}
 	}
 

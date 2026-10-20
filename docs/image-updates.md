@@ -236,7 +236,7 @@ An exit status of 0 therefore means converged. Specifically:
   and counted as blocked: it lives inside something that is not converged.
 - A resource that merely `depends_on` a blocked instance still runs; that
   dependency means "must exist first", not "must be current".
-- A resource that **fails** stops the apply after its level, as before.
+- A resource that **fails** stops the apply after its level, as before. If several resources in that level fail, every error is printed, one per line, in the level's order.
 - `tink plan` is read-only and exits 0 even when it shows BLOCKED.
 
 ## Limits
