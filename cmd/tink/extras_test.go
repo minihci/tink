@@ -33,12 +33,12 @@ func TestNoteExtras(t *testing.T) {
 		t.Errorf("silent when there are none, got %q", out.String())
 	}
 	noteExtras(&out, 1)
-	if !strings.Contains(out.String(), "1 instance carries") || !strings.Contains(out.String(), "plan changes nothing") {
+	if !strings.Contains(out.String(), "1 resource carries") || !strings.Contains(out.String(), "plan changes nothing") {
 		t.Errorf("got %q", out.String())
 	}
 	out.Reset()
 	noteExtras(&out, 3)
-	if !strings.Contains(out.String(), "3 instances carry") {
+	if !strings.Contains(out.String(), "3 resources carry") {
 		t.Errorf("got %q", out.String())
 	}
 }

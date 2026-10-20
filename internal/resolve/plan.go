@@ -48,8 +48,9 @@ type PlannedResource struct {
 	Warnings []string
 	// Notes: facts about what apply will do that are not problems, such as a file a mount hides from the instance's first start. Informational only.
 	Notes []string
-	// Extras: for an instance that exists and was planned WithExtras, what it carries that the stack does not declare. Informational only: it
-	// never changes the action, and nothing is removed because of it. Nil when not asked for or not an instance.
+	// Extras: for an instance, profile, storage volume, network or project that exists and was planned WithExtras, what it carries that the stack
+	// does not declare. Informational only: it never changes the action, and nothing is removed because of it. Nil when not asked for, or for
+	// any other kind.
 	Extras *Extras
 }
 
@@ -120,19 +121,21 @@ func planKind(server incus.InstanceServer, r Resource, opts PlanOptions) (Planne
 			"holds a ${secret:...} reference that was never expanded (this is a tink bug: refusing to apply the literal text as a value)"}}, nil
 	}
 	s := scopedServer(server, r)
+	venv := volumeEnv{targets: opts.targets, stack: opts.stack, helperReads: opts.helperReads, helperLabel: opts.helperLabel, helperRemotes: opts.helperRemotes}
 	switch r.Kind {
 	case KindHelper:
 		// the helper is found in every project, so it is read with the unscoped server
 		return planHelper(server, r, time.Now())
 	case KindProject:
-		return planProject(s, r)
+		p, err := planProject(s, r)
+		return withOtherExtras(s, r, venv, opts, p, err)
 	case KindNetwork:
 		p, err := planNetwork(s, r)
 		if err != nil {
 			return p, err
 		}
 		p.Warnings = append(p.Warnings, aclReferenceWarnings(s, r, opts.acls)...)
-		return p, nil
+		return withOtherExtras(s, r, venv, opts, p, nil)
 	case KindNetworkACL:
 		return planNetworkACL(s, r)
 	case KindProfile:
@@ -141,9 +144,10 @@ func planKind(server incus.InstanceServer, r Resource, opts PlanOptions) (Planne
 			return p, err
 		}
 		p.Warnings = append(p.Warnings, aclReferenceWarnings(s, r, opts.acls)...)
-		return p, nil
+		return withOtherExtras(s, r, venv, opts, p, nil)
 	case KindStorageVolume:
-		return planStorageVolume(s, r, volumeEnv{targets: opts.targets, stack: opts.stack, helperReads: opts.helperReads, helperLabel: opts.helperLabel, helperRemotes: opts.helperRemotes})
+		p, err := planStorageVolume(s, r, venv)
+		return withOtherExtras(s, r, venv, opts, p, err)
 	case KindBackupTarget:
 		// A declaration only: there is no Incus object to create or converge.
 		return PlannedResource{Resource: r, Action: ActionNone}, nil
@@ -169,6 +173,20 @@ func planKind(server incus.InstanceServer, r Resource, opts PlanOptions) (Planne
 	default:
 		return PlannedResource{}, fmt.Errorf("unknown kind %q", r.Kind)
 	}
+}
+
+// withOtherExtras adds, to the plan of a profile, storage volume, network or project that exists, what it carries that the stack does not
+// declare (see Extras), when planning was asked for it. It is informational: the plan's action and changes are left as they were.
+func withOtherExtras(server incus.InstanceServer, r Resource, env volumeEnv, opts PlanOptions, p PlannedResource, err error) (PlannedResource, error) {
+	if err != nil || !opts.extras || p.Action == ActionCreate {
+		return p, err
+	}
+	ex, err := otherExtras(server, r, env)
+	if err != nil {
+		return PlannedResource{}, fmt.Errorf("reading what the live %s carries: %w", r.Kind, err)
+	}
+	p.Extras = ex
+	return p, nil
 }
 
 // planProject only ever creates. This platform's own memory already

@@ -114,7 +114,7 @@ Each step is done when its check passes. Steps in a phase can run in parallel; p
 ### Phase 1: make the core trustworthy (M)
 - `planInstance` compares run state and profile membership; an instance left half-created is resumed or reported, not "no changes" (F3).
 - One shared instance-config update with a bounded retry on a failed precondition (F4).
-- `plan` says how many undeclared items it leaves in place, for every kind, not only instances (F5).
+- `plan` says how many undeclared items it leaves in place, for every kind, not only instances (F5). Built for profiles, storage volumes, networks and projects ([plan-extras.md](plan-extras.md)); not for network ACLs, which are converged rule by rule.
 - `context.Context` and a timeout through the resolver and guest exec (F7).
 - *Done when* each of those has a test that fails without it, and `go test -race ./...` is clean.
 
