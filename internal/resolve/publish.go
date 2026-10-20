@@ -25,7 +25,7 @@ import (
 // these files (publishstamp.go, which also says why that prefix is the one tink owns).
 //
 // Load-time checks only, because a publish is judged against other documents (the offer must exist, the helpers must be declared) by the join, which can
-// see more than one stack. docs/join.md and docs/offer-grant-join-design.md have the reasoning.
+// see more than one stack. docs/join.md has the reasoning.
 
 var (
 	// publishNamePattern is a DNS label: the first part of the published name.

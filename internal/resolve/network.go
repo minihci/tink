@@ -14,8 +14,7 @@ import (
 )
 
 // A kind: network resource declares an Incus MANAGED BRIDGE: the thing an instance's NIC names with `network:`. Until now a stack could name a bridge
-// but not state it, so the bridge a project depends on was hand-made host state (docs/network.md has the reasoning, and the design note
-// docs/network-resources-design.md, the larger picture this is the first slice of).
+// but not state it, so the bridge a project depends on was hand-made host state (docs/network.md has the reasoning; forwards, the next slice, are proposed in #139).
 //
 // What this slice does, and deliberately no more:
 //

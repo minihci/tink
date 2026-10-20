@@ -1,6 +1,6 @@
 # Design: put an instance's files in place before its first start
 
-**Status: a design note, 2026-10-13. Built** (#78) and measured in the lab (see "Measured"). It fixes a race found in the Headscale lab ([what-tink-is.md](what-tink-is.md), "Where it is strong, and where it is weak"). A gap found in the next lab, files under a disk-device mount, is closed by "Files under a mount" below: **built, and run against a real server on 2026-10-13** (the Home Assistant stack that found it); two cases are still only covered by fakes, listed there. The same hazard on a later *update*, while the instance is not running, was found in a third lab and is handled by "Later applies: the instance is not running" below: **built, and so far run only against fakes**. Claims are marked **[lab]**, **[code]**, **[proposed]** or **[verify]**.
+**Status: a design note, 2026-10-13. Built** (#78) and measured in the lab (see "Measured"). It fixes a race found in the Headscale lab (the 2026-10-12 assessment, in #131). A gap found in the next lab, files under a disk-device mount, is closed by "Files under a mount" below: **built, and run against a real server on 2026-10-13** (the Home Assistant stack that found it); two cases are still only covered by fakes, listed there. The same hazard on a later *update*, while the instance is not running, was found in a third lab and is handled by "Later applies: the instance is not running" below: **built, and so far run only against fakes**. Claims are marked **[lab]**, **[code]**, **[proposed]** or **[verify]**.
 
 ## The problem
 

@@ -17,7 +17,7 @@ import (
 // A kind: network-acl resource declares an Incus NETWORK ACL: a named list of firewall rules that a network (`security.acls` in its config) or an
 // instance's NIC (`security.acls` on the device) can be held to. Until now a stack could name an ACL but not state it, so the rule that isolates a
 // bridge was hand-made host state, and `kind: incus` (argv for the local CLI) is blocked under --remote. docs/network-acl.md has the reasoning and
-// a complete example; docs/network-resources-design.md the larger picture.
+// a complete example.
 //
 // What this does, and deliberately no more:
 //

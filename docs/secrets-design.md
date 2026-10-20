@@ -115,14 +115,7 @@ encodings (kept: they are cheap); a `--file` flag for multi-line values (kept si
 
 ## Later phases
 
-2. **File delivery.** `secrets:` on instances, pushed after create and **before first start**, mode `0400`; `mode`/`uid`/`gid` on
-   `kind: file`; drift by reading the file. Right for software with `_FILE` variables: Immich documents `DB_PASSWORD_FILE` and the other
-   database variables **[docs]**, and the Postgres image documents `POSTGRES_PASSWORD_FILE` **[docs]**. Rejected for now: a host-side tmpfs
-   bind-mounted in (it would keep secrets out of snapshots, but autostarted instances come up before anything runs tink to re-create it)
-   **[hypothesis]**.
-3. **Backup hooks.** Target credentials (R2), the restic job instance (R3), and verify-check secrets (R4), all delivered through the same
-   instance-secret path; never argv.
-4. **`kind: secret`** with `generate:` policies and an unused/missing report, if the reasons for deferring it go away.
+Not built, and proposed in #137: file delivery (`secrets:` on instances, pushed after create and before first start, with `mode`/`uid`/`gid` on `kind: file`), secrets for backup hooks (target credentials, the restic job instance, verify-check secrets), and a `kind: secret` with `generate:` policies. The reasoning for each is in that issue.
 
 ## Open questions
 
