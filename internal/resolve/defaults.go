@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/minihci/tink/internal/backupmeta"
+	"github.com/minihci/tink/internal/backupext"
 	"github.com/minihci/tink/internal/secrets"
 )
 
@@ -50,7 +50,7 @@ type InstanceDefaults struct {
 // VolumeDefaults are filled into every `kind: storage-volume` of the stack.
 type VolumeDefaults struct {
 	// Backup is the backup block of a volume that declares none.
-	Backup *backupmeta.VolumeBackup
+	Backup *backupext.VolumeBackup
 }
 
 // deviceTypes are the Incus device types a default may name. A misspelling would otherwise default nothing, silently.
@@ -96,7 +96,7 @@ func validateStackDefaults(r Resource) error {
 		if hasSecretRef(reflect.ValueOf(v.Backup)) {
 			return wrap("storage-volume", fmt.Errorf("backup: a secret reference is not allowed: references are only accepted in an instance's environment.* values"))
 		}
-		if err := backupmeta.ValidateBackup("defaults.storage-volume", v.Backup); err != nil {
+		if err := backupext.Get().Validate("defaults.storage-volume", v.Backup); err != nil {
 			return wrap("storage-volume", err)
 		}
 	}
@@ -236,13 +236,13 @@ func fillInstance(r *Resource, d *InstanceDefaults) bool {
 }
 
 // cloneBackup is a deep copy of a backup block, so that no two volumes share one.
-func cloneBackup(b *backupmeta.VolumeBackup) *backupmeta.VolumeBackup {
+func cloneBackup(b *backupext.VolumeBackup) *backupext.VolumeBackup {
 	out := *b
 	if b.Snapshots != nil {
 		s := *b.Snapshots
 		out.Snapshots = &s
 	}
-	out.Copies = append([]backupmeta.BackupCopy(nil), b.Copies...)
+	out.Copies = append([]backupext.BackupCopy(nil), b.Copies...)
 	if b.VerifyCheck != nil {
 		c := *b.VerifyCheck
 		c.Command = append([]string(nil), b.VerifyCheck.Command...)
