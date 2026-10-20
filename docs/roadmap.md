@@ -167,7 +167,7 @@ As of 2026-10-19 the repository has Issues on and nothing else: no issue, no mil
 
 Not worth it for this project: Projects boards (milestones carry the state), CODEOWNERS (one maintainer), and Discussions.
 
-**Applied 2026-10-19,** on the author's go-ahead: items 1, 2, 4 and 6 and the labels of item 3 are settings, made with `gh`; the issue forms, Dependabot's configuration and the release-notes grouping (items 3 and 5) are files, in pull request #110, which the new ruleset holds until CI passes. The ruleset requires a pull request and the `build` check, and forbids force-pushes and deleting `main`; it asks for no approving review, so the maintainer can merge their own pull request. Milestones exist for Phases 0 to 6, with no issue assigned yet. To undo any of it, an admin edits the ruleset or the repository settings.
+**Applied 2026-10-19,** on the author's go-ahead: items 1, 2, 4 and 6 and the labels of item 3 are settings, made with `gh`; the issue forms, Dependabot's configuration and the release-notes grouping (items 3 and 5) are files, in pull request #110, which the new ruleset holds until CI passes. The ruleset requires a pull request and the `build` check, and forbids force-pushes and deleting `main`; it asks for no approving review, so the maintainer can merge their own pull request. Milestones exist for Phases 0 to 6. The first 33 issues were created on 2026-10-19 (#114 to #146): the work items of Phases 0 to 2, the design notes as proposals, and the open gaps. Later phases get their issues when they start. To undo any of it, an admin edits the ruleset or the repository settings.
 
 ## Decided and open
 
