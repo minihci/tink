@@ -3,6 +3,7 @@ package resolve
 import (
 	"errors"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -74,6 +75,29 @@ func TestExpandSecretsExpandsAndRecordsProvenance(t *testing.T) {
 	}
 	if out[1].SecretsExpanded || out[1].SecretKeys != nil {
 		t.Errorf("a resource with no references must be left alone: %+v", out[1])
+	}
+}
+
+// The reasons a resource is blocked are listed in the order of its keys, whatever order the map yields them in.
+func TestExpandSecretsListsProblemsInKeyOrder(t *testing.T) {
+	src := &fakeSource{exists: true, set: map[string]string{}}
+	r := envInstance("app", map[string]string{
+		"A": "${secret:s-a}", "B": "${secret:s-b}", "C": "${secret:s-c}", "D": "${secret:s-d}", "E": "${secret:s-e}", "F": "${secret:s-f}",
+	})
+	want := ""
+	for run := 0; run < 50; run++ {
+		out := ExpandSecrets([]Resource{r}, src)[0]
+		var names []string
+		for _, p := range out.SecretProblems {
+			names = append(names, regexp.MustCompile(`"[^"]+"`).FindString(p))
+		}
+		got := strings.Join(names, " ")
+		if run == 0 {
+			want = `"s-a" "s-b" "s-c" "s-d" "s-e" "s-f"`
+		}
+		if got != want {
+			t.Fatalf("run %d: problems out of key order:\n got %s\nwant %s", run, got, want)
+		}
 	}
 }
 

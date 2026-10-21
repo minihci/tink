@@ -3,6 +3,7 @@ package resolve
 import (
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/minihci/tink/internal/secrets"
@@ -135,6 +136,7 @@ func ExpandSecrets(resources []Resource, src SecretSource) []Resource {
 		if len(keys) == 0 {
 			continue
 		}
+		sort.Strings(keys) // the problems below come out in key order, so a plan reads the same on every run
 
 		cfg := make(map[string]string, len(r.Config))
 		for k, v := range r.Config {
