@@ -162,7 +162,7 @@ func (o *OwnershipReport) Line() string {
 	switch {
 	case o.stack == "" && o.unnamed > 0:
 		return fmt.Sprintf("ownership: this stack has no name (add a `kind: stack` document), so nothing it creates is stamped with the stack it belongs to and nothing can be adopted; "+
-			"%d declared object(s) would carry the stamp", o.unnamed)
+			"once it is named, %d declared object(s) would be stamped", o.unnamed)
 	case len(o.unstamped) == 0:
 		return ""
 	}
