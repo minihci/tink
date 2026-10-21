@@ -12,6 +12,7 @@ import (
 	"github.com/lxc/incus/v7/shared/api"
 
 	"github.com/minihci/tink/internal/incusapi"
+	"github.com/minihci/tink/internal/ownership"
 )
 
 // A kind: network-acl resource declares an Incus NETWORK ACL: a named list of firewall rules that a network (`security.acls` in its config) or an
@@ -235,19 +236,20 @@ func planNetworkACL(server incus.InstanceServer, r Resource) (PlannedResource, e
 		changes = append(changes, diffACLRules("egress", aclRules(current.Egress), aclRules(r.Egress))...)
 	}
 	if len(changes) == 0 {
-		return PlannedResource{Resource: r, Action: ActionNone}, nil
+		return observed(PlannedResource{Resource: r, Action: ActionNone}, current.Config), nil
 	}
-	return PlannedResource{Resource: r, Action: ActionUpdate, Changes: changes}, nil
+	return observed(PlannedResource{Resource: r, Action: ActionUpdate, Changes: changes}, current.Config), nil
 }
 
-func createNetworkACL(server incus.InstanceServer, r Resource) error {
+// createNetworkACL creates the ACL with the ownership stamp of stack (ownership.go) in the creation request itself; a stack with no name stamps nothing.
+func createNetworkACL(server incus.InstanceServer, r Resource, stack string) error {
 	return server.CreateNetworkACL(api.NetworkACLsPost{
 		NetworkACLPost: api.NetworkACLPost{Name: r.Name},
 		NetworkACLPut: api.NetworkACLPut{
 			Description: r.Description,
 			Ingress:     aclRules(r.Ingress),
 			Egress:      aclRules(r.Egress),
-			Config:      r.Config,
+			Config:      ownership.With(r.Config, stack),
 		},
 	})
 }

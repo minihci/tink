@@ -15,6 +15,8 @@ package backupmeta
 import (
 	"fmt"
 	"time"
+
+	"github.com/minihci/tink/internal/ownership"
 )
 
 // The state `tink backup run` leaves on the SOURCE volume for each copy target, as Incus volume
@@ -129,8 +131,10 @@ const PolicyProto = 1
 // StackKey is the volume config key that points a storage volume back at the stack that applied it: the name given by
 // that stack's `kind: stack` declaration. It makes a volume traceable (`incus storage volume show` says whose YAML to
 // edit) and lets a stack find its own volumes without guessing, for instance the ones it applied once and no longer
-// declares. It is written by `apply` and never removed by tink: a stack that is applied unnamed leaves it alone.
-const StackKey = "user.tink.stack"
+// declares. It is the ownership stamp (internal/ownership) that every kind tink creates carries and a volume carried first. It is written
+// when tink creates the volume, or when a person adopts it (`tink plan apply --adopt`), and never removed by tink: a stack that is applied
+// unnamed leaves it alone.
+const StackKey = ownership.Key
 
 // The state `tink backup verify` leaves on the SOURCE volume as Incus config, so
 // `plan` can see it without tink keeping a state file of its own. Written only when a verification passes: a failed one must not

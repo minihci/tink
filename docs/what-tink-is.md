@@ -15,7 +15,7 @@ tink is declarative. You describe a site in YAML, `plan` shows what would change
 
 What tink must remember it writes on the objects themselves, under `user.tink.*`, so the state stays with the thing it describes **[docs]**.
 
-**Where the loop is incomplete today.** It creates and updates, but it never deletes: a thing the stack no longer declares is reported as an extra and left alone. The one exception is the prefix tink owns, `user.tink.publish.` ([join.md](join.md#the-owned-prefix-and-the-one-place-tink-removes-a-key)). That was a safe first rule and it hardened into a stronger one than it should be; an ownership stamp on everything tink creates would make an explicit, scoped removal safe. That is a proposal: #133, with the first step in #127.
+**Where the loop is incomplete today.** It creates and updates, but it never deletes: a thing the stack no longer declares is reported as an extra and left alone. The one exception is the prefix tink owns, `user.tink.publish.` ([join.md](join.md#the-owned-prefix-and-the-one-place-tink-removes-a-key)). That was a safe first rule and it hardened into a stronger one than it should be; an ownership stamp on everything tink creates would make an explicit, scoped removal safe. The first step, the stamp itself, is built (phase 1 of #133, #127; [ownership.md](ownership.md)): every object tink creates for a named stack carries `user.tink.stack`, and `plan apply --adopt` stamps what exists. Reporting orphans and removing them are not built.
 
 ## One pattern: a capability
 
@@ -79,7 +79,7 @@ The earlier draft of this page held decisions and lab findings for features that
 |---|---|
 | Roles and engines compared; role helpers; the platform stack as a shipped recipe; identity and single sign-on (the LLDAP and Authelia lab); open decisions on helpers | #131 |
 | The generic `Offer`, `Grant` and `Join` types and the per-role engine interface | #130 |
-| Removal and the ownership stamp | #133 |
+| Removal, and the unbuilt phases of the ownership stamp (orphans, takeover, prune) | #133 (the stamp itself is built: [ownership.md](ownership.md)) |
 | Secrets in files | #137 |
 | Notification: how a failure reaches a person | #135 |
 | Remote access and its defaults | #136 |

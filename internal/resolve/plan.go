@@ -52,6 +52,14 @@ type PlannedResource struct {
 	// does not declare. Informational only: it never changes the action, and nothing is removed because of it. Nil when not asked for, or for
 	// any other kind.
 	Extras *Extras
+
+	// Ownership is whose the object is, for a kind that carries the stamp, an object that exists and a stack with a name (ownership.go). It is its own
+	// dimension: it never makes an action, a change line or an exit status, however it reads.
+	Ownership StampState
+	// live is the config (an image's properties) of the object as the plan read it, for withOwnership to classify. Unexported and cleared once used: it
+	// can hold values that must not be printed.
+	live     map[string]string
+	liveRead bool
 }
 
 // Plan computes what would happen for each resource without touching
@@ -116,7 +124,16 @@ func scopedServer(server incus.InstanceServer, r Resource) incus.InstanceServer 
 	return server
 }
 
+// planKind is the plan of one resource: what its kind decides (planKindBody) and, beside it and never part of it, whose the object is (ownership.go).
 func planKind(server incus.InstanceServer, r Resource, opts PlanOptions) (PlannedResource, error) {
+	p, err := planKindBody(server, r, opts)
+	if err != nil {
+		return p, err
+	}
+	return p.withOwnership(opts.stack), nil
+}
+
+func planKindBody(server incus.InstanceServer, r Resource, opts PlanOptions) (PlannedResource, error) {
 	// A secret that cannot be resolved blocks the WHOLE resource, never part of it.
 	if len(r.SecretProblems) > 0 {
 		return PlannedResource{Resource: r, Action: ActionBlocked, Blocked: r.SecretProblems}, nil
@@ -172,7 +189,7 @@ func planKind(server incus.InstanceServer, r Resource, opts PlanOptions) (Planne
 	case KindIncus:
 		return planIncus(r)
 	case KindImage:
-		return planImage(s, r)
+		return planImage(s, r, opts.stack != "")
 	case KindExec:
 		return planExec(opts.context(), s, r)
 	default:
@@ -200,14 +217,14 @@ func withOtherExtras(server incus.InstanceServer, r Resource, env volumeEnv, opt
 // story to diff toward, and none of this platform's real usage has ever
 // needed one.
 func planProject(server incus.InstanceServer, r Resource) (PlannedResource, error) {
-	_, _, found, err := incusapi.LookupProject(server, r.Name)
+	current, _, found, err := incusapi.LookupProject(server, r.Name)
 	if err != nil {
 		return PlannedResource{}, fmt.Errorf("reading the live project: %w", err)
 	}
 	if !found {
 		return PlannedResource{Resource: r, Action: ActionCreate}, nil
 	}
-	return PlannedResource{Resource: r, Action: ActionNone}, nil
+	return observed(PlannedResource{Resource: r, Action: ActionNone}, current.Config), nil
 }
 
 func planProfile(server incus.InstanceServer, r Resource) (PlannedResource, error) {
@@ -221,9 +238,9 @@ func planProfile(server incus.InstanceServer, r Resource) (PlannedResource, erro
 	changes := diffConfig(current.Config, r.Config, nil)
 	changes = append(changes, diffDevices(current.Devices, r.Devices)...)
 	if len(changes) == 0 {
-		return PlannedResource{Resource: r, Action: ActionNone}, nil
+		return observed(PlannedResource{Resource: r, Action: ActionNone}, current.Config), nil
 	}
-	return PlannedResource{Resource: r, Action: ActionUpdate, Changes: changes}, nil
+	return observed(PlannedResource{Resource: r, Action: ActionUpdate, Changes: changes}, current.Config), nil
 }
 
 func planStorageVolume(server incus.InstanceServer, r Resource, env volumeEnv) (PlannedResource, error) {
@@ -244,6 +261,9 @@ func planStorageVolume(server incus.InstanceServer, r Resource, env volumeEnv) (
 		}
 	}
 	p := decideVolume(r, current, env)
+	if current != nil {
+		p = observed(p, current.Config)
+	}
 	p.Warnings = append(p.Warnings, backupWarnings(r, env.targets)...)
 	p.Warnings = append(p.Warnings, env.helperRemoteWarnings(r)...)
 	return p, nil
@@ -301,15 +321,29 @@ func planIncus(r Resource) (PlannedResource, error) {
 // to one specific artifact by convention, leaving nothing to diff beyond
 // "does it exist," the same reasoning project and storage-volume already
 // use to stay create-only.
-func planImage(server incus.InstanceServer, r Resource) (PlannedResource, error) {
-	_, _, found, err := incusapi.LookupImageAlias(server, r.Alias)
+//
+// readStamp says to also read the image the alias points at, for its properties, where the ownership stamp is (ownership.go); it is off for a stack with
+// no name, which has no use for them.
+func planImage(server incus.InstanceServer, r Resource, readStamp bool) (PlannedResource, error) {
+	alias, _, found, err := incusapi.LookupImageAlias(server, r.Alias)
 	if err != nil {
 		return PlannedResource{}, fmt.Errorf("reading the live image alias %q: %w", r.Alias, err)
 	}
 	if !found {
 		return PlannedResource{Resource: r, Action: ActionCreate}, nil
 	}
-	return PlannedResource{Resource: r, Action: ActionNone}, nil
+	p := PlannedResource{Resource: r, Action: ActionNone}
+	if !readStamp {
+		return p, nil
+	}
+	img, _, imgFound, err := incusapi.LookupImage(server, alias.Target)
+	if err != nil {
+		return PlannedResource{}, fmt.Errorf("reading the live image %s behind the alias %q: %w", alias.Target, r.Alias, err)
+	}
+	if !imgFound { // an alias that points at nothing: there is nothing to read a stamp from, and nothing here is changed
+		return p, nil
+	}
+	return observed(p, img.Properties), nil
 }
 
 // diffConfig reports desired keys that are missing or different in

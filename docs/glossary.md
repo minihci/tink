@@ -50,7 +50,9 @@ tink fills gaps; it does not replace what it builds on. It gives a home or self-
 | `kind: exec` | run a command in an instance, guarded by a `check` so it is idempotent | yes |
 | `kind: file` | a file placed in an instance | yes |
 | `kind: incus` | the escape hatch: arguments for the local `incus` command | yes |
-| stamp | a `user.tink.*` key tink writes on an object to remember something (which stack owns a volume, when a copy was made) | yes |
+| stamp | a `user.tink.*` key tink writes on an object to remember something (which stack made an object, when a copy was made) | yes |
+| owner | the stack named in an object's `user.tink.stack` stamp, written when tink creates the object (a stack with no `kind: stack` name has none). A record of who made it, not a lock ([ownership.md](ownership.md)) | yes |
+| adopt | stamp a declared object that exists and has no stamp with the stack's name, with `tink plan apply --adopt` or `ownership: adopt-on-apply`. It writes that one key and restarts nothing. (`kind: helper` also says "adopt", for "accept and leave alone"; this one writes.) | yes |
 | `on_image_change` | the policy for when a pinned image's digest moves: update, or report | yes |
 | offer | what an instance provides, stated as keys on it: `user.tink.offer.<offer>.port` and `.proto`. A fact about the app; it says nothing about who may use it | yes (read by `tink join`; web offers) |
 | `kind: publish` | a declaration: a name in the site's zone (the document's `name:`, plus the dns helper's zone) shows one offer of an instance to named groups. tink converges nothing for it and `plan` leaves it out of the graph, but stamps it onto its instance as `user.tink.publish.<name>` so the server holds it; `tink join` reads it, from files or `--from-server` ([join.md](join.md)) | yes (a declaration) |

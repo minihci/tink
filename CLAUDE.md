@@ -68,6 +68,13 @@ several files to see are below.
   interface `backupmeta` registers in its `init` (the declaration types live in `backupext` too), to write the policy onto the
   volume at `plan apply`. `resolve/imports_test.go` fails if the converger imports a package that is not on its list; do not add a
   capability to it. See `docs/volume-backup.md`.
+- **Ownership is one stamp, and it is not part of a diff.** `user.tink.stack` (`internal/ownership`) is written in the creation request of every kind tink
+  creates for a named stack (project, profile, storage volume, instance, network, network ACL, image properties), and never by an ordinary apply on an object that
+  exists. It is its own dimension of a plan (`PlannedResource.Ownership`, read from the live object by `observed` and classified in `planKind`), so it is never a
+  change line, an action or an exit status; `plan` ends with one line for declared objects that exist with no stamp. `plan apply --adopt` (or `ownership:
+  adopt-on-apply` on `kind: stack`) is a pass of its own, `resolve/adopt.go`, with a narrow stamp-only write that must not read `Restart` or change an instance's
+  state (a test fails if it does). The key is refused in `config:` of every kind and never exported. Phase 1 of #133 only; orphans and prune are not built. See
+  `docs/ownership.md`.
 - **The helper is an Incus instance, not a service.** `tink helper install` creates an instance running `tink daemon run`.
   `internal/jobs` is its work queue, a directory where `READY` is written last so a half-pushed job is never read. The helper
   publishes a status document as a config key (`user.tink.helper.status`) on a custom volume that its instance points at

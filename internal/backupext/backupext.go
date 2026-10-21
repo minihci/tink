@@ -101,8 +101,6 @@ type Keys struct {
 	SnapshotSchedule, SnapshotExpiry string
 	// Policy is the resolved copy policy a volume carries.
 	Policy string
-	// Stack names the stack that applied the volume.
-	Stack string
 	// Prefix starts every other key the capability writes (stamps and markers): state, not declaration.
 	Prefix string
 }

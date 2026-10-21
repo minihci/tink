@@ -34,6 +34,11 @@ type Spec struct {
 	// check instance of `backup verify`, the helper). A stack's instances leave it off: `plan` warns about their profiles instead (resolve/rootdisk.go).
 	RootDiskAtCreate bool
 
+	// CreateConfig is config sent in the creation request itself, so it is on the instance from the moment it exists and not after a second call that a
+	// crash could skip. It is for what must be there from birth (the ownership stamp, resolve/ownership.go); everything else in Config still goes in
+	// ApplyConfig, because a key may need a device or a volume that does not exist yet.
+	CreateConfig map[string]string
+
 	// OwnedConfigPrefixes are config key prefixes that tink OWNS on the instance: ApplyConfig removes every live key under one of them that Config does not
 	// carry. Everywhere else ApplyConfig only sets, and a key that is no longer declared is left alone; an owned prefix is the one place a key tink wrote is
 	// taken back when nothing derives it any more (the stamps of `kind: publish`, resolve/publishstamp.go). Empty for anything else.

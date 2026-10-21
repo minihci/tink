@@ -136,6 +136,10 @@ type Resource struct {
 	// this backed up?". Nil means unanswered, which plan BLOCKS. See backupext.VolumeBackup.
 	Backup *backupext.VolumeBackup
 
+	// Ownership (stack-only) is how the stack takes the objects that were there before it stamped anything: OwnershipExplicit (the default; `tink plan
+	// apply --adopt` does it once) or OwnershipAdoptOnApply (every apply does). See ownership.go.
+	Ownership string
+
 	// Publish-only (see publish.go): Instance is the instance that makes the offer, Offer is which of its offers is shown, and Allow lists the GROUPS
 	// that may use it. Name is the host label: the published name is Name plus the dns helper's zone.
 	Offer string
