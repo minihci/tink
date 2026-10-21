@@ -102,5 +102,9 @@ several files to see are below.
   the software version; the host's name and the raw output stay in the author's private notes. Read PR and issue text before
   posting it, because it is public too.
 - **No deprecation period for undeployed features.** If nothing has been deployed with a feature, remove it outright.
+- **Before 1.0, fix hosts with a page, not code.** When a rename or removal touches something deployed (config keys, CLI
+  names, an image name), write an agent-followable page that says how to find the affected instances, fix them and test the
+  result, in the style of `docs/removals/ingress-self-registration.md`, and make the plain change in code. Do not write
+  migration or compatibility code; fixing the few places that need it costs less than carrying lines that run once.
 - **Releases.** A `v*` tag builds the binaries (`release.yml`) and the helper image (`helper-image.yml`). The version is
   compiled in from the tag, and `tink helper install` with no flag picks the image published for the version it reports.
