@@ -1,0 +1,123 @@
+kind: stack
+name: platform
+project: platform
+defaults:
+  instance:
+    config: {boot.autostart: "true", boot.autorestart: "true", limits.memory: 128MiB}
+    devices: {nic: {name: eth0}}
+  storage-volume:
+    backup:
+      snapshots: {schedule: "0 3 * * *", retain: 14d}
+      copies: [{target: offsite, schedule: "0 4 * * *", retain: 30d}]
+      verify: weekly
+---
+kind: network
+name: tink0
+config:
+  ipv4.address: 192.0.2.1/24
+---
+kind: backup-target
+name: offsite
+location: offsite
+engine: incus
+remote: offsite
+pool: backups
+---
+kind: profile
+name: tink-base
+devices:
+  root:
+    type: disk
+    path: /
+    pool: default
+---
+kind: storage-volume
+name: identity-data
+pool: default
+---
+kind: storage-volume
+name: sso-data
+pool: default
+---
+kind: storage-volume
+name: mesh-state
+pool: default
+backup:
+  none: regenerable -- the mesh re-enrols on first start
+---
+kind: instance
+name: identity
+image: docker-oci:lldap/lldap:v0.6.3
+profiles: [tink-base]
+config:
+  user.tink.role: identity
+devices:
+  eth0:
+    type: nic
+    network: tink0
+    ipv4.address: 192.0.2.10
+  state:
+    type: disk
+    pool: default
+    source: identity-data
+    path: /data
+---
+kind: instance
+name: sso
+image: docker-oci:authelia/authelia:4.39.28
+profiles: [tink-base]
+config:
+  user.tink.role: sso
+devices:
+  eth0:
+    type: nic
+    network: tink0
+    ipv4.address: 192.0.2.11
+  state:
+    type: disk
+    pool: default
+    source: sso-data
+    path: /config
+---
+kind: instance
+name: dns
+image: docker-oci:coredns/coredns:1.14.7
+profiles: [tink-base]
+config:
+  limits.memory: 64MiB
+  user.tink.role: dns
+devices:
+  eth0:
+    type: nic
+    network: tink0
+    ipv4.address: 192.0.2.12
+---
+kind: instance
+name: ingress
+image: docker-oci:caddybuilds/caddy-cloudflare:2.11.7
+profiles: [tink-base]
+config:
+  limits.memory: 256MiB
+  user.tink.role: ingress
+devices:
+  eth0:
+    type: nic
+    network: tink0
+    ipv4.address: 192.0.2.13
+---
+kind: instance
+name: mesh
+image: docker-oci:tailscale/tailscale:v1.102.5
+profiles: [tink-base]
+config:
+  user.tink.role: mesh
+devices:
+  eth0:
+    type: nic
+    network: tink0
+    ipv4.address: 192.0.2.14
+  state:
+    type: disk
+    pool: default
+    source: mesh-state
+    path: /var/lib/tailscale

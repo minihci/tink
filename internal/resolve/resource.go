@@ -323,6 +323,9 @@ type Resource struct {
 	Config  map[string]string
 	Devices map[string]map[string]string
 
+	// Defaults (stack-only) is the boilerplate the stack fills into the resources that do not set it. See defaults.go.
+	Defaults *StackDefaults
+
 	// Set by ExpandSecrets, never from YAML. SecretKeys are the config keys whose value held a
 	// secret reference (no diff prints them); SecretProblems are the reasons a reference could not be
 	// resolved, which blocks the whole resource; SecretsExpanded says expansion ran on it.

@@ -33,7 +33,7 @@ tink fills gaps; it does not replace what it builds on. It gives a home or self-
 
 | Word | Meaning | Built |
 |---|---|---|
-| stack | the documents applied together; a `kind: stack` document names it and may give a default project. Incus has no word for it; Compose calls the same unit a *project* | yes |
+| stack | the documents applied together; a `kind: stack` document names it and may give a default project and `defaults:` ([docs](stack-defaults.md)). Incus has no word for it; Compose calls the same unit a *project* | yes |
 | resource, kind | one document in a stack, and its type | yes |
 | plan, apply | `tink plan` shows what would change; `tink plan apply` does it | yes |
 | BLOCKED | a plan result for something tink refuses to touch, with the reason | yes |

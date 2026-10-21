@@ -54,6 +54,9 @@ type yamlResource struct {
 	// Storage-volume-only -- see backupext.VolumeBackup.
 	Backup *yamlBackup `yaml:"backup"`
 
+	// Stack-only -- see defaults.go.
+	Defaults *yamlDefaults `yaml:"defaults"`
+
 	// File-only.
 	Instance string `yaml:"instance"`
 	Path     string `yaml:"path"`
@@ -112,6 +115,32 @@ type yamlResource struct {
 	Source       string            `yaml:"source"`
 	Architecture string            `yaml:"architecture"`
 	Properties   map[string]string `yaml:"properties"`
+}
+
+// yamlDefaults is the on-disk shape of a stack's `defaults:`: one section per kind that has something to default. The loader is strict about
+// every level of it, like the rest of the file.
+type yamlDefaults struct {
+	Instance *struct {
+		Config  map[string]string            `yaml:"config"`
+		Devices map[string]map[string]string `yaml:"devices"`
+	} `yaml:"instance"`
+	StorageVolume *struct {
+		Backup *yamlBackup `yaml:"backup"`
+	} `yaml:"storage-volume"`
+}
+
+func (d *yamlDefaults) toStackDefaults() *StackDefaults {
+	if d == nil {
+		return nil
+	}
+	out := &StackDefaults{}
+	if d.Instance != nil {
+		out.Instance = &InstanceDefaults{Config: d.Instance.Config, Devices: d.Instance.Devices}
+	}
+	if d.StorageVolume != nil {
+		out.StorageVolume = &VolumeDefaults{Backup: d.StorageVolume.Backup.toVolumeBackup()}
+	}
+	return out
 }
 
 // yamlBackup is the on-disk shape of a volume's backup block.
@@ -370,6 +399,7 @@ func (d yamlResource) toResource(dir string) (Resource, error) {
 		Address:         d.Address,
 		Fingerprint:     d.Fingerprint,
 		Backup:          d.Backup.toVolumeBackup(),
+		Defaults:        d.Defaults.toStackDefaults(),
 		Description:     d.Description,
 		AllowDisruption: d.AllowDisruption,
 		Ingress:         d.Ingress,

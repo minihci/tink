@@ -85,7 +85,7 @@ tink join platform/platform.yaml canary/canary.yaml
 tink join --only dns platform/platform.yaml canary/canary.yaml      # one section, no heading: easy to diff
 ```
 
-Each argument is one stack (that is what gives its resources the stack's default project); a stack split across files is given as `a.yaml,b.yaml`. Output, for two publishes of one app:
+Each argument is one stack (that is what gives its resources the stack's default project, and fills in its [`defaults:`](stack-defaults.md)); a stack split across files is given as `a.yaml,b.yaml`. Output, for two publishes of one app:
 
 ```
 == dns: records for the dns helper's hosts file (zone home.example.org)
