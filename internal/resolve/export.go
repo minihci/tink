@@ -11,7 +11,7 @@ import (
 	"github.com/lxc/incus/v7/shared/cliconfig"
 	yaml "go.yaml.in/yaml/v4"
 
-	"github.com/minihci/tink/internal/backupmeta"
+	"github.com/minihci/tink/internal/backupext"
 	"github.com/minihci/tink/internal/incusapi"
 	"github.com/minihci/tink/internal/run"
 	"github.com/minihci/tink/internal/secrets"
@@ -199,24 +199,25 @@ func exportVolumes(scoped incus.InstanceServer, inst *api.Instance, project stri
 
 		d := exportDoc{res: Resource{Kind: KindStorageVolume, Name: name, Project: project, Pool: pool, Config: map[string]string{}}}
 		var snapSchedule, snapExpiry string
+		keys := backupext.Get().Keys()
 		for k, v := range vol.Config {
 			switch {
 			case strings.HasPrefix(k, "volatile."):
-			case k == backupmeta.KeySnapshotSchedule:
+			case k == keys.SnapshotSchedule:
 				snapSchedule = v
-			case k == backupmeta.KeySnapshotExpiry:
+			case k == keys.SnapshotExpiry:
 				snapExpiry = v
-			case k == backupmeta.PolicyKey:
+			case k == keys.Policy:
 				d.trailing = append(d.trailing, "this volume carries a copy policy (user.tink.backup.policy); the backup-target resources it names cannot be rebuilt from the volume, declare them in the stack")
 				res.Notes = append(res.Notes, fmt.Sprintf("volume %s: carries a copy policy; copies and their targets are not exported", key))
-			case strings.HasPrefix(k, "user.tink.backup.") || k == backupmeta.StackKey:
+			case strings.HasPrefix(k, keys.Prefix) || k == keys.Stack:
 				// tink's own stamps (last copy, failures, owning stack): state, not declaration
 			default:
 				d.res.Config[k] = v
 			}
 		}
 		if snapSchedule != "" || snapExpiry != "" {
-			d.res.Backup = &backupmeta.VolumeBackup{Snapshots: &backupmeta.SnapshotPolicy{Schedule: snapSchedule, Retain: snapExpiry}}
+			d.res.Backup = &backupext.VolumeBackup{Snapshots: &backupext.SnapshotPolicy{Schedule: snapSchedule, Retain: snapExpiry}}
 			d.raw = fmt.Sprintf("backup:\n  snapshots:\n    schedule: %s\n    retain: %s\n", scalar(snapSchedule), scalar(snapExpiry))
 			// the keys are written by the backup block; the planned resource must not also carry them as config
 		} else if d.raw == "" {

@@ -12,7 +12,7 @@ import (
 	"github.com/lxc/incus/v7/shared/api"
 	yaml "go.yaml.in/yaml/v4"
 
-	"github.com/minihci/tink/internal/backupmeta"
+	"github.com/minihci/tink/internal/backupext"
 )
 
 // yamlResource is the on-disk shape: multi-document YAML files
@@ -51,7 +51,7 @@ type yamlResource struct {
 	Ingress []api.NetworkACLRule `yaml:"ingress"`
 	Egress  []api.NetworkACLRule `yaml:"egress"`
 
-	// Storage-volume-only -- see backupmeta.VolumeBackup.
+	// Storage-volume-only -- see backupext.VolumeBackup.
 	Backup *yamlBackup `yaml:"backup"`
 
 	// File-only.
@@ -167,19 +167,19 @@ func (v *yamlVerify) UnmarshalYAML(node *yaml.Node) error {
 	return fmt.Errorf("line %d: verify must be a cadence (daily, weekly, monthly) or a mapping with every and check", node.Line)
 }
 
-func (b *yamlBackup) toVolumeBackup() *backupmeta.VolumeBackup {
+func (b *yamlBackup) toVolumeBackup() *backupext.VolumeBackup {
 	if b == nil {
 		return nil
 	}
-	out := &backupmeta.VolumeBackup{None: b.None, Verify: b.Verify.Every}
+	out := &backupext.VolumeBackup{None: b.None, Verify: b.Verify.Every}
 	if c := b.Verify.Check; c != nil {
-		out.VerifyCheck = &backupmeta.VerifyCheck{Image: c.Image, Command: c.Command, Mount: c.Mount}
+		out.VerifyCheck = &backupext.VerifyCheck{Image: c.Image, Command: c.Command, Mount: c.Mount}
 	}
 	for _, c := range b.Copies {
-		out.Copies = append(out.Copies, backupmeta.BackupCopy{Target: c.Target, Schedule: c.Schedule, Retain: c.Retain})
+		out.Copies = append(out.Copies, backupext.BackupCopy{Target: c.Target, Schedule: c.Schedule, Retain: c.Retain})
 	}
 	if b.Snapshots != nil {
-		out.Snapshots = &backupmeta.SnapshotPolicy{Schedule: b.Snapshots.Schedule, Retain: b.Snapshots.Retain}
+		out.Snapshots = &backupext.SnapshotPolicy{Schedule: b.Snapshots.Schedule, Retain: b.Snapshots.Retain}
 	}
 	return out
 }
