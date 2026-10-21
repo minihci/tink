@@ -31,27 +31,17 @@ func (e *NotConvergedError) Error() string {
 	return fmt.Sprintf("%d resource(s) not converged (BLOCKED or SKIPPED, see above)", e.Blocked)
 }
 
-// Apply converges resources with default options.
-func Apply(socket string, resources []Resource) ([]string, error) {
-	return ApplyWithOptions(context.Background(), socket, resources, PlanOptions{})
-}
-
-// ApplyWithOptions converges resources level by level, every resource within a
-// level concurrently. It returns the notes to print (ending with a summary
+// ApplyPrepared converges a stack that has been prepared (the caller loaded it, qualified its images and built levels from it, and holds the
+// connection, so nothing here connects again or builds the graph a second time: Levels changes its input in place and is run once). It
+// goes level by level, every resource within a level concurrently, and returns the notes to print (ending with a summary
 // line). Resources that error stop the apply after their level, and every one of that level's errors is returned (joined, one per line, in the level's order); a
 // resource that is blocked does not, but the final error is a *NotConvergedError.
 //
+// resources is the whole stack the levels were built from; opts is completed from it where the caller left it unset.
+//
 // When ctx ends (Ctrl-C), the level in flight is allowed to finish, so a resource is never left half-converged between two of its own
 // steps by tink's choice, no further level starts, and the error wraps ctx's error. A guest exec in flight is abandoned at once.
-func ApplyWithOptions(ctx context.Context, socket string, resources []Resource, opts PlanOptions) ([]string, error) {
-	levels, err := Levels(resources)
-	if err != nil {
-		return nil, err
-	}
-	server, err := incusapi.Connect(socket)
-	if err != nil {
-		return nil, fmt.Errorf("connecting to incus: %w", err)
-	}
+func ApplyPrepared(ctx context.Context, server incus.InstanceServer, resources []Resource, levels [][]Resource, opts PlanOptions) ([]string, error) {
 	if opts.env == nil {
 		opts.env = newImageEnv(opts.Offline)
 	}

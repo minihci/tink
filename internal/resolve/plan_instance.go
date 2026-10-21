@@ -30,7 +30,7 @@ type PlanOptions struct {
 	// 3-2-1 check needs. Set by ForResources; a caller that plans one dependency
 	// level at a time (as `tink plan` does) must call it with the full stack,
 	// because the targets and the volumes that copy to them land in different
-	// levels. PlanWithOptions/ApplyWithOptions only fill it in when it is unset.
+	// levels. PlanWithOptions/ApplyPrepared only fill it in when it is unset.
 	targets map[string]Resource
 	// helperReads is the newest copy-policy protocol the server's helper says it can read (0: there is no helper, or it has said
 	// nothing), and helperLabel names it. A policy of a newer protocol would be skipped by that helper without a word, so plan blocks
