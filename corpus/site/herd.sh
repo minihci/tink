@@ -19,10 +19,22 @@ STACKS="vault status blog shop media metrics"
 # name:address:port of each published app, for the checks
 APPS="vault:198.51.100.10:80 status:203.0.113.10:3001 blog:203.0.113.42:80 shop:203.0.113.74:80 sonarr:203.0.113.106:8989 qbittorrent:203.0.113.107:8080 metrics:203.0.113.138:3000"
 
-fw() { # fw add|remove INTERFACE
-	if command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet firewalld 2>/dev/null; then
-		$SUDO firewall-cmd --zone=trusted --"$1"-interface="$2" >/dev/null || true
-	fi
+# fw add|remove INTERFACE puts an interface in firewalld's trusted zone, or takes it out, for the running firewall. firewalld often makes the change and
+# then does not answer in time (a D-Bus "did not receive a reply"), so its answer is not believed: the zone is asked, before and after, and the change
+# is tried again if the zone does not read as wanted. It fails, saying what to run, if the zone never does; `down` goes on regardless.
+fw() {
+	command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet firewalld 2>/dev/null || return 0
+	want=yes
+	[ "$1" = remove ] && want=no
+	n=0
+	while [ "$n" -lt 4 ]; do
+		[ "$(firewall-cmd --zone=trusted --query-interface="$2" 2>/dev/null || true)" = "$want" ] && return 0
+		$SUDO firewall-cmd --zone=trusted --"$1"-interface="$2" >/dev/null 2>&1 || true
+		n=$((n + 1))
+	done
+	[ "$(firewall-cmd --zone=trusted --query-interface="$2" 2>/dev/null || true)" = "$want" ] && return 0
+	echo "herd.sh: firewalld's trusted zone does not read as wanted for $2 after 4 tries; run: sudo firewall-cmd --zone=trusted --$1-interface=$2" >&2
+	return 1
 }
 
 exists() { "$@" >/dev/null 2>&1; }
@@ -112,8 +124,8 @@ down() {
 		exists incus network acl show "tink-$s-in" && incus network acl delete "tink-$s-in" </dev/null
 	done
 	exists incus network show herd0 && incus network delete herd0 </dev/null
-	fw remove herd0
-	fw remove 'tink-+'
+	fw remove herd0 || true
+	fw remove 'tink-+' || true
 	return 0
 }
 
