@@ -7,9 +7,20 @@ TINK=./tink corpus/site/herd.sh up       # the site, the six stacks, then the si
 corpus/site/herd.sh test                 # the checks below
 TINK=./tink corpus/site/herd.sh backup   # a copy of the vault volume to another pool, and two restore checks
 corpus/site/herd.sh down                 # removes everything it made
+corpus/site/herd.sh preflight            # what `up` checks first, on its own
 ```
 
 It runs on a local Incus server and touches the host in one place: on a host running firewalld it puts the platform bridge and every bridge named `tink-*` in the `trusted` zone of the running firewall (not permanent). That is one rule, added before any bridge exists, so tink creates the stacks' bridges from nothing and they get DHCP and DNS from the host (#177). With `SUDO_ASKPASS` set it asks through that. firewalld often makes a change and then does not answer, so the script asks the zone whether it took, tries again, and gives each call a time limit.
+
+## What `up` needs from the host
+
+`herd.sh preflight` (run by `up` first; `HERD_PREFLIGHT=0` skips it) checks, and changes nothing but a throwaway probe container that it deletes:
+
+- `incus`, `curl`, `dig`, `timeout` and `sed` are installed, `$TINK` is a program, and the Incus server answers;
+- a container starts (a small image from the `images:` remote), which fails on a host whose cgroup layout LXC does not support (a pure cgroup v2 host is the supported one);
+- a warning, not a failure, when `net.bridge.bridge-nf-call-iptables` is 1: the derived ACL then also applies inside a stack and the WordPress stacks answer 500 (#196).
+
+`up` also tries a `tink plan apply` again, after a pause, when the registry's anonymous pull limit refused an image (`toomanyrequests` in the output); any other failure stops at once. `HERD_PULL_RETRIES` (default 3) and `HERD_RETRY_WAIT` (default 30 seconds) set it. An apply that failed part-way is resumed by the next one.
 
 ## The platform bridge's subnet
 
@@ -55,7 +66,7 @@ Run on 2026-10-22 (L-2026-10-21b), Incus 7.5.1, Caddy 2.11.7, CoreDNS 1.15.0, Au
 
 And for the stacks: another platform instance does not reach an app; `blog` and `shop` each have a running `db`; Sonarr and qBittorrent share `/downloads`. From nothing, `up` leaves 32 passing checks and a second `tink plan` of the site and of every stack that says no changes.
 
-**With the platform bridge picked by Incus** (a disposable cloud container, Incus 7.5.1, tink built from the `claude/great-hawking-xt2760` branch): `up` with the render step above left 32 passing checks and a second `tink plan` of the rendered site and of every stack that said no changes. Two things were different from the first run. `plan` ends with a note that `network/herd0` has no ownership stamp, because `herd.sh` makes the bridge before tink does (nothing changes because of it). And the WordPress stacks needed `net.bridge.bridge-nf-call-iptables=0` on that host (see "What it found"). Docker Hub's unauthenticated pull limit refused some images on a first try; `up` stops at the first failed pull, and running it again resumes.
+**With the platform bridge picked by Incus** (a disposable cloud container, Incus 7.5.1, tink built from the `claude/great-hawking-xt2760` branch): `up` with the render step above left 32 passing checks and a second `tink plan` of the rendered site and of every stack that said no changes. Two things were different from the first run. `plan` ends with a note that `network/herd0` has no ownership stamp, because `herd.sh` makes the bridge before tink does (nothing changes because of it). And the WordPress stacks needed `net.bridge.bridge-nf-call-iptables=0` on that host (see "What it found"). Docker Hub's unauthenticated pull limit refused some images on a first try; that run stopped at the first failed pull and was resumed by hand, which `up` now does itself (see above).
 
 **Removing a publish** was tried on `status`: dropping its `kind: publish` and applying the stack, then the site, removed its route, its sign-on rule, its dns record, its stamp and its ACL rule, with no other step, and left the other six names answering.
 

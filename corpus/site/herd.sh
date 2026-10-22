@@ -89,6 +89,19 @@ files() {
 	echo "$f"
 }
 
+# drop_probe NAME deletes the preflight's probe container. A launch that failed can still be finishing when this is called, so a refusal is tried again
+# a few times; if it will not go, say so, so that nothing is left behind unnoticed.
+drop_probe() {
+	exists incus info "$1" </dev/null || return 0
+	n=0
+	while [ "$n" -lt 5 ]; do
+		timeout 60 incus delete -f "$1" </dev/null >/dev/null 2>&1 && return 0
+		n=$((n + 1))
+		sleep 2
+	done
+	echo "herd.sh: preflight: could not delete the probe container $1 (a stop that hangs?); delete it by hand: incus delete -f $1" >&2
+}
+
 # preflight says what is missing on this host before `up` spends minutes finding out, and changes nothing but a probe container it deletes. It fails
 # on what cannot work (a missing tool, a container that does not start) and only warns on what some stacks trip over (#196). HERD_PREFLIGHT=0 skips it.
 preflight() {
@@ -102,12 +115,12 @@ preflight() {
 	# A container has to start: the probe is a small image, and its cleanup is bounded because a stop can hang on a host whose cgroup layout LXC does not support.
 	probe=herd-preflight-$$
 	if ! out=$(timeout 180 incus launch images:alpine/3.21 "$probe" </dev/null 2>&1); then
-		timeout 60 incus delete -f "$probe" </dev/null >/dev/null 2>&1 || true
+		drop_probe "$probe"
 		echo "herd.sh: preflight: a container does not start on this server: $(echo "$out" | tail -n 1)" >&2
 		echo "herd.sh: preflight: check the image server is reachable and that LXC supports this host's cgroup layout (it needs a pure cgroup v2 host)" >&2
 		return 1
 	fi
-	timeout 60 incus delete -f "$probe" </dev/null >/dev/null 2>&1 || echo "herd.sh: preflight: could not delete the probe container $probe (a stop that hangs?); delete it by hand" >&2
+	drop_probe "$probe"
 	if [ "$(cat /proc/sys/net/bridge/bridge-nf-call-iptables 2>/dev/null || echo 0)" = 1 ]; then
 		echo "herd.sh: preflight: warning: net.bridge.bridge-nf-call-iptables is 1, so the ACL of a stack also applies between its own apps: blog and shop will answer 500 until this is 0 or #196 is fixed" >&2
 	fi
