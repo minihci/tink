@@ -182,13 +182,14 @@ Before the stack is planned (`internal/derive`, the fifth pass of `prepare`), wh
   - A file that exists, has lines in it and carries no `# BEGIN tink derive` line was not written by tink, and applying would lose them. `adopt_existing: true` on the file takes it over, once; remove the line after it is applied.
   - A rendering with nothing in it does not empty a region that has lines in it: nothing published usually means the wrong server, or stacks that have not been applied yet, and an empty file takes every name down. `allow_empty: true` says it is meant.
 - **A derived file is read back after it is written**, and the apply fails if the file does not hold what was written.
-- **Not derived here:** the mesh records.
+- **The mesh view is `derive: mesh`, and it is the whole file.** Headscale's `extra_records` file is a JSON array, and JSON has no comment to mark a region with, so the file takes no `content` and is exactly the join's rendering: one A record per published name, answering with the ingress helper's mesh-leg address (`[]` when nothing is published). A site needs a helper with `user.tink.role: mesh` for this, and says so if it has none. With no marker to say that tink wrote the file, the guards look at what is in it: a file that is not a JSON array of records, or that holds a record outside the site's zone, is BLOCKED until `adopt_existing: true` takes it over, once, and one that has records is not emptied until `allow_empty` says it is meant. A record inside the zone that the rendering lacks is a name that was unpublished, which is what the file is for.
+- **It reaches a file on the server the stack is applied to.** A control plane that runs on another server (a Headscale on a VPS, say) is not reachable by a `kind: file` of this stack: one apply is one server (`--remote`). The view that `derive: mesh` would write is in `tink plan explain` of a stack that declares such a file on a local instance; carrying it to the other server is not built.
 
 ## What is left before `tink join` can go
 
 `tink join` is a verb for a computation that belongs in `plan` (the roadmap, Phase 3). It goes when nothing it prints is only printed:
 
-1. **The mesh records as a planned change.** The proxy, sign-on, ACL and dns renderings are planned changes now, with the dns applier's rules (above); the mesh view is the one rendering left.
+1. ~~The mesh records as a planned change~~, built (`derive: mesh`, above), for a control plane whose records file the stack can reach. All five renderings are planned changes now.
 2. ~~`tink plan explain` (#129)~~, built: [plan-explain.md](plan-explain.md) prints the routes, rules and records of a site, line by line, without writing them. That is what `tink join --only ...` was for.
 3. **The daemon applies planned changes** instead of running `join apply dns --from-server`, under a credential narrow enough for it (Phase 5).
 4. **A removal page** in the style of `docs/removals/ingress-self-registration.md`, because the verb is deployed on the author's hosts.

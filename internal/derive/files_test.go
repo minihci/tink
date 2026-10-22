@@ -2,6 +2,7 @@ package derive
 
 import (
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 
@@ -241,5 +242,62 @@ func TestDerivedDNSRefusals(t *testing.T) {
 	}
 	if _, err := DerivedFiles(srv(), wrong); err == nil || !strings.Contains(err.Error(), "belongs on the dns helper") {
 		t.Errorf("a dns file on another instance: err = %v", err)
+	}
+}
+
+// The mesh view is the whole file: the join's own JSON, one A record per published name, answering with the ingress helper's mesh-leg address.
+func TestDerivedMeshIsTheWholeFile(t *testing.T) {
+	rs, err := resolve.LoadFiles([]string{"../join/testdata/platform.yaml"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rs = append(rs, resolve.Resource{Kind: resolve.KindFile, Name: "mesh-records", Instance: "mesh", Project: "tink", Path: "/extra-records.json", Derive: resolve.DeriveMesh})
+	notices, err := DerivedFiles(serverWith(t, "../join/testdata/platform.yaml", "../join/testdata/canary.yaml"), rs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := os.ReadFile("../join/testdata/golden/mesh.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := file(rs, "mesh-records")
+	if f.Content != string(want) {
+		t.Errorf("got:\n%s\nwant:\n%s", f.Content, want)
+	}
+	if f.DerivedZone != "home.example.org" {
+		t.Errorf("the zone the guard looks at = %q", f.DerivedZone)
+	}
+	if len(notices) != 1 || !strings.Contains(notices[0], "mesh derived for 2 published name(s)") {
+		t.Errorf("notices = %v", notices)
+	}
+
+	// with nothing published the file is an empty array, valid JSON for the control plane
+	rs2, _ := resolve.LoadFiles([]string{"../join/testdata/platform.yaml"})
+	rs2 = append(rs2, resolve.Resource{Kind: resolve.KindFile, Name: "mesh-records", Instance: "mesh", Project: "tink", Path: "/extra-records.json", Derive: resolve.DeriveMesh})
+	if _, err := DerivedFiles(serverWith(t, "../join/testdata/platform.yaml"), rs2); err != nil {
+		t.Fatal(err)
+	}
+	if got := file(rs2, "mesh-records").Content; got != "[]\n" {
+		t.Errorf("nothing published: %q", got)
+	}
+}
+
+// A site with no mesh helper has no mesh view to write, and says so.
+func TestDerivedMeshNeedsAMeshHelper(t *testing.T) {
+	rs := site(t)
+	rs = append(rs, resolve.Resource{Kind: resolve.KindFile, Name: "mesh-records", Instance: "mesh", Project: "tink", Path: "/x.json", Derive: resolve.DeriveMesh})
+	for i := range rs {
+		if rs[i].Kind == resolve.KindInstance && rs[i].Name == "mesh" {
+			rs[i].Config = map[string]string{}
+		}
+	}
+	srv := serverWith(t, "../join/testdata/platform.yaml", "../join/testdata/canary.yaml")
+	for i := range srv.instances {
+		if srv.instances[i].Name == "mesh" {
+			srv.instances[i].Config = map[string]string{}
+		}
+	}
+	if _, err := DerivedFiles(srv, rs); err == nil || !strings.Contains(err.Error(), "no helper has role mesh") {
+		t.Errorf("err = %v", err)
 	}
 }

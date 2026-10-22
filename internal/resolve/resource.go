@@ -172,6 +172,10 @@ type Resource struct {
 	AdoptExisting bool
 	AllowEmpty    bool
 
+	// DerivedZone (file-only, set by internal/derive for derive: mesh) is the zone of the names tink writes into a whole-file rendering. A record in
+	// the live file outside it is not one tink wrote; see guardRecords. Not read from a stack file.
+	DerivedZone string
+
 	Content string
 
 	// Restart controls whether converging this resource also restarts

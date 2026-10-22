@@ -103,7 +103,7 @@ func ACLRules(server incus.InstanceServer, resources []resolve.Resource) ([]stri
 }
 
 // DerivedFiles fills the region of every `kind: file` that says derive: with the join's rendering of the names the site publishes (docs/join.md,
-// "Derived files"): the proxy's routes for derive: caddy, the sign-on helper's rules for derive: sso, the dns helper's records for derive: dns.
+// "Derived files"): the proxy's routes for derive: caddy, the sign-on helper's rules for derive: sso, the dns helper's records for derive: dns, and the mesh view (Headscale's extra_records, as the whole file) for derive: mesh.
 //
 // Unlike the ACL of one stack, a file at the site's door shows every name the site publishes, and those are declared in many stacks. So the
 // view is the whole server (every instance with its stored config, and every `kind: publish` as the stamps on the instances say it) with the
@@ -157,12 +157,24 @@ func DerivedFiles(server incus.InstanceServer, resources []resolve.Resource) ([]
 				return nil, fmt.Errorf("file/%s: %w", r.Name, err)
 			}
 			rendering = res.DNS
+		case resolve.DeriveMesh:
+			if !res.HasMesh {
+				return nil, fmt.Errorf("file/%s: derive: mesh, but no helper has role mesh (user.tink.role: mesh), so there is no mesh view to write", r.Name)
+			}
+			// the whole file: a JSON array, empty when nothing is published
+			r.Content = res.Mesh
+			if r.Content == "" {
+				r.Content = "[]\n"
+			}
+			r.DerivedZone = res.Zone
 		}
-		content, err := resolve.FillDerived(r.Content, rendering)
-		if err != nil {
-			return nil, fmt.Errorf("file/%s: %w", r.Name, err)
+		if r.Derive != resolve.DeriveMesh {
+			content, err := resolve.FillDerived(r.Content, rendering)
+			if err != nil {
+				return nil, fmt.Errorf("file/%s: %w", r.Name, err)
+			}
+			r.Content = content
 		}
-		r.Content = content
 		if len(labels) == 0 {
 			notices = append(notices, fmt.Sprintf("file/%s: no name is published, so the %s region is empty", r.Name, r.Derive))
 		} else {
