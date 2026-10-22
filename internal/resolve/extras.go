@@ -76,7 +76,7 @@ func (e Extras) Describe() string {
 // tinkOwnKeyPrefixes are config keys tink itself writes as state, not as something a person declared: the helper's status document, the
 // record of the command `tink run` was given, the hash a `kind: exec` with triggers stores to know it already ran, the ownership stamp, and the stamps of `kind: publish`
 // (a stamp the stack derives is declared, and one it no longer derives is a planned removal, so neither is an extra). They are never "extras".
-var tinkOwnKeyPrefixes = []string{"user.tink.helper.", "user.tink.run.", "user.tink.exec.", PublishStampPrefix, ownership.Key}
+var tinkOwnKeyPrefixes = []string{"user.tink.helper.", "user.tink.run.", "user.tink.exec.", PublishStampPrefix, SiteKey, ownership.Key}
 
 // undeclaredExtras compares the live instance, already reduced to what a person set (see instanceExtras), with the declared one.
 func undeclaredExtras(live, declared Resource) Extras {

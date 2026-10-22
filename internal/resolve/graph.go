@@ -17,6 +17,7 @@ func Levels(resources []Resource) ([][]Resource, error) {
 	if _, err := StackName(resources); err != nil {
 		return nil, err
 	}
+	applyStackSite(resources) // needs a single stack name, so after the check above
 	if err := validatePublishNames(resources); err != nil {
 		return nil, err
 	}

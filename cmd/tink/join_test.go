@@ -23,7 +23,7 @@ const (
 func runJoinCmd(t *testing.T, args []string, only string) (stdout, stderr string, err error) {
 	t.Helper()
 	var out, errw bytes.Buffer
-	err = runJoin(&out, &errw, args, only)
+	err = runJoin(&out, &errw, args, only, siteFlag{})
 	return out.String(), errw.String(), err
 }
 
@@ -165,7 +165,7 @@ func newFakeJoinFiles() *fakeJoinFiles {
 func runApply(t *testing.T, f *fakeJoinFiles, section string, o join.ApplyOptions) (stdout, stderr string, err error) {
 	t.Helper()
 	var out, errw bytes.Buffer
-	err = runJoinApply(&out, &errw, f, section, []string{joinPlatform, joinCanary}, o)
+	err = runJoinApply(&out, &errw, f, section, []string{joinPlatform, joinCanary}, siteFlag{}, o)
 	return out.String(), errw.String(), err
 }
 
@@ -221,7 +221,7 @@ func TestJoinApply_AJoinErrorIsPrintedAndNothingIsWritten(t *testing.T) {
 	}
 	f := newFakeJoinFiles()
 	var out, errw bytes.Buffer
-	err := runJoinApply(&out, &errw, f, "dns", []string{broken, joinCanary}, join.ApplyOptions{})
+	err := runJoinApply(&out, &errw, f, "dns", []string{broken, joinCanary}, siteFlag{}, join.ApplyOptions{})
 	if err == nil || !strings.Contains(err.Error(), "nothing was applied") || !strings.Contains(errw.String(), "error: sso helper") || len(f.writes) != 0 {
 		t.Errorf("err %v, stderr %q, writes %v", err, errw.String(), f.writes)
 	}
@@ -279,7 +279,7 @@ func newJoinServer(t *testing.T) *joinServer {
 func runFromServer(t *testing.T, s incus.InstanceServer, only string) (stdout, stderr string, err error) {
 	t.Helper()
 	var out, errw bytes.Buffer
-	err = runJoinFromServer(&out, &errw, s, only)
+	err = runJoinFromServer(&out, &errw, s, only, "")
 	return out.String(), errw.String(), err
 }
 
@@ -336,7 +336,7 @@ func TestJoinApplyFromServer_WritesTheSameFileAsTheFilesDo(t *testing.T) {
 	s := newJoinServer(t)
 	f := newFakeJoinFiles()
 	var out, errw bytes.Buffer
-	if err := runJoinApplyFromServer(&out, &errw, s, f, "dns", join.ApplyOptions{}); err != nil {
+	if err := runJoinApplyFromServer(&out, &errw, s, f, "dns", "", join.ApplyOptions{}); err != nil {
 		t.Fatalf("%v\n%s", err, errw.String())
 	}
 	if !strings.Contains(out.String(), "created, and read back") {
@@ -351,7 +351,7 @@ func TestJoinApplyFromServer_WritesTheSameFileAsTheFilesDo(t *testing.T) {
 	}
 	// a second run changes nothing
 	out.Reset()
-	if err := runJoinApplyFromServer(&out, &errw, s, f, "dns", join.ApplyOptions{}); err != nil || !strings.Contains(out.String(), "no changes") {
+	if err := runJoinApplyFromServer(&out, &errw, s, f, "dns", "", join.ApplyOptions{}); err != nil || !strings.Contains(out.String(), "no changes") {
 		t.Errorf("second run: %v\n%s", err, out.String())
 	}
 }
@@ -360,11 +360,11 @@ func TestJoinApplyFromServer_ABadStampOrSectionWritesNothing(t *testing.T) {
 	s := newJoinServer(t)
 	f := newFakeJoinFiles()
 	var out, errw bytes.Buffer
-	if err := runJoinApplyFromServer(&out, &errw, s, f, "caddy", join.ApplyOptions{}); err == nil || !strings.Contains(err.Error(), "only dns is built") {
+	if err := runJoinApplyFromServer(&out, &errw, s, f, "caddy", "", join.ApplyOptions{}); err == nil || !strings.Contains(err.Error(), "only dns is built") {
 		t.Errorf("caddy: %v", err)
 	}
 	s.instances[0].Config = map[string]string{"user.tink.publish.x": "nope"}
-	if err := runJoinApplyFromServer(&out, &errw, s, f, "dns", join.ApplyOptions{}); err == nil || !strings.Contains(err.Error(), "nothing was rendered") {
+	if err := runJoinApplyFromServer(&out, &errw, s, f, "dns", "", join.ApplyOptions{}); err == nil || !strings.Contains(err.Error(), "nothing was rendered") {
 		t.Errorf("bad stamp: %v", err)
 	}
 	if len(f.writes) != 0 {

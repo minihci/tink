@@ -286,6 +286,9 @@ func exportInstance(server, scoped incus.InstanceServer, env *imageEnv, inst *ap
 			continue
 		case k == ownership.Key:
 			continue // state, not declaration: which stack made the instance is not something a stack declares (and validate refuses the key)
+		case k == SiteKey:
+			note("%s is %q: the site is declared as `site:` on the stack's kind: stack document, not as a key on the instance, so add that line to the stack this is written into (applying it without removes the key)", k, v)
+			continue
 		case strings.HasPrefix(k, PublishStampPrefix):
 			continue // written as a kind: publish document (exportPublishes): a stack that declared the key itself would be refused
 		case derived[k]:

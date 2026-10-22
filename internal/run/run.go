@@ -410,9 +410,10 @@ func ApplyConfig(server incus.InstanceServer, spec *Spec) error {
 	})
 }
 
-// StaleOwnedKeys are the keys of live that start with one of prefixes and that declared does not carry, sorted. It is the whole of what "tink owns this
-// prefix" means: plan reports these as removals and ApplyConfig makes them, and both ask here so they cannot disagree. A key outside every prefix is never
-// returned, however absent from declared it is.
+// StaleOwnedKeys are the keys of live that are owned and that declared does not carry, sorted. A prefix that ends in a dot owns every key under it
+// (user.tink.publish. owns the stamps of every publish); one that does not owns that one key and nothing built from its name (user.tink.site owns
+// user.tink.site and not user.tink.sitemap). It is the whole of what "tink owns this" means: plan reports these as removals and ApplyConfig makes them,
+// and both ask here so they cannot disagree. A key that is owned by none is never returned, however absent from declared it is.
 func StaleOwnedKeys(live, declared map[string]string, prefixes []string) []string {
 	var out []string
 	for k := range live {
@@ -420,7 +421,10 @@ func StaleOwnedKeys(live, declared map[string]string, prefixes []string) []strin
 			continue
 		}
 		for _, p := range prefixes {
-			if p != "" && strings.HasPrefix(k, p) {
+			if p == "" {
+				continue
+			}
+			if strings.HasSuffix(p, ".") && strings.HasPrefix(k, p) || !strings.HasSuffix(p, ".") && k == p {
 				out = append(out, k)
 				break
 			}

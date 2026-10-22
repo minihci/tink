@@ -22,6 +22,7 @@ func TestStaleOwnedKeysAreTheLiveOnesUnderAnOwnedPrefixThatAreNotDeclared(t *tes
 		{"one owned prefix", []string{"user.tink.publish."}, []string{"user.tink.publish.a", "user.tink.publish.b"}},
 		{"no owned prefix owns nothing", nil, nil},
 		{"an empty prefix owns nothing (it would own everything)", []string{""}, nil},
+		{"a name with no trailing dot owns that key and nothing built from it", []string{"user.tink.publish"}, []string{"user.tink.publish"}},
 		{"two prefixes", []string{"user.tink.publish.", "user."}, []string{"user.other", "user.tink.publish", "user.tink.publish.a", "user.tink.publish.b", "user.tink.publisher"}},
 	}
 	for _, c := range cases {

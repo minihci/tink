@@ -37,6 +37,7 @@ var fieldOwners = map[string][]Kind{
 	"Defaults":        {KindStack},
 	"Instance":        {KindFile, KindExec, KindPublish},
 	"Ownership":       {KindStack},
+	"Site":            {KindStack},
 	"Offer":           {KindPublish},
 	"Network":         {KindHelper, KindStack},
 	"NetworkPool":     {KindStack},

@@ -32,6 +32,11 @@ import (
 type Stack struct {
 	Name      string
 	Resources []resolve.Resource // as resolve.LoadFiles returns them: each carries its stack's default project
+
+	// Elsewhere counts the helpers (instances that state a role) that were left out of this view because they are in another site, by that site's name
+	// ("" is the unnamed site). It is set by ForSite and by the readers of the server (site.go), and only used to say so when the join fails: a
+	// server with several sites is the usual reason a site seems to lack a helper.
+	Elsewhere map[string]int
 }
 
 // Severity says whether a finding stops the rendering.
@@ -74,6 +79,9 @@ type Result struct {
 	Zone        string
 	DNSProject  string // where the dns helper lives, so the DNS applier knows where to write
 	DNSInstance string
+	// DNSHelpers are all the instances with role dns, as "project/name": none, one (then DNSInstance is it) or several (then it is empty, because there
+	// is no one to write to). It is how a caller tells "no dns helper" from "more than one".
+	DNSHelpers  []string
 	LANAddress  string // the ingress helper's address on its `serves` leg: what the dns records answer with
 	MeshAddress string // the ingress helper's address on its `mesh` leg: what the mesh view answers with
 	// PublicAddress is the ingress helper's address on its `public` leg: where the host's proxy devices carry traffic from the internet. Nothing is rendered
@@ -111,10 +119,32 @@ func projectOf(r resolve.Resource) string {
 	return r.Project
 }
 
+// where lists instances as project/name, sorted, for a message that says which ones it found.
+func where(rs []resolve.Resource) string {
+	names := make([]string, 0, len(rs))
+	for _, r := range rs {
+		names = append(names, projectOf(r)+"/"+r.Name)
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
+}
+
 var zonePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$`)
 
-// Build joins the stacks.
+// Build joins the stacks. It reads what it is given as one site (site.go says how a caller makes that so). When that comes to nothing, or to an error,
+// and helpers of other sites were left out of the view, a warning says so.
 func Build(stacks []Stack) Result {
+	res := build(stacks)
+	if res.Errors() > 0 || len(res.Published) == 0 {
+		if note := elsewhereNote(stacks); note != "" {
+			res.Findings = append(res.Findings, Finding{Warning, "", note})
+			sortFindings(res.Findings)
+		}
+	}
+	return res
+}
+
+func build(stacks []Stack) Result {
 	var res Result
 	add := func(sev Severity, subject, format string, args ...any) {
 		res.Findings = append(res.Findings, Finding{sev, subject, fmt.Sprintf(format, args...)})
@@ -147,6 +177,11 @@ func Build(stacks []Stack) Result {
 			}
 		}
 	}
+
+	for _, d := range roles["dns"] {
+		res.DNSHelpers = append(res.DNSHelpers, projectOf(d)+"/"+d.Name)
+	}
+	sort.Strings(res.DNSHelpers)
 
 	// Offers, parsed once per instance. Parse findings are about the instance, not about any one publish.
 	offers := map[key]map[string]Offer{}
@@ -207,7 +242,7 @@ func Build(stacks []Stack) Result {
 		case 0:
 			add(Error, role+" helper", "no instance has %s: %s, and a publish needs one", roleKey, role)
 		default:
-			add(Error, role+" helper", "%d instances have %s: %s, and the join needs exactly one", len(roles[role]), roleKey, role)
+			add(Error, role+" helper", "%d instances have %s: %s (%s), and the join needs exactly one in a site", len(roles[role]), roleKey, role, where(roles[role]))
 		}
 		return resolve.Resource{}, false
 	}
@@ -244,7 +279,7 @@ func Build(stacks []Stack) Result {
 			}
 		}
 	default:
-		add(Error, "dns helper", "%d instances have %s: dns, and the join needs exactly one", len(roles["dns"]), roleKey)
+		add(Error, "dns helper", "%d instances have %s: dns (%s), and the join needs exactly one in a site", len(roles["dns"]), roleKey, where(roles["dns"]))
 	}
 	if haveIngress {
 		lg := legAddresses(ing, profiles, len(roles["dns"]) > 0, len(roles["mesh"]) > 0, add)

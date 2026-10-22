@@ -18,6 +18,9 @@ func validateStack(r Resource) error {
 	if !stackNamePattern.MatchString(r.Name) {
 		return fmt.Errorf("resource %q: a stack's name is lower case letters, digits, '.', '_' and '-' (at most 63, starting with a letter or digit)", r.Name)
 	}
+	if err := validateStackSite(r); err != nil {
+		return err
+	}
 	return validateStackNetwork(r)
 }
 
