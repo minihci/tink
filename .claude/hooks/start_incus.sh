@@ -4,7 +4,7 @@
 [ "$CLAUDE_CODE_REMOTE" = "true" ] || exit 0
 if ! pgrep -x incusd >/dev/null; then
   mkdir -p /var/lib/incus /run/incus
-  nohup /usr/libexec/incus/incusd --group root >/tmp/incusd.log 2>&1 &
+  nohup /opt/incus/lib/systemd/incusd --group root >/tmp/incusd.log 2>&1 &
 fi
 for _ in $(seq 1 30); do
   incus info >/dev/null 2>&1 && break
