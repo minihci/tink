@@ -14,7 +14,8 @@ while :; do
 		*" $r "*)
 			name=${r#/1.0/instances/}
 			name=${name%%\?*}
-			proj=${r##*project=}
+			proj=default
+			case "$r" in *project=*) proj=${r##*project=} ;; esac
 			pid=$(incus info "$name" --project "$proj" 2>/dev/null | sed -n 's/^PID: //p')
 			[ -n "$pid" ] && [ "$pid" != 0 ] && kill -9 "$pid" 2>/dev/null
 			;;
