@@ -5,6 +5,7 @@
 #   ./herd.sh test                # the checks of README.md, against what is up
 #   TINK=./tink ./herd.sh backup  # a copy of the vault stack's volume to another pool, and a restore check of the snapshot and of the copy
 #   ./herd.sh down                # removes everything it made
+#   ./herd.sh preflight           # what `up` checks first: the tools, that a container starts, and a warning for br_netfilter (changes nothing)
 #
 # It touches the host in one place only, the firewall: on a host running firewalld it puts the platform bridge and every bridge named tink-*
 # in the trusted zone of the running firewall (not permanently), so that a new bridge gets DHCP and DNS from the host. Nothing else outside Incus.
@@ -88,15 +89,60 @@ files() {
 	echo "$f"
 }
 
+# preflight says what is missing on this host before `up` spends minutes finding out, and changes nothing but a probe container it deletes. It fails
+# on what cannot work (a missing tool, a container that does not start) and only warns on what some stacks trip over (#196). HERD_PREFLIGHT=0 skips it.
+preflight() {
+	bad=0
+	for c in incus curl dig timeout sed; do
+		command -v "$c" >/dev/null 2>&1 || { echo "herd.sh: preflight: '$c' is not installed" >&2; bad=1; }
+	done
+	command -v "$TINK" >/dev/null 2>&1 || { echo "herd.sh: preflight: TINK='$TINK' is not a program (build it: go build -o tink ./cmd/tink; run with TINK=./tink)" >&2; bad=1; }
+	[ "$bad" = 0 ] && ! incus info >/dev/null 2>&1 </dev/null && { echo "herd.sh: preflight: the Incus server does not answer (incus info)" >&2; bad=1; }
+	[ "$bad" = 0 ] || return 1
+	# A container has to start: the probe is a small image, and its cleanup is bounded because a stop can hang on a host whose cgroup layout LXC does not support.
+	probe=herd-preflight-$$
+	if ! out=$(timeout 180 incus launch images:alpine/3.21 "$probe" </dev/null 2>&1); then
+		timeout 60 incus delete -f "$probe" </dev/null >/dev/null 2>&1 || true
+		echo "herd.sh: preflight: a container does not start on this server: $(echo "$out" | tail -n 1)" >&2
+		echo "herd.sh: preflight: check the image server is reachable and that LXC supports this host's cgroup layout (it needs a pure cgroup v2 host)" >&2
+		return 1
+	fi
+	timeout 60 incus delete -f "$probe" </dev/null >/dev/null 2>&1 || echo "herd.sh: preflight: could not delete the probe container $probe (a stop that hangs?); delete it by hand" >&2
+	if [ "$(cat /proc/sys/net/bridge/bridge-nf-call-iptables 2>/dev/null || echo 0)" = 1 ]; then
+		echo "herd.sh: preflight: warning: net.bridge.bridge-nf-call-iptables is 1, so the ACL of a stack also applies between its own apps: blog and shop will answer 500 until this is 0 or #196 is fixed" >&2
+	fi
+	echo "preflight: ok"
+}
+
+# apply FILE is `tink plan apply FILE`, tried again after a pause when the registry's anonymous pull limit refused an image (it comes and goes). Any other
+# failure stops at once. An apply that failed part-way is resumed by the next one. HERD_PULL_RETRIES (default 3) and HERD_RETRY_WAIT (default 30 s) set it.
+apply() {
+	tries=0
+	while :; do
+		log=$(mktemp)
+		{ "$TINK" plan apply "$1" 2>&1; echo $? >"$log.rc"; } | tee "$log"
+		rc=$(cat "$log.rc")
+		limited=no
+		grep -q toomanyrequests "$log" && limited=yes
+		rm -f "$log" "$log.rc"
+		[ "$rc" = 0 ] && return 0
+		[ "$limited" = yes ] && [ "$tries" -lt "${HERD_PULL_RETRIES:-3}" ] || return "$rc"
+		tries=$((tries + 1))
+		echo "herd.sh: the registry refused a pull (rate limit); trying $1 again in ${HERD_RETRY_WAIT:-30} s ($tries of ${HERD_PULL_RETRIES:-3})" >&2
+		sleep "${HERD_RETRY_WAIT:-30}"
+	done
+}
+
 up() {
+	[ "${HERD_PREFLIGHT:-1}" = 0 ] || preflight
 	fw add herd0
 	fw add 'tink-+'
 	ensure_bridge
 	render
-	"$TINK" plan apply "$RENDERED/site.yaml"
-	for s in $STACKS; do "$TINK" plan apply "$HERE/$s.yaml"; done
+	apply "$RENDERED/site.yaml"
+	for s in $STACKS; do apply "$HERE/$s.yaml"; done
 	# the site's proxy, sign-on and dns files hold what the stacks publish, read from the server, so the site is applied again once they are
-	"$TINK" plan apply "$RENDERED/site.yaml"
+	apply "$RENDERED/site.yaml"
 }
 
 ok() { printf '  ok    %s\n' "$1"; }
@@ -186,6 +232,7 @@ case "${1:-}" in
 up) up ;;
 test) test ;;
 backup) backup ;;
+preflight) preflight ;;
 down) down ;;
-*) echo "usage: TINK=./tink $0 up|test|backup|down" >&2; exit 2 ;;
+*) echo "usage: TINK=./tink $0 up|test|backup|down|preflight" >&2; exit 2 ;;
 esac
