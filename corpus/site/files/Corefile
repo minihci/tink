@@ -1,4 +1,4 @@
-# The site's DNS. /hosts is written by `tink join apply dns` and holds nothing else; the platform's own static names are in the zone file.
+# The site's DNS. /hosts is written by tink from the publishes (`derive: dns`) and holds nothing else; the platform's own static names are in the zone file.
 home.example.org {
 	hosts /hosts {
 		fallthrough

@@ -1,28 +1,15 @@
-# The herd stack "metrics": Grafana. Imported from the project's compose file with `tink import`; every line marked "site:" is the site's half,
-# written by hand until the derive stage (#177, #130) does it.
+# The herd stack "metrics": Grafana. Imported from the project's compose file with `tink import`; the lines marked "site:" are the site's
+# half, written by hand: what is left of it once the derive stage has done the rest (a project, the offer, the name, the grant, the backup
+# answer).
 kind: stack
 name: metrics
+network: own                              # a bridge, its ACL and the apps' static addresses are derived (docs/network.md)
 project: herd-metrics                     # site
 ---
 kind: project                             # site
 name: herd-metrics
 config:
   features.profiles: "false"
----
-kind: network-acl                         # site: the rules are the join's `acl` rendering, written in by paste.sh
-name: tink-metrics-in
-description: only the ingress helper may reach the metrics app
-ingress:
-  - {action: allow, source: 192.0.2.3/32, protocol: tcp, destination_port: "3000", state: enabled, description: "ingress helper publishes metrics"}
----
-kind: network                             # site
-name: tink-metrics
-description: the metrics stack's bridge
-config:
-  ipv4.address: 203.0.113.129/27
-  ipv4.nat: "false"
-  ipv6.address: none
-  security.acls: tink-metrics-in
 ---
 kind: storage-volume
 name: grafana-storage
@@ -45,7 +32,6 @@ config:
   user.tink.offer.web.port: "3000"        # site
   user.tink.offer.web.proto: http
 devices:
-  eth0: {name: eth0, type: nic, network: tink-metrics, ipv4.address: 203.0.113.138}   # site
   volume0:
     type: disk
     path: /var/lib/grafana

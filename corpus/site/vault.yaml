@@ -1,28 +1,15 @@
-# The first herd stack: Vaultwarden. Imported from the project's own compose file with `tink import`, then the site's half written by hand.
-# Every line marked "site:" is something the derive stage (#177, #130) should make unnecessary.
+# The herd stack "vault": Vaultwarden. Imported from the project's compose file with `tink import`; the lines marked "site:" are the
+# site's half, written by hand: what is left of it once the derive stage has done the rest (a project, the offer, the name, the grant, the
+# backup answer).
 kind: stack
 name: vault
+network: own                              # a bridge, its ACL and the apps' static addresses are derived (docs/network.md)
 project: herd-vault                       # site: a project of its own
 ---
 kind: project
 name: herd-vault
 config:
   features.profiles: "false"
----
-kind: network-acl                         # site: the ACL that lets only the ingress helper in. Its rules are the join's `acl` rendering, pasted below
-name: tink-vault-in
-description: only the ingress helper may reach the vault app
-ingress:
-  - {action: allow, source: 192.0.2.3/32, protocol: tcp, destination_port: "80", state: enabled, description: "ingress helper publishes vault"}
----
-kind: network                             # site: a bridge for the stack
-name: tink-vault
-description: the vault stack's bridge
-config:
-  ipv4.address: 198.51.100.1/24
-  ipv4.nat: "false"
-  ipv6.address: none
-  security.acls: tink-vault-in
 ---
 kind: backup-target                       # site: where copies go. A target has to be in the same load as the volumes that name it, so each stack that copies repeats it
 name: vmpool
@@ -55,7 +42,6 @@ config:
   user.tink.offer.web.port: "80"                         # site: the offer the join reads
   user.tink.offer.web.proto: http
 devices:
-  eth0: {name: eth0, type: nic, network: tink-vault, ipv4.address: 198.51.100.10}   # site: the bridge and a static address
   # (the compose file's `127.0.0.1:8000:80` host port is gone: the app is reached through the ingress helper)  # site
   volume0:
     type: disk

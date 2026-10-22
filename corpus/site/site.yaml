@@ -2,7 +2,8 @@
 # project of their own. A fixture, not the platform recipe (#131): the addresses and the zone are the documentation ones, certificates
 # are Caddy's own local CA, and the site's one user is a throwaway.
 #
-# Apply the bridge first and put it in a firewall zone that lets it reach the host's DHCP and DNS (see README.md), then the rest.
+# Put the platform bridge and the bridges tink makes for the stacks (named tink-*) in a firewall zone that lets them reach the host's DHCP and DNS
+# (README.md), apply this file, then the stacks, then this file again: three of its files (derive:) hold what the stacks publish, and follow them.
 kind: stack
 name: herd-site
 project: herd-site
@@ -46,6 +47,13 @@ path: /db.home.example.org
 source_path: files/db.home.example.org
 restart: true
 ---
+kind: file
+name: dns-hosts
+instance: dns
+path: /hosts
+source_path: files/hosts
+derive: dns                    # the generated records; the platform's own names are in the zone file above. CoreDNS re-reads it, so no restart
+---
 kind: instance
 name: sso
 image: docker-oci:authelia/authelia:4.39.28
@@ -67,6 +75,7 @@ name: sso-configuration
 instance: sso
 path: /app/configuration.yml
 source_path: files/configuration.yml
+derive: sso
 restart: true
 ---
 kind: file
@@ -103,4 +112,5 @@ name: ingress-routes
 instance: ingress
 path: /etc/caddy/apps.caddy
 source_path: files/apps.caddy
+derive: caddy
 restart: true

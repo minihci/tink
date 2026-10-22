@@ -1,7 +1,7 @@
 #!/bin/sh
 # Brings the herd test's fixture site and its stacks up on a local Incus server, checks them, and takes them down. See README.md.
 #
-#   TINK=./tink ./herd.sh up      # the site (dns, sign-on, ingress), then the six stacks
+#   TINK=./tink ./herd.sh up      # the site (dns, sign-on, ingress), the six stacks, then the site again
 #   ./herd.sh test                # the checks of README.md, against what is up
 #   TINK=./tink ./herd.sh backup  # a copy of the vault stack's volume to another pool, and a restore check of the snapshot and of the copy
 #   ./herd.sh down                # removes everything it made
@@ -21,18 +21,18 @@ APPS="vault:198.51.100.10:80 status:203.0.113.10:3001 blog:203.0.113.42:80 shop:
 
 # fw add|remove INTERFACE puts an interface in firewalld's trusted zone, or takes it out, for the running firewall. firewalld often makes the change and
 # then does not answer in time (a D-Bus "did not receive a reply"), so its answer is not believed: the zone is asked, before and after, and the change
-# is tried again if the zone does not read as wanted. It fails, saying what to run, if the zone never does; `down` goes on regardless.
+# is tried again if the zone does not read as wanted. Each call has a time limit, because firewalld can also stop answering altogether. It fails, saying what to run, if the zone never does; `down` goes on regardless.
 fw() {
 	command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet firewalld 2>/dev/null || return 0
 	want=yes
 	[ "$1" = remove ] && want=no
 	n=0
 	while [ "$n" -lt 4 ]; do
-		[ "$(firewall-cmd --zone=trusted --query-interface="$2" 2>/dev/null || true)" = "$want" ] && return 0
-		$SUDO firewall-cmd --zone=trusted --"$1"-interface="$2" >/dev/null 2>&1 || true
+		[ "$(timeout 30 firewall-cmd --zone=trusted --query-interface="$2" 2>/dev/null || true)" = "$want" ] && return 0
+		$SUDO timeout 60 firewall-cmd --zone=trusted --"$1"-interface="$2" >/dev/null 2>&1 || true
 		n=$((n + 1))
 	done
-	[ "$(firewall-cmd --zone=trusted --query-interface="$2" 2>/dev/null || true)" = "$want" ] && return 0
+	[ "$(timeout 30 firewall-cmd --zone=trusted --query-interface="$2" 2>/dev/null || true)" = "$want" ] && return 0
 	echo "herd.sh: firewalld's trusted zone does not read as wanted for $2 after 4 tries; run: sudo firewall-cmd --zone=trusted --$1-interface=$2" >&2
 	return 1
 }
@@ -49,9 +49,9 @@ up() {
 	fw add herd0
 	fw add 'tink-+'
 	"$TINK" plan apply "$HERE/site.yaml"
-	# shellcheck disable=SC2046
-	"$TINK" join apply dns $(files)
 	for s in $STACKS; do "$TINK" plan apply "$HERE/$s.yaml"; done
+	# the site's proxy, sign-on and dns files hold what the stacks publish, read from the server, so the site is applied again once they are
+	"$TINK" plan apply "$HERE/site.yaml"
 }
 
 ok() { printf '  ok    %s\n' "$1"; }
