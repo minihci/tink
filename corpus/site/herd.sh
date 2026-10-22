@@ -16,8 +16,12 @@ SUDO=sudo
 [ -n "${SUDO_ASKPASS:-}" ] && SUDO="sudo -A"
 STACKS="vault status blog shop media metrics"
 
-# name:address:port of each published app, for the checks
-APPS="vault:198.51.100.10:80 status:203.0.113.10:3001 blog:203.0.113.42:80 shop:203.0.113.74:80 sonarr:203.0.113.106:8989 qbittorrent:203.0.113.107:8080 metrics:203.0.113.138:3000"
+# name:project:instance:port of each published app, for the checks. The address is read from the server (addr_of), because tink picks it.
+APPS="vault:herd-vault:vaultwarden:80 status:herd-status:uptime-kuma:3001 blog:herd-blog:wordpress:80 shop:herd-shop:wordpress:80 sonarr:herd-media:sonarr:8989 qbittorrent:herd-media:qbittorrent:8080 metrics:herd-metrics:grafana:3000"
+
+# The platform bridge is picked by Incus, so no address of it is in the repository: the helpers' addresses are placeholders (@DNS_IP@, @SSO_IP@,
+# @INGRESS_IP@) in site.yaml and files/, filled in by render() from the subnet the bridge was given and written to .rendered/ (gitignored).
+RENDERED=$HERE/.rendered
 
 # fw add|remove INTERFACE puts an interface in firewalld's trusted zone, or takes it out, for the running firewall. firewalld often makes the change and
 # then does not answer in time (a D-Bus "did not receive a reply"), so its answer is not believed: the zone is asked, before and after, and the change
@@ -39,6 +43,41 @@ fw() {
 
 exists() { "$@" >/dev/null 2>&1; }
 
+# ensure_bridge creates the platform bridge with a subnet of Incus's choosing, if there is none, so that its subnet can be read before tink applies the site
+# (site.yaml says `ipv4.address: auto`, which tink treats as satisfied by whatever Incus chose).
+ensure_bridge() {
+	exists incus network show herd0 && return 0
+	incus network create herd0 ipv4.address=auto ipv4.nat=true ipv6.address=none </dev/null
+}
+
+# platform sets DNS_IP, SSO_IP and INGRESS_IP from the platform bridge's subnet: the .10, .11 and .3 of it. Incus picks a /24.
+platform() {
+	cidr=$(incus network get herd0 ipv4.address </dev/null 2>/dev/null) || cidr=
+	case "$cidr" in
+	*.*.*.1/24) ;;
+	*) echo "herd.sh: the platform bridge herd0 has no /24 IPv4 address ('$cidr'); run 'up' first" >&2; return 1 ;;
+	esac
+	net=${cidr%.*}
+	DNS_IP=$net.10
+	SSO_IP=$net.11
+	INGRESS_IP=$net.3
+}
+
+# render writes site.yaml and files/ to .rendered/ with the placeholders filled in.
+render() {
+	platform
+	rm -rf "$RENDERED"
+	mkdir -p "$RENDERED/files"
+	for f in site.yaml files/*; do
+		sed -e "s|@DNS_IP@|$DNS_IP|g" -e "s|@SSO_IP@|$SSO_IP|g" -e "s|@INGRESS_IP@|$INGRESS_IP|g" "$HERE/$f" >"$RENDERED/$f"
+	done
+}
+
+# addr_of PROJECT INSTANCE prints the instance's IPv4 address.
+addr_of() {
+	incus list --project "$1" "$2" -c 4 -f csv </dev/null | sed -n '1s/ .*//p'
+}
+
 files() {
 	f="$HERE/site.yaml"
 	for s in $STACKS; do f="$f $HERE/$s.yaml"; done
@@ -48,10 +87,12 @@ files() {
 up() {
 	fw add herd0
 	fw add 'tink-+'
-	"$TINK" plan apply "$HERE/site.yaml"
+	ensure_bridge
+	render
+	"$TINK" plan apply "$RENDERED/site.yaml"
 	for s in $STACKS; do "$TINK" plan apply "$HERE/$s.yaml"; done
 	# the site's proxy, sign-on and dns files hold what the stacks publish, read from the server, so the site is applied again once they are
-	"$TINK" plan apply "$HERE/site.yaml"
+	"$TINK" plan apply "$RENDERED/site.yaml"
 }
 
 ok() { printf '  ok    %s\n' "$1"; }
@@ -60,19 +101,24 @@ bad() { printf '  FAIL  %s\n' "$1"; fail=1; }
 # test: the herd's checks, by hand until the derive stage and a heartbeat exist.
 test() {
 	fail=0
+	platform
 	J=$(mktemp)
 	R="--resolve auth.home.example.org:443:127.0.0.1"
 	for a in $APPS; do R="$R --resolve ${a%%:*}.home.example.org:443:127.0.0.1"; done
 	curl -sk -m 10 $R -c "$J" -H 'Content-Type: application/json' \
-		-d '{"username":"tester","password":"herd-test-password","keepMeLoggedIn":false}' https://auth.home.example.org/api/firstfactor >/dev/null
+		-d '{"username":"tester","password":"herd-test-password","keepMeLoggedIn":false}' https://auth.home.example.org/api/firstfactor >/dev/null || bad "signed in as tester"
 
 	for a in $APPS; do
 		name=${a%%:*}
 		rest=${a#*:}
-		addr=${rest%%:*}
+		project=${rest%%:*}
+		rest=${rest#*:}
+		inst=${rest%%:*}
+		port=${rest#*:}
+		addr=$(addr_of "$project" "$inst")
 		url="https://$name.home.example.org/"
 		echo "$name"
-		[ "$(dig +short +time=3 +tries=1 @192.0.2.10 "$name.home.example.org")" = 192.0.2.3 ] && ok "the name answers" || bad "the name answers"
+		[ "$(dig +short +time=3 +tries=1 @"$DNS_IP" "$name.home.example.org")" = "$INGRESS_IP" ] && ok "the name answers" || bad "the name answers"
 		out=$(curl -sk -m 15 $R -o /dev/null -w '%{http_code} %{redirect_url}' "$url")
 		case "$out" in "302 https://auth.home.example.org"*) ok "no session: sent to sign-on" ;; *) bad "no session: sent to sign-on ($out)" ;; esac
 		out=$(curl -sk -m 20 $R -b "$J" -o /dev/null -w '%{http_code} %{redirect_url}' "$url")
@@ -81,13 +127,14 @@ test() {
 			case "$out" in *auth.home.example.org*) bad "signed in: sent to sign-on again ($out)" ;; *) ok "signed in: the app answers (${out%% *})" ;; esac ;;
 		*) bad "signed in: the app answers ($out)" ;;
 		esac
-		code=$(curl -s -m 4 -o /dev/null -w '%{http_code}' "http://$addr:${rest#*:}/" || true)
+		[ -n "$addr" ] || bad "$name has no address on the server"
+		code=$(curl -s -m 4 -o /dev/null -w '%{http_code}' "http://$addr:$port/" || true)
 		[ "$code" = 000 ] && ok "not reachable from the host directly" || bad "the app answered the host ($code)"
 	done
 
 	echo "the stacks"
 	# wget's -T does not bound the connect to an address whose ACL drops packets (it waited out the kernel's retries, about five minutes), so the call has its own limit
-	if timeout 15 incus exec --project herd-site sso -- wget -q -O /dev/null -T 4 http://198.51.100.10/ </dev/null 2>/dev/null; then bad "another platform instance reached an app"; else ok "another platform instance does not reach an app"; fi
+	if timeout 15 incus exec --project herd-site sso -- wget -q -O /dev/null -T 4 "http://$(addr_of herd-vault vaultwarden)/" </dev/null 2>/dev/null; then bad "another platform instance reached an app"; else ok "another platform instance does not reach an app"; fi
 	for p in herd-blog herd-shop; do
 		[ "$(incus list --project $p db -c s -f csv </dev/null)" = RUNNING ] && ok "$p: db is running" || bad "$p: db is running"
 	done
@@ -125,6 +172,7 @@ down() {
 		exists incus network acl show "tink-$s-in" && incus network acl delete "tink-$s-in" </dev/null
 	done
 	exists incus network show herd0 && incus network delete herd0 </dev/null
+	rm -rf "$RENDERED"
 	fw remove herd0 || true
 	fw remove 'tink-+' || true
 	return 0
