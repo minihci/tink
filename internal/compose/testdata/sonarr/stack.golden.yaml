@@ -1,0 +1,33 @@
+# Imported by `tink import` from a compose file. A starting point to review, not the stack: it states what the compose file
+# says about the app, and nothing about the site (its project, network, address, name, sign-on or backup).
+kind: stack
+name: sonarr
+---
+kind: instance
+name: sonarr
+image: lscr.io/linuxserver/sonarr:latest
+profiles:
+  - default
+config:
+  boot.autorestart: "true"
+  boot.autostart: "true"
+  environment.PGID: "1000"
+  environment.PUID: "1000"
+  environment.TZ: Etc/UTC
+devices:
+  proxy0:
+    type: proxy
+    connect: tcp:127.0.0.1:8989
+    listen: tcp:0.0.0.0:8989
+  volume0:
+    type: disk
+    path: /config
+    source: /path/to/sonarr/data
+  volume1:
+    type: disk
+    path: /tv
+    source: /path/to/tvseries
+  volume2:
+    type: disk
+    path: /downloads
+    source: /path/to/downloadclient-downloads

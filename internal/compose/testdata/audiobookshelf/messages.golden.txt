@@ -1,0 +1,4 @@
+note: service audiobookshelf: ./audiobooks was a path relative to the compose file; it is now the managed volume audiobookshelf-audiobooks. Write it as a bind mount to keep it a directory you can see
+note: service audiobookshelf: ./podcasts was a path relative to the compose file; it is now the managed volume audiobookshelf-podcasts. Write it as a bind mount to keep it a directory you can see
+note: service audiobookshelf: ./metadata was a path relative to the compose file; it is now the managed volume audiobookshelf-metadata. Write it as a bind mount to keep it a directory you can see
+note: service audiobookshelf: ./config was a path relative to the compose file; it is now the managed volume audiobookshelf-config. Write it as a bind mount to keep it a directory you can see

@@ -95,6 +95,7 @@ made executable instead of just documented.`,
 	root.AddCommand(newRunCmd())
 	root.AddCommand(newPlanCmd())
 	root.AddCommand(newExportCmd())
+	root.AddCommand(newImportCmd())
 	root.AddCommand(newSecretCmd())
 	root.AddCommand(newVolBackupCmd())
 	root.AddCommand(newRemoteCmd())

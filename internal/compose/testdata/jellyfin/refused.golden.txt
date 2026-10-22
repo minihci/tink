@@ -1,0 +1,1 @@
+service jellyfin: user: "uid:gid": the user "uid" is not a number: only numeric UID[:GID] can be used, because a name is looked up in the image's /etc/passwd, which tink cannot read (try --user $(id -u):$(id -g))

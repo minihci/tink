@@ -1,0 +1,109 @@
+# Imported by `tink import` from a compose file. A starting point to review, not the stack: it states what the compose file
+# says about the app, and nothing about the site (its project, network, address, name, sign-on or backup).
+kind: stack
+name: immich
+---
+kind: storage-volume
+name: database-postgres
+pool: default
+# backup: not decided. Say how this volume is backed up (`backup: {snapshots: ...}`, or `backup: {none: "why"}`); `tink plan` warns until you do.
+---
+kind: storage-volume
+name: immich-server-library
+pool: default
+# backup: not decided. Say how this volume is backed up (`backup: {snapshots: ...}`, or `backup: {none: "why"}`); `tink plan` warns until you do.
+---
+kind: storage-volume
+name: model-cache
+pool: default
+# backup: not decided. Say how this volume is backed up (`backup: {snapshots: ...}`, or `backup: {none: "why"}`); `tink plan` warns until you do.
+---
+# healthcheck was dropped: an image's healthcheck is not run, and nothing waits for it
+# environment DB_PASSWORD looks like a secret and is written as it is: add it with `tink secret set` and write ${secret:NAME} instead
+kind: instance
+name: immich-server
+image: ghcr.io/immich-app/immich-server:v3
+profiles:
+  - default
+depends_on:
+  - redis
+  - database
+config:
+  boot.autorestart: "true"
+  boot.autostart: "true"
+  environment.DB_DATABASE_NAME: immich
+  environment.DB_DATA_LOCATION: ./postgres
+  environment.DB_PASSWORD: postgres
+  environment.DB_USERNAME: postgres
+  environment.IMMICH_VERSION: v3
+  environment.UPLOAD_LOCATION: ./library
+devices:
+  proxy0:
+    type: proxy
+    connect: tcp:127.0.0.1:2283
+    listen: tcp:0.0.0.0:2283
+  volume0:
+    type: disk
+    path: /data
+    pool: default
+    source: immich-server-library
+  volume1:
+    type: disk
+    path: /etc/localtime
+    readonly: "true"
+    source: /etc/localtime
+---
+# healthcheck was dropped: an image's healthcheck is not run, and nothing waits for it
+# environment DB_PASSWORD looks like a secret and is written as it is: add it with `tink secret set` and write ${secret:NAME} instead
+kind: instance
+name: immich-machine-learning
+image: ghcr.io/immich-app/immich-machine-learning:v3
+profiles:
+  - default
+config:
+  boot.autorestart: "true"
+  boot.autostart: "true"
+  environment.DB_DATABASE_NAME: immich
+  environment.DB_DATA_LOCATION: ./postgres
+  environment.DB_PASSWORD: postgres
+  environment.DB_USERNAME: postgres
+  environment.IMMICH_VERSION: v3
+  environment.UPLOAD_LOCATION: ./library
+devices:
+  volume0:
+    type: disk
+    path: /cache
+    pool: default
+    source: model-cache
+---
+# healthcheck was dropped: an image's healthcheck is not run, and nothing waits for it
+kind: instance
+name: redis
+image: docker.io/valkey/valkey:9@sha256:c123e3715db63d06d4ad6964884037aa0d5d4d703939b9929954112889708e1d
+profiles:
+  - default
+config:
+  boot.autorestart: "true"
+  boot.autostart: "true"
+---
+# healthcheck was dropped: an image's healthcheck is not run, and nothing waits for it
+# shm_size was dropped: Incus has no equivalent size for /dev/shm
+# environment POSTGRES_PASSWORD looks like a secret and is written as it is: add it with `tink secret set` and write ${secret:NAME} instead
+kind: instance
+name: database
+image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
+profiles:
+  - default
+config:
+  boot.autorestart: "true"
+  boot.autostart: "true"
+  environment.POSTGRES_DB: immich
+  environment.POSTGRES_INITDB_ARGS: --data-checksums
+  environment.POSTGRES_PASSWORD: postgres
+  environment.POSTGRES_USER: postgres
+devices:
+  volume0:
+    type: disk
+    path: /var/lib/postgresql/data
+    pool: default
+    source: database-postgres

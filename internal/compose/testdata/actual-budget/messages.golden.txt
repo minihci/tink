@@ -1,0 +1,3 @@
+warning: service actual_server: healthcheck was dropped: an image's healthcheck is not run, and nothing waits for it
+note: service actual_server is named actual-server: an instance name cannot hold an underscore. Anything that refers to it by name must say actual-server
+note: service actual_server: ./actual-data was a path relative to the compose file; it is now the managed volume actual-server-actual-data. Write it as a bind mount to keep it a directory you can see

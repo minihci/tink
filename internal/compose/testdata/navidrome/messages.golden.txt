@@ -1,0 +1,1 @@
+note: service navidrome: bind mount /path/to/data is mounted as it is: files owned by a host user show up as "nobody" in the container, so the app can read it but probably not write to it. Add :ro if it only reads, or :shift to map the ids (needs idmapped-mount support on that filesystem)

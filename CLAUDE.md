@@ -25,7 +25,7 @@ disposable host, and the README's per-command "Status" notes record what has act
 ## What tink is
 
 A single Go binary (`cobra`, module `github.com/minihci/tink`) that makes the Mini HCI platform's Incus conventions executable:
-`deploy`, `run`, `plan` / `plan apply`, `export`, `daemon`, `backup`, `secret`, `remote`, `helper`. It talks to Incus through
+`deploy`, `run`, `import`, `plan` / `plan apply`, `export`, `daemon`, `backup`, `secret`, `remote`, `helper`. It talks to Incus through
 Incus's own Go client (`github.com/lxc/incus/v7`), not by shelling out. The exceptions are registries and `incus launch` in
 `internal/bootstrap`, which still shell out.
 

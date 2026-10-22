@@ -1,0 +1,39 @@
+# Imported by `tink import` from a compose file. A starting point to review, not the stack: it states what the compose file
+# says about the app, and nothing about the site (its project, network, address, name, sign-on or backup).
+kind: stack
+name: forgejo
+---
+kind: storage-volume
+name: server-forgejo
+pool: default
+# backup: not decided. Say how this volume is backed up (`backup: {snapshots: ...}`, or `backup: {none: "why"}`); `tink plan` warns until you do.
+---
+kind: instance
+name: server
+image: codeberg.org/forgejo/forgejo:16
+profiles:
+  - default
+config:
+  boot.autorestart: "true"
+  boot.autostart: "true"
+  environment.USER_GID: "1000"
+  environment.USER_UID: "1000"
+devices:
+  proxy0:
+    type: proxy
+    connect: tcp:127.0.0.1:3000
+    listen: tcp:0.0.0.0:3000
+  proxy1:
+    type: proxy
+    connect: tcp:127.0.0.1:22
+    listen: tcp:0.0.0.0:222
+  volume0:
+    type: disk
+    path: /data
+    pool: default
+    source: server-forgejo
+  volume1:
+    type: disk
+    path: /etc/localtime
+    readonly: "true"
+    source: /etc/localtime

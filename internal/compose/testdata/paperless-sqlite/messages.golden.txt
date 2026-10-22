@@ -1,0 +1,3 @@
+warning: service webserver: environment PAPERLESS_SECRET_KEY looks like a secret and is written as it is: add it with `tink secret set` and write ${secret:NAME} instead
+note: service webserver: ./export was a path relative to the compose file; it is now the managed volume webserver-export. Write it as a bind mount to keep it a directory you can see
+note: service webserver: ./consume was a path relative to the compose file; it is now the managed volume webserver-consume. Write it as a bind mount to keep it a directory you can see
