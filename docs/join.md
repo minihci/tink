@@ -116,6 +116,8 @@ ingress:
 
 ### From the server
 
+A stack that says `network: own` ([network.md](network.md#a-bridge-of-the-stacks-own)) has its bridge, NICs and addresses derived by `tink plan`, so they are not in its files: `tink join FILE...` cannot see them, and `tink join --from-server` after `plan apply` can.
+
 ```
 tink join --from-server                       # the same five renderings, from what the server holds
 tink join --from-server --only dns

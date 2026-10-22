@@ -76,6 +76,10 @@ type yamlResource struct {
 	Timezone string   `yaml:"timezone"`
 	Remotes  []string `yaml:"remotes"`
 
+	// Stack-only -- see Resource.NetworkPool.
+	NetworkPool   string `yaml:"network_pool"`
+	NetworkPrefix int    `yaml:"network_prefix"`
+
 	Content    string `yaml:"content"`
 	SourcePath string `yaml:"source_path"` // read at load time, relative to this YAML file's own directory
 
@@ -418,6 +422,8 @@ func (d yamlResource) toResource(dir string) (Resource, error) {
 		Offer:           d.Offer,
 		Allow:           d.Allow,
 		Network:         d.Network,
+		NetworkPool:     d.NetworkPool,
+		NetworkPrefix:   d.NetworkPrefix,
 		Timezone:        d.Timezone,
 		Remotes:         d.Remotes,
 		Path:            d.Path,

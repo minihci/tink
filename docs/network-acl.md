@@ -140,7 +140,7 @@ With `derive_ingress: true` the ingress rules are not written in the file; `tink
 - **It reads the platform from the server and the apps from the stack.** The ingress helper's legs and addresses, the dns and sign-on helpers, and the profiles come from the server (the instances that state a role, with the publishes left out); the stack's own instances, networks and publishes come from the files and win over the server's copy. Another stack's apps are not read, so a fault in one of them cannot stop this stack from being planned. The platform has to be applied first: with no ingress helper on the server there is nothing to derive from, and `plan` fails and names what is missing (the join's findings that are errors).
 - **A network that two stacks use should not name such an ACL in only one of them.** The rules are those of the stack being planned, and the other stack's rules would be removed as stale. Give each stack its own bridge (#177), or write the rules.
 - **Exclusive with `ingress:`.** Writing both is a load error. `egress:` is not derived and is written as usual.
-- **Only the ingress rules.** The bridge, the address on the app's NIC and the attaching of the ACL are still written by hand; they are the rest of #177.
+- **Only the ingress rules.** The bridge, the address on the app's NIC and the attaching of the ACL are written by hand, or derived for a stack that says `network: own` ([network.md](network.md#a-bridge-of-the-stacks-own)), which also makes an ACL like this one.
 
 ## Checked when the file is loaded
 
