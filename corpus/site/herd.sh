@@ -43,6 +43,10 @@ fw() {
 
 exists() { "$@" >/dev/null 2>&1; }
 
+# The checks talk to this host's own bridges and loopback, never through an HTTP proxy that the environment may set ($HTTPS_PROXY would send the
+# https:// requests to the proxy, and make "not reachable from the host" say 000 for the wrong reason).
+curl() { command curl --noproxy '*' "$@"; }
+
 # ensure_bridge creates the platform bridge with a subnet of Incus's choosing, if there is none, so that its subnet can be read before tink applies the site
 # (site.yaml says `ipv4.address: auto`, which tink treats as satisfied by whatever Incus chose).
 ensure_bridge() {
