@@ -8,7 +8,7 @@ backup, with a person managing as little as possible. The herd test is the corpu
 | Level | Question | Today |
 |---|---|---|
 | 1. Runs | Does the app answer when its own line is pasted into tink? | 14 of 21 (`status.md`) |
-| 2. Imports | Does its published compose or run line become a stack with no hand editing? | not measured; tink reads no compose |
+| 2. Imports | Does its published compose line become a stack with no hand editing? | 13 of the 17 apps with a compose file (14 of 18 files); the other four are refused with a reason (#179, #180) |
 | 3. Herd | Is it applied together with the others, onto one site, and wired? | not measured |
 
 ## The first herd
