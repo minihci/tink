@@ -80,6 +80,7 @@ type yamlResource struct {
 	NetworkPool   string `yaml:"network_pool"`
 	NetworkPrefix int    `yaml:"network_prefix"`
 
+	Derive     string `yaml:"derive"` // file-only -- see Resource.Derive
 	Content    string `yaml:"content"`
 	SourcePath string `yaml:"source_path"` // read at load time, relative to this YAML file's own directory
 
@@ -427,6 +428,7 @@ func (d yamlResource) toResource(dir string) (Resource, error) {
 		Timezone:        d.Timezone,
 		Remotes:         d.Remotes,
 		Path:            d.Path,
+		Derive:          d.Derive,
 		Content:         content,
 		Restart:         d.Restart,
 		OnImageChange:   d.OnImageChange,

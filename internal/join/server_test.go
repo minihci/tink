@@ -356,3 +356,26 @@ func TestOverlayLetsTheStackWin(t *testing.T) {
 		t.Error("what the stack does not declare stays")
 	}
 }
+
+// A publish the server holds for an instance the overlay declares is dropped with the server's copy of it: if the overlay still publishes the name it
+// brings it, and if it does not, the name is gone.
+func TestOverlayDropsThePublishesOfAnInstanceItDeclares(t *testing.T) {
+	base := []Stack{{Name: "server", Resources: []resolve.Resource{
+		{Kind: resolve.KindInstance, Name: "app", Project: "p"},
+		{Kind: resolve.KindPublish, Name: "old", Project: "p", Instance: "app", Offer: "web"},
+		{Kind: resolve.KindInstance, Name: "other", Project: "p"},
+		{Kind: resolve.KindPublish, Name: "kept", Project: "p", Instance: "other", Offer: "web"},
+	}}}
+	over := []Stack{{Name: "mine", Resources: []resolve.Resource{{Kind: resolve.KindInstance, Name: "app", Project: "p"}}}}
+	var names []string
+	for _, s := range Overlay(base, over) {
+		for _, r := range s.Resources {
+			if r.Kind == resolve.KindPublish {
+				names = append(names, r.Name)
+			}
+		}
+	}
+	if len(names) != 1 || names[0] != "kept" {
+		t.Errorf("publishes = %v, want only the one for the instance the overlay does not declare", names)
+	}
+}

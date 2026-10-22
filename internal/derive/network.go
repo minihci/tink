@@ -41,7 +41,12 @@ func Run(server incus.InstanceServer, resources []resolve.Resource) ([]resolve.R
 	if err != nil {
 		return nil, nil, err
 	}
-	return resources, append(notices, more...), nil
+	notices = append(notices, more...)
+	files, err := DerivedFiles(server, resources)
+	if err != nil {
+		return nil, nil, err
+	}
+	return resources, append(notices, files...), nil
 }
 
 // OwnNetwork gives a stack that says `network: own` a bridge of its own and what the join needs from it (docs/network-acl.md, #177):
