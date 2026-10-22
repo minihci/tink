@@ -1,6 +1,8 @@
 package derive
 
 import (
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -18,6 +20,8 @@ type serverFake struct {
 	profiles  []api.Profile
 	networks  []api.Network
 	calls     int
+	files     map[string]string
+	fileErr   error
 }
 
 func (f *serverFake) GetInstancesAllProjects(api.InstanceType) ([]api.Instance, error) {
@@ -29,6 +33,20 @@ func (f *serverFake) GetProfilesAllProjects() ([]api.Profile, error) {
 	return f.profiles, nil
 }
 func (f *serverFake) GetNetworks() ([]api.Network, error) { f.calls++; return f.networks, nil }
+
+// GetInstanceFile answers from files, keyed "instance:path"; a path not there is a 404, as the real API says. UseProject returns the same fake.
+func (f *serverFake) GetInstanceFile(instance, path string) (io.ReadCloser, *incus.InstanceFileResponse, error) {
+	f.calls++
+	if f.fileErr != nil {
+		return nil, nil, f.fileErr
+	}
+	c, ok := f.files[instance+":"+path]
+	if !ok {
+		return nil, nil, api.StatusErrorf(http.StatusNotFound, "not found")
+	}
+	return io.NopCloser(strings.NewReader(c)), &incus.InstanceFileResponse{Type: "file"}, nil
+}
+func (f *serverFake) UseProject(string) incus.InstanceServer { return f }
 
 // platformOnServer stores the platform stack of the join's fixtures as `plan apply` would have left it.
 func platformOnServer(t *testing.T) *serverFake {

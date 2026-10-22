@@ -1,6 +1,7 @@
 package derive
 
 import (
+	"net/http"
 	"strings"
 	"testing"
 
@@ -161,5 +162,84 @@ func TestNoDerivedFileNoWork(t *testing.T) {
 	notices, err := DerivedFiles(f, rs)
 	if err != nil || notices != nil || f.calls != 0 {
 		t.Errorf("notices %v, err %v, server calls %d", notices, err, f.calls)
+	}
+}
+
+// dnsSite is the platform with a hosts file for the dns helper and, when zone is not empty, the zone file it declares.
+func dnsSite(t *testing.T, zone string) []resolve.Resource {
+	t.Helper()
+	rs, err := resolve.LoadFiles([]string{"../join/testdata/platform.yaml"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rs = append(rs, resolve.Resource{Kind: resolve.KindFile, Name: "dns-hosts", Instance: "dns", Project: "tink", Path: "/hosts", Derive: resolve.DeriveDNS,
+		Content: "# generated\n" + resolve.DeriveBegin + "\n" + resolve.DeriveEnd + "\n"})
+	if zone != "" {
+		rs = append(rs, resolve.Resource{Kind: resolve.KindFile, Name: "dns-zone", Instance: "dns", Project: "tink", Path: "/db.home.example.org", Content: zone})
+	}
+	return rs
+}
+
+const platformZone = "$ORIGIN home.example.org.\n@ IN SOA dns.home.example.org. h.home.example.org. 1 3600 600 86400 60\nauth IN A 192.0.2.3\n"
+
+// The records are the join's dns rendering, one line per published name, answering with the ingress helper's serves-leg address.
+func TestDerivedDNSHoldsTheRecords(t *testing.T) {
+	rs := dnsSite(t, platformZone)
+	notices, err := DerivedFiles(serverWith(t, "../join/testdata/platform.yaml", "../join/testdata/canary.yaml"), rs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := file(rs, "dns-hosts").Content
+	want := "# generated\n" + resolve.DeriveBegin + "\n192.0.2.231 whoami.home.example.org\n192.0.2.231 whoami-admin.home.example.org\n" + resolve.DeriveEnd + "\n"
+	if got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+	if len(notices) != 1 || !strings.Contains(notices[0], "dns derived for 2 published name(s)") {
+		t.Errorf("notices = %v", notices)
+	}
+}
+
+// The zone file may be on the server and not in the stack.
+func TestDerivedDNSReadsTheZoneFromTheServer(t *testing.T) {
+	srv := serverWith(t, "../join/testdata/platform.yaml", "../join/testdata/canary.yaml")
+	srv.files = map[string]string{"dns:/db.home.example.org": platformZone}
+	if _, err := DerivedFiles(srv, dnsSite(t, "")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDerivedDNSRefusals(t *testing.T) {
+	srv := func() *serverFake {
+		return serverWith(t, "../join/testdata/platform.yaml", "../join/testdata/canary.yaml")
+	}
+	// a published name that is a record of the platform's own
+	zone := platformZone + "whoami IN A 192.0.2.99\n"
+	if _, err := DerivedFiles(srv(), dnsSite(t, zone)); err == nil || !strings.Contains(err.Error(), "already holds a record for whoami") {
+		t.Errorf("a clash with the zone file: err = %v", err)
+	}
+	// the same, written the long way
+	zone = platformZone + "whoami-admin.home.example.org. IN A 192.0.2.99\n"
+	if _, err := DerivedFiles(srv(), dnsSite(t, zone)); err == nil || !strings.Contains(err.Error(), "whoami-admin") {
+		t.Errorf("a clash written with the zone: err = %v", err)
+	}
+	// no zone file anywhere
+	if _, err := DerivedFiles(srv(), dnsSite(t, "")); err == nil || !strings.Contains(err.Error(), "neither declared") {
+		t.Errorf("no zone file: err = %v", err)
+	}
+	// a read that fails is not a file that is not there
+	failing := srv()
+	failing.fileErr = api.StatusErrorf(http.StatusInternalServerError, "database is locked")
+	if _, err := DerivedFiles(failing, dnsSite(t, "")); err == nil || !strings.Contains(err.Error(), "database is locked") {
+		t.Errorf("a failing read: err = %v", err)
+	}
+	// the file is on the wrong instance
+	wrong := dnsSite(t, platformZone)
+	for i := range wrong {
+		if wrong[i].Name == "dns-hosts" {
+			wrong[i].Instance = "sso"
+		}
+	}
+	if _, err := DerivedFiles(srv(), wrong); err == nil || !strings.Contains(err.Error(), "belongs on the dns helper") {
+		t.Errorf("a dns file on another instance: err = %v", err)
 	}
 }

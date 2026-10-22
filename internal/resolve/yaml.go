@@ -80,9 +80,12 @@ type yamlResource struct {
 	NetworkPool   string `yaml:"network_pool"`
 	NetworkPrefix int    `yaml:"network_prefix"`
 
-	Derive     string `yaml:"derive"` // file-only -- see Resource.Derive
-	Content    string `yaml:"content"`
-	SourcePath string `yaml:"source_path"` // read at load time, relative to this YAML file's own directory
+	Derive string `yaml:"derive"` // file-only -- see Resource.Derive
+	// File-only, with derive -- see Resource.AdoptExisting.
+	AdoptExisting bool   `yaml:"adopt_existing"`
+	AllowEmpty    bool   `yaml:"allow_empty"`
+	Content       string `yaml:"content"`
+	SourcePath    string `yaml:"source_path"` // read at load time, relative to this YAML file's own directory
 
 	// Shared between File and Instance -- see Resource.Restart's own doc
 	// comment.
@@ -429,6 +432,8 @@ func (d yamlResource) toResource(dir string) (Resource, error) {
 		Remotes:         d.Remotes,
 		Path:            d.Path,
 		Derive:          d.Derive,
+		AdoptExisting:   d.AdoptExisting,
+		AllowEmpty:      d.AllowEmpty,
 		Content:         content,
 		Restart:         d.Restart,
 		OnImageChange:   d.OnImageChange,

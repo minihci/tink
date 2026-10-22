@@ -60,6 +60,8 @@ type PlannedResource struct {
 	// can hold values that must not be printed.
 	live     map[string]string
 	liveRead bool
+	// liveContent is a file's content as the plan read it, for the guards of a derived file (derivedfile.go). Unexported: it can hold anything.
+	liveContent string
 }
 
 // Plan computes what would happen for each resource without touching
@@ -294,7 +296,7 @@ func planFile(server incus.InstanceServer, r Resource) (PlannedResource, error) 
 	if string(current) == r.Content {
 		return PlannedResource{Resource: r, Action: ActionNone}, nil
 	}
-	return PlannedResource{Resource: r, Action: ActionUpdate, Changes: []string{fmt.Sprintf("content of %s on %s differs", r.Path, r.Instance)}}, nil
+	return PlannedResource{Resource: r, Action: ActionUpdate, Changes: []string{fmt.Sprintf("content of %s on %s differs", r.Path, r.Instance)}, liveContent: string(current)}, nil
 }
 
 // planIncus runs `incus` with r.Check's args to decide whether r.Command
