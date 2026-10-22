@@ -1,0 +1,105 @@
+# The herd stack "media": Sonarr and qBittorrent. They are two projects' compose files; the stack shares one volume for /downloads between them,
+# which is why they are one stack and one Incus project (a volume cannot cross projects). Every line marked "site:" is the site's half, written
+# by hand until the derive stage (#177, #130) does it. The compose files' host paths (/path/to/...) are placeholders; they become managed volumes.
+kind: stack
+name: media
+project: herd-media                       # site
+---
+kind: project                             # site
+name: herd-media
+config:
+  features.profiles: "false"
+---
+kind: network-acl                         # site: the rules are the join's `acl` rendering, written in by paste.sh
+name: tink-media-in
+description: only the ingress helper may reach the media apps
+ingress:
+  - {action: allow, source: 192.0.2.3/32, protocol: tcp, destination_port: "8080", state: enabled, description: "ingress helper publishes qbittorrent"}
+  - {action: allow, source: 192.0.2.3/32, protocol: tcp, destination_port: "8989", state: enabled, description: "ingress helper publishes sonarr"}
+---
+kind: network                             # site
+name: tink-media
+description: the media stack's bridge
+config:
+  ipv4.address: 203.0.113.97/27
+  ipv4.nat: "false"
+  ipv6.address: none
+  security.acls: tink-media-in
+---
+kind: storage-volume                      # site: a placeholder path became a volume
+name: sonarr-config
+pool: default
+backup:
+  none: "a throwaway fixture"
+---
+kind: storage-volume                      # site
+name: sonarr-tv
+pool: default
+backup:
+  none: "a throwaway fixture"
+---
+kind: storage-volume                      # site: shared by both apps
+name: downloads
+pool: default
+backup:
+  none: "a throwaway fixture"
+---
+kind: storage-volume                      # site
+name: qbittorrent-config
+pool: default
+backup:
+  none: "a throwaway fixture"
+---
+kind: instance
+name: sonarr
+image: lscr.io/linuxserver/sonarr:latest
+profiles:
+  - default
+config:
+  boot.autorestart: "true"
+  boot.autostart: "true"
+  environment.PGID: "1000"
+  environment.PUID: "1000"
+  environment.TZ: Etc/UTC
+  user.tink.offer.web.port: "8989"        # site
+  user.tink.offer.web.proto: http
+devices:
+  eth0: {name: eth0, type: nic, network: tink-media, ipv4.address: 203.0.113.106}   # site
+  volume0: {type: disk, path: /config, pool: default, source: sonarr-config}
+  volume1: {type: disk, path: /tv, pool: default, source: sonarr-tv}
+  volume2: {type: disk, path: /downloads, pool: default, source: downloads}
+---
+kind: instance
+name: qbittorrent
+image: lscr.io/linuxserver/qbittorrent:latest
+profiles:
+  - default
+config:
+  boot.autorestart: "true"
+  boot.autostart: "true"
+  environment.PGID: "1000"
+  environment.PUID: "1000"
+  environment.TORRENTING_PORT: "6881"
+  environment.TZ: Etc/UTC
+  environment.WEBUI_PORT: "8080"
+  user.tink.offer.web.port: "8080"        # site
+  user.tink.offer.web.proto: http
+devices:
+  eth0: {name: eth0, type: nic, network: tink-media, ipv4.address: 203.0.113.107}   # site
+  # (the web UI's host port 8080 is gone; the torrent port stays, on the loopback address only)  # site
+  proxy1: {type: proxy, connect: "tcp:127.0.0.1:6881", listen: "tcp:127.0.0.1:6881"}
+  proxy2: {type: proxy, connect: "udp:127.0.0.1:6881", listen: "udp:127.0.0.1:6881"}
+  volume0: {type: disk, path: /config, pool: default, source: qbittorrent-config}
+  volume1: {type: disk, path: /downloads, pool: default, source: downloads}
+---
+kind: publish                             # site
+name: sonarr
+instance: sonarr
+offer: web
+allow: [admins]
+---
+kind: publish                             # site
+name: qbittorrent
+instance: qbittorrent
+offer: web
+allow: [admins]

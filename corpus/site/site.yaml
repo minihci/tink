@@ -87,8 +87,9 @@ config:
   user.tink.leg.eth0: serves, public
 devices:
   eth0: {name: eth0, type: nic, network: herd0, ipv4.address: 192.0.2.3}
-  # The fixture's one way in from the host. A real site reaches the ingress helper through a NAT proxy device on its public address.
-  https: {type: proxy, listen: "tcp:127.0.0.1:18443", connect: "tcp:127.0.0.1:443"}
+  # The fixture's one way in from the host, on the loopback address only and on the port a browser would use, so that a Host header carries no
+  # port (qBittorrent, for one, refuses one that is not its own). A real site reaches the ingress helper through a NAT proxy device on its public address.
+  https: {type: proxy, listen: "tcp:127.0.0.1:443", connect: "tcp:127.0.0.1:443"}
 ---
 kind: file
 name: ingress-caddyfile

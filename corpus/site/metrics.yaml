@@ -1,0 +1,59 @@
+# The herd stack "metrics": Grafana. Imported from the project's compose file with `tink import`; every line marked "site:" is the site's half,
+# written by hand until the derive stage (#177, #130) does it.
+kind: stack
+name: metrics
+project: herd-metrics                     # site
+---
+kind: project                             # site
+name: herd-metrics
+config:
+  features.profiles: "false"
+---
+kind: network-acl                         # site: the rules are the join's `acl` rendering, written in by paste.sh
+name: tink-metrics-in
+description: only the ingress helper may reach the metrics app
+ingress:
+  - {action: allow, source: 192.0.2.3/32, protocol: tcp, destination_port: "3000", state: enabled, description: "ingress helper publishes metrics"}
+---
+kind: network                             # site
+name: tink-metrics
+description: the metrics stack's bridge
+config:
+  ipv4.address: 203.0.113.129/27
+  ipv4.nat: "false"
+  ipv6.address: none
+  security.acls: tink-metrics-in
+---
+kind: storage-volume
+name: grafana-storage
+pool: default
+config:                                   # site: Grafana runs as uid 472 and a new volume is root's (#176); without this it exits at once
+  initial.uid: "472"
+  initial.gid: "0"
+backup:                                   # site
+  none: "a throwaway fixture"
+---
+kind: instance
+name: grafana
+image: grafana/grafana-enterprise
+profiles:
+  - default
+config:
+  boot.autorestart: "true"
+  boot.autostart: "true"
+  environment.GF_SERVER_ROOT_URL: https://metrics.home.example.org   # site: the name the app is told it has
+  user.tink.offer.web.port: "3000"        # site
+  user.tink.offer.web.proto: http
+devices:
+  eth0: {name: eth0, type: nic, network: tink-metrics, ipv4.address: 203.0.113.138}   # site
+  volume0:
+    type: disk
+    path: /var/lib/grafana
+    pool: default
+    source: grafana-storage
+---
+kind: publish                             # site
+name: metrics
+instance: grafana
+offer: web
+allow: [admins]

@@ -9,7 +9,7 @@ backup, with a person managing as little as possible. The herd test is the corpu
 |---|---|---|
 | 1. Runs | Does the app answer when its own line is pasted into tink? | 14 of 21 (`status.md`) |
 | 2. Imports | Does its published compose line become a stack with no hand editing? | 13 of the 17 apps with a compose file (14 of 18 files); the other four are refused with a reason (#179, #180) |
-| 3. Herd | Is it applied together with the others, onto one site, and wired? | 1 of 6 stacks is on the fixture site and meets 2 of the 5 criteria below (a clean second plan; the name answers behind sign-on); 13 steps are still by hand, and backup and removal are untried (`site/README.md`) |
+| 3. Herd | Is it applied together with the others, onto one site, and wired? | all 6 stacks (7 names) are on the fixture site and answer behind sign-on; against the 5 criteria below, 2 and 3 hold for every stack, 4 for one stack (vault), 5 was tried on one (status), and 1 does not hold yet: the hand steps are listed in `site/README.md` |
 
 ## The first herd
 

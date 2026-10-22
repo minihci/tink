@@ -1,0 +1,56 @@
+# The herd stack "status": Uptime Kuma. Imported from the project's compose file with `tink import`; every line marked "site:" is the site's half,
+# written by hand until the derive stage (#177, #130) does it.
+kind: stack
+name: status
+project: herd-status                      # site
+---
+kind: project                             # site
+name: herd-status
+config:
+  features.profiles: "false"
+---
+kind: network-acl                         # site: the rules are the join's `acl` rendering, written in by paste.sh
+name: tink-status-in
+description: only the ingress helper may reach the status app
+ingress:
+  - {action: allow, source: 192.0.2.3/32, protocol: tcp, destination_port: "3001", state: enabled, description: "ingress helper publishes status"}
+---
+kind: network                             # site
+name: tink-status
+description: the status stack's bridge
+config:
+  ipv4.address: 203.0.113.1/27
+  ipv4.nat: "false"
+  ipv6.address: none
+  security.acls: tink-status-in
+---
+kind: storage-volume
+name: uptime-kuma-data
+pool: default
+backup:                                   # site
+  none: "a throwaway fixture"
+---
+kind: instance
+name: uptime-kuma
+image: louislam/uptime-kuma:2
+profiles:
+  - default
+config:
+  boot.autorestart: "true"
+  boot.autostart: "true"
+  user.tink.offer.web.port: "3001"        # site
+  user.tink.offer.web.proto: http
+devices:
+  eth0: {name: eth0, type: nic, network: tink-status, ipv4.address: 203.0.113.10}   # site
+  # (the compose file's host port 3001 is gone: the app is reached through the ingress helper)  # site
+  volume0:
+    type: disk
+    path: /app/data
+    pool: default
+    source: uptime-kuma-data
+---
+kind: publish                             # site: the admin UI is for admins. Its public status page cannot be opened separately: a publish is a whole name
+name: status
+instance: uptime-kuma
+offer: web
+allow: [admins]

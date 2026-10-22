@@ -1,64 +1,71 @@
 # The herd test's site
 
-The shared site the herd test (`../herd.md`) applies stacks to, and the first stack on it. A fixture, not the platform recipe (#131): the addresses and the zone are documentation values, certificates come from Caddy's own local CA, and the site's one user is a throwaway.
+The shared site the herd test (`../herd.md`) applies stacks to, and the six stacks of the first herd. A fixture, not the platform recipe (#131): the addresses and the zone are documentation values, certificates come from Caddy's own local CA, and the site's one user is a throwaway.
 
 ```
-TINK=./tink corpus/site/herd.sh up      # the site, then the vault stack
-corpus/site/herd.sh test                # the checks below
-corpus/site/herd.sh down                # removes everything it made
+TINK=./tink corpus/site/herd.sh up       # the site, then the six stacks
+corpus/site/herd.sh test                 # the checks below
+TINK=./tink corpus/site/herd.sh backup   # a copy of the vault volume to another pool, and two restore checks
+corpus/site/herd.sh down                 # removes everything it made
 ```
 
-It runs on a local Incus server and touches the host in one place: on a host running firewalld it puts the two bridges in the `trusted` zone for the running firewall (`sudo firewall-cmd --zone=trusted --add-interface=...`, not permanent). A new bridge needs this to get DHCP and DNS from the host (#177). With `SUDO_ASKPASS` set it asks through that.
+It runs on a local Incus server and touches the host in one place: on a host running firewalld it puts the platform bridge and every bridge named `tink-*` in the `trusted` zone of the running firewall (not permanent). That is one rule, added before any bridge exists, so tink creates the stacks' bridges from nothing and they get DHCP and DNS from the host (#177). With `SUDO_ASKPASS` set it asks through that.
 
 ## What is in it
 
 | File | What |
 |---|---|
 | `site.yaml` | a project `herd-site`, the platform bridge `herd0`, and three role helpers: **dns** (CoreDNS), **sso** (Authelia), **ingress** (Caddy), with their files |
-| `files/` | the Corefile and zone, the Caddyfile and its routes, Authelia's configuration and one user (`tester`, password `herd-test-password`) |
-| `vault.yaml` | the first herd stack: Vaultwarden, from `tink import` plus the site's half |
-| `herd.sh` | `up`, `test`, `down` |
+| `files/` | the Corefile and zone, the Caddyfile and its routes, Authelia's configuration and one user (`tester`, password `herd-test-password`, groups `family` and `admins`) |
+| `vault.yaml`, `status.yaml`, `blog.yaml`, `shop.yaml`, `media.yaml`, `metrics.yaml` | the herd: Vaultwarden; Uptime Kuma; WordPress with MySQL twice; Sonarr with qBittorrent; Grafana. Each is what `tink import` writes for the project's own compose file, plus the lines marked `site:` |
+| `paste.sh` | stands in for the derive stage: runs `tink join` and writes its renderings into the places they belong |
+| `herd.sh` | `up`, `test`, `backup`, `down` |
 
-The ingress helper is reached from the host on `127.0.0.1:18443`. Names are tried with `curl --resolve NAME:18443:127.0.0.1`.
+Every stack has a project and a bridge of its own (`herd-NAME`, `tink-NAME`) with an ACL that admits only the ingress helper. The ingress helper is reached from the host on `127.0.0.1:443`; names are tried with `curl --resolve NAME:443:127.0.0.1`.
 
-## The first stack, and what is still by hand
+## What is still by hand
 
-`vault.yaml` is what `tink import` writes for Vaultwarden's own compose file, plus the lines marked `site:`. Each is something the derive stage (#177, #130) should make unnecessary. Counted:
+Each line marked `site:` in a stack is something the derive stage (#177, #130) should make unnecessary.
 
-| # | By hand | Should become |
-|---|---|---|
-| 1 | a project of its own | the stack's project |
-| 2 | a bridge for the stack | derived (#177) |
-| 3 | an ACL on it, with the join's `acl` rendering pasted in | derived (#177, #130) |
-| 4 | a static address on the app's NIC | allocated (#177) |
-| 5 | the NIC pointing at the bridge | derived (#177) |
-| 6 | the offer keys (`user.tink.offer.web.*`) | stated by the app's stack, or imported |
-| 7 | a `kind: publish` | stays: it is the grant |
-| 8 | the public name in the app's environment (`DOMAIN`) | a place in the publish for it |
-| 9 | removing the compose file's host port | the importer's offer-or-port choice (#179) |
-| 10 | a backup answer for the volume | stays: it is the site's decision |
-| 11 | the `caddy` rendering pasted into `files/apps.caddy` | a derived file (#130) |
-| 12 | the `sso` rendering pasted into `files/configuration.yml` | a derived file (#130) |
-| 13 | firewall: the bridge in a trusted zone | a documented prerequisite (#177) |
+| By hand | Should become |
+|---|---|
+| a project of its own | the stack's project |
+| a bridge for the stack, and an ACL on it | derived (#177) |
+| a static address on the app's NIC, and the NIC pointing at the bridge | allocated and derived (#177) |
+| the offer keys (`user.tink.offer.web.*`) | stated by the app's stack, or imported |
+| a `kind: publish` | stays: it is the grant |
+| the public name in the app's environment (`DOMAIN`, `GF_SERVER_ROOT_URL`, WordPress's `WP_HOME`) | a place in the publish for it |
+| removing the compose file's host port | the importer's offer-or-port choice (#179) |
+| a backup answer for each volume | stays: it is the site's decision |
+| the `caddy`, `sso` and `acl` renderings written into their files | derived files (#130); `paste.sh` does the writing here |
+| a volume's owner when the image runs as its own user (Grafana) | #176 |
+| the firewall rule, once | a documented prerequisite (#177) |
 
 `tink join apply dns` writes the dns records; nothing else the join renders is applied by tink yet.
 
 ## The checks (`herd.sh test`)
 
-Run on 2026-10-21 (L-2026-10-21b), Incus 7.5.1, Caddy 2.11.7, CoreDNS 1.15.0, Authelia 4.39.28:
+Run on 2026-10-21 and 22 (L-2026-10-21b), Incus 7.5.1, Caddy 2.11.7, CoreDNS 1.15.0, Authelia 4.39.28. For each of the seven published names (`vault`, `status`, `blog`, `shop`, `sonarr`, `qbittorrent`, `metrics`):
 
-1. The name answers from the dns helper.
-2. With no session, the ingress helper sends the request to sign-on (302).
-3. After signing in as `tester` (group `family`), the app answers (200).
-4. The app is not reachable from the host directly: the ACL on its bridge admits only the ingress helper's address.
-5. The ingress helper reaches the app; another platform instance (the sign-on helper) does not.
+1. the name answers from the dns helper;
+2. with no session, the ingress helper sends the request to sign-on (302);
+3. after signing in as `tester`, the app answers (200, or a redirect that is not back to sign-on);
+4. the app is not reachable from the host directly.
 
-A second `tink plan` of `site.yaml` and of `vault.yaml` says no changes, run after a from-scratch `up` (the site's files already hold the vault stack's pasted renderings).
+And for the stacks: another platform instance does not reach an app; `blog` and `shop` each have a running `db`; Sonarr and qBittorrent share `/downloads`. All 32 checks pass, and a second `tink plan` of the site and of every stack says no changes.
 
-Not yet checked, so the stack does not pass level 3 of `../herd.md`: a backup copy and a restore have not been made, and removing the publish has not been tried. The pasted files are the site's, so the second plan says nothing about whether the vault stack's own publish still drives them.
+**Removing a publish** was tried on `status`: dropping its `kind: publish` and running `paste.sh` removed its route, its sign-on rule, its dns record (`tink join apply dns`), its stamp on the instance and its ACL rule, and left the other six names answering. The ACL rule goes only because the ACL says `ingress: []`: leaving the direction out means "not managed" and the rule stayed (`docs/network-acl.md`). A derived ACL has to declare its direction even when nothing is published through it.
+
+**Backup** (`herd.sh backup`, vault only): the volume declares a snapshot schedule, a copy to the `vm` pool and a weekly restore check. A copy was made, and both the snapshot and the copy were restored to a scratch volume where the check (`test -s /data/db.sqlite3`) passed. `tink plan` still warns that 3-2-1 is not met, which is true: the second pool is on the same host. The other five stacks answer `none: a throwaway fixture`, so the herd does not yet meet "every `keep` volume has a policy".
 
 ## What it found
 
-- **A file cannot be placed in a directory that is not there** (#140). Authelia's image has no `/config`, and Caddy's has no `/etc/caddy/routes`, so the fixture points Authelia at `/app` with an `oci.entrypoint` and imports a single `apps.caddy` instead of a directory of files.
-- **An instance that exits at its first start and restarts on its own blocks the next apply** (`Instance is busy running a "stop" operation`) and the file reads fail on it, until it is stopped. It happened when the first apply put the config in a directory that was not there. The file-before-first-start work (`docs/first-start-files-design.md`) covers the case where the push succeeds.
-- **The join's ACL rendering matches the rule written by hand**, and the proxy route, sign-on rule and dns record it prints were enough to make the name work, once pasted into the right files.
+- **A file cannot be placed in a directory that is not there** (#140). Authelia's image has no `/config`, Caddy's no routes directory, so the fixture points Authelia at `/app` and imports one `apps.caddy`. A failed push also left a crash-looping instance that blocked the next apply until it was stopped by hand.
+- **A one-time rule for `tink-+` is enough.** With it in place before any bridge exists, tink created six bridges from nothing, all with DHCP and DNS (#177).
+- **An env value cannot hold a line break** (Incus: `Environment variables cannot contain line breaks`). WordPress's `WORDPRESS_CONFIG_EXTRA` had to be one line. `tink import` passes a multi-line value through and the apply fails; it should refuse it (#179). The failed apply left the instance half made, and the retry resumed it.
+- **Two stacks with a `db` run side by side** when each has its bridge: `blog` and `shop` are the same compose file twice. On one bridge the second would be refused (#143, #177).
+- **A first run of Grafana exits at once** on a root-owned volume (#176); the stack gives the volume an owner.
+- **qBittorrent refuses a Host header whose port is not its own** (`Invalid Host header, port mismatch`). It only showed because the fixture first listened on 18443; on 443 the header has no port. A proxy that serves a non-standard port meets it.
+- **A publish is a whole name.** Uptime Kuma's public status page cannot be opened without sign-on while its dashboard stays behind it (`platform.md`, `public-paths`). Not tried; the stack publishes the admin UI only.
+- **Apps on one bridge are not isolated from each other by the bridge ACL**: Sonarr reached qBittorrent directly. That is what a stack of apps sharing data wants, and it is why a bridge per stack and not per app is the unit.
+- **The join over seven publishes in six projects, two of them with an instance `wordpress` and an instance `db` each, rendered correctly.** Its ACL rendering matched the rules written by hand.

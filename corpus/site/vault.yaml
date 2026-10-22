@@ -24,11 +24,24 @@ config:
   ipv6.address: none
   security.acls: tink-vault-in
 ---
+kind: backup-target                       # site: where copies go. A target has to be in the same load as the volumes that name it, so each stack that copies repeats it
+name: vmpool
+location: same-host
+engine: incus
+pool: vm
+---
 kind: storage-volume
 name: vaultwarden-vw-data
 pool: default
-backup:                                   # site: the backup answer the importer left open
-  none: "a throwaway fixture"
+backup:                                   # site: the backup answer the importer left open. A copy to another pool on this server is not off-site; plan says so
+  snapshots: {schedule: "0 3 * * *", retain: 14d}
+  copies:
+    - {target: vmpool, schedule: "0 4 * * *", retain: 30d}
+  verify:
+    every: weekly
+    check:
+      image: docker-oci:library/alpine:3
+      command: [sh, -c, "test -s /data/db.sqlite3"]
 ---
 kind: instance
 name: vaultwarden

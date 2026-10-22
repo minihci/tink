@@ -1,85 +1,126 @@
 #!/bin/sh
-# Brings the herd test's fixture site up on a local Incus server, and takes it down. See README.md.
+# Brings the herd test's fixture site and its stacks up on a local Incus server, checks them, and takes them down. See README.md.
 #
-#   TINK=./tink ./herd.sh up      # the site (dns, sign-on, ingress), then the vault stack
+#   TINK=./tink ./herd.sh up      # the site (dns, sign-on, ingress), then the six stacks
 #   ./herd.sh test                # the checks of README.md, against what is up
+#   TINK=./tink ./herd.sh backup  # a copy of the vault stack's volume to another pool, and a restore check of the snapshot and of the copy
 #   ./herd.sh down                # removes everything it made
 #
-# It touches the host in one place only, the firewall: on a host running firewalld it puts the two bridges in the trusted zone for the
-# running firewall (not permanently). Nothing else outside Incus.
+# It touches the host in one place only, the firewall: on a host running firewalld it puts the platform bridge and every bridge named tink-*
+# in the trusted zone of the running firewall (not permanently), so that a new bridge gets DHCP and DNS from the host. Nothing else outside Incus.
 set -eu
 
 TINK=${TINK:-tink}
 HERE=$(cd "$(dirname "$0")" && pwd)
 SUDO=sudo
 [ -n "${SUDO_ASKPASS:-}" ] && SUDO="sudo -A"
+STACKS="vault status blog shop media metrics"
 
-fw() { # fw add|remove BRIDGE
+# name:address:port of each published app, for the checks
+APPS="vault:198.51.100.10:80 status:203.0.113.10:3001 blog:203.0.113.42:80 shop:203.0.113.74:80 sonarr:203.0.113.106:8989 qbittorrent:203.0.113.107:8080 metrics:203.0.113.138:3000"
+
+fw() { # fw add|remove INTERFACE
 	if command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet firewalld 2>/dev/null; then
-		$SUDO firewall-cmd --zone=trusted --"$1"-interface="$2" >/dev/null
+		$SUDO firewall-cmd --zone=trusted --"$1"-interface="$2" >/dev/null || true
 	fi
 }
 
 exists() { "$@" >/dev/null 2>&1; }
 
-up() {
-	exists incus project show herd-site || incus project create herd-site -c features.profiles=false
-	exists incus network show herd0 || incus network create herd0 ipv4.address=192.0.2.1/24 ipv4.nat=true ipv6.address=none \
-		--description "the herd test's platform bridge"
-	fw add herd0
-
-	exists incus project show herd-vault || incus project create herd-vault -c features.profiles=false
-	exists incus network acl show tink-vault-in || incus network acl create tink-vault-in --description "only the ingress helper may reach the vault app" </dev/null
-	exists incus network show tink-vault || incus network create tink-vault ipv4.address=198.51.100.1/24 ipv4.nat=false ipv6.address=none \
-		security.acls=tink-vault-in --description "the vault stack's bridge"
-	fw add tink-vault
-
-	"$TINK" plan apply --adopt "$HERE/site.yaml"
-	"$TINK" join apply dns "$HERE/site.yaml" "$HERE/vault.yaml"
-	"$TINK" plan apply --adopt "$HERE/vault.yaml"
+files() {
+	f="$HERE/site.yaml"
+	for s in $STACKS; do f="$f $HERE/$s.yaml"; done
+	echo "$f"
 }
 
-# test: the herd's checks for the vault stack, by hand until the derive stage and a heartbeat exist.
-test() {
-	R="--resolve vault.home.example.org:18443:127.0.0.1 --resolve auth.home.example.org:18443:127.0.0.1"
-	J=$(mktemp)
-	fail=0
-	ok() { printf '  ok    %s\n' "$1"; }
-	bad() { printf '  FAIL  %s\n' "$1"; fail=1; }
+up() {
+	fw add herd0
+	fw add 'tink-+'
+	"$TINK" plan apply "$HERE/site.yaml"
+	# shellcheck disable=SC2046
+	"$TINK" join apply dns $(files)
+	for s in $STACKS; do "$TINK" plan apply "$HERE/$s.yaml"; done
+}
 
-	[ "$(dig +short +time=3 +tries=1 @192.0.2.10 vault.home.example.org)" = 192.0.2.3 ] && ok "the name answers (dns helper)" || bad "the name answers (dns helper)"
-	code=$(curl -sk -m 10 $R -o /dev/null -w '%{http_code}' https://vault.home.example.org:18443/)
-	[ "$code" = 302 ] && ok "no session: sent to sign-on ($code)" || bad "no session: sent to sign-on ($code)"
+ok() { printf '  ok    %s\n' "$1"; }
+bad() { printf '  FAIL  %s\n' "$1"; fail=1; }
+
+# test: the herd's checks, by hand until the derive stage and a heartbeat exist.
+test() {
+	fail=0
+	J=$(mktemp)
+	R="--resolve auth.home.example.org:443:127.0.0.1"
+	for a in $APPS; do R="$R --resolve ${a%%:*}.home.example.org:443:127.0.0.1"; done
 	curl -sk -m 10 $R -c "$J" -H 'Content-Type: application/json' \
-		-d '{"username":"tester","password":"herd-test-password","keepMeLoggedIn":false}' https://auth.home.example.org:18443/api/firstfactor >/dev/null
-	code=$(curl -sk -m 10 $R -b "$J" -o /dev/null -w '%{http_code}' https://vault.home.example.org:18443/)
-	[ "$code" = 200 ] && ok "signed in: the app answers ($code)" || bad "signed in: the app answers ($code)"
-	code=$(curl -s -m 5 -o /dev/null -w '%{http_code}' http://198.51.100.10/ || true)
-	[ "$code" = 000 ] && ok "the app is not reachable except through the ingress helper (host: no answer)" || bad "the app answered the host ($code)"
-	incus exec --project herd-site ingress -- wget -q -O /dev/null -T 4 http://198.51.100.10/ </dev/null && ok "the ingress helper reaches the app" || bad "the ingress helper reaches the app"
-	if incus exec --project herd-site sso -- wget -q -O /dev/null -T 4 http://198.51.100.10/ </dev/null; then bad "another platform instance reached the app"; else ok "another platform instance does not reach the app"; fi
+		-d '{"username":"tester","password":"herd-test-password","keepMeLoggedIn":false}' https://auth.home.example.org/api/firstfactor >/dev/null
+
+	for a in $APPS; do
+		name=${a%%:*}
+		rest=${a#*:}
+		addr=${rest%%:*}
+		url="https://$name.home.example.org/"
+		echo "$name"
+		[ "$(dig +short +time=3 +tries=1 @192.0.2.10 "$name.home.example.org")" = 192.0.2.3 ] && ok "the name answers" || bad "the name answers"
+		out=$(curl -sk -m 15 $R -o /dev/null -w '%{http_code} %{redirect_url}' "$url")
+		case "$out" in "302 https://auth.home.example.org"*) ok "no session: sent to sign-on" ;; *) bad "no session: sent to sign-on ($out)" ;; esac
+		out=$(curl -sk -m 20 $R -b "$J" -o /dev/null -w '%{http_code} %{redirect_url}' "$url")
+		case "$out" in
+		"200 "* | "30"[1237]" "*)
+			case "$out" in *auth.home.example.org*) bad "signed in: sent to sign-on again ($out)" ;; *) ok "signed in: the app answers (${out%% *})" ;; esac ;;
+		*) bad "signed in: the app answers ($out)" ;;
+		esac
+		code=$(curl -s -m 4 -o /dev/null -w '%{http_code}' "http://$addr:${rest#*:}/" || true)
+		[ "$code" = 000 ] && ok "not reachable from the host directly" || bad "the app answered the host ($code)"
+	done
+
+	echo "the stacks"
+	if incus exec --project herd-site sso -- wget -q -O /dev/null -T 4 http://198.51.100.10/ </dev/null 2>/dev/null; then bad "another platform instance reached an app"; else ok "another platform instance does not reach an app"; fi
+	for p in herd-blog herd-shop; do
+		[ "$(incus list --project $p db -c s -f csv </dev/null)" = RUNNING ] && ok "$p: db is running" || bad "$p: db is running"
+	done
+	incus exec --project herd-media sonarr -- sh -c 'echo shared > /downloads/herd-check' </dev/null 2>/dev/null &&
+		[ "$(incus exec --project herd-media qbittorrent -- cat /downloads/herd-check </dev/null 2>/dev/null)" = shared ] &&
+		ok "media: the two apps share /downloads" || bad "media: the two apps share /downloads"
 	rm -f "$J"
 	return $fail
 }
 
+# backup: the vault stack's volume declares snapshots, a copy to another pool on this server and a restore check. Takes a snapshot by hand (the
+# schedule would), makes the copy, and restores both the snapshot and the copy to a scratch volume to run the check against them.
+backup() {
+	v=vaultwarden-vw-data
+	incus storage volume snapshot create default "$v" herd-snap --project herd-vault </dev/null
+	"$TINK" backup run "$v" -f "$HERE/vault.yaml"
+	"$TINK" backup verify "$v" -f "$HERE/vault.yaml" --snapshot herd-snap
+	"$TINK" backup verify "$v" -f "$HERE/vault.yaml" --from vmpool
+}
+
 down() {
-	for p in herd-vault herd-site; do
+	for p in $(for s in $STACKS; do echo "herd-$s"; done) herd-site; do
 		exists incus project show "$p" || continue
 		for i in $(incus list --project "$p" -c n -f csv </dev/null); do incus delete --project "$p" "$i" -f </dev/null; done
-		for v in $(incus storage volume list default --project "$p" -c n -f csv </dev/null 2>/dev/null); do
-			incus storage volume delete default "$v" --project "$p" </dev/null >/dev/null 2>&1 || true
+		for pool in $(incus storage list -f csv -c n </dev/null); do
+			for v in $(incus storage volume list "$pool" --project "$p" -c n -f csv </dev/null 2>/dev/null); do
+				incus storage volume delete "$pool" "$v" --project "$p" </dev/null >/dev/null 2>&1 || true
+			done
 		done
 		for f in $(incus image list --project "$p" -c f -f csv </dev/null); do incus image delete --project "$p" "$f" </dev/null; done
 		incus project delete "$p" </dev/null
 	done
-	if exists incus network show tink-vault; then fw remove tink-vault; incus network delete tink-vault </dev/null; fi
-	exists incus network acl show tink-vault-in && incus network acl delete tink-vault-in </dev/null
-	if exists incus network show herd0; then fw remove herd0; incus network delete herd0 </dev/null; fi
+	for s in $STACKS; do
+		exists incus network show "tink-$s" && incus network delete "tink-$s" </dev/null
+		exists incus network acl show "tink-$s-in" && incus network acl delete "tink-$s-in" </dev/null
+	done
+	exists incus network show herd0 && incus network delete herd0 </dev/null
+	fw remove herd0
+	fw remove 'tink-+'
+	return 0
 }
 
 case "${1:-}" in
 up) up ;;
 test) test ;;
+backup) backup ;;
 down) down ;;
-*) echo "usage: TINK=./tink $0 up|test|down" >&2; exit 2 ;;
+*) echo "usage: TINK=./tink $0 up|test|backup|down" >&2; exit 2 ;;
 esac
