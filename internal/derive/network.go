@@ -29,26 +29,6 @@ func BridgeName(stack string) string {
 	return fmt.Sprintf("%s%s-%04x", BridgePrefix, stack[:5], h.Sum32()&0xffff)
 }
 
-// Run is the derive stage: every pass, in the order each needs the one before. The bridge, its ACL and the addresses come first, because the
-// ingress rules are worked out from the stack as it will be planned, with its apps on that bridge at fixed addresses. It may add resources, so
-// the caller takes the slice it returns. A stack that asks for nothing is returned untouched and the server is not read.
-func Run(server incus.InstanceServer, resources []resolve.Resource) ([]resolve.Resource, []string, error) {
-	resources, notices, err := OwnNetwork(server, resources)
-	if err != nil {
-		return nil, nil, err
-	}
-	more, err := ACLRules(server, resources)
-	if err != nil {
-		return nil, nil, err
-	}
-	notices = append(notices, more...)
-	files, err := DerivedFiles(server, resources)
-	if err != nil {
-		return nil, nil, err
-	}
-	return resources, append(notices, files...), nil
-}
-
 // OwnNetwork gives a stack that says `network: own` a bridge of its own and what the join needs from it (docs/network-acl.md, #177):
 //
 //   - a `kind: network` named BridgeName(stack), with a subnet, NAT out and no IPv6, with the ACL attached;
@@ -80,6 +60,9 @@ func OwnNetwork(server incus.InstanceServer, resources []resolve.Resource) ([]re
 	}
 	if stack.Name == "" {
 		return nil, nil, fmt.Errorf("network: own needs the stack to be named")
+	}
+	if server == nil {
+		return nil, nil, errNoServer("the bridge, the subnet and the addresses of a stack that says network: own")
 	}
 	bridge := BridgeName(stack.Name)
 	aclName := bridge + "-in"

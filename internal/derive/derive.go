@@ -47,6 +47,9 @@ func ACLRules(server incus.InstanceServer, resources []resolve.Resource) ([]stri
 	if len(marked) == 0 {
 		return nil, nil
 	}
+	if server == nil {
+		return nil, errNoServer("the ingress rules of a network ACL that says derive_ingress")
+	}
 
 	platform, err := join.PlatformFromServer(server)
 	if err != nil {
@@ -118,6 +121,9 @@ func DerivedFiles(server incus.InstanceServer, resources []resolve.Resource) ([]
 	}
 	if len(files) == 0 {
 		return nil, nil
+	}
+	if server == nil {
+		return nil, errNoServer("the region of a file that says derive:")
 	}
 	onServer, err := join.FromServer(server)
 	if err != nil {
@@ -223,4 +229,9 @@ func checkDNS(server incus.InstanceServer, resources []resolve.Resource, f resol
 		return fmt.Errorf("%s already holds a record for %s, and a generated record would answer first and take the name over: rename the publish", zonePath, strings.Join(clash, ", "))
 	}
 	return nil
+}
+
+// errNoServer is what a pass says when it needs the server and none is connected (tink plan explain with no server to reach).
+func errNoServer(what string) error {
+	return fmt.Errorf("%s is worked out from the server (the platform's helpers and the stacks' publishes), and none is connected", what)
 }

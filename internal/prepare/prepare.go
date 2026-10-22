@@ -13,9 +13,10 @@
 //     default is never a surprise to a later pass. It needs no server, so a bad `defaults:` fails before a connection is made;
 //  3. expand ${secret:NAME} references, so nothing after this point sees a reference, and nothing before it holds a value;
 //  4. connect to the server, once, for everything that follows (the commands reuse the connection for planning or applying);
-//  5. derive what the stack leaves to tink (internal/derive), which needs the server's view of the platform: a bridge of its own, its ACL and the
-//     static address of each published app for a stack that says `network: own`, then the ingress rules of every ACL that says derive_ingress. It comes before the graph is built, because the graph and every check read the derived values as if they had
-//     been written, and it reads no secret, so it can sit after the secrets pass;
+//  5. derive what the stack leaves to tink (internal/derive), which needs the server's view of the platform, in three passes: a bridge of its own, its
+//     ACL and the static address of each published app for a stack that says `network: own`; then the ingress rules of every ACL that says
+//     derive_ingress; then the region of every file that says derive:. They come before the graph is built, because the graph and every check
+//     read the derived values as if they had been written, and they read no secret, so they can sit after the secrets pass;
 //  6. qualify each instance's image the way Incus resolves it, which needs the server and must come before the graph is built;
 //  7. build the dependency levels (resolve.Levels), which applies the passes inside the resolver in their own fixed order.
 //
@@ -48,6 +49,19 @@ type Request struct {
 	// Notice receives what the person should be told as the passes run, one line each (an image reference read another way than written).
 	// It is called as each line is known, so it is seen even when a later pass fails. Nil drops them.
 	Notice func(line string)
+	// Trace, when set, is told what each pass was handed and what it left (see Tracer). `tink plan explain` is the one user. Nil costs nothing.
+	Trace Tracer
+	// NoServerOK lets the passes run without a server when none can be reached: the ones that read it (a bridge of the stack's own, the derived
+	// files) fail with a message that says so, the images are left as written, and the rest runs. For commands that only look at the stack.
+	NoServerOK bool
+}
+
+// A Tracer watches the passes. Before is called with the resources a pass is about to be handed, and After with what it left and the lines it
+// reported, so a tracer can say what each pass changed. The resources are the live ones: a tracer that keeps them must copy them. A pass that
+// fails is not followed by an After.
+type Tracer interface {
+	Before(pass string, resources []resolve.Resource)
+	After(pass string, resources []resolve.Resource, notices []string)
 }
 
 // Prepared is a stack ready to be planned or applied.
@@ -82,41 +96,41 @@ type steps struct {
 	defaults func(resources []resolve.Resource) ([]resolve.Resource, error)
 	secrets  func(resources []resolve.Resource, req Request) ([]resolve.Resource, error)
 	connect  func(socket string) (incus.InstanceServer, error)
-	derive   func(server incus.InstanceServer, resources []resolve.Resource) ([]resolve.Resource, []string, error)
-	qualify  func(server incus.InstanceServer, resources []resolve.Resource) ([]string, error)
-	levels   func(resources []resolve.Resource) ([][]resolve.Resource, error)
+	// the derive stage's passes (internal/derive), each named so that a tracer can say which one made a change
+	ownNetwork   func(server incus.InstanceServer, resources []resolve.Resource) ([]resolve.Resource, []string, error)
+	aclRules     func(server incus.InstanceServer, resources []resolve.Resource) ([]string, error)
+	derivedFiles func(server incus.InstanceServer, resources []resolve.Resource) ([]string, error)
+	qualify      func(server incus.InstanceServer, resources []resolve.Resource) ([]string, error)
+	levels       func(resources []resolve.Resource) ([][]resolve.Resource, error)
 }
+
+// The names of the passes, as a Tracer is told them.
+const (
+	PassDefaults     = "defaults"
+	PassSecrets      = "secrets"
+	PassOwnNetwork   = "network: own"
+	PassACLRules     = "ingress rules"
+	PassDerivedFiles = "derived files"
+	PassImages       = "images"
+)
 
 func defaultSteps() steps {
 	return steps{
-		load:     resolve.LoadFiles,
-		defaults: resolve.ApplyDefaults,
-		secrets:  expandSecrets,
-		connect:  incusapi.Connect,
-		derive:   derive.Run,
-		qualify:  resolve.QualifyImages,
-		levels:   resolve.Levels,
+		load:         resolve.LoadFiles,
+		defaults:     resolve.ApplyDefaults,
+		secrets:      expandSecrets,
+		connect:      incusapi.Connect,
+		ownNetwork:   derive.OwnNetwork,
+		aclRules:     derive.ACLRules,
+		derivedFiles: derive.DerivedFiles,
+		qualify:      resolve.QualifyImages,
+		levels:       resolve.Levels,
 	}
 }
 
 // prepare is the sequence itself. Every pass of the pipeline is named here, in order, and nowhere else.
 func prepare(req Request, s steps) (*Prepared, error) {
 	resources, err := s.load(req.Files)
-	if err != nil {
-		return nil, err
-	}
-	if resources, err = s.defaults(resources); err != nil {
-		return nil, err
-	}
-	if resources, err = s.secrets(resources, req); err != nil {
-		return nil, err
-	}
-	server, err := s.connect(req.Socket)
-	if err != nil {
-		return nil, fmt.Errorf("connecting to incus: %w", err)
-	}
-	// before the graph is built, and before the images are qualified: it fills values that the graph and the checks must see as written
-	resources, derived, err := s.derive(server, resources)
 	if err != nil {
 		return nil, err
 	}
@@ -127,13 +141,51 @@ func prepare(req Request, s steps) (*Prepared, error) {
 			}
 		}
 	}
-	say(derived)
-	// before the graph is built: it rewrites each instance's image: to the form Incus resolves
-	notices, err := s.qualify(server, resources)
-	if err != nil {
+	// pass runs one pass: the tracer sees the resources before and after, and what the pass reports is said as it is known.
+	pass := func(name string, run func() ([]string, error)) error {
+		if req.Trace != nil {
+			req.Trace.Before(name, resources)
+		}
+		notices, err := run()
+		if err != nil {
+			return err
+		}
+		if req.Trace != nil {
+			req.Trace.After(name, resources, notices)
+		}
+		say(notices)
+		return nil
+	}
+	if err := pass(PassDefaults, func() (n []string, err error) { resources, err = s.defaults(resources); return }); err != nil {
 		return nil, err
 	}
-	say(notices)
+	if err := pass(PassSecrets, func() (n []string, err error) { resources, err = s.secrets(resources, req); return }); err != nil {
+		return nil, err
+	}
+	server, err := s.connect(req.Socket)
+	if err != nil {
+		if !req.NoServerOK {
+			return nil, fmt.Errorf("connecting to incus: %w", err)
+		}
+		server = nil
+		say([]string{fmt.Sprintf("no server: %v; whatever reads the server cannot be derived, and images are left as written", err)})
+	}
+	// before the graph is built, and before the images are qualified: they fill values that the graph and the checks must see as written
+	if err := pass(PassOwnNetwork, func() (n []string, err error) { resources, n, err = s.ownNetwork(server, resources); return }); err != nil {
+		return nil, err
+	}
+	if err := pass(PassACLRules, func() ([]string, error) { return s.aclRules(server, resources) }); err != nil {
+		return nil, err
+	}
+	if err := pass(PassDerivedFiles, func() ([]string, error) { return s.derivedFiles(server, resources) }); err != nil {
+		return nil, err
+	}
+	// before the graph is built: it rewrites each instance's image: to the form Incus resolves
+	if server != nil {
+		if err := pass(PassImages, func() ([]string, error) { return s.qualify(server, resources) }); err != nil {
+			return nil, err
+		}
+	}
 	levels, err := s.levels(resources)
 	if err != nil {
 		return nil, err

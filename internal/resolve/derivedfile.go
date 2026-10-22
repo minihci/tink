@@ -160,3 +160,23 @@ func guardDerived(f Resource, p PlannedResource, live string) PlannedResource {
 	}
 	return p
 }
+
+// DerivedRegion returns the lines between the DeriveBegin and DeriveEnd lines of content, without them, or "" when content has no region. It is what
+// a derive filled in, for a person to read (tink plan explain).
+func DerivedRegion(content string) string {
+	in := false
+	var region []string
+	for _, l := range strings.Split(content, "\n") {
+		switch strings.TrimSpace(l) {
+		case DeriveBegin:
+			in = true
+		case DeriveEnd:
+			in = false
+		default:
+			if in {
+				region = append(region, l)
+			}
+		}
+	}
+	return strings.Join(region, "\n")
+}

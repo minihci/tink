@@ -29,12 +29,17 @@ var prepareStack = prepare.Prepare
 
 // prepare is the only way `plan` and `plan apply` get their stack: the passes and their order are internal/prepare's.
 func (f *stackFlags) prepare(cmd *cobra.Command, files []string) (*prepare.Prepared, error) {
-	return prepareStack(prepare.Request{
+	return prepareStack(f.request(cmd, files))
+}
+
+// request is what the shared flags say, for a command that adds to it (`plan explain` watches the passes and does not need a server).
+func (f *stackFlags) request(cmd *cobra.Command, files []string) prepare.Request {
+	return prepare.Request{
 		Files:       files,
 		Socket:      f.socket,
 		SecretStore: f.secrets.store,
 		Identity:    f.secrets.identity,
 		Redactor:    redactor,
 		Notice:      func(line string) { fmt.Fprintln(cmd.ErrOrStderr(), line) },
-	})
+	}
 }

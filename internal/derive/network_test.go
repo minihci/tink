@@ -255,14 +255,19 @@ func TestBridgeNameFitsAnInterfaceName(t *testing.T) {
 	}
 }
 
-// Run: the bridge, the addresses and then the ingress rules, against the platform of the join's fixtures. The ACL's rule is for the app's port,
+// The bridge, the addresses and then the ingress rules, against the platform of the join's fixtures. The ACL's rule is for the app's port,
 // admitting the ingress helper, and the whole stack is one the join accepts with no error.
-func TestRunDerivesTheBridgeThenTheRules(t *testing.T) {
+func TestTheRulesFollowTheBridge(t *testing.T) {
 	srv := platformOnServer(t)
-	got, notices, err := Run(srv, stackOf("blog"))
+	got, notices, err := OwnNetwork(srv, stackOf("blog"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	more, err := ACLRules(srv, got) // the order prepare runs them in: the bridge and the addresses first
+	if err != nil {
+		t.Fatal(err)
+	}
+	notices = append(notices, more...)
 	acl := find(got, resolve.KindNetworkACL, "tink-blog-in")
 	if acl == nil || len(acl.Ingress) != 1 || acl.Ingress[0].DestinationPort != "80" || acl.Ingress[0].Source != "192.0.2.3/32" {
 		t.Fatalf("ACL = %+v", acl)
@@ -276,5 +281,22 @@ func TestRunDerivesTheBridgeThenTheRules(t *testing.T) {
 	}
 	if res := join.Build(join.Overlay(platform, []join.Stack{{Name: "blog", Resources: got}})); res.Errors() != 0 {
 		t.Errorf("the join does not accept what was derived: %v", res.Findings)
+	}
+}
+
+// With no server, a pass that has something to derive says that it needs one, and one that has nothing to derive does not mind.
+func TestPassesWithNoServer(t *testing.T) {
+	if _, _, err := OwnNetwork(nil, stackOf("blog")); err == nil || !strings.Contains(err.Error(), "none is connected") {
+		t.Errorf("network: own: err = %v", err)
+	}
+	if _, err := ACLRules(nil, canary(t)); err == nil || !strings.Contains(err.Error(), "none is connected") {
+		t.Errorf("derive_ingress: err = %v", err)
+	}
+	if _, err := DerivedFiles(nil, site(t)); err == nil || !strings.Contains(err.Error(), "none is connected") {
+		t.Errorf("derived files: err = %v", err)
+	}
+	plain := stackOf("blog", func(r *resolve.Resource) { r.Network = "" })
+	if _, _, err := OwnNetwork(nil, plain); err != nil {
+		t.Errorf("a stack that asks for nothing needs no server: %v", err)
 	}
 }
