@@ -1,0 +1,84 @@
+# Imported by `tink import` from a compose file. A starting point to review, not the stack: it states what the compose file
+# says about the app, and nothing about the site (its project, network, address, name, sign-on or backup).
+kind: stack
+name: paperless-sqlite
+---
+kind: storage-volume
+name: data
+pool: default
+# backup: not decided. Say how this volume is backed up (`backup: {snapshots: ...}`, or `backup: {none: "why"}`); `tink plan` warns until you do.
+---
+kind: storage-volume
+name: media
+pool: default
+# backup: not decided. Say how this volume is backed up (`backup: {snapshots: ...}`, or `backup: {none: "why"}`); `tink plan` warns until you do.
+---
+kind: storage-volume
+name: redisdata
+pool: default
+# backup: not decided. Say how this volume is backed up (`backup: {snapshots: ...}`, or `backup: {none: "why"}`); `tink plan` warns until you do.
+---
+kind: storage-volume
+name: webserver-consume
+pool: default
+# backup: not decided. Say how this volume is backed up (`backup: {snapshots: ...}`, or `backup: {none: "why"}`); `tink plan` warns until you do.
+---
+kind: storage-volume
+name: webserver-export
+pool: default
+# backup: not decided. Say how this volume is backed up (`backup: {snapshots: ...}`, or `backup: {none: "why"}`); `tink plan` warns until you do.
+---
+kind: instance
+name: broker
+image: docker.io/valkey/valkey:9-alpine
+profiles:
+  - default
+config:
+  boot.autorestart: "true"
+  boot.autostart: "true"
+devices:
+  volume0:
+    type: disk
+    path: /data
+    pool: default
+    source: redisdata
+---
+# environment PAPERLESS_SECRET_KEY looks like a secret and is written as it is: add it with `tink secret set` and write ${secret:NAME} instead
+kind: instance
+name: webserver
+image: ghcr.io/paperless-ngx/paperless-ngx:latest
+profiles:
+  - default
+depends_on:
+  - broker
+config:
+  boot.autorestart: "true"
+  boot.autostart: "true"
+  environment.PAPERLESS_DBENGINE: sqlite
+  environment.PAPERLESS_REDIS: redis://broker:6379
+  environment.PAPERLESS_SECRET_KEY: change-me
+devices:
+  proxy0:
+    type: proxy
+    connect: tcp:127.0.0.1:8000
+    listen: tcp:0.0.0.0:8000
+  volume0:
+    type: disk
+    path: /usr/src/paperless/data
+    pool: default
+    source: data
+  volume1:
+    type: disk
+    path: /usr/src/paperless/media
+    pool: default
+    source: media
+  volume2:
+    type: disk
+    path: /usr/src/paperless/export
+    pool: default
+    source: webserver-export
+  volume3:
+    type: disk
+    path: /usr/src/paperless/consume
+    pool: default
+    source: webserver-consume

@@ -1,0 +1,45 @@
+# Imported by `tink import` from a compose file. A starting point to review, not the stack: it states what the compose file
+# says about the app, and nothing about the site (its project, network, address, name, sign-on or backup).
+kind: stack
+name: pihole
+---
+kind: storage-volume
+name: pihole-etc-pihole
+pool: default
+# backup: not decided. Say how this volume is backed up (`backup: {snapshots: ...}`, or `backup: {none: "why"}`); `tink plan` warns until you do.
+---
+# cap_add was dropped: Incus has no per-capability option; privileged is the blunt instrument
+# environment FTLCONF_webserver_api_password looks like a secret and is written as it is: add it with `tink secret set` and write ${secret:NAME} instead
+kind: instance
+name: pihole
+image: pihole/pihole:latest
+profiles:
+  - default
+config:
+  boot.autorestart: "true"
+  boot.autostart: "true"
+  environment.FTLCONF_dns_listeningMode: ALL
+  environment.FTLCONF_webserver_api_password: correct horse battery staple
+  environment.TZ: Europe/London
+devices:
+  proxy0:
+    type: proxy
+    connect: tcp:127.0.0.1:53
+    listen: tcp:0.0.0.0:53
+  proxy1:
+    type: proxy
+    connect: udp:127.0.0.1:53
+    listen: udp:0.0.0.0:53
+  proxy2:
+    type: proxy
+    connect: tcp:127.0.0.1:80
+    listen: tcp:0.0.0.0:80
+  proxy3:
+    type: proxy
+    connect: tcp:127.0.0.1:443
+    listen: tcp:0.0.0.0:443
+  volume0:
+    type: disk
+    path: /etc/pihole
+    pool: default
+    source: pihole-etc-pihole

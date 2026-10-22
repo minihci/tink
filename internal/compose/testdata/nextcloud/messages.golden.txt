@@ -1,0 +1,2 @@
+note: service app: --volume "nextcloud:/var/www/html:z": option "z" means nothing to Incus and is ignored
+note: service cron: --volume "nextcloud:/var/www/html:z": option "z" means nothing to Incus and is ignored

@@ -1,0 +1,28 @@
+# Imported by `tink import` from a compose file. A starting point to review, not the stack: it states what the compose file
+# says about the app, and nothing about the site (its project, network, address, name, sign-on or backup).
+kind: stack
+name: uptime-kuma
+---
+kind: storage-volume
+name: uptime-kuma-data
+pool: default
+# backup: not decided. Say how this volume is backed up (`backup: {snapshots: ...}`, or `backup: {none: "why"}`); `tink plan` warns until you do.
+---
+kind: instance
+name: uptime-kuma
+image: louislam/uptime-kuma:2
+profiles:
+  - default
+config:
+  boot.autorestart: "true"
+  boot.autostart: "true"
+devices:
+  proxy0:
+    type: proxy
+    connect: tcp:127.0.0.1:3001
+    listen: tcp:0.0.0.0:3001
+  volume0:
+    type: disk
+    path: /app/data
+    pool: default
+    source: uptime-kuma-data

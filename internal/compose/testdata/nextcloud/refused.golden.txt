@@ -1,0 +1,1 @@
+service db: command: it adds arguments to the image's own entrypoint, and tink's replaces the entrypoint as well as the command; write the entrypoint and the command together

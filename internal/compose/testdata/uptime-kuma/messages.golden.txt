@@ -1,0 +1,1 @@
+note: service uptime-kuma: ./data was a path relative to the compose file; it is now the managed volume uptime-kuma-data. Write it as a bind mount to keep it a directory you can see

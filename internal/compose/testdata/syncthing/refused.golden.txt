@@ -1,0 +1,1 @@
+service syncthing: network_mode: host networking has no equivalent: an Incus instance has its own network namespace. Give it an address of its own on the LAN, or decide what it needed the host's network for

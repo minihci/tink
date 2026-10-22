@@ -1,0 +1,58 @@
+# Imported by `tink import` from a compose file. A starting point to review, not the stack: it states what the compose file
+# says about the app, and nothing about the site (its project, network, address, name, sign-on or backup).
+kind: stack
+name: audiobookshelf
+---
+kind: storage-volume
+name: audiobookshelf-audiobooks
+pool: default
+# backup: not decided. Say how this volume is backed up (`backup: {snapshots: ...}`, or `backup: {none: "why"}`); `tink plan` warns until you do.
+---
+kind: storage-volume
+name: audiobookshelf-config
+pool: default
+# backup: not decided. Say how this volume is backed up (`backup: {snapshots: ...}`, or `backup: {none: "why"}`); `tink plan` warns until you do.
+---
+kind: storage-volume
+name: audiobookshelf-metadata
+pool: default
+# backup: not decided. Say how this volume is backed up (`backup: {snapshots: ...}`, or `backup: {none: "why"}`); `tink plan` warns until you do.
+---
+kind: storage-volume
+name: audiobookshelf-podcasts
+pool: default
+# backup: not decided. Say how this volume is backed up (`backup: {snapshots: ...}`, or `backup: {none: "why"}`); `tink plan` warns until you do.
+---
+kind: instance
+name: audiobookshelf
+image: ghcr.io/advplyr/audiobookshelf:latest
+profiles:
+  - default
+config:
+  boot.autorestart: "true"
+  boot.autostart: "true"
+devices:
+  proxy0:
+    type: proxy
+    connect: tcp:127.0.0.1:80
+    listen: tcp:0.0.0.0:13378
+  volume0:
+    type: disk
+    path: /audiobooks
+    pool: default
+    source: audiobookshelf-audiobooks
+  volume1:
+    type: disk
+    path: /podcasts
+    pool: default
+    source: audiobookshelf-podcasts
+  volume2:
+    type: disk
+    path: /metadata
+    pool: default
+    source: audiobookshelf-metadata
+  volume3:
+    type: disk
+    path: /config
+    pool: default
+    source: audiobookshelf-config

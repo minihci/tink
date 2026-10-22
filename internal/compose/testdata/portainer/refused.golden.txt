@@ -1,0 +1,1 @@
+service portainer: volumes: the Docker socket: there is no Docker on an Incus host

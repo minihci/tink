@@ -1,0 +1,29 @@
+# Imported by `tink import` from a compose file. A starting point to review, not the stack: it states what the compose file
+# says about the app, and nothing about the site (its project, network, address, name, sign-on or backup).
+kind: stack
+name: navidrome
+---
+kind: instance
+name: navidrome
+image: navidrome/navidrome:latest
+profiles:
+  - default
+config:
+  boot.autorestart: "true"
+  boot.autostart: "true"
+  oci.gid: "1000"
+  oci.uid: "1000"
+devices:
+  proxy0:
+    type: proxy
+    connect: tcp:127.0.0.1:4533
+    listen: tcp:0.0.0.0:4533
+  volume0:
+    type: disk
+    path: /data
+    source: /path/to/data
+  volume1:
+    type: disk
+    path: /music
+    readonly: "true"
+    source: /path/to/your/music/folder

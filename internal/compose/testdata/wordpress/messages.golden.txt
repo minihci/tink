@@ -1,0 +1,4 @@
+warning: service wordpress: environment WORDPRESS_DB_PASSWORD looks like a secret and is written as it is: add it with `tink secret set` and write ${secret:NAME} instead
+warning: service db: environment MYSQL_PASSWORD looks like a secret and is written as it is: add it with `tink secret set` and write ${secret:NAME} instead
+note: volume wordpress is named wordpress-data: a volume and an instance cannot share a name in a stack
+note: volume db is named db-data: a volume and an instance cannot share a name in a stack
