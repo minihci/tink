@@ -33,7 +33,7 @@ const ServerStackName = "server"
 //
 // It reads ONE SITE (site.go): the helpers and the publishes whose instances carry user.tink.site: SITE, or, for the unnamed site "", carry none. Instances
 // of another site are left out before their stamps are read, so a stamp of another site that cannot be read does not stop this one, and the number of
-// helpers that were left out is kept (Stack.Elsewhere) to be said when the join fails.
+// helpers and publishes that were left out is kept (Stack.Elsewhere) to be said by Build.
 //
 // Build and the renderers are unchanged: the result is a []Stack like the file-based one, with every resource in its place.
 func FromServer(server incus.InstanceServer, site string) ([]Stack, error) {
@@ -122,15 +122,22 @@ func readServer(server incus.InstanceServer, platformOnly bool, site string) ([]
 
 	var rs []resolve.Resource
 	var bad []StampProblem
-	elsewhere := map[string]int{}
+	elsewhere := map[string]Left{}
 	for _, in := range insts {
 		if platformOnly && strings.TrimSpace(in.Config[roleKey]) == "" {
 			continue
 		}
 		if !memberOf(in.Config, hasPublishStamp(in.Config), site) {
+			l := elsewhere[strings.TrimSpace(in.Config[resolve.SiteKey])]
 			if strings.TrimSpace(in.Config[roleKey]) != "" {
-				elsewhere[strings.TrimSpace(in.Config[resolve.SiteKey])]++
+				l.Helpers++
 			}
+			for k := range in.Config { // counted by key and not read, so a stamp that cannot be read does not stop this site
+				if strings.HasPrefix(k, resolve.PublishStampPrefix) {
+					l.Publishes++
+				}
+			}
+			elsewhere[strings.TrimSpace(in.Config[resolve.SiteKey])] = l
 			continue
 		}
 		rs = append(rs, resolve.Resource{

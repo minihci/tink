@@ -33,10 +33,11 @@ type Stack struct {
 	Name      string
 	Resources []resolve.Resource // as resolve.LoadFiles returns them: each carries its stack's default project
 
-	// Elsewhere counts the helpers (instances that state a role) that were left out of this view because they are in another site, by that site's name
-	// ("" is the unnamed site). It is set by ForSite and by the readers of the server (site.go), and only used to say so when the join fails: a
-	// server with several sites is the usual reason a site seems to lack a helper.
-	Elsewhere map[string]int
+	// Elsewhere counts what was left out of this view because it is in another site, by that site's name ("" is the unnamed site): the helpers
+	// (instances that state a role) and the publishes. It is set by ForSite and by the readers of the server (site.go), and Build says so: a server
+	// with several sites is the usual reason a site seems to lack a helper, and a stack that forgot its `site:` is a publish that is not where it was
+	// meant to be, which nothing else shows.
+	Elsewhere map[string]Left
 }
 
 // Severity says whether a finding stops the rendering.
@@ -131,15 +132,13 @@ func where(rs []resolve.Resource) string {
 
 var zonePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$`)
 
-// Build joins the stacks. It reads what it is given as one site (site.go says how a caller makes that so). When that comes to nothing, or to an error,
-// and helpers of other sites were left out of the view, a warning says so.
+// Build joins the stacks. It reads what it is given as one site (site.go says how a caller makes that so). When helpers or publishes of other sites were
+// left out of the view, a warning says so, always: a publish whose stack forgot its site looks the same as one that is rightly elsewhere.
 func Build(stacks []Stack) Result {
 	res := build(stacks)
-	if res.Errors() > 0 || len(res.Published) == 0 {
-		if note := elsewhereNote(stacks); note != "" {
-			res.Findings = append(res.Findings, Finding{Warning, "", note})
-			sortFindings(res.Findings)
-		}
+	if note := elsewhereNote(stacks); note != "" {
+		res.Findings = append(res.Findings, Finding{Warning, "", note})
+		sortFindings(res.Findings)
 	}
 	return res
 }

@@ -74,10 +74,7 @@ func ForSite(stacks []Stack, site string) []Stack {
 			case resolve.KindInstance:
 				if !memberOf(r.Config, published[loc{projectOf(r), r.Name}], site) {
 					if strings.TrimSpace(r.Config[resolve.RoleKey]) != "" {
-						if kept.Elsewhere == nil {
-							kept.Elsewhere = map[string]int{}
-						}
-						kept.Elsewhere[strings.TrimSpace(r.Config[resolve.SiteKey])]++
+						kept.leave(strings.TrimSpace(r.Config[resolve.SiteKey]), 1, 0)
 					}
 					continue
 				}
@@ -87,6 +84,7 @@ func ForSite(stacks []Stack, site string) []Stack {
 					cfg, ok = config[loc{projectOf(r), r.Instance}]
 				}
 				if ok && strings.TrimSpace(cfg[resolve.SiteKey]) != site {
+					kept.leave(strings.TrimSpace(cfg[resolve.SiteKey]), 0, 1)
 					continue
 				}
 			}
@@ -116,13 +114,36 @@ func SitesOf(stacks []Stack) []string {
 	return out
 }
 
-// elsewhereNote says, when a view lacks or doubles a helper, that helpers of other sites were left out of it. A server with several sites is the usual
-// reason a site seems to have no dns helper, and "none found" would send a person looking for something that is there.
+// Left is what a view left out of one other site.
+type Left struct{ Helpers, Publishes int }
+
+// leave counts helpers and publishes of another site as left out. The map is the stack's own: ForSite copies it first.
+func (s *Stack) leave(site string, helpers, publishes int) {
+	if s.Elsewhere == nil {
+		s.Elsewhere = map[string]Left{}
+	}
+	l := s.Elsewhere[site]
+	l.Helpers += helpers
+	l.Publishes += publishes
+	s.Elsewhere[site] = l
+}
+
+// elsewhereNote says that helpers and publishes of other sites were left out of a view. A server with several sites is the usual reason a site seems to have
+// no dns helper, and "none found" would send a person looking for something that is there; and a stack that forgot its `site:` leaves its publishes out
+// without any other sign.
 func elsewhereNote(stacks []Stack) string {
-	total := map[string]int{}
+	total := map[string]Left{}
 	for _, s := range stacks {
 		for site, n := range s.Elsewhere {
-			total[site] += n
+			t := total[site]
+			t.Helpers += n.Helpers
+			t.Publishes += n.Publishes
+			total[site] = t
+		}
+	}
+	for site, n := range total {
+		if n == (Left{}) {
+			delete(total, site)
 		}
 	}
 	if len(total) == 0 {
@@ -139,16 +160,23 @@ func elsewhereNote(stacks []Stack) string {
 		if site == "" {
 			label = "the unnamed site"
 		}
-		parts = append(parts, fmt.Sprintf("%s (%d helper(s))", label, total[site]))
+		var what []string
+		if n := total[site].Helpers; n > 0 {
+			what = append(what, fmt.Sprintf("%d helper(s)", n))
+		}
+		if n := total[site].Publishes; n > 0 {
+			what = append(what, fmt.Sprintf("%d publish(es)", n))
+		}
+		parts = append(parts, fmt.Sprintf("%s (%s)", label, strings.Join(what, ", ")))
 	}
-	return "helpers in other sites were left out of this view: " + strings.Join(parts, ", ") + "; --site NAME reads another site"
+	return "other sites were left out of this view: " + strings.Join(parts, ", ") + "; --site NAME reads another site"
 }
 
-func copyCounts(m map[string]int) map[string]int {
+func copyCounts(m map[string]Left) map[string]Left {
 	if m == nil {
 		return nil
 	}
-	out := make(map[string]int, len(m))
+	out := make(map[string]Left, len(m))
 	for k, v := range m {
 		out[k] = v
 	}

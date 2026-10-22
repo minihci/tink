@@ -2,6 +2,7 @@ package join
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -131,7 +132,8 @@ func TestANamedSiteBesideAnUnnamedPlatformAndLabsJoinsOnItsOwn(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := Build(named)
-	if got.Errors() != 0 || len(got.Findings) != 0 {
+	// the one finding is the note of what was left out: the unnamed site's seven helpers and the two publishes of its apps
+	if got.Errors() != 0 || len(got.Findings) != 1 || !strings.Contains(got.Findings[0].Message, "the unnamed site (7 helper(s), 2 publish(es))") {
 		t.Fatalf("findings for site trial: %v", got.Findings)
 	}
 	if got.Zone != "trial.example.org" || got.DNSProject != "trial" || got.DNSInstance != "dns" {
@@ -187,7 +189,7 @@ func TestANamedPlatformRendersItsGoldenFilesBesideAnotherSiteAndTheLabs(t *testi
 		t.Fatal(err)
 	}
 	res := Build(st)
-	if len(res.Findings) != 0 {
+	if len(res.Findings) != 1 || !strings.Contains(res.Findings[0].Message, `the unnamed site (2 helper(s)), site "trial" (5 helper(s), 2 publish(es))`) {
 		t.Fatalf("findings: %v", res.Findings)
 	}
 	for name, got := range map[string]string{"dns": res.DNS, "mesh": res.Mesh, "caddy": res.Caddy, "sso": res.SSO, "acl": res.ACL} {
@@ -277,11 +279,11 @@ func TestAViewWithNoHelpersSaysThatOtherSitesHaveThem(t *testing.T) {
 	if len(res.Published) != 0 || res.DNSInstance != "" {
 		t.Fatalf("a view of the unnamed site found %d publishes and dns %q on a server whose only site is trial", len(res.Published), res.DNSInstance)
 	}
-	if w := messages(res, Warning); !strings.Contains(w, `site "trial" (5 helper(s))`) || !strings.Contains(w, "--site NAME") {
+	if w := messages(res, Warning); !strings.Contains(w, `site "trial" (5 helper(s), 2 publish(es))`) || !strings.Contains(w, "--site NAME") {
 		t.Errorf("warnings do not name the other site:\n%s", w)
 	}
 
-	// and a view that works carries no such note: it is only said when something is wrong
+	// and a view of a server with no other site has nothing to say
 	ok, err := FromServer(f, "trial")
 	if err != nil {
 		t.Fatal(err)
@@ -321,6 +323,9 @@ func TestASiteCutFromFilesIsTheSiteReadFromTheServer(t *testing.T) {
 	fromServerRes := Build(st)
 	if fromFiles.Errors() != 0 || fromServerRes.Errors() != 0 {
 		t.Fatalf("files %v, server %v", fromFiles.Findings, fromServerRes.Findings)
+	}
+	if f, s := messages(fromFiles, Warning), messages(fromServerRes, Warning); f != s {
+		t.Errorf("the note of what was left out differs between files and server:\nfiles: %s\nserver: %s", f, s)
 	}
 	if fromFiles.DNS != fromServerRes.DNS || fromFiles.Caddy != fromServerRes.Caddy || fromFiles.SSO != fromServerRes.SSO || fromFiles.ACL != fromServerRes.ACL || fromFiles.Mesh != fromServerRes.Mesh {
 		t.Errorf("the site differs between files and server:\nfiles:\n%s\nserver:\n%s", fromFiles.DNS+fromFiles.Caddy, fromServerRes.DNS+fromServerRes.Caddy)
@@ -369,5 +374,28 @@ func TestReadingASiteWritesNothing(t *testing.T) {
 	}
 	if _, err := PlatformFromServer(f, "other"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A stack that forgot its `site:` leaves its publishes in the unnamed site, and a view of the named site then lacks them with no error. The note is the only
+// sign, so it counts the publishes and not only the helpers.
+func TestAPublishLeftOutOfTheSiteIsCounted(t *testing.T) {
+	forgot := load(t) // the unnamed platform and canary, as stacks that never said `site:`
+	all := append(siteStacks(t, "trial"), forgot...)
+	var n int
+	for _, s := range forgot {
+		for _, r := range s.Resources {
+			if r.Kind == resolve.KindPublish {
+				n++
+			}
+		}
+	}
+	if n == 0 {
+		t.Fatal("the fixture has no publish to forget")
+	}
+	res := Build(ForSite(all, "trial"))
+	want := fmt.Sprintf("%d publish(es)", n)
+	if w := messages(res, Warning); !strings.Contains(w, "the unnamed site") || !strings.Contains(w, want) {
+		t.Errorf("warnings do not count the %d publishes left out:\n%s", n, w)
 	}
 }
