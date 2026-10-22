@@ -7,6 +7,7 @@
 kind: stack
 name: herd-site
 project: herd-site
+site: herd                              # site: only needed on a server that has a platform already (docs/join.md#sites)
 ---
 kind: project
 name: herd-site

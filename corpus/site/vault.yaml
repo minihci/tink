@@ -5,6 +5,7 @@ kind: stack
 name: vault
 network: own                              # a bridge, its ACL and the apps' static addresses are derived (docs/network.md)
 project: herd-vault                       # site: a project of its own
+site: herd                              # site: only needed on a server that has a platform already (docs/join.md#sites)
 ---
 kind: project
 name: herd-vault

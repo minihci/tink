@@ -39,8 +39,8 @@ type Spec struct {
 	// ApplyConfig, because a key may need a device or a volume that does not exist yet.
 	CreateConfig map[string]string
 
-	// OwnedConfigPrefixes are config key prefixes that tink OWNS on the instance: ApplyConfig removes every live key under one of them that Config does not
-	// carry. Everywhere else ApplyConfig only sets, and a key that is no longer declared is left alone; an owned prefix is the one place a key tink wrote is
+	// OwnedConfigPrefixes are config key prefixes that tink OWNS on the instance (a prefix that ends in a dot owns every key under it, one that does not owns
+	// that key alone; see StaleOwnedKeys): ApplyConfig removes every live key owned that Config does not carry. Everywhere else ApplyConfig only sets, and a key that is no longer declared is left alone; an owned prefix is the one place a key tink wrote is
 	// taken back when nothing derives it any more (the stamps of `kind: publish`, resolve/publishstamp.go). Empty for anything else.
 	OwnedConfigPrefixes []string
 

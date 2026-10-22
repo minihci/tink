@@ -67,6 +67,9 @@ type yamlResource struct {
 	// Stack-only (see ownership.go): "explicit" (the default) or "adopt-on-apply".
 	Ownership string `yaml:"ownership"`
 
+	// Stack-only (see site.go): the site the stack belongs to.
+	Site string `yaml:"site"`
+
 	// Publish-only (see publish.go).
 	Offer string   `yaml:"offer"`
 	Allow []string `yaml:"allow"`
@@ -241,6 +244,7 @@ func LoadFiles(paths []string) ([]Resource, error) {
 	resources, err := loadFiles(paths)
 	if err == nil {
 		applyStackProject(resources) // the stack's own project, if it names one, for every resource that names none
+		applyStackSite(resources)    // and the stack's site, stamped on the instances the join reads across stacks
 	}
 	return resources, err
 }
@@ -423,6 +427,7 @@ func (d yamlResource) toResource(dir string) (Resource, error) {
 		Devices:         d.Devices,
 		Instance:        d.Instance,
 		Ownership:       d.Ownership,
+		Site:            d.Site,
 		Offer:           d.Offer,
 		Allow:           d.Allow,
 		Network:         d.Network,

@@ -86,7 +86,8 @@ test() {
 	done
 
 	echo "the stacks"
-	if incus exec --project herd-site sso -- wget -q -O /dev/null -T 4 http://198.51.100.10/ </dev/null 2>/dev/null; then bad "another platform instance reached an app"; else ok "another platform instance does not reach an app"; fi
+	# wget's -T does not bound the connect to an address whose ACL drops packets (it waited out the kernel's retries, about five minutes), so the call has its own limit
+	if timeout 15 incus exec --project herd-site sso -- wget -q -O /dev/null -T 4 http://198.51.100.10/ </dev/null 2>/dev/null; then bad "another platform instance reached an app"; else ok "another platform instance does not reach an app"; fi
 	for p in herd-blog herd-shop; do
 		[ "$(incus list --project $p db -c s -f csv </dev/null)" = RUNNING ] && ok "$p: db is running" || bad "$p: db is running"
 	done

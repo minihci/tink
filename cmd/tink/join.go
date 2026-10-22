@@ -20,7 +20,7 @@ import (
 var joinSections = []string{"dns", "mesh", "caddy", "sso", "acl"}
 
 func newJoinCmd() *cobra.Command {
-	var only, socket string
+	var only, socket, site string
 	var fromServer bool
 	cmd := &cobra.Command{
 		Use:   "join [flags] FILE...",
@@ -50,9 +50,14 @@ prints one section alone so a diff is easy:
 Each FILE is one stack, which is what gives its resources the stack's default project. A stack split across several files is given as one
 argument with the files joined by commas (a.yaml,b.yaml). FILE and --from-server are alternatives: give one or the other.
 
+A server or a set of files can hold more than one site (the group of stacks that share a platform; "site:" on a stack's kind: stack). The join reads ONE:
+the helpers and the publishes of that site, and nothing of another site's. --site NAME says which. Given files and no --site, it is the site the files
+name (an error if they name more than one); with --from-server and no --site it is the unnamed site, where everything is on a server that never says
+"site:".
+
 Findings go to standard error. Any error means NOTHING is printed and the exit status is 1: a partial rendering (a mesh view missing one
-name) looks exactly like a complete one. Warnings are printed beside a complete rendering. With --from-server a stamp that cannot be read is an
-error naming its instance.`,
+name) looks exactly like a complete one. Warnings are printed beside a complete rendering. With --from-server a stamp of the site that cannot be
+read is an error naming its instance.`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !fromServer {
@@ -62,7 +67,7 @@ error naming its instance.`,
 				if socket != "" {
 					return fmt.Errorf("--socket is for --from-server: join reads files and no server otherwise")
 				}
-				return runJoin(cmd.OutOrStdout(), cmd.ErrOrStderr(), args, only)
+				return runJoin(cmd.OutOrStdout(), cmd.ErrOrStderr(), args, only, siteFlag{site, cmd.Flags().Changed("site")})
 			}
 			if err := noFilesWithFromServer(args); err != nil {
 				return err
@@ -71,12 +76,13 @@ error naming its instance.`,
 			if err != nil {
 				return fmt.Errorf("connecting to incus: %w", err)
 			}
-			return runJoinFromServer(cmd.OutOrStdout(), cmd.ErrOrStderr(), server, only)
+			return runJoinFromServer(cmd.OutOrStdout(), cmd.ErrOrStderr(), server, only, site)
 		},
 	}
 	cmd.Flags().StringVar(&only, "only", "", "print one section's body alone, with no heading: "+strings.Join(joinSections, ", "))
 	cmd.Flags().BoolVar(&fromServer, "from-server", false, "read the instances, profiles, networks and publish stamps from the server instead of from FILEs (read-only)")
 	cmd.Flags().StringVar(&socket, "socket", "", "Incus daemon unix socket path, with --from-server (default: Incus's own resolution)")
+	cmd.Flags().StringVar(&site, "site", "", "the site to read (default: the site the FILEs name; the unnamed site with --from-server)")
 	cmd.AddCommand(newJoinApplyCmd())
 	return cmd
 }
@@ -89,8 +95,34 @@ func noFilesWithFromServer(args []string) error {
 	return nil
 }
 
+// siteFlag is the --site flag: its value, and whether it was given (an empty value given names the unnamed site).
+type siteFlag struct {
+	name string
+	set  bool
+}
+
+// siteView cuts the stacks to one site. With no --site it is the site the stacks name, so files that belong together are read together without saying so;
+// stacks that name more than one site (or a site and the unnamed one) are not guessed at.
+func siteView(stacks []join.Stack, s siteFlag) ([]join.Stack, error) {
+	site := s.name
+	if !s.set {
+		switch sites := join.SitesOf(stacks); len(sites) {
+		case 0:
+		case 1:
+			site = sites[0]
+		default:
+			names := make([]string, len(sites))
+			for i, n := range sites {
+				names[i] = fmt.Sprintf("%q", n)
+			}
+			return nil, fmt.Errorf("the files name more than one site (%s; \"\" is the unnamed site): one is read at a time, choose with --site NAME", strings.Join(names, ", "))
+		}
+	}
+	return join.ForSite(stacks, site), nil
+}
+
 // runJoin loads each argument as one stack, joins them, and prints.
-func runJoin(out, errw io.Writer, args []string, only string) error {
+func runJoin(out, errw io.Writer, args []string, only string, site siteFlag) error {
 	if only != "" && !slices.Contains(joinSections, only) {
 		return fmt.Errorf("--only %q: the sections are %s", only, strings.Join(joinSections, ", "))
 	}
@@ -98,15 +130,18 @@ func runJoin(out, errw io.Writer, args []string, only string) error {
 	if err != nil {
 		return err
 	}
+	if stacks, err = siteView(stacks, site); err != nil {
+		return err
+	}
 	return printJoin(out, errw, stacks, only)
 }
 
 // runJoinFromServer joins what the server holds and prints, as runJoin does for files. A stamp that cannot be read is reported as the join's own errors are.
-func runJoinFromServer(out, errw io.Writer, server incus.InstanceServer, only string) error {
+func runJoinFromServer(out, errw io.Writer, server incus.InstanceServer, only, site string) error {
 	if only != "" && !slices.Contains(joinSections, only) {
 		return fmt.Errorf("--only %q: the sections are %s", only, strings.Join(joinSections, ", "))
 	}
-	stacks, err := readServerStacks(errw, server)
+	stacks, err := readServerStacks(errw, server, site)
 	if err != nil {
 		return err
 	}
@@ -114,8 +149,8 @@ func runJoinFromServer(out, errw io.Writer, server incus.InstanceServer, only st
 }
 
 // readServerStacks is join.FromServer, with the stamps it could not read printed as findings; the error it returns then only says nothing was rendered.
-func readServerStacks(errw io.Writer, server incus.InstanceServer) ([]join.Stack, error) {
-	stacks, err := join.FromServer(server)
+func readServerStacks(errw io.Writer, server incus.InstanceServer, site string) ([]join.Stack, error) {
+	stacks, err := join.FromServer(server, site)
 	var se *join.StampError
 	if errors.As(err, &se) {
 		for _, f := range se.Findings() {
@@ -176,7 +211,7 @@ func loadJoinStacks(args []string) ([]join.Stack, error) {
 }
 
 func newJoinApplyCmd() *cobra.Command {
-	var socket string
+	var socket, site string
 	var fromServer bool
 	var o join.ApplyOptions
 	cmd := &cobra.Command{
@@ -202,7 +237,8 @@ take the platform's own name over); and when a read fails (a failed read is an e
 It acts through the Incus API with the certificate of whoever runs it (--remote works). The same code is meant to be run by the daemon helper
 on a timer; nothing here is specific to the person running it.
 
-With --from-server the join is built from the server (see "tink join --help") and no FILE is given; the files and --from-server are alternatives.`,
+With --from-server the join is built from the server (see "tink join --help") and no FILE is given; the files and --from-server are alternatives. It writes
+for ONE site, the one --site names (see "tink join --help" for the default): the dns helper of another site is never written to.`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := checkApplySection(args[0]); err != nil {
@@ -220,9 +256,9 @@ With --from-server the join is built from the server (see "tink join --help") an
 				return fmt.Errorf("connecting to incus: %w", err)
 			}
 			if fromServer {
-				return runJoinApplyFromServer(cmd.OutOrStdout(), cmd.ErrOrStderr(), server, incusFiles{server}, args[0], o)
+				return runJoinApplyFromServer(cmd.OutOrStdout(), cmd.ErrOrStderr(), server, incusFiles{server}, args[0], site, o)
 			}
-			return runJoinApply(cmd.OutOrStdout(), cmd.ErrOrStderr(), incusFiles{server}, args[0], args[1:], o)
+			return runJoinApply(cmd.OutOrStdout(), cmd.ErrOrStderr(), incusFiles{server}, args[0], args[1:], siteFlag{site, cmd.Flags().Changed("site")}, o)
 		},
 	}
 	cmd.Flags().BoolVar(&fromServer, "from-server", false, "join from the instances, profiles, networks and publish stamps on the server instead of from FILEs")
@@ -230,11 +266,12 @@ With --from-server the join is built from the server (see "tink join --help") an
 	cmd.Flags().BoolVar(&o.Adopt, "adopt", false, "overwrite a /hosts that tink did not write (once, when moving to generated records; move the platform's own names to the zone file first)")
 	cmd.Flags().BoolVar(&o.AllowEmpty, "allow-empty", false, "accept a rendering with no published name (it empties the generated records)")
 	cmd.Flags().StringVar(&socket, "socket", "", "Incus daemon unix socket path (default: Incus's own resolution)")
+	cmd.Flags().StringVar(&site, "site", "", "the site to write for (default: the site the FILEs name; the unnamed site with --from-server)")
 	return cmd
 }
 
 // runJoinApply joins the stacks and applies one section. Findings go to errw, as for the print-only command.
-func runJoinApply(out, errw io.Writer, files join.Files, section string, stackArgs []string, o join.ApplyOptions) error {
+func runJoinApply(out, errw io.Writer, files join.Files, section string, stackArgs []string, site siteFlag, o join.ApplyOptions) error {
 	if err := checkApplySection(section); err != nil {
 		return err
 	}
@@ -242,15 +279,18 @@ func runJoinApply(out, errw io.Writer, files join.Files, section string, stackAr
 	if err != nil {
 		return err
 	}
+	if stacks, err = siteView(stacks, site); err != nil {
+		return err
+	}
 	return applyJoin(out, errw, files, stacks, o)
 }
 
 // runJoinApplyFromServer is runJoinApply with the join built from the server.
-func runJoinApplyFromServer(out, errw io.Writer, server incus.InstanceServer, files join.Files, section string, o join.ApplyOptions) error {
+func runJoinApplyFromServer(out, errw io.Writer, server incus.InstanceServer, files join.Files, section, site string, o join.ApplyOptions) error {
 	if err := checkApplySection(section); err != nil {
 		return err
 	}
-	stacks, err := readServerStacks(errw, server)
+	stacks, err := readServerStacks(errw, server, site)
 	if err != nil {
 		return err
 	}

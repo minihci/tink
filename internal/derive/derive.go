@@ -36,6 +36,9 @@ import (
 // A network that more than one stack uses should not name an ACL that derives its rules in one of them: the rules are those of the stack being
 // planned, and the other stack's would be removed as stale. Give each stack its own bridge (#177), or write the rules.
 //
+// Only the helpers of the stack's site are read (`site:` on its kind: stack, internal/join/site.go), so the helpers of another site on the server neither
+// stop this stack from being planned nor appear in its rules.
+//
 // A stack with no such ACL is returned untouched and the server is not read. The returned lines say what was derived, for the person running plan.
 func ACLRules(server incus.InstanceServer, resources []resolve.Resource) ([]string, error) {
 	var marked []int
@@ -51,7 +54,7 @@ func ACLRules(server incus.InstanceServer, resources []resolve.Resource) ([]stri
 		return nil, errNoServer("the ingress rules of a network ACL that says derive_ingress")
 	}
 
-	platform, err := join.PlatformFromServer(server)
+	platform, err := join.PlatformFromServer(server, resolve.StackSite(resources))
 	if err != nil {
 		return nil, fmt.Errorf("deriving ingress rules: %w", err)
 	}
@@ -110,6 +113,9 @@ func ACLRules(server incus.InstanceServer, resources []resolve.Resource) ([]stri
 // stack being planned laid over it, the stack winning. That makes the file follow the stacks that have been applied: a stack applied after the
 // site changes the file at the next `plan apply` of the site, and not before.
 //
+// The view is the stack's site (`site:` on its kind: stack): the helpers and the publishes of another site on the server are not read, and a stamp of one
+// that cannot be read does not stop this stack.
+//
 // It is as strict as the join is. A stamp that cannot be read, or anything the join reports as an error, stops the plan of the site and says what,
 // because a rendering with one name missing looks exactly like a complete one. The files that do not ask are left alone and the server is not read.
 func DerivedFiles(server incus.InstanceServer, resources []resolve.Resource) ([]string, error) {
@@ -125,7 +131,7 @@ func DerivedFiles(server incus.InstanceServer, resources []resolve.Resource) ([]
 	if server == nil {
 		return nil, errNoServer("the region of a file that says derive:")
 	}
-	onServer, err := join.FromServer(server)
+	onServer, err := join.FromServer(server, resolve.StackSite(resources))
 	if err != nil {
 		return nil, fmt.Errorf("deriving files: %w", err)
 	}
@@ -190,7 +196,7 @@ func DerivedFiles(server incus.InstanceServer, resources []resolve.Resource) ([]
 // neither is not laid out the way the join expects, and is told so, not guessed at.
 func checkDNS(server incus.InstanceServer, resources []resolve.Resource, f resolve.Resource, res join.Result) error {
 	if res.DNSInstance == "" {
-		return fmt.Errorf("derive: dns, but no dns helper was found (no instance states user.tink.role: dns)")
+		return fmt.Errorf("derive: dns, but %s", res.NoDNSHelper())
 	}
 	project := f.Project
 	if project == "" {

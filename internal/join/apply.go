@@ -61,7 +61,7 @@ func ApplyDNS(f Files, res Result, opts ApplyOptions) (ApplyReport, error) {
 		return rep, fmt.Errorf("the join has %d error(s): nothing was applied", n)
 	}
 	if res.DNSInstance == "" {
-		return rep, fmt.Errorf("no dns helper was found (no instance has %s: dns): nothing to apply to", roleKey)
+		return rep, fmt.Errorf("%s: nothing to apply to", res.NoDNSHelper())
 	}
 	if len(res.Published) == 0 && !opts.AllowEmpty {
 		return rep, fmt.Errorf("no published name was found, so applying would replace every generated record with none; with files that usually means the wrong files were given, and from the server that nothing is stamped on it yet (--allow-empty says it is meant)")

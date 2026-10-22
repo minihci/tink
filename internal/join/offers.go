@@ -13,7 +13,7 @@ import (
 // The keys an instance states about itself. They all live under user.tink.* (cmd/tink/keynamespace_test.go holds the line), and they say what the
 // app PROVIDES, never who may use it: that is a publish's allow list.
 const (
-	roleKey    = "user.tink.role"
+	roleKey    = resolve.RoleKey
 	offerKey   = "user.tink.offer."
 	legKey     = "user.tink.leg."
 	zoneKey    = "user.tink.dns.zone"

@@ -72,7 +72,7 @@ func (f *serverFake) whoami(t *testing.T) *api.Instance {
 
 func fromServer(t *testing.T, f *serverFake) Result {
 	t.Helper()
-	stacks, err := FromServer(f)
+	stacks, err := FromServer(f, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +158,7 @@ func TestAStampThatCannotBeReadIsAnErrorNamingTheInstanceAndNothingIsJoined(t *t
 			cfg[c.key] = c.value
 			f.whoami(t).Config = cfg
 
-			stacks, err := FromServer(f)
+			stacks, err := FromServer(f, "")
 			var se *StampError
 			if !errors.As(err, &se) {
 				t.Fatalf("err = %v, want a *StampError", err)
@@ -190,7 +190,7 @@ func TestEveryBadStampIsReportedNotOnlyTheFirstAndAGoodOneDoesNotRescueThem(t *t
 	cfg["user.tink.publish.zzz"] = `{"allow":"family","offer":"web"}`
 	cfg["user.tink.publish.aaa"] = `nope`
 	f.whoami(t).Config = cfg // the two good stamps are still there
-	_, err := FromServer(f)
+	_, err := FromServer(f, "")
 	var se *StampError
 	if !errors.As(err, &se) || len(se.Problems) != 2 {
 		t.Fatalf("err = %v", err)
@@ -275,7 +275,7 @@ func TestAFailedReadIsAnErrorAndNotAnEmptyServer(t *testing.T) {
 	for _, what := range []string{"instances", "profiles", "networks"} {
 		f := serverOf(t, load(t))
 		f.err = map[string]error{what: api.StatusErrorf(http.StatusForbidden, "not authorized")}
-		stacks, err := FromServer(f)
+		stacks, err := FromServer(f, "")
 		if err == nil || stacks != nil || !strings.Contains(err.Error(), what) || !strings.Contains(err.Error(), "not authorized") {
 			t.Errorf("%s: stacks %v, err %v", what, stacks, err)
 		}

@@ -31,17 +31,21 @@ const ServerStackName = "server"
 // held to (the same rules, resolve.ValidatePublish) is never skipped and never repaired: FromServer returns a *StampError naming every such stamp and its
 // instance, and no stacks. A name that is half-read would be half-rendered, and the join's whole stance is that a partial rendering looks like a complete one.
 //
+// It reads ONE SITE (site.go): the helpers and the publishes whose instances carry user.tink.site: SITE, or, for the unnamed site "", carry none. Instances
+// of another site are left out before their stamps are read, so a stamp of another site that cannot be read does not stop this one, and the number of
+// helpers and publishes that were left out is kept (Stack.Elsewhere) to be said by Build.
+//
 // Build and the renderers are unchanged: the result is a []Stack like the file-based one, with every resource in its place.
-func FromServer(server incus.InstanceServer) ([]Stack, error) {
-	return readServer(server, false)
+func FromServer(server incus.InstanceServer, site string) ([]Stack, error) {
+	return readServer(server, false, site)
 }
 
 // PlatformFromServer reads only the platform from the server: the helpers (the instances that state a role), the profiles and the managed networks,
 // and no publish at all. It is what the derive stage joins a stack's own declarations to: the stack brings its apps and its publishes, and the
 // server brings the ingress helper's legs and addresses. Another stack's apps and stamps are not read, so a fault in one of them cannot stop this
 // stack from being planned.
-func PlatformFromServer(server incus.InstanceServer) ([]Stack, error) {
-	return readServer(server, true)
+func PlatformFromServer(server incus.InstanceServer, site string) ([]Stack, error) {
+	return readServer(server, true, site)
 }
 
 // Overlay puts over on top of base: the result holds every resource of over, and every resource of base that over does not declare (the same kind,
@@ -88,7 +92,7 @@ func Overlay(base, over []Stack) []Stack {
 	return append(out, over...)
 }
 
-func readServer(server incus.InstanceServer, platformOnly bool) ([]Stack, error) {
+func readServer(server incus.InstanceServer, platformOnly bool, site string) ([]Stack, error) {
 	insts, err := server.GetInstancesAllProjects(api.InstanceTypeAny)
 	if err != nil {
 		return nil, fmt.Errorf("listing the instances of every project: %w", err)
@@ -118,8 +122,22 @@ func readServer(server incus.InstanceServer, platformOnly bool) ([]Stack, error)
 
 	var rs []resolve.Resource
 	var bad []StampProblem
+	elsewhere := map[string]Left{}
 	for _, in := range insts {
 		if platformOnly && strings.TrimSpace(in.Config[roleKey]) == "" {
+			continue
+		}
+		if !memberOf(in.Config, hasPublishStamp(in.Config), site) {
+			l := elsewhere[strings.TrimSpace(in.Config[resolve.SiteKey])]
+			if strings.TrimSpace(in.Config[roleKey]) != "" {
+				l.Helpers++
+			}
+			for k := range in.Config { // counted by key and not read, so a stamp that cannot be read does not stop this site
+				if strings.HasPrefix(k, resolve.PublishStampPrefix) {
+					l.Publishes++
+				}
+			}
+			elsewhere[strings.TrimSpace(in.Config[resolve.SiteKey])] = l
 			continue
 		}
 		rs = append(rs, resolve.Resource{
@@ -157,7 +175,11 @@ func readServer(server incus.InstanceServer, platformOnly bool) ([]Stack, error)
 		}
 		rs = append(rs, resolve.Resource{Kind: resolve.KindNetwork, Name: n.Name, Config: copyStrings(n.Config)})
 	}
-	return []Stack{{Name: ServerStackName, Resources: rs}}, nil
+	st := Stack{Name: ServerStackName, Resources: rs}
+	if len(elsewhere) > 0 {
+		st.Elsewhere = elsewhere
+	}
+	return []Stack{st}, nil
 }
 
 // A StampProblem is one publish stamp on the server that cannot be read. Reason already names the key.

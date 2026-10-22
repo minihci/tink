@@ -7,6 +7,7 @@ kind: stack
 name: media
 network: own                              # a bridge, its ACL and the apps' static addresses are derived (docs/network.md)
 project: herd-media                       # site
+site: herd                              # site: only needed on a server that has a platform already (docs/join.md#sites)
 ---
 kind: project                             # site
 name: herd-media

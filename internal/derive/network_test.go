@@ -275,7 +275,7 @@ func TestTheRulesFollowTheBridge(t *testing.T) {
 	if len(notices) != 3 {
 		t.Errorf("notices = %v", notices)
 	}
-	platform, err := join.PlatformFromServer(srv)
+	platform, err := join.PlatformFromServer(srv, "")
 	if err != nil {
 		t.Fatal(err)
 	}

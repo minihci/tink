@@ -151,6 +151,10 @@ type Resource struct {
 	Timezone string
 	Remotes  []string
 
+	// Site (stack-only) is the site the stack belongs to: the group of stacks whose helpers and publishes the join reads together. Empty is the unnamed
+	// site. See site.go.
+	Site string
+
 	// Stack-only (see stacknetwork.go and internal/derive): `network: own` asks tink to give the stack a bridge of its own, an ACL on it, and the
 	// static address of each app that is published. Network is "own" or empty on a stack. NetworkPool is the range the bridge's subnet is taken from
 	// (an IPv4 CIDR; default DefaultNetworkPool) and NetworkPrefix the length of that subnet (default DefaultNetworkPrefix); both need network: own.

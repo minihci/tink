@@ -58,7 +58,7 @@ several files to see are below.
   nothing is printed (a partial rendering looks like a complete one). `tink join apply dns` (`internal/join/apply.go`) is the one thing
   that writes: the dns helper's generated `/hosts`, through an injected `Files` interface, with refusals instead of guesses (errors,
   zero publishes, a clash with the zone file, a file tink did not write, a failed read) and a read-back. `apply dns --from-server` is what the daemon helper will run. Its golden outputs in `internal/join/testdata/golden` are written
-  by hand, not generated. See `docs/join.md`.
+  by hand, not generated. It reads **one site** at a time: `site: NAME` on `kind: stack` is stamped as `user.tink.site` on the stack's role helpers and published instances (`resolve/site.go`, an owned key like the publish stamps), `join.FromServer`/`PlatformFromServer` take the site and leave other sites' instances unread, `join.ForSite` cuts files the same way, and the derive passes use the planned stack's site. No site is the unnamed site, which is how a server behaved before sites. See `docs/join.md#sites`.
 - **Plan also judges drift and policy**, not just existence: image drift by fingerprint (`volatile.base_image`, not `image.id`,
   see `imagedrift.go`) driven by an instance's `on_image_change`, and each storage volume's declared backup policy
   (`policy.go`, `volumebackup.go`).

@@ -31,8 +31,9 @@ import (
 // removal and removed on apply (run.StaleOwnedKeys). Only that prefix, and only on instances the stack declares: any other key, tink's or not, is untouched.
 const PublishStampPrefix = "user.tink.publish."
 
-// ownedConfigPrefixes are the config key prefixes tink owns on a stack's instances (see PublishStampPrefix).
-var ownedConfigPrefixes = []string{PublishStampPrefix}
+// ownedConfigPrefixes are what tink owns on a stack's instances: the family of publish stamps (above) and the one key of the site stamp (SiteKey, site.go).
+// The first ends in a dot and owns everything under it; the second does not, and owns only itself (run.StaleOwnedKeys).
+var ownedConfigPrefixes = []string{PublishStampPrefix, SiteKey}
 
 // publishStamp is the stamped value. Its fields are in key order, which is the order the JSON is written in.
 type publishStamp struct {
@@ -148,6 +149,9 @@ func validateOwnedConfig(r Resource) error {
 		return nil
 	}
 	sort.Strings(keys)
+	if strings.HasPrefix(keys[0], SiteKey) {
+		return fmt.Errorf("resource %q: config %s is the site stamp, which tink owns: it writes it from `site:` on the stack's kind: stack document (on the instances that state a role or are published) and removes it where the stack no longer derives it, so declare the site and not the key", r.Name, keys[0])
+	}
 	return fmt.Errorf("resource %q: config %s is under %s, which tink owns: it writes those keys from the kind: publish documents of the stack and removes the ones no publish derives, so declare the publish and not the key", r.Name, keys[0], PublishStampPrefix)
 }
 
