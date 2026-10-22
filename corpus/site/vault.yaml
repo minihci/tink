@@ -1,0 +1,57 @@
+# The first herd stack: Vaultwarden. Imported from the project's own compose file with `tink import`, then the site's half written by hand.
+# Every line marked "site:" is something the derive stage (#177, #130) should make unnecessary.
+kind: stack
+name: vault
+project: herd-vault                       # site: a project of its own
+---
+kind: project
+name: herd-vault
+config:
+  features.profiles: "false"
+---
+kind: network-acl                         # site: the ACL that lets only the ingress helper in. Its rules are the join's `acl` rendering, pasted below
+name: tink-vault-in
+description: only the ingress helper may reach the vault app
+ingress:
+  - {action: allow, source: 192.0.2.3/32, protocol: tcp, destination_port: "80", state: enabled, description: "ingress helper publishes vault"}
+---
+kind: network                             # site: a bridge for the stack
+name: tink-vault
+description: the vault stack's bridge
+config:
+  ipv4.address: 198.51.100.1/24
+  ipv4.nat: "false"
+  ipv6.address: none
+  security.acls: tink-vault-in
+---
+kind: storage-volume
+name: vaultwarden-vw-data
+pool: default
+backup:                                   # site: the backup answer the importer left open
+  none: "a throwaway fixture"
+---
+kind: instance
+name: vaultwarden
+image: vaultwarden/server:latest
+profiles:
+  - default
+config:
+  boot.autorestart: "true"
+  boot.autostart: "true"
+  environment.DOMAIN: https://vault.home.example.org     # site: the name the app is told it has (the compose file said vw.domain.tld)
+  user.tink.offer.web.port: "80"                         # site: the offer the join reads
+  user.tink.offer.web.proto: http
+devices:
+  eth0: {name: eth0, type: nic, network: tink-vault, ipv4.address: 198.51.100.10}   # site: the bridge and a static address
+  # (the compose file's `127.0.0.1:8000:80` host port is gone: the app is reached through the ingress helper)  # site
+  volume0:
+    type: disk
+    path: /data/
+    pool: default
+    source: vaultwarden-vw-data
+---
+kind: publish                             # site: the name, and who may use it
+name: vault
+instance: vaultwarden
+offer: web
+allow: [family]

@@ -1,0 +1,41 @@
+# Authelia for the fixture. Every secret below is a made-up string for a throwaway site; none protects anything.
+theme: light
+
+server:
+  address: 'tcp://0.0.0.0:9091/'
+
+log:
+  level: info
+
+identity_validation:
+  reset_password:
+    jwt_secret: 'fixture-jwt-value-for-a-throwaway-site'
+
+authentication_backend:
+  file:
+    path: /app/users_database.yml
+
+access_control:
+  default_policy: deny
+  rules:
+    - domain: 'auth.home.example.org'
+      policy: bypass
+    # The `sso` rendering of `tink join`, pasted here by hand until the derive stage writes it.
+    - domain: 'vault.home.example.org'
+      policy: one_factor
+      subject: 'group:family'
+
+session:
+  secret: 'fixture-session-value-for-a-throwaway-site'
+  cookies:
+    - domain: 'home.example.org'
+      authelia_url: 'https://auth.home.example.org'
+
+storage:
+  encryption_key: 'fixture-storage-value-for-a-throwaway-site'
+  local:
+    path: /app/db.sqlite3
+
+notifier:
+  filesystem:
+    filename: /app/notification.txt

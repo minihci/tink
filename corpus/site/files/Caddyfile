@@ -1,0 +1,35 @@
+# The shared edge. Names are served from a wildcard site; the routes that `tink join` renders for published apps are imported from
+# /etc/caddy/apps.caddy (not a directory of files: a file cannot be placed in a directory that is not there, #140). `local_certs` is for the fixture only: a real site gets its certificate from an ACME challenge.
+{
+	local_certs
+	skip_install_trust
+	admin off
+}
+
+# The forward-auth call to the sign-on helper.
+(sso) {
+	forward_auth 192.0.2.11:9091 {
+		uri /api/authz/forward-auth
+		copy_headers Remote-User Remote-Groups Remote-Name Remote-Email
+	}
+}
+
+# Strips the portal's zone-wide session cookie before a request reaches an app, so an app cannot replay a user's portal session.
+(no_portal_cookie) {
+	header_up Cookie "authelia_session=[^;]*;? ?" ""
+}
+
+*.home.example.org {
+	tls internal
+
+	@auth host auth.home.example.org
+	handle @auth {
+		reverse_proxy 192.0.2.11:9091
+	}
+
+	import /etc/caddy/apps.caddy
+
+	handle {
+		respond "no such name" 404
+	}
+}

@@ -51,7 +51,7 @@ general knowledge of the apps and is marked as such: check it before relying on 
 ## The herd test
 
 [herd.md](herd.md) defines the measuring stick: the corpus applied to a shared site (proxy, names, sign-on, backup), one project and
-one bridge per stack first, and what it takes for a stack to pass.
+one bridge per stack first, and what it takes for a stack to pass. [site/](site/README.md) is that site as a fixture, with the first stack on it.
 
 ## Status
 

@@ -9,7 +9,7 @@ backup, with a person managing as little as possible. The herd test is the corpu
 |---|---|---|
 | 1. Runs | Does the app answer when its own line is pasted into tink? | 14 of 21 (`status.md`) |
 | 2. Imports | Does its published compose line become a stack with no hand editing? | 13 of the 17 apps with a compose file (14 of 18 files); the other four are refused with a reason (#179, #180) |
-| 3. Herd | Is it applied together with the others, onto one site, and wired? | not measured |
+| 3. Herd | Is it applied together with the others, onto one site, and wired? | 1 of 6 stacks is on the fixture site with six of its seven checks passing and thirteen hand-made steps (`site/README.md`); none passes yet |
 
 ## The first herd
 
@@ -25,7 +25,7 @@ Six stacks, eight instances, chosen to cover the shapes that interact (see `shap
 | `metrics` | Grafana | OIDC; a volume owned by the image's own user (#176) |
 
 The shared site is what the herd is applied *to*: an ingress (Caddy), a DNS helper (CoreDNS), a sign-on helper (Authelia) and a backup
-target. It is a fixture of the test, not of the stacks.
+target. It is a fixture of the test, not of the stacks, and it is in [site/](site/README.md) (the backup target is not there yet).
 
 ## The first layout
 

@@ -1,0 +1,8 @@
+# The proxy routes for the published apps: the `caddy` rendering of `tink join`, pasted here by hand until the derive stage writes it.
+@vault host vault.home.example.org
+handle @vault {
+	import sso
+	reverse_proxy 198.51.100.10:80 {
+		import no_portal_cookie
+	}
+}

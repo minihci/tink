@@ -1,0 +1,10 @@
+# One user for the fixture. The password is `herd-test-password`; this file is a throwaway site's, and the hash protects nothing.
+users:
+  tester:
+    disabled: false
+    displayname: Tester
+    password: '$argon2id$v=19$m=65536,t=3,p=4$TNPWMt6j24Lu08PYUOXbRA$cFMPpQ/PlutHMAa6vGQcmtRA1yoPn9PXGFyj9T/VSZk'
+    email: tester@example.org
+    groups:
+      - family
+      - admins
