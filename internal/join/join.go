@@ -189,6 +189,7 @@ func Build(stacks []Stack) Result {
 	}
 
 	if len(publishes) == 0 {
+		res.HasMesh = len(roles["mesh"]) > 0 // a fact about the site, not about what is published
 		add(Warning, "", "no publish is declared in the files given, so there is nothing to render")
 		if len(roles["dns"]) == 1 { // no error either way: a site with no publishes need not have a dns helper; this only tells an explicit empty apply where to write
 			d := roles["dns"][0]

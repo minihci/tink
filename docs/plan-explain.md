@@ -44,7 +44,7 @@ For each pass that did something, in the order the passes run (`internal/prepare
 
 - the lines the pass reported, which say what a comparison cannot: that an address was kept and not chosen, which publishes a rule covers, which subnet was taken and why;
 - each resource it **made** (`+`, with its fields) or **changed** (`~`, with only the fields the pass made or altered, and the old value when there was one);
-- for a file that says `derive:`, the **region** it filled in, line by line. This is the view the `tink join --only caddy|sso|dns` commands printed.
+- for a file that says `derive:`, the **region** it filled in, line by line (the whole file for `derive: mesh`, which is JSON and has no region). This is the view the `tink join --only caddy|sso|dns` commands printed.
 
 A stack that needs nothing derived says so: `nothing was derived; it plans as it is written`.
 

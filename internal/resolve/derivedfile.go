@@ -1,6 +1,7 @@
 package resolve
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -24,6 +25,7 @@ const (
 	DeriveCaddy = "caddy" // the join's `caddy` rendering: routes for the proxy's wildcard site
 	DeriveSSO   = "sso"   // the join's `sso` rendering: rules for the sign-on helper's access control
 	DeriveDNS   = "dns"   // the join's `dns` rendering: the dns helper's generated records, one line per published name
+	DeriveMesh  = "mesh"  // the join's `mesh` rendering: a JSON array of A records, the format of Headscale's extra_records file. The WHOLE file: JSON has no comment to mark a region with
 
 	DeriveBegin = "# BEGIN tink derive"
 	DeriveEnd   = "# END tink derive"
@@ -41,8 +43,13 @@ func validateDerivedFile(r Resource) error {
 	}
 	switch r.Derive {
 	case DeriveCaddy, DeriveSSO, DeriveDNS:
+	case DeriveMesh:
+		if r.Content != "" {
+			return fmt.Errorf("resource %q: derive: %s is the whole file, a JSON array tink writes; it takes no content or source_path", r.Name, DeriveMesh)
+		}
+		return nil
 	default:
-		return fmt.Errorf("resource %q: derive %q is not one of %s, %s, %s", r.Name, r.Derive, DeriveCaddy, DeriveSSO, DeriveDNS)
+		return fmt.Errorf("resource %q: derive %q is not one of %s, %s, %s, %s", r.Name, r.Derive, DeriveCaddy, DeriveSSO, DeriveDNS, DeriveMesh)
 	}
 	if _, err := FillDerived(r.Content, ""); err != nil {
 		return fmt.Errorf("resource %q: %w", r.Name, err)
@@ -144,6 +151,9 @@ func guardDerived(f Resource, p PlannedResource, live string) PlannedResource {
 	if f.Derive == "" || p.Action != ActionUpdate {
 		return p
 	}
+	if f.Derive == DeriveMesh {
+		return guardRecords(f, p, live)
+	}
 	blocked := func(format string, args ...any) PlannedResource {
 		return PlannedResource{Resource: f, Action: ActionBlocked, Blocked: []string{fmt.Sprintf(format, args...)}}
 	}
@@ -179,4 +189,49 @@ func DerivedRegion(content string) string {
 		}
 	}
 	return strings.Join(region, "\n")
+}
+
+// A whole-file rendering (derive: mesh) has no marker to say that tink wrote the file, so the guard looks at what is in it. The file is a JSON array of
+// records {name, type, value}; a record whose name is outside the zone the site publishes in is not one tink wrote, and replacing the file would lose it.
+// A file that is not that shape is not a records file at all. Either is BLOCKED until adopt_existing takes the file over, once. And as for the other
+// derived files, a rendering with no record does not empty a file that has records until allow_empty says that is meant. A record inside the zone that
+// the rendering lacks is a name that was unpublished, which is what the file is for.
+func guardRecords(f Resource, p PlannedResource, live string) PlannedResource {
+	blocked := func(format string, args ...any) PlannedResource {
+		return PlannedResource{Resource: f, Action: ActionBlocked, Blocked: []string{fmt.Sprintf(format, args...)}}
+	}
+	if strings.TrimSpace(live) == "" {
+		return p
+	}
+	var records []struct{ Name, Type, Value string }
+	if err := json.Unmarshal([]byte(live), &records); err != nil {
+		if f.AdoptExisting {
+			p.Notes = append(p.Notes, fmt.Sprintf("adopt_existing: replaces %s on %s, which is not a JSON array of records; remove adopt_existing once it is applied", f.Path, f.Instance))
+			return p
+		}
+		return blocked("%s on %s is not a JSON array of records ({name, type, value}), so it is not the file this was written for: set adopt_existing: true once to replace it", f.Path, f.Instance)
+	}
+	var foreign []string
+	for _, r := range records {
+		if f.DerivedZone != "" && !strings.HasSuffix(strings.ToLower(r.Name), "."+strings.ToLower(f.DerivedZone)) {
+			foreign = append(foreign, r.Name)
+		}
+	}
+	if len(foreign) > 0 {
+		if f.AdoptExisting {
+			p.Notes = append(p.Notes, fmt.Sprintf("adopt_existing: replaces %d record(s) of %s on %s outside %s; remove adopt_existing once it is applied", len(foreign), f.Path, f.Instance, f.DerivedZone))
+			return p
+		}
+		shown := foreign
+		if len(shown) > 3 {
+			shown = append(append([]string{}, shown[:3]...), "...")
+		}
+		return blocked("%s on %s holds %d record(s) outside the zone %s that tink did not write (%s), and applying would remove them: set adopt_existing: true once to take the file over", f.Path, f.Instance, len(foreign), f.DerivedZone, strings.Join(shown, ", "))
+	}
+	var desired []struct{ Name, Type, Value string }
+	_ = json.Unmarshal([]byte(f.Content), &desired)
+	if len(desired) == 0 && len(records) > 0 && !f.AllowEmpty {
+		return blocked("nothing is published, so applying would empty the %d record(s) in %s on %s; that usually means the wrong server, or stacks that have not been applied yet (allow_empty: true says it is meant)", len(records), f.Path, f.Instance)
+	}
+	return p
 }

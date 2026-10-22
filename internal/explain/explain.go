@@ -116,6 +116,9 @@ func take(resources []resolve.Resource) snapshot {
 		s.derive[id] = r.Derive
 		if r.Derive != "" {
 			s.region[id] = resolve.DerivedRegion(r.Content)
+			if r.Derive == resolve.DeriveMesh {
+				s.region[id] = strings.TrimRight(r.Content, "\n") // the whole file is the rendering
+			}
 		}
 		flatten(id, "", m, s.fields)
 	}
