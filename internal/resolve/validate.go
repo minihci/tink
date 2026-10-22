@@ -47,6 +47,8 @@ var fieldOwners = map[string][]Kind{
 	"Path":            {KindFile},
 	"Content":         {KindFile},
 	"Derive":          {KindFile},
+	"AdoptExisting":   {KindFile},
+	"AllowEmpty":      {KindFile},
 	"Restart":         {KindFile, KindInstance},
 	"OnImageChange":   {KindInstance},
 	"SnapshotVolumes": {KindInstance},

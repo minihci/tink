@@ -164,7 +164,14 @@ type Resource struct {
 	// Derive (file-only) names a rendering of the join that tink writes into Content before the stack is planned (internal/derive): DeriveCaddy
 	// for the proxy's routes, DeriveSSO for the sign-on helper's rules. Content (or source_path) is the file around it, and holds a region marked
 	// DeriveBegin and DeriveEnd, which is replaced; see FillDerived.
-	Derive  string
+	Derive string
+
+	// AdoptExisting and AllowEmpty (file-only, with Derive) lift the two refusals that protect a derived file. A derived file is tink's only where it
+	// carries the DeriveBegin line; one that exists without it, with lines in it, is not replaced until AdoptExisting says so (set it once, then remove
+	// it). A rendering with nothing in it does not empty a region that has lines in it until AllowEmpty says that is meant. See guardDerived.
+	AdoptExisting bool
+	AllowEmpty    bool
+
 	Content string
 
 	// Restart controls whether converging this resource also restarts

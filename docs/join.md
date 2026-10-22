@@ -155,7 +155,7 @@ What each section is shaped for, and what it assumes:
 
 ## Derived files
 
-**Status: built for the proxy's routes and the sign-on helper's rules (the third piece of the derive stage, #130); unit-tested, and run on a local Incus 7.5.1 server on 2026-10-22 (L-2026-10-21b).** Six stacks were brought up from nothing and the site's two files followed them: the routes and rules for seven names were written by `tink plan apply` of the site, the 32 checks of the herd test passed, a second plan of every file said no changes, and dropping a publish took its route, rule, dns record, stamp and ACL rule with it, with no paste step.
+**Status: built for the proxy's routes, the sign-on helper's rules and the dns helper's records (the third and fourth pieces of the derive stage, #130); unit-tested, and run on a local Incus 7.5.1 server on 2026-10-22 (L-2026-10-21b).** Six stacks were brought up from nothing and the site's three files followed them: the routes, rules and records for seven names were written by `tink plan apply` of the site, with no `join apply dns` and no paste step; the 32 checks of the herd test passed, a second plan of every file said no changes, and dropping or adding a publish moved all of them. A hand-written `/hosts` was BLOCKED until `adopt_existing` took it over, and removing every stamp was BLOCKED until `allow_empty` said it was meant.
 
 A `kind: file` with `derive:` is a file around a region that `tink plan` writes, from the same renderings as above:
 
@@ -177,18 +177,23 @@ Before the stack is planned (`internal/derive`, the fifth pass of `prepare`), wh
 - **The view is the whole site.** A file at the site's door shows every name the site publishes, and those are declared in many stacks. So the plan reads the server (every instance with its stored config, and every publish as the stamps say it) and lays the stack being planned over it, the stack winning, as it does for an ACL. The file follows the stacks that have been *applied*: a stack applied after the site changes the file at the next `plan apply` of the site, and not before. Something has to apply the site again when a stack changes (a person today, the daemon later).
 - **It is as strict as the join.** A stamp that cannot be read, or anything the join reports as an error (an app on DHCP, no ingress helper, no sign-on helper), stops the plan of the site and says what: a route missing looks exactly like a route that was never wanted.
 - **A file that does not ask is left alone**, and the server is not read.
-- **Not derived here:** the dns records (`tink join apply dns` writes them, with rules a plain file does not have: a note at the top, a refusal to replace the records with none, a clash check against the zone file, a read-back) and the mesh records.
+- **The dns records are `derive: dns`**, with the rules `tink join apply dns` has, now the plan's. The file must be on the dns helper. A published name that is already a record in the zone file (`/db.<zone>`, from the stack's own `kind: file` for it, else the server's) is an error, because the generated records answer first and would take the name over. A zone file found nowhere is an error too, not a guess.
+- **Two refusals protect every derived file**, shown by `plan` as BLOCKED with the reason:
+  - A file that exists, has lines in it and carries no `# BEGIN tink derive` line was not written by tink, and applying would lose them. `adopt_existing: true` on the file takes it over, once; remove the line after it is applied.
+  - A rendering with nothing in it does not empty a region that has lines in it: nothing published usually means the wrong server, or stacks that have not been applied yet, and an empty file takes every name down. `allow_empty: true` says it is meant.
+- **A derived file is read back after it is written**, and the apply fails if the file does not hold what was written.
+- **Not derived here:** the mesh records.
 
 ## What is left before `tink join` can go
 
 `tink join` is a verb for a computation that belongs in `plan` (the roadmap, Phase 3). It goes when nothing it prints is only printed:
 
-1. **dns as a planned change.** The proxy, sign-on and ACL renderings are planned changes now; the dns records are still written by `join apply dns`, which the daemon helper is to run (`--from-server`). The applier's rules have to become resolver behaviour first, and the mesh records after.
+1. **The mesh records as a planned change.** The proxy, sign-on, ACL and dns renderings are planned changes now, with the dns applier's rules (above); the mesh view is the one rendering left.
 2. **`tink plan explain` (#129)**, the expanded-stack view, so that a person can still see what the site would write without writing it.
-3. **The daemon applies planned changes** instead of running `join apply dns`, under a credential narrow enough for it (Phase 5).
+3. **The daemon applies planned changes** instead of running `join apply dns --from-server`, under a credential narrow enough for it (Phase 5).
 4. **A removal page** in the style of `docs/removals/ingress-self-registration.md`, because the verb is deployed on the author's hosts.
 
-Until then `tink join` and `tink join apply dns` stay, and `--from-server` is the way to see what a stack that derives its own network produced.
+Until then `tink join` and `tink join apply dns` stay, and `--from-server` is the way to see what a stack that derives its own network produced. `tink join apply dns` and a `derive: dns` file do the same job; use one of them for a dns helper, not both.
 
 ## Applying: dns
 

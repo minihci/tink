@@ -103,11 +103,19 @@ func planPlacedFile(s incus.InstanceServer, f Resource) (PlannedResource, error)
 	}
 	switch t.Where {
 	case inVolume:
-		return planVolumeFile(s, f, t)
+		p, err := planVolumeFile(s, f, t)
+		if err != nil {
+			return PlannedResource{}, err
+		}
+		return guardDerived(f, p, p.liveContent), nil
 	case withheld:
 		return PlannedResource{Resource: f, Action: ActionDeferred, Warnings: []string{t.withheldWarning(f)}}, nil
 	}
-	return planFile(s, f)
+	p, err := planFile(s, f)
+	if err != nil {
+		return PlannedResource{}, err
+	}
+	return guardDerived(f, p, p.liveContent), nil
 }
 
 // planVolumeFile is planFile against the volume's copy of the file.
@@ -123,6 +131,7 @@ func planVolumeFile(s incus.InstanceServer, f Resource, t fileTarget) (PlannedRe
 	case current != f.Content:
 		p.Action = ActionUpdate
 		p.Changes = []string{fmt.Sprintf("content of %s on %s differs", f.Path, f.Instance)}
+		p.liveContent = current
 	}
 	return p, nil
 }

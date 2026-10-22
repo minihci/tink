@@ -79,7 +79,7 @@ func ApplyDNS(f Files, res Result, opts ApplyOptions) (ApplyReport, error) {
 	if !found {
 		return rep, fmt.Errorf("%s does not exist on %s: the dns helper is not laid out the way the join expects (docs/join.md), so it cannot check the published names against the platform's own", zonePath, res.DNSInstance)
 	}
-	owners := zoneOwners(zone, res.Zone)
+	owners := ZoneOwners(zone, res.Zone)
 	var clash []string
 	for _, p := range res.Published {
 		if owners[p.Label] {
@@ -151,9 +151,9 @@ func recordDiff(current, desired string) (added, removed []string) {
 	return added, removed
 }
 
-// zoneOwners returns the relative owner names in a zone file that has records: "auth" for a line `auth IN A ...` or `auth.<zone>. IN A ...`. A line that
+// ZoneOwners returns the relative owner names in a zone file that has records: "auth" for a line `auth IN A ...` or `auth.<zone>. IN A ...`. A line that
 // starts with white space continues the previous record; `$` lines are directives; `;` starts a comment. "@" is the zone itself.
-func zoneOwners(zone, name string) map[string]bool {
+func ZoneOwners(zone, name string) map[string]bool {
 	owners := map[string]bool{}
 	for _, l := range strings.Split(zone, "\n") {
 		if i := strings.Index(l, ";"); i >= 0 {

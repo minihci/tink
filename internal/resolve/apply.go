@@ -358,6 +358,17 @@ func pushFile(server incus.InstanceServer, r Resource, limit time.Duration) erro
 	if err != nil {
 		return err
 	}
+	if r.Derive != "" {
+		// A derived file is read back: a write that did not take must not look like a name that is routed. (Before the restart, which would
+		// otherwise hide it.)
+		back, err := planPlacedFile(scopedServer(server, r), r)
+		if err != nil {
+			return fmt.Errorf("the write to %s on %s succeeded but reading it back failed: %w", r.Path, r.Instance, err)
+		}
+		if back.Action != ActionNone {
+			return fmt.Errorf("the write to %s on %s succeeded but the file does not hold what was written", r.Path, r.Instance)
+		}
+	}
 	if !r.Restart {
 		return nil
 	}

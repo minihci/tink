@@ -74,3 +74,62 @@ func TestLoadFile_DerivedFile(t *testing.T) {
 		}
 	}
 }
+
+func TestGuardDerived(t *testing.T) {
+	filled := "# generated\n" + DeriveBegin + "\n192.0.2.3 a.example.org\n" + DeriveEnd + "\n"
+	empty := "# generated\n" + DeriveBegin + "\n" + DeriveEnd + "\n"
+	update := func(f Resource) PlannedResource {
+		return PlannedResource{Resource: f, Action: ActionUpdate, Changes: []string{"content differs"}}
+	}
+	for _, c := range []struct {
+		name    string
+		file    Resource
+		action  Action
+		live    string
+		blocked string
+		note    string
+	}{
+		{"a file tink wrote, replaced by the new records", Resource{Derive: DeriveDNS, Content: filled}, ActionUpdate, "# generated\n" + DeriveBegin + "\n192.0.2.3 old.example.org\n" + DeriveEnd + "\n", "", ""},
+		{"a file a person wrote, with records in it", Resource{Derive: DeriveDNS, Content: filled}, ActionBlocked, "192.0.2.9 hand.example.org\n", "was not written by tink", ""},
+		{"the same, taken over once", Resource{Derive: DeriveDNS, Content: filled, AdoptExisting: true}, ActionUpdate, "192.0.2.9 hand.example.org\n", "", "adopt_existing: replaces the 1 line(s)"},
+		{"a file with only comments is nobody's to protect", Resource{Derive: DeriveDNS, Content: filled}, ActionUpdate, "# nothing here\n", "", ""},
+		{"nothing published, records on the file", Resource{Derive: DeriveDNS, Content: empty}, ActionBlocked, "# generated\n" + DeriveBegin + "\n192.0.2.3 a.example.org\n" + DeriveEnd + "\n", "nothing is published", ""},
+		{"nothing published, and that is meant", Resource{Derive: DeriveDNS, Content: empty, AllowEmpty: true}, ActionUpdate, "# generated\n" + DeriveBegin + "\n192.0.2.3 a.example.org\n" + DeriveEnd + "\n", "", ""},
+		{"nothing published, nothing there", Resource{Derive: DeriveDNS, Content: empty}, ActionUpdate, "# generated\n" + DeriveBegin + "\n" + DeriveEnd + "\nextra\n", "", ""},
+		{"a file that is not derived is not guarded", Resource{Content: filled}, ActionUpdate, "192.0.2.9 hand.example.org\n", "", ""},
+	} {
+		c.file.Kind, c.file.Name, c.file.Instance, c.file.Path = KindFile, "hosts", "dns", "/hosts"
+		got := guardDerived(c.file, update(c.file), c.live)
+		if got.Action != c.action {
+			t.Errorf("%s: action = %v, want %v (%v)", c.name, got.Action, c.action, got.Blocked)
+			continue
+		}
+		if c.blocked != "" && (len(got.Blocked) != 1 || !strings.Contains(got.Blocked[0], c.blocked)) {
+			t.Errorf("%s: blocked = %v, want it to contain %q", c.name, got.Blocked, c.blocked)
+		}
+		if c.note != "" && (len(got.Notes) != 1 || !strings.Contains(got.Notes[0], c.note)) {
+			t.Errorf("%s: notes = %v, want one containing %q", c.name, got.Notes, c.note)
+		}
+	}
+	// a file that does not exist, or already holds the content, is not guarded
+	f := Resource{Kind: KindFile, Name: "h", Instance: "dns", Path: "/hosts", Derive: DeriveDNS, Content: "x"}
+	for _, a := range []Action{ActionCreate, ActionNone} {
+		if got := guardDerived(f, PlannedResource{Resource: f, Action: a}, "hand written\n"); got.Action != a {
+			t.Errorf("%v must pass through, got %v", a, got.Action)
+		}
+	}
+}
+
+func TestLoadFile_DerivedFileOptions(t *testing.T) {
+	text := "kind: file\nname: hosts\ninstance: dns\npath: /hosts\nderive: dns\nadopt_existing: true\nallow_empty: true\ncontent: |\n  " + DeriveBegin + "\n  " + DeriveEnd + "\n"
+	rs, err := LoadFile(writeTemp(t, text))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rs[0].AdoptExisting || !rs[0].AllowEmpty || rs[0].Derive != DeriveDNS {
+		t.Errorf("got %+v", rs[0])
+	}
+	if _, err := LoadFile(writeTemp(t, "kind: file\nname: a\ninstance: i\npath: /p\nadopt_existing: true\ncontent: x\n")); err == nil || !strings.Contains(err.Error(), "belong to a file that has a derive field") {
+		t.Errorf("adopt_existing without derive: err = %v", err)
+	}
+}

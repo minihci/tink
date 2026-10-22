@@ -221,7 +221,7 @@ func TestApplyDNSReportsAWriteThatFailsOrDoesNotTake(t *testing.T) {
 }
 
 func TestZoneOwners(t *testing.T) {
-	got := zoneOwners(labZone, "home.example.org")
+	got := ZoneOwners(labZone, "home.example.org")
 	for _, want := range []string{"@", "ns", "auth", "id"} {
 		if !got[want] {
 			t.Errorf("owner %q not found in %v", want, got)

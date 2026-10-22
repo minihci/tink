@@ -10,6 +10,7 @@ package derive
 
 import (
 	"fmt"
+	"io"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
 
+	"github.com/minihci/tink/internal/incusapi"
 	"github.com/minihci/tink/internal/join"
 	"github.com/minihci/tink/internal/resolve"
 )
@@ -98,7 +100,7 @@ func ACLRules(server incus.InstanceServer, resources []resolve.Resource) ([]stri
 }
 
 // DerivedFiles fills the region of every `kind: file` that says derive: with the join's rendering of the names the site publishes (docs/join.md,
-// "Derived files"): the proxy's routes for derive: caddy, the sign-on helper's rules for derive: sso.
+// "Derived files"): the proxy's routes for derive: caddy, the sign-on helper's rules for derive: sso, the dns helper's records for derive: dns.
 //
 // Unlike the ACL of one stack, a file at the site's door shows every name the site publishes, and those are declared in many stacks. So the
 // view is the whole server (every instance with its stored config, and every `kind: publish` as the stamps on the instances say it) with the
@@ -138,9 +140,17 @@ func DerivedFiles(server incus.InstanceServer, resources []resolve.Resource) ([]
 	var notices []string
 	for _, i := range files {
 		r := &resources[i]
-		rendering := res.Caddy
-		if r.Derive == resolve.DeriveSSO {
+		var rendering string
+		switch r.Derive {
+		case resolve.DeriveCaddy:
+			rendering = res.Caddy
+		case resolve.DeriveSSO:
 			rendering = res.SSO
+		case resolve.DeriveDNS:
+			if err := checkDNS(server, resources, *r, res); err != nil {
+				return nil, fmt.Errorf("file/%s: %w", r.Name, err)
+			}
+			rendering = res.DNS
 		}
 		content, err := resolve.FillDerived(r.Content, rendering)
 		if err != nil {
@@ -154,4 +164,63 @@ func DerivedFiles(server incus.InstanceServer, resources []resolve.Resource) ([]
 		}
 	}
 	return notices, nil
+}
+
+// checkDNS holds a dns file to the rules of the applier it replaces (docs/join.md, "Applying: dns"): it must be on the dns helper, and a published name
+// must not already be a record in the zone file, because the generated records answer first and a name published as `auth` would take the portal's.
+// The zone file is the one the stack declares for that path on the dns helper; failing that, the one on the server. A site whose dns helper has
+// neither is not laid out the way the join expects, and is told so, not guessed at.
+func checkDNS(server incus.InstanceServer, resources []resolve.Resource, f resolve.Resource, res join.Result) error {
+	if res.DNSInstance == "" {
+		return fmt.Errorf("derive: dns, but no dns helper was found (no instance states user.tink.role: dns)")
+	}
+	project := f.Project
+	if project == "" {
+		project = "default"
+	}
+	if f.Instance != res.DNSInstance || project != res.DNSProject {
+		return fmt.Errorf("derive: dns belongs on the dns helper (instance/%s in project %s), not on instance/%s", res.DNSInstance, res.DNSProject, f.Instance)
+	}
+	if res.Zone == "" {
+		return fmt.Errorf("the dns helper states no zone, so the zone file cannot be checked for names it already holds")
+	}
+	zonePath := join.DNSZonePath(res.Zone)
+	zone, found := "", false
+	for _, r := range resources {
+		if r.Kind == resolve.KindFile && r.Instance == f.Instance && r.Path == zonePath && r.Content != "" {
+			zone, found = r.Content, true
+		}
+	}
+	if !found {
+		scoped := server
+		if f.Project != "" {
+			scoped = server.UseProject(f.Project)
+		}
+		rc, _, ok, err := incusapi.LookupInstanceFile(scoped, f.Instance, zonePath)
+		if err != nil {
+			return fmt.Errorf("reading %s on %s: %w", zonePath, f.Instance, err)
+		}
+		if ok {
+			b, err := io.ReadAll(rc)
+			rc.Close()
+			if err != nil {
+				return fmt.Errorf("reading %s on %s: %w", zonePath, f.Instance, err)
+			}
+			zone, found = string(b), true
+		}
+	}
+	if !found {
+		return fmt.Errorf("%s is neither declared for %s in this stack nor on the server: the dns helper is not laid out the way the join expects (docs/join.md), so published names cannot be checked against the platform's own", zonePath, f.Instance)
+	}
+	owners := join.ZoneOwners(zone, res.Zone)
+	var clash []string
+	for _, p := range res.Published {
+		if owners[p.Label] {
+			clash = append(clash, p.Label)
+		}
+	}
+	if len(clash) > 0 {
+		return fmt.Errorf("%s already holds a record for %s, and a generated record would answer first and take the name over: rename the publish", zonePath, strings.Join(clash, ", "))
+	}
+	return nil
 }
