@@ -117,61 +117,86 @@ func renderSSO(r Result) string {
 	return b.String()
 }
 
-type aclRule struct {
-	port   int
-	labels []string
+// ACLRule is one ingress rule the join derives for an ACL: the ingress helper's addresses may reach one port of the apps behind it.
+type ACLRule struct {
+	Port    int
+	Sources string   // the ingress helper's addresses as an Incus ACL rule takes them: address/32, comma-separated
+	Labels  []string // the publishes this rule covers, sorted
 }
 
-// renderACL is, for every ACL a published app's bridge carries, one rule per port: the ingress helper (from the addresses of its mesh and public legs, the
-// platform-bridge addresses) may reach it. Several publishes of one port collapse into one rule, and the rule's description says which. A publish whose network is not declared
-// in the files given has no ACL to show and is left out (a warning already said so).
-func renderACL(r Result) string {
-	byACL := map[string]map[int]*aclRule{}
+// Description is what the rule says about itself in `incus network acl show`.
+func (a ACLRule) Description() string {
+	return "ingress helper publishes " + strings.Join(a.Labels, ", ")
+}
+
+// ACLRuleSet is everything the join derives for one ACL: the networks it is found from and its rules, by port.
+type ACLRuleSet struct {
+	ACL      string
+	Networks []string
+	Rules    []ACLRule
+}
+
+// ACLRules is the `acl` rendering as data: for each ACL that an app with a publish sits behind, the rules that admit the ingress helper. It is
+// what renderACL writes as text and what the derive stage fills into an ACL that asks for its rules to be derived, so the two cannot differ.
+func ACLRules(r Result) []ACLRuleSet {
+	byACL := map[string]map[int]*ACLRule{}
 	nets := map[string]map[string]bool{}
 	for _, p := range r.Published {
 		if p.ACL == "" {
 			continue
 		}
 		if byACL[p.ACL] == nil {
-			byACL[p.ACL] = map[int]*aclRule{}
+			byACL[p.ACL] = map[int]*ACLRule{}
 			nets[p.ACL] = map[string]bool{}
 		}
 		nets[p.ACL][p.Network] = true
 		rule := byACL[p.ACL][p.Offer.Port]
 		if rule == nil {
-			rule = &aclRule{port: p.Offer.Port}
+			rule = &ACLRule{Port: p.Offer.Port}
 			byACL[p.ACL][p.Offer.Port] = rule
 		}
-		rule.labels = append(rule.labels, p.Label)
+		rule.Labels = append(rule.Labels, p.Label)
 	}
-	names := make([]string, 0, len(byACL))
-	for n := range byACL {
-		names = append(names, n)
-	}
-	sort.Strings(names)
 	masked := make([]string, len(r.Sources))
 	for i, a := range r.Sources {
 		masked[i] = a + "/32"
 	}
 	sources := strings.Join(masked, ",") // an Incus ACL rule takes a comma-separated list of sources
-	var b strings.Builder
+	names := make([]string, 0, len(byACL))
+	for n := range byACL {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	out := make([]ACLRuleSet, 0, len(names))
 	for _, n := range names {
+		set := ACLRuleSet{ACL: n}
+		for nw := range nets[n] {
+			set.Networks = append(set.Networks, nw)
+		}
+		sort.Strings(set.Networks)
 		ports := make([]int, 0, len(byACL[n]))
 		for port := range byACL[n] {
 			ports = append(ports, port)
 		}
 		sort.Ints(ports)
-		var ns []string
-		for nw := range nets[n] {
-			ns = append(ns, nw)
-		}
-		sort.Strings(ns)
-		fmt.Fprintf(&b, "# network-acl %s (network %s)\ningress:\n", n, strings.Join(ns, ", "))
 		for _, port := range ports {
 			rule := byACL[n][port]
-			sort.Strings(rule.labels)
-			fmt.Fprintf(&b, "  - {action: allow, source: %s, protocol: tcp, destination_port: \"%d\", state: enabled, description: \"ingress helper publishes %s\"}\n",
-				sources, port, strings.Join(rule.labels, ", "))
+			sort.Strings(rule.Labels)
+			rule.Sources = sources
+			set.Rules = append(set.Rules, *rule)
+		}
+		out = append(out, set)
+	}
+	return out
+}
+
+func renderACL(r Result) string {
+	var b strings.Builder
+	for _, set := range ACLRules(r) {
+		fmt.Fprintf(&b, "# network-acl %s (network %s)\ningress:\n", set.ACL, strings.Join(set.Networks, ", "))
+		for _, rule := range set.Rules {
+			fmt.Fprintf(&b, "  - {action: allow, source: %s, protocol: tcp, destination_port: \"%d\", state: enabled, description: \"%s\"}\n",
+				rule.Sources, rule.Port, rule.Description())
 		}
 	}
 	return b.String()

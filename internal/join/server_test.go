@@ -324,3 +324,35 @@ func TestAnUnmanagedBridgeIsNotANetworkTheJoinCanFindAnAclOn(t *testing.T) {
 		t.Errorf("findings: %v", res.Findings)
 	}
 }
+
+func TestOverlayLetsTheStackWin(t *testing.T) {
+	base := []Stack{{Name: "server", Resources: []resolve.Resource{
+		{Kind: resolve.KindInstance, Name: "a", Project: "p", Config: map[string]string{"from": "server"}},
+		{Kind: resolve.KindInstance, Name: "b", Project: "p"},
+		{Kind: resolve.KindNetwork, Name: "n", Config: map[string]string{"from": "server"}},
+	}}}
+	over := []Stack{{Name: "mine", Resources: []resolve.Resource{
+		{Kind: resolve.KindInstance, Name: "a", Project: "p", Config: map[string]string{"from": "mine"}},
+		{Kind: resolve.KindNetwork, Name: "n", Config: map[string]string{"from": "mine"}},
+	}}}
+	got := Overlay(base, over)
+	count := map[string]int{}
+	for _, s := range got {
+		for _, r := range s.Resources {
+			count[string(r.Kind)+"/"+r.Name]++
+			if r.Name == "a" || r.Name == "n" {
+				if r.Config["from"] != "mine" {
+					t.Errorf("%s/%s came from the server", r.Kind, r.Name)
+				}
+			}
+		}
+	}
+	for k, n := range count {
+		if n != 1 {
+			t.Errorf("%s appears %d times", k, n)
+		}
+	}
+	if count["instance/b"] != 1 {
+		t.Error("what the stack does not declare stays")
+	}
+}

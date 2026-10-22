@@ -324,6 +324,12 @@ type Resource struct {
 	Ingress []api.NetworkACLRule
 	Egress  []api.NetworkACLRule
 
+	// DeriveIngress (network-ACL-only) says the ingress rules are not written here: tink works them out from the publishes whose apps sit on a
+	// network that attaches this ACL, and fills Ingress before the stack is planned (internal/derive). The direction is then always declared, an
+	// empty list when nothing is published, so a publish that is removed takes its rule with it; written by hand, a missing `ingress:` would leave
+	// the rule in place. Mutually exclusive with Ingress.
+	DeriveIngress bool
+
 	Config  map[string]string
 	Devices map[string]map[string]string
 

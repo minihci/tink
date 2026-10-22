@@ -32,6 +32,7 @@ var fieldOwners = map[string][]Kind{
 	"AllowDisruption": {KindNetwork},
 	"Ingress":         {KindNetworkACL},
 	"Egress":          {KindNetworkACL},
+	"DeriveIngress":   {KindNetworkACL},
 	"Devices":         {KindProfile, KindInstance},
 	"Defaults":        {KindStack},
 	"Instance":        {KindFile, KindExec, KindPublish},

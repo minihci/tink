@@ -51,6 +51,9 @@ type yamlResource struct {
 	Ingress []api.NetworkACLRule `yaml:"ingress"`
 	Egress  []api.NetworkACLRule `yaml:"egress"`
 
+	// DeriveIngress -- see Resource.DeriveIngress.
+	DeriveIngress bool `yaml:"derive_ingress"`
+
 	// Storage-volume-only -- see backupext.VolumeBackup.
 	Backup *yamlBackup `yaml:"backup"`
 
@@ -407,6 +410,7 @@ func (d yamlResource) toResource(dir string) (Resource, error) {
 		AllowDisruption: d.AllowDisruption,
 		Ingress:         d.Ingress,
 		Egress:          d.Egress,
+		DeriveIngress:   d.DeriveIngress,
 		Config:          d.Config,
 		Devices:         d.Devices,
 		Instance:        d.Instance,

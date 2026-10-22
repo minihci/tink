@@ -33,6 +33,51 @@ const ServerStackName = "server"
 //
 // Build and the renderers are unchanged: the result is a []Stack like the file-based one, with every resource in its place.
 func FromServer(server incus.InstanceServer) ([]Stack, error) {
+	return readServer(server, false)
+}
+
+// PlatformFromServer reads only the platform from the server: the helpers (the instances that state a role), the profiles and the managed networks,
+// and no publish at all. It is what the derive stage joins a stack's own declarations to: the stack brings its apps and its publishes, and the
+// server brings the ingress helper's legs and addresses. Another stack's apps and stamps are not read, so a fault in one of them cannot stop this
+// stack from being planned.
+func PlatformFromServer(server incus.InstanceServer) ([]Stack, error) {
+	return readServer(server, true)
+}
+
+// Overlay puts over on top of base: the result holds every resource of over, and every resource of base that over does not declare (the same kind,
+// project and name). It is a stack-wins merge, so a stack being planned replaces the server's copy of what it declares, and Build, which refuses an
+// instance declared twice, sees each once.
+func Overlay(base, over []Stack) []Stack {
+	type id struct {
+		kind          resolve.Kind
+		project, name string
+	}
+	idOf := func(r resolve.Resource) id {
+		if r.Kind == resolve.KindNetwork || r.Kind == resolve.KindNetworkACL {
+			return id{r.Kind, "", r.Name} // server-global
+		}
+		return id{r.Kind, projectOf(r), r.Name}
+	}
+	taken := map[id]bool{}
+	for _, s := range over {
+		for _, r := range s.Resources {
+			taken[idOf(r)] = true
+		}
+	}
+	out := make([]Stack, 0, len(base)+len(over))
+	for _, s := range base {
+		kept := Stack{Name: s.Name}
+		for _, r := range s.Resources {
+			if !taken[idOf(r)] {
+				kept.Resources = append(kept.Resources, r)
+			}
+		}
+		out = append(out, kept)
+	}
+	return append(out, over...)
+}
+
+func readServer(server incus.InstanceServer, platformOnly bool) ([]Stack, error) {
 	insts, err := server.GetInstancesAllProjects(api.InstanceTypeAny)
 	if err != nil {
 		return nil, fmt.Errorf("listing the instances of every project: %w", err)
@@ -63,10 +108,16 @@ func FromServer(server incus.InstanceServer) ([]Stack, error) {
 	var rs []resolve.Resource
 	var bad []StampProblem
 	for _, in := range insts {
+		if platformOnly && strings.TrimSpace(in.Config[roleKey]) == "" {
+			continue
+		}
 		rs = append(rs, resolve.Resource{
 			Kind: resolve.KindInstance, Name: in.Name, Project: in.Project,
 			Config: copyStrings(in.Config), Devices: copyDevices(in.Devices), Profiles: append([]string(nil), in.Profiles...),
 		})
+		if platformOnly {
+			continue
+		}
 		keys := make([]string, 0)
 		for k := range in.Config {
 			if strings.HasPrefix(k, resolve.PublishStampPrefix) {

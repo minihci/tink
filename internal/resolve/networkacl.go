@@ -86,6 +86,9 @@ func validateNetworkACL(r Resource) error {
 			return fmt.Errorf("resource %q: config has an empty key", r.Name)
 		}
 	}
+	if r.DeriveIngress && r.Ingress != nil {
+		return fmt.Errorf("resource %q: derive_ingress and ingress: are exclusive: either tink works the ingress rules out from the publishes, or you write them", r.Name)
+	}
 	if err := validateACLRules(r.Name, "ingress", r.Ingress); err != nil {
 		return err
 	}

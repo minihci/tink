@@ -123,6 +123,25 @@ The reason: Incus applies these as a live change to its own firewall chains, not
 - **A direction you declare is the whole list for it.** A live rule the stack does not list is removed on apply: a stale `allow` left in a firewall is the drift this kind exists to catch. A direction you leave out (no `ingress:` at all) is **not managed** and its live rules are untouched; `ingress: []` declares "none". This is a different thing from deleting an ACL, which tink does not do. **[lab]** A rule added to a live ACL by hand was named by `plan` as `remove`, apply removed it, and the next plan said `no changes`.
 - **A rule has no identity of its own** in Incus, so there is no "this rule changed" beyond the fields that differ at a position.
 
+## Rules derived from the publishes
+
+**Status: built (the first piece of the derive stage, #177 and #130); unit-tested, and run on a local Incus 7.5.1 server on 2026-10-22 (L-2026-10-21b).** Six stacks with a bridge and an ACL each were brought up from nothing with `derive_ingress: true`, all 32 checks of the herd test passed, a second plan said no changes, and removing a publish removed its rule.
+
+```yaml
+kind: network-acl
+name: tink-vault-in
+description: only the ingress helper may reach the vault app
+derive_ingress: true          # the ingress rules are not written here
+```
+
+With `derive_ingress: true` the ingress rules are not written in the file; `tink plan` and `tink plan apply` work them out before anything is planned (`internal/derive`, the fifth pass of `prepare`) and then treat them as if they had been written. They are the `acl` rendering of `tink join` ([join.md](join.md)): for each app of the stack that a `kind: publish` shows, one rule that lets the ingress helper's addresses reach the app's port, on the ACL attached to the network the app's NIC is on. Several publishes of one port are one rule. `plan` says what it derived: `network-acl/tink-vault-in: 1 ingress rule(s) derived from the publishes vault`.
+
+- **The direction is always declared.** An ACL that nothing is published through gets `ingress: []`, not a missing list. A missing list means "not managed", so a publish that was removed would leave its rule in the firewall; this way the rule goes with the publish (the herd test removed one: the route, the sign-on rule, the dns record, the stamp and the rule were all gone, and the other names kept answering).
+- **It reads the platform from the server and the apps from the stack.** The ingress helper's legs and addresses, the dns and sign-on helpers, and the profiles come from the server (the instances that state a role, with the publishes left out); the stack's own instances, networks and publishes come from the files and win over the server's copy. Another stack's apps are not read, so a fault in one of them cannot stop this stack from being planned. The platform has to be applied first: with no ingress helper on the server there is nothing to derive from, and `plan` fails and names what is missing (the join's findings that are errors).
+- **A network that two stacks use should not name such an ACL in only one of them.** The rules are those of the stack being planned, and the other stack's rules would be removed as stale. Give each stack its own bridge (#177), or write the rules.
+- **Exclusive with `ingress:`.** Writing both is a load error. `egress:` is not derived and is written as usual.
+- **Only the ingress rules.** The bridge, the address on the app's NIC and the attaching of the ACL are still written by hand; they are the rest of #177.
+
 ## Checked when the file is loaded
 
 An invalid value fails before anything is read from the server, naming the resource and the rule: `resource "svclab0-in": ingress rule 1: action "permit" is not one of: allow, allow-stateless, drop, reject`.

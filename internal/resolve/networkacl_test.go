@@ -187,6 +187,8 @@ func TestLoadFile_NetworkACLRejectedForms(t *testing.T) {
 		{"the same rule twice, one spelling the state out", "kind: network-acl\nname: a\ningress:\n  - {action: allow}\n  - {action: allow, state: enabled}\n", "repeats rule 0"},
 		{"unknown rule field", "kind: network-acl\nname: a\ningress:\n  - {action: allow, port: 80}\n", "not found in type"},
 		{"unknown resource field", "kind: network-acl\nname: a\nrules: []\n", "not found in type"},
+		{"derive_ingress with rules written", "kind: network-acl\nname: a\nderive_ingress: true\ningress: []\n", "exclusive"},
+		{"derive_ingress on a network", "kind: network\nname: a\nderive_ingress: true\n", "derive_ingress"},
 		{"type is not a field", "kind: network-acl\nname: a\ntype: bridge\n", "not found in type"},
 		{"allow_disruption is the network's", "kind: network-acl\nname: a\nallow_disruption: true\n", `does not use field "AllowDisruption"`},
 		{"pool is not an ACL field", "kind: network-acl\nname: a\npool: default\n", `does not use field "Pool"`},
@@ -945,5 +947,17 @@ func TestRecipe_TheDocsExampleReproducesTheLabRecipeAndConverges(t *testing.T) {
 	}
 	if len(server.created) != 1 || len(server.updated) != 0 || len(server.netServer.updated) != 1 {
 		t.Errorf("second apply wrote again: %d ACL creates, %d ACL updates, %d network updates", len(server.created), len(server.updated), len(server.netServer.updated))
+	}
+}
+
+// derive_ingress is only a marker at load: the rules are filled in by internal/derive before the stack is planned. A marked ACL carries no rules of
+// its own here, which is how a plan of a stack that was not prepared (a test, a command that never derives) can tell it from one declared empty.
+func TestLoadFile_NetworkACLDeriveIngress(t *testing.T) {
+	rs, err := LoadFile(writeTemp(t, "kind: network-acl\nname: a-in\nderive_ingress: true\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rs) != 1 || !rs[0].DeriveIngress || rs[0].Ingress != nil {
+		t.Errorf("got %+v, want a marked ACL with no ingress list", rs)
 	}
 }

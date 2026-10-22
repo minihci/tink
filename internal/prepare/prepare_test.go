@@ -52,6 +52,11 @@ func (r *recorder) steps() steps {
 			r.calls = append(r.calls, "connect")
 			return nil, nil
 		},
+		derive: func(server incus.InstanceServer, rs []resolve.Resource) ([]string, error) {
+			note("derive", rs)
+			mark(rs, "V")
+			return []string{"derived notice"}, nil
+		},
 		qualify: func(server incus.InstanceServer, rs []resolve.Resource) ([]string, error) {
 			note("qualify", rs)
 			mark(rs, "Q")
@@ -74,18 +79,18 @@ func TestPassesRunInOrderEachSeeingWhatTheLastLeft(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"load", "defaults", "secrets", "connect", "qualify", "levels"}; !reflect.DeepEqual(r.calls, want) {
+	if want := []string{"load", "defaults", "secrets", "connect", "derive", "qualify", "levels"}; !reflect.DeepEqual(r.calls, want) {
 		t.Fatalf("passes ran as %v, want %v", r.calls, want)
 	}
-	for pass, want := range map[string]string{"defaults": "L", "secrets": "LD", "qualify": "LDS", "levels": "LDSQ"} {
+	for pass, want := range map[string]string{"defaults": "L", "secrets": "LD", "derive": "LDS", "qualify": "LDSV", "levels": "LDSVQ"} {
 		if seen := r.seen[pass]; len(seen) != 1 || seen[0] != want {
 			t.Errorf("%s was handed %v, want a resource marked %q", pass, seen, want)
 		}
 	}
-	if len(got.Levels) != 1 || got.Levels[0][0].Description != "LDSQ" || got.Resources[0].Description != "LDSQ" {
+	if len(got.Levels) != 1 || got.Levels[0][0].Description != "LDSVQ" || got.Resources[0].Description != "LDSVQ" {
 		t.Errorf("result = %+v", got)
 	}
-	if want := []string{"first notice", "second notice"}; !reflect.DeepEqual(notices, want) {
+	if want := []string{"derived notice", "first notice", "second notice"}; !reflect.DeepEqual(notices, want) {
 		t.Errorf("notices = %v, want %v", notices, want)
 	}
 }
@@ -93,7 +98,7 @@ func TestPassesRunInOrderEachSeeingWhatTheLastLeft(t *testing.T) {
 // Each failure stops the passes after it, and the ones before it have run.
 func TestAFailingPassStopsTheRest(t *testing.T) {
 	boom := errors.New("boom")
-	order := []string{"load", "defaults", "secrets", "connect", "qualify", "levels"}
+	order := []string{"load", "defaults", "secrets", "connect", "derive", "qualify", "levels"}
 	for i, pass := range order {
 		r := &recorder{}
 		s := r.steps()
@@ -107,6 +112,8 @@ func TestAFailingPassStopsTheRest(t *testing.T) {
 			s.secrets = func([]resolve.Resource, Request) ([]resolve.Resource, error) { fail(); return nil, boom }
 		case "connect":
 			s.connect = func(string) (incus.InstanceServer, error) { fail(); return nil, boom }
+		case "derive":
+			s.derive = func(incus.InstanceServer, []resolve.Resource) ([]string, error) { fail(); return nil, boom }
 		case "qualify":
 			s.qualify = func(incus.InstanceServer, []resolve.Resource) ([]string, error) { fail(); return nil, boom }
 		case "levels":
@@ -138,8 +145,8 @@ func TestNoticesAreSaidEvenWhenALaterPassFails(t *testing.T) {
 	if _, err := prepare(Request{Notice: func(l string) { notices = append(notices, l) }}, s); err == nil {
 		t.Fatal("expected the error")
 	}
-	if len(notices) != 2 {
-		t.Errorf("notices = %v, want both", notices)
+	if len(notices) != 3 {
+		t.Errorf("notices = %v, want all three (the derived one and the two about images)", notices)
 	}
 }
 
@@ -277,5 +284,24 @@ func TestSecretsAreNotOpenedWhenNothingReferencesThem(t *testing.T) {
 	got, err := expandSecrets(rs, Request{SecretStore: "/nonexistent/secrets.yaml"})
 	if err != nil || len(got) != 1 {
 		t.Errorf("got %v, %v", got, err)
+	}
+}
+
+// The derive pass reads the resources the secrets pass left and the graph reads what it leaves, so a derived value is planned as if it had been
+// written; with the real pass and a stack that asks for nothing, it does not touch the server (here there is none).
+func TestTheRealDerivePassAsksNothingOfAStackThatWantsNothing(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "stack.yaml")
+	if err := os.WriteFile(file, []byte(stackFile), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := defaultSteps()
+	s.connect = func(string) (incus.InstanceServer, error) { return nil, nil }
+	s.qualify = func(incus.InstanceServer, []resolve.Resource) ([]string, error) { return nil, nil }
+	var notices []string
+	if _, err := prepare(Request{Files: []string{file}, Notice: func(l string) { notices = append(notices, l) }}, s); err != nil {
+		t.Fatal(err)
+	}
+	if len(notices) != 0 {
+		t.Errorf("notices = %v, want none", notices)
 	}
 }
