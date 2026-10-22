@@ -115,3 +115,27 @@ func TestPlanOptionsCarryTheStackNameFromTheFullStack(t *testing.T) {
 		t.Errorf("a level planned on its own keeps the stack's name: %+v", o)
 	}
 }
+
+func TestLoadFile_StackNetwork(t *testing.T) {
+	rs, err := LoadFile(writeTemp(t, "kind: stack\nname: blog\nnetwork: own\nnetwork_pool: 203.0.113.0/24\nnetwork_prefix: 27\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rs) != 1 || rs[0].Network != StackNetworkOwn || rs[0].NetworkPool != "203.0.113.0/24" || rs[0].NetworkPrefix != 27 {
+		t.Errorf("got %+v", rs)
+	}
+	for name, c := range map[string]struct{ yaml, want string }{
+		"a value that is not own":        {"kind: stack\nname: a\nnetwork: lan0\n", `only value is "own"`},
+		"a pool with no network: own":    {"kind: stack\nname: a\nnetwork_pool: 10.0.0.0/8\n", "need network: own"},
+		"a prefix with no network: own":  {"kind: stack\nname: a\nnetwork_prefix: 24\n", "need network: own"},
+		"a pool that is not a range":     {"kind: stack\nname: a\nnetwork: own\nnetwork_pool: nowhere\n", "not an IPv4 range"},
+		"a pool with host bits":          {"kind: stack\nname: a\nnetwork: own\nnetwork_pool: 10.1.2.3/8\n", "host bits"},
+		"a prefix longer than a /29":     {"kind: stack\nname: a\nnetwork: own\nnetwork_prefix: 30\n", "between"},
+		"a prefix shorter than the pool": {"kind: stack\nname: a\nnetwork: own\nnetwork_pool: 10.0.0.0/16\nnetwork_prefix: 8\n", "between"},
+		"network_pool on an instance":    {"kind: instance\nname: a\nimage: x\nnetwork_pool: 10.0.0.0/8\n", "NetworkPool"},
+	} {
+		if _, err := LoadFile(writeTemp(t, c.yaml)); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: err = %v, want it to contain %q", name, err, c.want)
+		}
+	}
+}

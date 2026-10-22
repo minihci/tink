@@ -63,6 +63,37 @@ A `project:` is a load error: networks are server-global unless a project has `f
 
 A NIC's `network:` (on an instance or on a profile) is an ordering edge **when the network is in the stack**: the bridge is created before the profile or instance that names it. A NIC naming a network the stack does not declare (`incusbr0`) stays lenient, because it may exist on the server already, the same as a profile or a volume source. The same holds for an ACL named in a bridge's `security.acls`: the ACL is created first ([`network-acl.md`](network-acl.md)).
 
+## A bridge of the stack's own
+
+**Status: built (the second piece of the derive stage, #177); unit-tested, and run on a local Incus 7.5.1 server on 2026-10-22 (L-2026-10-21b).** Six stacks, each with `network: own` and no network, ACL, NIC or address written, were brought up from nothing; the 32 checks of the herd test passed, a second plan of every stack said no changes, and the stacks' names, routes and sign-on rules were rendered by `tink join --from-server` from what the stacks had made.
+
+```yaml
+kind: stack
+name: blog
+network: own          # optional: network_pool: 203.0.113.0/24, network_prefix: 27
+```
+
+For a stack that says `network: own`, `tink plan` (the fifth pass of `prepare`, `internal/derive`) adds, before anything is planned:
+
+- **A `kind: network`** named `tink-` and up to ten characters of the stack's name (a longer name is cut to five characters and a short hash, so the whole fits an interface name), with a subnet, `ipv4.nat: "true"`, `ipv6.address: none`, a DHCP range, and the ACL below attached.
+- **A `kind: network-acl`** named after the bridge with `-in`, that derives its ingress rules from the publishes ([network-acl.md](network-acl.md#rules-derived-from-the-publishes)).
+- **A NIC on the bridge** for each instance that names no network. An instance with no NIC gets `eth0`; a NIC device with no network and no parent (what `defaults:` leaves) gets the bridge. A NIC that names a network, or has an address, is left as written.
+- **A static address** on that NIC for each instance that has an offer (`user.tink.offer.*`), because the proxy and the ACL name the app by address.
+
+Whatever the stack writes itself wins: a `kind: network` or `kind: network-acl` of those names is used as it is.
+
+**Where the numbers come from.** The subnet is chosen by tink, not by Incus's `auto`, because an address has to be in the plan before the bridge exists. It is a `network_prefix` (default /24) out of `network_pool` (default 10.0.0.0/8), starting at the place a hash of the stack's name points at and moving on past every subnet any network on the server already holds. The subnet is divided as the bridge is made: the gateway, then a run of static addresses (a quarter of the hosts, at least four), then the DHCP range for the rest, so a lease handed out later never lands on an address tink allocated. An app's address is the lowest free one in that run, below every static address any NIC on the server holds (every project is read, because Incus refuses a duplicate across projects).
+
+**Nothing is remembered but on the objects.** Once the bridge exists its address is read back from the server and never chosen again, and an instance that already has an address on the server keeps it, so a second plan says no changes. Several stacks get different subnets.
+
+**Refusals.** A network of that name that belongs to another stack (its `user.tink.stack` stamp), that Incus does not manage, or that has no IPv4 address; a pool with no free subnet; a subnet with no free static address. Each says what to change.
+
+**Limits.**
+- tink cannot see the host's own routes or the LAN's range. A pool that overlaps them is the person's to move (`network_pool`).
+- `tink join FILE...` reads the files, which do not hold what was derived; use `tink join --from-server` after `plan apply`.
+- Not here: several bridges in one stack (write them with `kind: network`), a bridge shared between stacks, OVN, and deleting a bridge.
+- **A host firewall that does not trust unknown interfaces** needs a rule once for the `tink-*` prefix, or the bridge's instances get no DHCP or DNS (#177). tink never changes the host's firewall. On firewalld, one zone entry for `tink-+` was enough for six bridges that did not exist when it was added.
+
 ## Adopting a bridge you already have
 
 Declare it with the keys you care about and run `plan`: it should say `no changes`, and if it does not it shows exactly which declared key differs, before anything is written. Declare few keys at first, and leave `raw.dnsmasq` and the like out until you want tink to own them. A bridge with instances on it is protected by the disruption guard even if a later edit changes a key.

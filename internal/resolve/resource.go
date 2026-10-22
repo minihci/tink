@@ -151,6 +151,12 @@ type Resource struct {
 	Timezone string
 	Remotes  []string
 
+	// Stack-only (see stacknetwork.go and internal/derive): `network: own` asks tink to give the stack a bridge of its own, an ACL on it, and the
+	// static address of each app that is published. Network is "own" or empty on a stack. NetworkPool is the range the bridge's subnet is taken from
+	// (an IPv4 CIDR; default DefaultNetworkPool) and NetworkPrefix the length of that subnet (default DefaultNetworkPrefix); both need network: own.
+	NetworkPool   string
+	NetworkPrefix int
+
 	// File-only: push Content to Path inside the named Instance.
 	Instance string
 	Path     string

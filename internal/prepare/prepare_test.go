@@ -52,10 +52,10 @@ func (r *recorder) steps() steps {
 			r.calls = append(r.calls, "connect")
 			return nil, nil
 		},
-		derive: func(server incus.InstanceServer, rs []resolve.Resource) ([]string, error) {
+		derive: func(server incus.InstanceServer, rs []resolve.Resource) ([]resolve.Resource, []string, error) {
 			note("derive", rs)
 			mark(rs, "V")
-			return []string{"derived notice"}, nil
+			return rs, []string{"derived notice"}, nil
 		},
 		qualify: func(server incus.InstanceServer, rs []resolve.Resource) ([]string, error) {
 			note("qualify", rs)
@@ -113,7 +113,10 @@ func TestAFailingPassStopsTheRest(t *testing.T) {
 		case "connect":
 			s.connect = func(string) (incus.InstanceServer, error) { fail(); return nil, boom }
 		case "derive":
-			s.derive = func(incus.InstanceServer, []resolve.Resource) ([]string, error) { fail(); return nil, boom }
+			s.derive = func(incus.InstanceServer, []resolve.Resource) ([]resolve.Resource, []string, error) {
+				fail()
+				return nil, nil, boom
+			}
 		case "qualify":
 			s.qualify = func(incus.InstanceServer, []resolve.Resource) ([]string, error) { fail(); return nil, boom }
 		case "levels":

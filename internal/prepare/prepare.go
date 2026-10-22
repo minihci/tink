@@ -13,8 +13,8 @@
 //     default is never a surprise to a later pass. It needs no server, so a bad `defaults:` fails before a connection is made;
 //  3. expand ${secret:NAME} references, so nothing after this point sees a reference, and nothing before it holds a value;
 //  4. connect to the server, once, for everything that follows (the commands reuse the connection for planning or applying);
-//  5. derive what the stack leaves to tink (internal/derive), which needs the server's view of the platform: today the ingress rules of a network
-//     ACL that says derive_ingress. It comes before the graph is built, because the graph and every check read the derived values as if they had
+//  5. derive what the stack leaves to tink (internal/derive), which needs the server's view of the platform: a bridge of its own, its ACL and the
+//     static address of each published app for a stack that says `network: own`, then the ingress rules of every ACL that says derive_ingress. It comes before the graph is built, because the graph and every check read the derived values as if they had
 //     been written, and it reads no secret, so it can sit after the secrets pass;
 //  6. qualify each instance's image the way Incus resolves it, which needs the server and must come before the graph is built;
 //  7. build the dependency levels (resolve.Levels), which applies the passes inside the resolver in their own fixed order.
@@ -82,7 +82,7 @@ type steps struct {
 	defaults func(resources []resolve.Resource) ([]resolve.Resource, error)
 	secrets  func(resources []resolve.Resource, req Request) ([]resolve.Resource, error)
 	connect  func(socket string) (incus.InstanceServer, error)
-	derive   func(server incus.InstanceServer, resources []resolve.Resource) ([]string, error)
+	derive   func(server incus.InstanceServer, resources []resolve.Resource) ([]resolve.Resource, []string, error)
 	qualify  func(server incus.InstanceServer, resources []resolve.Resource) ([]string, error)
 	levels   func(resources []resolve.Resource) ([][]resolve.Resource, error)
 }
@@ -93,7 +93,7 @@ func defaultSteps() steps {
 		defaults: resolve.ApplyDefaults,
 		secrets:  expandSecrets,
 		connect:  incusapi.Connect,
-		derive:   derive.ACLRules,
+		derive:   derive.Run,
 		qualify:  resolve.QualifyImages,
 		levels:   resolve.Levels,
 	}
@@ -116,7 +116,7 @@ func prepare(req Request, s steps) (*Prepared, error) {
 		return nil, fmt.Errorf("connecting to incus: %w", err)
 	}
 	// before the graph is built, and before the images are qualified: it fills values that the graph and the checks must see as written
-	derived, err := s.derive(server, resources)
+	resources, derived, err := s.derive(server, resources)
 	if err != nil {
 		return nil, err
 	}
