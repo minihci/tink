@@ -46,7 +46,8 @@ func PlatformFromServer(server incus.InstanceServer) ([]Stack, error) {
 
 // Overlay puts over on top of base: the result holds every resource of over, and every resource of base that over does not declare (the same kind,
 // project and name). It is a stack-wins merge, so a stack being planned replaces the server's copy of what it declares, and Build, which refuses an
-// instance declared twice, sees each once.
+// instance declared twice, sees each once. A publish the server holds for an instance the overlay declares is dropped with it: the overlay is the
+// word on which names that instance shows.
 func Overlay(base, over []Stack) []Stack {
 	type id struct {
 		kind          resolve.Kind
@@ -59,18 +60,28 @@ func Overlay(base, over []Stack) []Stack {
 		return id{r.Kind, projectOf(r), r.Name}
 	}
 	taken := map[id]bool{}
+	declared := map[id]bool{} // the instances the overlay declares: it is also the word on which names they show
 	for _, s := range over {
 		for _, r := range s.Resources {
 			taken[idOf(r)] = true
+			if r.Kind == resolve.KindInstance {
+				declared[id{resolve.KindInstance, projectOf(r), r.Name}] = true
+			}
 		}
 	}
 	out := make([]Stack, 0, len(base)+len(over))
 	for _, s := range base {
 		kept := Stack{Name: s.Name}
 		for _, r := range s.Resources {
-			if !taken[idOf(r)] {
-				kept.Resources = append(kept.Resources, r)
+			if taken[idOf(r)] {
+				continue
 			}
+			// a publish the server holds for an instance the overlay declares is a stamp of an older version of it: if the overlay still
+			// publishes the name it brings it, and if it does not, the name is gone
+			if r.Kind == resolve.KindPublish && declared[id{resolve.KindInstance, projectOf(r), r.Instance}] {
+				continue
+			}
+			kept.Resources = append(kept.Resources, r)
 		}
 		out = append(out, kept)
 	}

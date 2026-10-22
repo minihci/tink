@@ -160,7 +160,12 @@ type Resource struct {
 	// File-only: push Content to Path inside the named Instance.
 	Instance string
 	Path     string
-	Content  string
+
+	// Derive (file-only) names a rendering of the join that tink writes into Content before the stack is planned (internal/derive): DeriveCaddy
+	// for the proxy's routes, DeriveSSO for the sign-on helper's rules. Content (or source_path) is the file around it, and holds a region marked
+	// DeriveBegin and DeriveEnd, which is replaced; see FillDerived.
+	Derive  string
+	Content string
 
 	// Restart controls whether converging this resource also restarts
 	// the instance it affects, for the cases where Incus doesn't apply

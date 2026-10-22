@@ -96,3 +96,62 @@ func ACLRules(server incus.InstanceServer, resources []resolve.Resource) ([]stri
 	}
 	return notices, nil
 }
+
+// DerivedFiles fills the region of every `kind: file` that says derive: with the join's rendering of the names the site publishes (docs/join.md,
+// "Derived files"): the proxy's routes for derive: caddy, the sign-on helper's rules for derive: sso.
+//
+// Unlike the ACL of one stack, a file at the site's door shows every name the site publishes, and those are declared in many stacks. So the
+// view is the whole server (every instance with its stored config, and every `kind: publish` as the stamps on the instances say it) with the
+// stack being planned laid over it, the stack winning. That makes the file follow the stacks that have been applied: a stack applied after the
+// site changes the file at the next `plan apply` of the site, and not before.
+//
+// It is as strict as the join is. A stamp that cannot be read, or anything the join reports as an error, stops the plan of the site and says what,
+// because a rendering with one name missing looks exactly like a complete one. The files that do not ask are left alone and the server is not read.
+func DerivedFiles(server incus.InstanceServer, resources []resolve.Resource) ([]string, error) {
+	var files []int
+	for i, r := range resources {
+		if r.Kind == resolve.KindFile && r.Derive != "" {
+			files = append(files, i)
+		}
+	}
+	if len(files) == 0 {
+		return nil, nil
+	}
+	onServer, err := join.FromServer(server)
+	if err != nil {
+		return nil, fmt.Errorf("deriving files: %w", err)
+	}
+	res := join.Build(join.Overlay(onServer, []join.Stack{{Name: "stack", Resources: resources}}))
+	if res.Errors() > 0 {
+		var lines []string
+		for _, f := range res.Findings {
+			if f.Severity == join.Error {
+				lines = append(lines, "  "+f.String())
+			}
+		}
+		return nil, fmt.Errorf("cannot derive the files of this stack from what the site publishes:\n%s", strings.Join(lines, "\n"))
+	}
+	labels := make([]string, 0, len(res.Published))
+	for _, p := range res.Published {
+		labels = append(labels, p.Label)
+	}
+	var notices []string
+	for _, i := range files {
+		r := &resources[i]
+		rendering := res.Caddy
+		if r.Derive == resolve.DeriveSSO {
+			rendering = res.SSO
+		}
+		content, err := resolve.FillDerived(r.Content, rendering)
+		if err != nil {
+			return nil, fmt.Errorf("file/%s: %w", r.Name, err)
+		}
+		r.Content = content
+		if len(labels) == 0 {
+			notices = append(notices, fmt.Sprintf("file/%s: no name is published, so the %s region is empty", r.Name, r.Derive))
+		} else {
+			notices = append(notices, fmt.Sprintf("file/%s: %s derived for %d published name(s): %s", r.Name, r.Derive, len(labels), strings.Join(labels, ", ")))
+		}
+	}
+	return notices, nil
+}
