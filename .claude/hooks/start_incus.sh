@@ -25,7 +25,7 @@ if incus info >/dev/null 2>&1 && [ -d /sys/fs/cgroup/unified ] && [ ! -e /sys/fs
   pgrep -f '[i]ncus_reaper.sh' >/dev/null || setsid nohup bash "$(dirname "$0")/incus_reaper.sh" >/tmp/incus-reaper.log 2>&1 </dev/null &
 fi
 # Bridged traffic is passed through netfilter here (net.bridge.bridge-nf-call-iptables=1), which makes the ACL tink derives for `network: own`
-# reject traffic between the apps of one stack (a WordPress cannot reach its own database). Turn it off until tink allows a stack's own subnet.
+# reject traffic between the apps of one stack (a WordPress cannot reach its own database). Turn it off until tink allows a stack's own subnet (minihci/tink#196).
 for k in iptables ip6tables; do
   [ -e /proc/sys/net/bridge/bridge-nf-call-$k ] && echo 0 >/proc/sys/net/bridge/bridge-nf-call-$k
 done
