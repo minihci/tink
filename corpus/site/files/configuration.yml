@@ -1,0 +1,60 @@
+# Authelia for the fixture. Every secret below is a made-up string for a throwaway site; none protects anything.
+theme: light
+
+server:
+  address: 'tcp://0.0.0.0:9091/'
+
+log:
+  level: info
+
+identity_validation:
+  reset_password:
+    jwt_secret: 'fixture-jwt-value-for-a-throwaway-site'
+
+authentication_backend:
+  file:
+    path: /app/users_database.yml
+
+access_control:
+  default_policy: deny
+  rules:
+    - domain: 'auth.home.example.org'
+      policy: bypass
+    # BEGIN tink join sso (written by paste.sh until the derive stage writes it)
+    - domain: 'blog.home.example.org'
+      policy: one_factor
+      subject: 'group:family'
+    - domain: 'metrics.home.example.org'
+      policy: one_factor
+      subject: 'group:admins'
+    - domain: 'qbittorrent.home.example.org'
+      policy: one_factor
+      subject: 'group:admins'
+    - domain: 'shop.home.example.org'
+      policy: one_factor
+      subject: 'group:family'
+    - domain: 'sonarr.home.example.org'
+      policy: one_factor
+      subject: 'group:admins'
+    - domain: 'status.home.example.org'
+      policy: one_factor
+      subject: 'group:admins'
+    - domain: 'vault.home.example.org'
+      policy: one_factor
+      subject: 'group:family'
+    # END tink join sso
+
+session:
+  secret: 'fixture-session-value-for-a-throwaway-site'
+  cookies:
+    - domain: 'home.example.org'
+      authelia_url: 'https://auth.home.example.org'
+
+storage:
+  encryption_key: 'fixture-storage-value-for-a-throwaway-site'
+  local:
+    path: /app/db.sqlite3
+
+notifier:
+  filesystem:
+    filename: /app/notification.txt

@@ -1,0 +1,90 @@
+# The herd stack "blog": WordPress with MySQL. Imported from the project's compose file with `tink import`; every line marked "site:" is the
+# site's half, written by hand until the derive stage (#177, #130) does it. "blog" and "shop" are the same compose file twice, so each has an
+# instance called `db`: on one bridge the second would be refused, on a bridge each both run.
+kind: stack
+name: blog
+project: herd-blog                          # site
+---
+kind: project                             # site
+name: herd-blog
+config:
+  features.profiles: "false"
+---
+kind: network-acl                         # site: the rules are the join's `acl` rendering, written in by paste.sh
+name: tink-blog-in
+description: only the ingress helper may reach the blog app
+ingress:
+  - {action: allow, source: 192.0.2.3/32, protocol: tcp, destination_port: "80", state: enabled, description: "ingress helper publishes blog"}
+---
+kind: network                             # site
+name: tink-blog
+description: the blog stack's bridge
+config:
+  ipv4.address: 203.0.113.33/27
+  ipv4.nat: "false"
+  ipv6.address: none
+  security.acls: tink-blog-in
+---
+kind: storage-volume
+name: db-data
+pool: default
+backup:                                   # site
+  none: "a throwaway fixture"
+---
+kind: storage-volume
+name: wordpress-data
+pool: default
+backup:                                   # site
+  none: "a throwaway fixture"
+---
+kind: instance
+name: wordpress
+image: wordpress
+profiles:
+  - default
+config:
+  boot.autorestart: "true"
+  boot.autostart: "true"
+  environment.WORDPRESS_DB_HOST: db
+  environment.WORDPRESS_DB_NAME: exampledb
+  environment.WORDPRESS_DB_PASSWORD: examplepass
+  environment.WORDPRESS_DB_USER: exampleuser
+  # site: the name the app is told it has, and that the proxy reached it over https (it would redirect to the wrong address otherwise)
+  # Incus refuses a line break in an environment variable, so the PHP is on one line.
+  environment.WORDPRESS_CONFIG_EXTRA: "define('WP_HOME', 'https://blog.home.example.org'); define('WP_SITEURL', 'https://blog.home.example.org'); if (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') { $_SERVER['HTTPS'] = 'on'; }"
+  user.tink.offer.web.port: "80"          # site
+  user.tink.offer.web.proto: http
+devices:
+  eth0: {name: eth0, type: nic, network: tink-blog, ipv4.address: 203.0.113.42}   # site
+  # (the compose file's host port 8080 is gone: the app is reached through the ingress helper)  # site
+  volume0:
+    type: disk
+    path: /var/www/html
+    pool: default
+    source: wordpress-data
+---
+kind: instance
+name: db
+image: mysql:8.0
+profiles:
+  - default
+config:
+  boot.autorestart: "true"
+  boot.autostart: "true"
+  environment.MYSQL_DATABASE: exampledb
+  environment.MYSQL_PASSWORD: examplepass
+  environment.MYSQL_RANDOM_ROOT_PASSWORD: "1"
+  environment.MYSQL_USER: exampleuser
+devices:
+  eth0: {name: eth0, type: nic, network: tink-blog}   # site: the bridge (a sibling needs no static address)
+  volume0:
+    type: disk
+    path: /var/lib/mysql
+    pool: default
+    source: db-data
+---
+kind: publish                             # site
+name: blog
+instance: wordpress
+offer: web
+allow: [family]

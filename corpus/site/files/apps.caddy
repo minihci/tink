@@ -1,0 +1,50 @@
+# The proxy routes for the published apps: the `caddy` rendering of `tink join`, written by paste.sh until the derive stage writes it.
+@blog host blog.home.example.org
+handle @blog {
+	import sso
+	reverse_proxy 203.0.113.42:80 {
+		import no_portal_cookie
+	}
+}
+@metrics host metrics.home.example.org
+handle @metrics {
+	import sso
+	reverse_proxy 203.0.113.138:3000 {
+		import no_portal_cookie
+	}
+}
+@qbittorrent host qbittorrent.home.example.org
+handle @qbittorrent {
+	import sso
+	reverse_proxy 203.0.113.107:8080 {
+		import no_portal_cookie
+	}
+}
+@shop host shop.home.example.org
+handle @shop {
+	import sso
+	reverse_proxy 203.0.113.74:80 {
+		import no_portal_cookie
+	}
+}
+@sonarr host sonarr.home.example.org
+handle @sonarr {
+	import sso
+	reverse_proxy 203.0.113.106:8989 {
+		import no_portal_cookie
+	}
+}
+@status host status.home.example.org
+handle @status {
+	import sso
+	reverse_proxy 203.0.113.10:3001 {
+		import no_portal_cookie
+	}
+}
+@vault host vault.home.example.org
+handle @vault {
+	import sso
+	reverse_proxy 198.51.100.10:80 {
+		import no_portal_cookie
+	}
+}
