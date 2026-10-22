@@ -1,6 +1,6 @@
 # The herd test's site
 
-The shared site the herd test (`../herd.md`) applies stacks to, and the six stacks of the first herd. A fixture, not the platform recipe (#131): the addresses and the zone are documentation values, certificates come from Caddy's own local CA, and the site's one user is a throwaway.
+The shared site the herd test (`../herd.md`) applies stacks to, and the six stacks of the first herd. A fixture, not the platform recipe (#131): the zone is a documentation value and the platform bridge's subnet is picked by Incus, so no address is written down here, certificates come from Caddy's own local CA, and the site's one user is a throwaway.
 
 ```
 TINK=./tink corpus/site/herd.sh up       # the site, the six stacks, then the site again
@@ -11,11 +11,17 @@ corpus/site/herd.sh down                 # removes everything it made
 
 It runs on a local Incus server and touches the host in one place: on a host running firewalld it puts the platform bridge and every bridge named `tink-*` in the `trusted` zone of the running firewall (not permanent). That is one rule, added before any bridge exists, so tink creates the stacks' bridges from nothing and they get DHCP and DNS from the host (#177). With `SUDO_ASKPASS` set it asks through that. firewalld often makes a change and then does not answer, so the script asks the zone whether it took, tries again, and gives each call a time limit.
 
+## The platform bridge's subnet
+
+No address of the platform is in the repository. `herd.sh up` creates `herd0` with `ipv4.address=auto` if it does not exist, reads back the /24 Incus chose, and renders `site.yaml` and `files/` into `.rendered/` (gitignored) with the dns helper at `.10`, the sign-on helper at `.11` and the ingress helper at `.3` of it; `tink` applies the rendered copy. The helpers need static addresses (`tink join` refuses a NIC without one), which is why the subnet is read back and not left to DHCP. `test` and `down` read the same subnet from the server. A fixed documentation range would collide with any host that already uses it, and a cloud sandbox that does.
+
+The apps' addresses are the ones tink allocated on each stack's own bridge; `test` reads them from the server.
+
 ## What is in it
 
 | File | What |
 |---|---|
-| `site.yaml` | a project `herd-site`, the platform bridge `herd0`, and three role helpers: **dns** (CoreDNS), **sso** (Authelia), **ingress** (Caddy), with their files. Three of the files say `derive:` and hold what the stacks publish: the proxy's routes, the sign-on helper's rules and the dns records |
+| `site.yaml` | a project `herd-site`, the platform bridge `herd0` (`ipv4.address: auto`; the helpers' addresses are `@DNS_IP@`, `@SSO_IP@` and `@INGRESS_IP@` placeholders that `herd.sh` fills in, see below), and three role helpers: **dns** (CoreDNS), **sso** (Authelia), **ingress** (Caddy), with their files. Three of the files say `derive:` and hold what the stacks publish: the proxy's routes, the sign-on helper's rules and the dns records |
 | `files/` | the Corefile and zone, the Caddyfile, Authelia's configuration and one user (`tester`, password `herd-test-password`, groups `family` and `admins`); the three derived files are a note and a pair of `# BEGIN tink derive` / `# END tink derive` lines that tink fills |
 | `vault.yaml`, `status.yaml`, `blog.yaml`, `shop.yaml`, `media.yaml`, `metrics.yaml` | the herd: Vaultwarden; Uptime Kuma; WordPress with MySQL twice; Sonarr with qBittorrent; Grafana. Each is what `tink import` writes for the project's own compose file, plus the lines marked `site:`, and says `network: own` |
 | `herd.sh` | `up`, `test`, `backup`, `down` |
@@ -49,6 +55,8 @@ Run on 2026-10-22 (L-2026-10-21b), Incus 7.5.1, Caddy 2.11.7, CoreDNS 1.15.0, Au
 
 And for the stacks: another platform instance does not reach an app; `blog` and `shop` each have a running `db`; Sonarr and qBittorrent share `/downloads`. From nothing, `up` leaves 32 passing checks and a second `tink plan` of the site and of every stack that says no changes.
 
+**With the platform bridge picked by Incus** (a disposable cloud container, Incus 7.5.1, tink built from the `claude/great-hawking-xt2760` branch): `up` with the render step above left 32 passing checks and a second `tink plan` of the rendered site and of every stack that said no changes. Two things were different from the first run. `plan` ends with a note that `network/herd0` has no ownership stamp, because `herd.sh` makes the bridge before tink does (nothing changes because of it). And the WordPress stacks needed `net.bridge.bridge-nf-call-iptables=0` on that host (see "What it found"). Docker Hub's unauthenticated pull limit refused some images on a first try; `up` stops at the first failed pull, and running it again resumes.
+
 **Removing a publish** was tried on `status`: dropping its `kind: publish` and applying the stack, then the site, removed its route, its sign-on rule, its dns record, its stamp and its ACL rule, with no other step, and left the other six names answering.
 
 **Backup** (`herd.sh backup`, vault only): the volume declares a snapshot schedule, a copy to the `vm` pool and a weekly restore check. A copy was made, and both the snapshot and the copy were restored to a scratch volume where the check (`test -s /data/db.sqlite3`) passed. `tink plan` still warns that 3-2-1 is not met, which is true: the second pool is on the same host. The other five stacks answer `none: a throwaway fixture`, so the herd does not yet meet "every `keep` volume has a policy".
@@ -64,7 +72,9 @@ And for the stacks: another platform instance does not reach an app; `blog` and 
 - **A first run of Grafana exits at once** on a root-owned volume (#176); the stack gives the volume an owner.
 - **qBittorrent refuses a Host header whose port is not its own** (`Invalid Host header, port mismatch`). It only showed because the fixture first listened on 18443; on 443 the header has no port. A proxy that serves a non-standard port meets it.
 - **A publish is a whole name.** Uptime Kuma's public status page cannot be opened without sign-on while its dashboard stays behind it (`platform.md`, `public-paths`). Not tried; the stack publishes the admin UI only.
-- **Apps on one bridge are not isolated from each other by the bridge ACL**: Sonarr reached qBittorrent directly. That is what a stack of apps sharing data wants, and it is why a bridge per stack and not per app is the unit.
+- **Apps on one bridge are not isolated from each other by the bridge ACL**: Sonarr reached qBittorrent directly. That is what a stack of apps sharing data wants, and it is why a bridge per stack and not per app is the unit. **That holds only while the kernel does not pass bridged traffic through netfilter.** On a host with `net.bridge.bridge-nf-call-iptables=1` (the `br_netfilter` module, which Docker and some distributions load), the derived ACL, which admits only the ingress helper, also rejects WordPress's connection to its own `db`: WordPress answered 500 with "Error establishing a database connection" until the sysctl was set to 0 (Incus 7.5.1). The derive stage needs to allow traffic within the stack's own subnet, or say that it cannot; not done.
+- **The checks' addresses did not match the apps.** `herd.sh` listed documentation addresses for the apps, but the stacks' bridges are picked by Incus, so "not reachable from the host directly" and "another platform instance does not reach an app" probed addresses nothing owned and could not fail. They now read the real addresses from the server.
+- **`herd.sh test` died without a word** when its first `curl` failed (`set -e`), and went through `$HTTPS_PROXY` where one is set. It now reports the failed sign-in and bypasses any proxy.
 - **The host's daemon helper reads every project** (L-2026-10-22b). It found the vault volume's copy to a pool the host does not have, tried it, and reported itself degraded until `down` removed the volume. A site's backup policy reaches the helper that serves the whole server (#189, question 5).
 - **"Another platform instance does not reach an app" waited for the kernel.** `wget -T` does not bound the connect to an address whose ACL drops packets; the check took about five minutes. `herd.sh` now gives the call a time limit.
 - **firewalld stops answering.** Its calls often make the change and then time out, and sometimes hang. A script that believes the answer leaves interfaces in the trusted zone; `herd.sh` asks the zone instead (it left the zone clean on the first teardown that used it).
