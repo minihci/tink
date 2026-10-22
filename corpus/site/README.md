@@ -35,6 +35,7 @@ Each line marked `site:` in a stack. The derive stage (#177, #130) took the rest
 | removing the compose file's host port | the importer's offer-or-port choice (#179) |
 | a backup answer for each volume | stays: it is the site's decision |
 | a volume's owner when the image runs as its own user (Grafana) | #176 |
+| `site: herd` on each stack | only on a server that already has a platform: it puts the herd in a site of its own (#189, [join.md](../../docs/join.md#sites)); on a server with nothing else, drop it |
 | the firewall rule, once | a documented prerequisite (#177) |
 
 ## The checks (`herd.sh test`)
@@ -52,6 +53,8 @@ And for the stacks: another platform instance does not reach an app; `blog` and 
 
 **Backup** (`herd.sh backup`, vault only): the volume declares a snapshot schedule, a copy to the `vm` pool and a weekly restore check. A copy was made, and both the snapshot and the copy were restored to a scratch volume where the check (`test -s /data/db.sqlite3`) passed. `tink plan` still warns that 3-2-1 is not met, which is true: the second pool is on the same host. The other five stacks answer `none: a throwaway fixture`, so the herd does not yet meet "every `keep` volume has a policy".
 
+**As a named site, beside a platform** (`site: herd` on every stack, L-2026-10-22b, Incus 7.5.1, tink built from the `site-scoping` branch). On a homelab host that already ran a platform and role-stamped lab helpers, `up` made the seven projects, the platform bridge, six bridges and their ACLs with no step by hand, and left 32 passing checks and a second `tink plan` of every file that said no changes. The three helpers and the seven published apps carried `user.tink.site: herd`, and nothing that existed on the host was stamped or changed. `tink join --from-server --site herd` read the herd and exited 0 beside seven helpers of the unnamed site; without `--site`, the same command read the unnamed site and said that the herd's 3 helpers and 7 publishes were left out. `tink join apply dns --from-server` of the unnamed site named the two dns helpers it found there; with `--site herd --dry-run` it chose the herd's and refused to replace a `/hosts` that the derive stage had written. `down` left the host as it was before. Not run: `herd.sh backup` (the host has no `vm` pool), two complete platforms on one server, and a platform that tink manages.
+
 ## What it found
 
 - **A file cannot be placed in a directory that is not there** (#140). Authelia's image has no `/config`, Caddy's no routes directory, so the fixture points Authelia at `/app` and imports one `apps.caddy`. A failed push also left a crash-looping instance that blocked the next apply until it was stopped by hand.
@@ -62,4 +65,6 @@ And for the stacks: another platform instance does not reach an app; `blog` and 
 - **qBittorrent refuses a Host header whose port is not its own** (`Invalid Host header, port mismatch`). It only showed because the fixture first listened on 18443; on 443 the header has no port. A proxy that serves a non-standard port meets it.
 - **A publish is a whole name.** Uptime Kuma's public status page cannot be opened without sign-on while its dashboard stays behind it (`platform.md`, `public-paths`). Not tried; the stack publishes the admin UI only.
 - **Apps on one bridge are not isolated from each other by the bridge ACL**: Sonarr reached qBittorrent directly. That is what a stack of apps sharing data wants, and it is why a bridge per stack and not per app is the unit.
+- **The host's daemon helper reads every project** (L-2026-10-22b). It found the vault volume's copy to a pool the host does not have, tried it, and reported itself degraded until `down` removed the volume. A site's backup policy reaches the helper that serves the whole server (#189, question 5).
+- **"Another platform instance does not reach an app" waited for the kernel.** `wget -T` does not bound the connect to an address whose ACL drops packets; the check took about five minutes. `herd.sh` now gives the call a time limit.
 - **firewalld stops answering.** Its calls often make the change and then time out, and sometimes hang. A script that believes the answer leaves interfaces in the trusted zone; `herd.sh` asks the zone instead (it left the zone clean on the first teardown that used it).
