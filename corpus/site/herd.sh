@@ -133,8 +133,9 @@ apply() {
 	tries=0
 	while :; do
 		log=$(mktemp)
-		{ "$TINK" plan apply "$1" 2>&1; echo $? >"$log.rc"; } | tee "$log"
-		rc=$(cat "$log.rc")
+		# set -e is in force in the pipeline's subshell too, so a failing tink must not be a command of its own: it is the left side of `||`, which records its status
+		{ "$TINK" plan apply "$1" 2>&1 || echo $? >"$log.rc"; } | tee "$log"
+		rc=$(cat "$log.rc" 2>/dev/null || echo 0)
 		limited=no
 		grep -q toomanyrequests "$log" && limited=yes
 		rm -f "$log" "$log.rc"
