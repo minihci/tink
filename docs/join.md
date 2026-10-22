@@ -189,7 +189,7 @@ Before the stack is planned (`internal/derive`, the fifth pass of `prepare`), wh
 `tink join` is a verb for a computation that belongs in `plan` (the roadmap, Phase 3). It goes when nothing it prints is only printed:
 
 1. **The mesh records as a planned change.** The proxy, sign-on, ACL and dns renderings are planned changes now, with the dns applier's rules (above); the mesh view is the one rendering left.
-2. **`tink plan explain` (#129)**, the expanded-stack view, so that a person can still see what the site would write without writing it.
+2. ~~`tink plan explain` (#129)~~, built: [plan-explain.md](plan-explain.md) prints the routes, rules and records of a site, line by line, without writing them. That is what `tink join --only ...` was for.
 3. **The daemon applies planned changes** instead of running `join apply dns --from-server`, under a credential narrow enough for it (Phase 5).
 4. **A removal page** in the style of `docs/removals/ingress-self-registration.md`, because the verb is deployed on the author's hosts.
 

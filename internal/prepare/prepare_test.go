@@ -50,12 +50,22 @@ func (r *recorder) steps() steps {
 		},
 		connect: func(socket string) (incus.InstanceServer, error) {
 			r.calls = append(r.calls, "connect")
-			return nil, nil
+			return &fakeServer{}, nil // a server there is; the passes are stubs that do not use it
 		},
-		derive: func(server incus.InstanceServer, rs []resolve.Resource) ([]resolve.Resource, []string, error) {
-			note("derive", rs)
-			mark(rs, "V")
-			return rs, []string{"derived notice"}, nil
+		ownNetwork: func(server incus.InstanceServer, rs []resolve.Resource) ([]resolve.Resource, []string, error) {
+			note("ownNetwork", rs)
+			mark(rs, "N")
+			return rs, []string{"network notice"}, nil
+		},
+		aclRules: func(server incus.InstanceServer, rs []resolve.Resource) ([]string, error) {
+			note("aclRules", rs)
+			mark(rs, "A")
+			return []string{"acl notice"}, nil
+		},
+		derivedFiles: func(server incus.InstanceServer, rs []resolve.Resource) ([]string, error) {
+			note("derivedFiles", rs)
+			mark(rs, "F")
+			return []string{"files notice"}, nil
 		},
 		qualify: func(server incus.InstanceServer, rs []resolve.Resource) ([]string, error) {
 			note("qualify", rs)
@@ -79,18 +89,18 @@ func TestPassesRunInOrderEachSeeingWhatTheLastLeft(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"load", "defaults", "secrets", "connect", "derive", "qualify", "levels"}; !reflect.DeepEqual(r.calls, want) {
+	if want := []string{"load", "defaults", "secrets", "connect", "ownNetwork", "aclRules", "derivedFiles", "qualify", "levels"}; !reflect.DeepEqual(r.calls, want) {
 		t.Fatalf("passes ran as %v, want %v", r.calls, want)
 	}
-	for pass, want := range map[string]string{"defaults": "L", "secrets": "LD", "derive": "LDS", "qualify": "LDSV", "levels": "LDSVQ"} {
+	for pass, want := range map[string]string{"defaults": "L", "secrets": "LD", "ownNetwork": "LDS", "aclRules": "LDSN", "derivedFiles": "LDSNA", "qualify": "LDSNAF", "levels": "LDSNAFQ"} {
 		if seen := r.seen[pass]; len(seen) != 1 || seen[0] != want {
 			t.Errorf("%s was handed %v, want a resource marked %q", pass, seen, want)
 		}
 	}
-	if len(got.Levels) != 1 || got.Levels[0][0].Description != "LDSVQ" || got.Resources[0].Description != "LDSVQ" {
+	if len(got.Levels) != 1 || got.Levels[0][0].Description != "LDSNAFQ" || got.Resources[0].Description != "LDSNAFQ" {
 		t.Errorf("result = %+v", got)
 	}
-	if want := []string{"derived notice", "first notice", "second notice"}; !reflect.DeepEqual(notices, want) {
+	if want := []string{"network notice", "acl notice", "files notice", "first notice", "second notice"}; !reflect.DeepEqual(notices, want) {
 		t.Errorf("notices = %v, want %v", notices, want)
 	}
 }
@@ -98,7 +108,7 @@ func TestPassesRunInOrderEachSeeingWhatTheLastLeft(t *testing.T) {
 // Each failure stops the passes after it, and the ones before it have run.
 func TestAFailingPassStopsTheRest(t *testing.T) {
 	boom := errors.New("boom")
-	order := []string{"load", "defaults", "secrets", "connect", "derive", "qualify", "levels"}
+	order := []string{"load", "defaults", "secrets", "connect", "ownNetwork", "aclRules", "derivedFiles", "qualify", "levels"}
 	for i, pass := range order {
 		r := &recorder{}
 		s := r.steps()
@@ -112,11 +122,15 @@ func TestAFailingPassStopsTheRest(t *testing.T) {
 			s.secrets = func([]resolve.Resource, Request) ([]resolve.Resource, error) { fail(); return nil, boom }
 		case "connect":
 			s.connect = func(string) (incus.InstanceServer, error) { fail(); return nil, boom }
-		case "derive":
-			s.derive = func(incus.InstanceServer, []resolve.Resource) ([]resolve.Resource, []string, error) {
+		case "ownNetwork":
+			s.ownNetwork = func(incus.InstanceServer, []resolve.Resource) ([]resolve.Resource, []string, error) {
 				fail()
 				return nil, nil, boom
 			}
+		case "aclRules":
+			s.aclRules = func(incus.InstanceServer, []resolve.Resource) ([]string, error) { fail(); return nil, boom }
+		case "derivedFiles":
+			s.derivedFiles = func(incus.InstanceServer, []resolve.Resource) ([]string, error) { fail(); return nil, boom }
 		case "qualify":
 			s.qualify = func(incus.InstanceServer, []resolve.Resource) ([]string, error) { fail(); return nil, boom }
 		case "levels":
@@ -148,8 +162,8 @@ func TestNoticesAreSaidEvenWhenALaterPassFails(t *testing.T) {
 	if _, err := prepare(Request{Notice: func(l string) { notices = append(notices, l) }}, s); err == nil {
 		t.Fatal("expected the error")
 	}
-	if len(notices) != 3 {
-		t.Errorf("notices = %v, want all three (the derived one and the two about images)", notices)
+	if len(notices) != 5 {
+		t.Errorf("notices = %v, want all five (the three derived ones and the two about images)", notices)
 	}
 }
 
@@ -307,4 +321,69 @@ func TestTheRealDerivePassAsksNothingOfAStackThatWantsNothing(t *testing.T) {
 	if len(notices) != 0 {
 		t.Errorf("notices = %v, want none", notices)
 	}
+}
+
+// fakeServer stands for a connection: the stub passes never call it.
+type fakeServer struct{ incus.InstanceServer }
+
+// With no server to reach and NoServerOK, the passes that read the server are told so when they have something to derive, the images are left as
+// written, and the rest runs; without NoServerOK the connection error stops it.
+func TestNoServerOK(t *testing.T) {
+	boom := errors.New("no socket")
+	r := &recorder{}
+	s := r.steps()
+	s.connect = func(string) (incus.InstanceServer, error) { return nil, boom }
+	var notices []string
+	got, err := prepare(Request{NoServerOK: true, Notice: func(l string) { notices = append(notices, l) }}, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Server != nil {
+		t.Error("there is no server in the result")
+	}
+	for _, c := range r.calls {
+		if c == "qualify" {
+			t.Error("images are not qualified without a server")
+		}
+	}
+	if len(notices) == 0 || !strings.Contains(notices[0], "no server: no socket") {
+		t.Errorf("notices = %v: the first should say there is no server", notices)
+	}
+	if _, err := prepare(Request{}, s); err == nil || err.Error() != "connecting to incus: no socket" {
+		t.Errorf("without NoServerOK: err = %v", err)
+	}
+}
+
+// A tracer is told each pass in order, with the resources before and after, and the lines the pass reported.
+func TestTracerSeesEachPass(t *testing.T) {
+	r := &recorder{}
+	tr := &traceLog{}
+	if _, err := prepare(Request{Trace: tr}, r.steps()); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"defaults", "secrets", "network: own", "ingress rules", "derived files", "images"}
+	if !reflect.DeepEqual(tr.passes, want) {
+		t.Errorf("passes = %v, want %v", tr.passes, want)
+	}
+	if tr.before["network: own"] != "LDS" || tr.after["network: own"] != "LDSN" || tr.notices["images"] != "first notice,second notice" {
+		t.Errorf("before %v, after %v, notices %v", tr.before, tr.after, tr.notices)
+	}
+}
+
+type traceLog struct {
+	passes                 []string
+	before, after, notices map[string]string
+}
+
+func (l *traceLog) Before(pass string, rs []resolve.Resource) {
+	if l.before == nil {
+		l.before, l.after, l.notices = map[string]string{}, map[string]string{}, map[string]string{}
+	}
+	l.before[pass] = rs[0].Description
+}
+
+func (l *traceLog) After(pass string, rs []resolve.Resource, notices []string) {
+	l.passes = append(l.passes, pass)
+	l.after[pass] = rs[0].Description
+	l.notices[pass] = strings.Join(notices, ",")
 }

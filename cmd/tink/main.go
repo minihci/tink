@@ -357,6 +357,7 @@ not counted. See docs/plan-extras.md.`, resolve.DefaultFile),
 	// declared once, here, for `plan apply` and the commands to come under `plan` to inherit
 	flags.bind(cmd)
 	cmd.AddCommand(newPlanApplyCmd(&flags))
+	cmd.AddCommand(newPlanExplainCmd(&flags))
 	return cmd
 }
 
