@@ -1,28 +1,15 @@
-# The herd stack "status": Uptime Kuma. Imported from the project's compose file with `tink import`; every line marked "site:" is the site's half,
-# written by hand until the derive stage (#177, #130) does it.
+# The herd stack "status": Uptime Kuma. Imported from the project's compose file with `tink import`; the lines marked "site:" are the
+# site's half, written by hand: what is left of it once the derive stage has done the rest (a project, the offer, the name, the grant, the
+# backup answer).
 kind: stack
 name: status
+network: own                              # a bridge, its ACL and the apps' static addresses are derived (docs/network.md)
 project: herd-status                      # site
 ---
 kind: project                             # site
 name: herd-status
 config:
   features.profiles: "false"
----
-kind: network-acl                         # site: the rules are the join's `acl` rendering, written in by paste.sh
-name: tink-status-in
-description: only the ingress helper may reach the status app
-ingress:
-  - {action: allow, source: 192.0.2.3/32, protocol: tcp, destination_port: "3001", state: enabled, description: "ingress helper publishes status"}
----
-kind: network                             # site
-name: tink-status
-description: the status stack's bridge
-config:
-  ipv4.address: 203.0.113.1/27
-  ipv4.nat: "false"
-  ipv6.address: none
-  security.acls: tink-status-in
 ---
 kind: storage-volume
 name: uptime-kuma-data
@@ -41,7 +28,6 @@ config:
   user.tink.offer.web.port: "3001"        # site
   user.tink.offer.web.proto: http
 devices:
-  eth0: {name: eth0, type: nic, network: tink-status, ipv4.address: 203.0.113.10}   # site
   # (the compose file's host port 3001 is gone: the app is reached through the ingress helper)  # site
   volume0:
     type: disk

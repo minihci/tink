@@ -1,29 +1,16 @@
-# The herd stack "blog": WordPress with MySQL. Imported from the project's compose file with `tink import`; every line marked "site:" is the
-# site's half, written by hand until the derive stage (#177, #130) does it. "blog" and "shop" are the same compose file twice, so each has an
-# instance called `db`: on one bridge the second would be refused, on a bridge each both run.
+# The herd stack "blog": WordPress with MySQL. "blog" and "shop" are the same compose file twice, so each has an instance called `db`;
+# each stack has a bridge of its own, so both run. Imported from the project's compose file with `tink import`; the lines marked "site:"
+# are the site's half, written by hand: what is left of it once the derive stage has done the rest (a project, the offer, the name, the
+# grant, the backup answer).
 kind: stack
 name: blog
-project: herd-blog                          # site
+network: own                              # a bridge, its ACL and the apps' static addresses are derived (docs/network.md)
+project: herd-blog                       # site
 ---
 kind: project                             # site
 name: herd-blog
 config:
   features.profiles: "false"
----
-kind: network-acl                         # site: the rules are the join's `acl` rendering, written in by paste.sh
-name: tink-blog-in
-description: only the ingress helper may reach the blog app
-ingress:
-  - {action: allow, source: 192.0.2.3/32, protocol: tcp, destination_port: "80", state: enabled, description: "ingress helper publishes blog"}
----
-kind: network                             # site
-name: tink-blog
-description: the blog stack's bridge
-config:
-  ipv4.address: 203.0.113.33/27
-  ipv4.nat: "false"
-  ipv6.address: none
-  security.acls: tink-blog-in
 ---
 kind: storage-volume
 name: db-data
@@ -55,7 +42,6 @@ config:
   user.tink.offer.web.port: "80"          # site
   user.tink.offer.web.proto: http
 devices:
-  eth0: {name: eth0, type: nic, network: tink-blog, ipv4.address: 203.0.113.42}   # site
   # (the compose file's host port 8080 is gone: the app is reached through the ingress helper)  # site
   volume0:
     type: disk
@@ -76,7 +62,6 @@ config:
   environment.MYSQL_RANDOM_ROOT_PASSWORD: "1"
   environment.MYSQL_USER: exampleuser
 devices:
-  eth0: {name: eth0, type: nic, network: tink-blog}   # site: the bridge (a sibling needs no static address)
   volume0:
     type: disk
     path: /var/lib/mysql

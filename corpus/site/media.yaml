@@ -1,30 +1,17 @@
-# The herd stack "media": Sonarr and qBittorrent. They are two projects' compose files; the stack shares one volume for /downloads between them,
-# which is why they are one stack and one Incus project (a volume cannot cross projects). Every line marked "site:" is the site's half, written
-# by hand until the derive stage (#177, #130) does it. The compose files' host paths (/path/to/...) are placeholders; they become managed volumes.
+# The herd stack "media": Sonarr and qBittorrent. They are two projects' compose files; the stack shares one volume for /downloads between
+# them, which is why they are one stack and one Incus project (a volume cannot cross projects). The compose files' host paths
+# (/path/to/...) are placeholders; they become managed volumes. Imported from the project's compose file with `tink import`; the lines
+# marked "site:" are the site's half, written by hand: what is left of it once the derive stage has done the rest (a project, the offer,
+# the name, the grant, the backup answer).
 kind: stack
 name: media
+network: own                              # a bridge, its ACL and the apps' static addresses are derived (docs/network.md)
 project: herd-media                       # site
 ---
 kind: project                             # site
 name: herd-media
 config:
   features.profiles: "false"
----
-kind: network-acl                         # site: the rules are the join's `acl` rendering, written in by paste.sh
-name: tink-media-in
-description: only the ingress helper may reach the media apps
-ingress:
-  - {action: allow, source: 192.0.2.3/32, protocol: tcp, destination_port: "8080", state: enabled, description: "ingress helper publishes qbittorrent"}
-  - {action: allow, source: 192.0.2.3/32, protocol: tcp, destination_port: "8989", state: enabled, description: "ingress helper publishes sonarr"}
----
-kind: network                             # site
-name: tink-media
-description: the media stack's bridge
-config:
-  ipv4.address: 203.0.113.97/27
-  ipv4.nat: "false"
-  ipv6.address: none
-  security.acls: tink-media-in
 ---
 kind: storage-volume                      # site: a placeholder path became a volume
 name: sonarr-config
@@ -64,7 +51,6 @@ config:
   user.tink.offer.web.port: "8989"        # site
   user.tink.offer.web.proto: http
 devices:
-  eth0: {name: eth0, type: nic, network: tink-media, ipv4.address: 203.0.113.106}   # site
   volume0: {type: disk, path: /config, pool: default, source: sonarr-config}
   volume1: {type: disk, path: /tv, pool: default, source: sonarr-tv}
   volume2: {type: disk, path: /downloads, pool: default, source: downloads}
@@ -85,7 +71,6 @@ config:
   user.tink.offer.web.port: "8080"        # site
   user.tink.offer.web.proto: http
 devices:
-  eth0: {name: eth0, type: nic, network: tink-media, ipv4.address: 203.0.113.107}   # site
   # (the web UI's host port 8080 is gone; the torrent port stays, on the loopback address only)  # site
   proxy1: {type: proxy, connect: "tcp:127.0.0.1:6881", listen: "tcp:127.0.0.1:6881"}
   proxy2: {type: proxy, connect: "udp:127.0.0.1:6881", listen: "udp:127.0.0.1:6881"}
