@@ -221,7 +221,8 @@ backup() {
 down() {
 	for p in $(for s in $STACKS; do echo "herd-$s"; done) herd-site; do
 		exists incus project show "$p" || continue
-		for i in $(incus list --project "$p" -c n -f csv </dev/null); do incus delete --project "$p" "$i" -f </dev/null; done
+		# a delete is refused now and then while a stop is still ending ("Instance is running"), so it is tried once more
+		for i in $(incus list --project "$p" -c n -f csv </dev/null); do incus delete --project "$p" "$i" -f </dev/null || { sleep 5; incus delete --project "$p" "$i" -f </dev/null; }; done
 		for pool in $(incus storage list -f csv -c n </dev/null); do
 			for v in $(incus storage volume list "$pool" --project "$p" -c n -f csv </dev/null 2>/dev/null); do
 				incus storage volume delete "$pool" "$v" --project "$p" </dev/null >/dev/null 2>&1 || true
