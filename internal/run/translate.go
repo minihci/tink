@@ -165,32 +165,67 @@ func volumeDevice(v, pool string) (dev map[string]string, notes []string, err er
 
 var memoryRe = regexp.MustCompile(`^([0-9]+(?:\.[0-9]+)?)\s*([a-zA-Z]*)$`)
 
-// parseMemory turns -m (Docker's 512m, 1g, 1.5g, 256mb, a plain number of bytes) into limits.memory, which takes Incus's binary suffixes.
-func parseMemory(s string) (string, error) {
+// sizeBytes reads a Docker size (512m, 1g, 1.5g, 256mb, a plain number of bytes) as bytes. what names the flag or key in an error.
+func sizeBytes(what, s string) (int64, error) {
 	m := memoryRe.FindStringSubmatch(s)
 	if m == nil {
-		return "", fmt.Errorf("--memory %q: expected a size such as 512m or 1g", s)
+		return 0, fmt.Errorf("%s %q: expected a size such as 512m or 1g", what, s)
 	}
 	n, _ := strconv.ParseFloat(m[1], 64)
 	mult := map[string]float64{"": 1, "b": 1, "k": 1 << 10, "kb": 1 << 10, "m": 1 << 20, "mb": 1 << 20, "g": 1 << 30, "gb": 1 << 30, "t": 1 << 40, "tb": 1 << 40}
 	unit, ok := mult[strings.ToLower(m[2])]
 	if !ok {
-		return "", fmt.Errorf("--memory %q: unit %q is not one of b, k, m, g, t", s, m[2])
+		return 0, fmt.Errorf("%s %q: unit %q is not one of b, k, m, g, t", what, s, m[2])
 	}
 	bytes := math.Round(n * unit)
 	if bytes <= 0 {
-		return "", fmt.Errorf("--memory %q: a limit must be more than zero (leave the flag off for none)", s)
+		return 0, fmt.Errorf("%s %q: a size must be more than zero (leave it off for none)", what, s)
 	}
-	b := int64(bytes)
+	return int64(bytes), nil
+}
+
+// binarySize writes bytes with Incus's binary suffixes where it can, and as a plain number of bytes (which Incus also takes for a tmpfs) where not.
+func binarySize(b int64) string {
 	switch {
 	case b%(1<<30) == 0:
-		return fmt.Sprintf("%dGiB", b>>30), nil
+		return fmt.Sprintf("%dGiB", b>>30)
 	case b%(1<<20) == 0:
-		return fmt.Sprintf("%dMiB", b>>20), nil
+		return fmt.Sprintf("%dMiB", b>>20)
 	case b%(1<<10) == 0:
-		return fmt.Sprintf("%dKiB", b>>10), nil
+		return fmt.Sprintf("%dKiB", b>>10)
 	}
-	return "", fmt.Errorf("--memory %q is not a whole number of KiB, which is what Incus takes", s)
+	return strconv.FormatInt(b, 10)
+}
+
+// parseMemory turns -m (Docker's 512m, 1g, 1.5g, 256mb, a plain number of bytes) into limits.memory, which takes Incus's binary suffixes.
+func parseMemory(s string) (string, error) {
+	b, err := sizeBytes("--memory", s)
+	if err != nil {
+		return "", err
+	}
+	if b%(1<<10) != 0 {
+		return "", fmt.Errorf("--memory %q is not a whole number of KiB, which is what Incus takes", s)
+	}
+	return binarySize(b), nil
+}
+
+// TmpfsIncusDevice is the --incus-device entry that mounts a tmpfs at path, with size (Docker's 64m, a number of bytes; empty for Incus's default,
+// half the memory). It is the entry docs/docker-to-tink.md gives for `--tmpfs`, written once so that tink import and anyone building options by
+// hand say the same thing. name is the device's name. Measured on a local Incus 7.5.1: the size is honoured at /cache and at /dev/shm, which
+// is a 64 MiB tmpfs in an instance already and is replaced by the device.
+func TmpfsIncusDevice(name, path, size string) (string, error) {
+	if !strings.HasPrefix(path, "/") || strings.ContainsAny(path, " \t") {
+		return "", fmt.Errorf("tmpfs %q: the path must be absolute and hold no space", path)
+	}
+	e := fmt.Sprintf("%s type=disk source=tmpfs: path=%s", name, path)
+	if size != "" {
+		b, err := sizeBytes("tmpfs size", size)
+		if err != nil {
+			return "", err
+		}
+		e += " size=" + binarySize(b)
+	}
+	return e, nil
 }
 
 // parseCPUs turns --cpus (a possibly fractional number of CPUs worth of time) into limits.cpu.allowance's hard form, "<ms>/100ms": that many
@@ -230,6 +265,9 @@ func deviceFlag(d string) (map[string]string, error) {
 	}
 	if strings.HasSuffix(src, "/") || src == "/dev/dri" {
 		return nil, fmt.Errorf("%q is a directory, not a device: for a GPU use --incus-device 'gpu type=gpu', for a single node name it", src)
+	}
+	if strings.TrimSuffix(src, "/") == "/dev/bus/usb" {
+		return nil, fmt.Errorf("%q is the whole USB bus, a directory, not a device: for one USB device use --incus-device 'NAME type=usb vendorid=VENDOR productid=PRODUCT'", src)
 	}
 	for _, block := range []string{"/dev/sd", "/dev/hd", "/dev/vd", "/dev/xvd", "/dev/nvme", "/dev/loop", "/dev/mapper/", "/dev/dm-", "/dev/md", "/dev/mmcblk"} {
 		if strings.HasPrefix(src, block) {

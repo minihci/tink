@@ -157,6 +157,9 @@ func Build(opts Options) (*Spec, error) {
 		spec.Notes = append(spec.Notes, "--privileged becomes security.privileged=true: the container runs without user-namespace isolation, so its root is the host's root. Unlike Docker's flag it does not also hand over every host device (name those with --device)")
 	}
 
+	if opts.Network == "host" {
+		return nil, fmt.Errorf("--network host: %s", HostNetworkAdvice)
+	}
 	if opts.IP != "" && opts.Network == "" {
 		return nil, fmt.Errorf("--ip requires --network")
 	}
@@ -197,6 +200,12 @@ func Build(opts Options) (*Spec, error) {
 
 	return spec, nil
 }
+
+// HostNetworkAdvice is what tink says about Docker's host networking (--network host, network_mode: host), in tink run and in tink import alike.
+const HostNetworkAdvice = "host networking has no equivalent: an Incus instance has a network namespace of its own and meets the host's network only through a NIC. " +
+	"What an app wants it for is usually to find devices on the LAN, or to be found there. The Incus answer is a NIC on the LAN's bridge (nictype bridged, parent the bridge, " +
+	"an address outside the router's DHCP pool), which is a decision about the site: tink writes none (docs/docker-to-tink.md says how; #206 proposes a way to declare the need). " +
+	"If the app only needed to be reached on a port, publish it. If an Incus network really is named host, add its NIC with --incus-device"
 
 // KeyCommand is the instance config key tink run records the command it was given in: the only trace, on the instance, of how it
 // came to be. `tink export` reads it back as a comment. Environment values that look like secrets are masked in it.

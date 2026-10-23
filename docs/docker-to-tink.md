@@ -38,9 +38,9 @@ how to say so (`docker.io/deluan/navidrome:latest`). `ghcr.io/org/app` and `quay
 | `--user UID[:GID]` | `--user UID[:GID]` | numbers only. Volumes tink creates for this run are owned by that user |
 | `-m 512m` | `-m 512m` | |
 | `--cpus 1.5` | `--cpus 1.5` | CPU *time*, as in Docker (not how many CPUs the instance sees) |
-| `--device /dev/ttyUSB0[:/dev/ttyACM0]` | `--device ...` | character devices; a GPU or a block device uses `--incus-device` |
+| `--device /dev/ttyUSB0[:/dev/ttyACM0]` | `--device ...` | character devices; a GPU, the whole USB bus (`/dev/bus/usb`) or a block device uses `--incus-device` |
 | `--privileged` | `--privileged` | Incus's `security.privileged`: no user-namespace isolation. It does **not** also grant every host device |
-| `--network NAME` | `--network NAME` | an Incus managed network. `--ip ADDR` for a fixed address |
+| `--network NAME` | `--network NAME` | an Incus managed network. `--ip ADDR` for a fixed address. `--network host` is refused, with the reason (below) |
 | `--rm` | `--rm` | |
 | `IMAGE CMD...` | `IMAGE CMD...` | replaces the image's entrypoint **and** command (Docker replaces only the command) |
 | `--platform`, `--pull`, `-d`, `-it`, `--init` | - | not applicable: see [the `run` design](../internal/run/DESIGN.md) |
@@ -60,8 +60,10 @@ override them. A few that come up (all checked live unless marked):
 | You want | Write |
 |---|---|
 | a tmpfs (`--tmpfs /cache:size=64m`) | `--incus-device 'cache type=disk source=tmpfs: path=/cache size=64MiB'` |
+| shared memory (`--shm-size 512m`) | `--incus-device 'shm type=disk source=tmpfs: path=/dev/shm size=512MiB'` (an instance already has a 64 MiB `/dev/shm`, as Docker does; the device replaces it) |
 | a GPU (`--device /dev/dri`) | `--incus-device 'gpu type=gpu'` (docs) |
 | a block device | `--incus-device 'disk1 type=unix-block source=/dev/sdb path=/dev/sdb'` (docs) |
+| one USB device (`--device /dev/bus/usb/001/004`) | `--incus-device 'coral type=usb vendorid=1a6e productid=089a'` (docs) |
 | a serial adapter that may be unplugged | `--incus-device 'zigbee type=unix-char source=/dev/ttyUSB0 path=/dev/ttyUSB0 required=false'` |
 | DNS servers (`--dns`) | `--incus-config oci.dns.nameservers=1.1.1.1` |
 | a sysctl (`--sysctl`) | `--incus-config linux.sysctl.net.ipv4.ip_forward=1` (docs) |
@@ -75,9 +77,14 @@ Say these out loud rather than hide them. Each is from Incus's reference for ins
 
 - **Host networking (`--network host`).** There is no shared network namespace. What the install page wants it for is usually discovery on the LAN (Home Assistant, DLNA), and the Incus answer is to give the
   instance **its own address on the LAN**: a `bridged` (or `macvlan`) network device on your LAN bridge. If you have a profile for that, layer it: `--profile lan` (the lab host's `lan` profile is exactly
-  `nictype: bridged, parent: br0`). The app then has its own IP rather than the host's.
+  `nictype: bridged, parent: br0`). The app then has its own IP rather than the host's. `tink run --network host` and `tink import` on `network_mode: host` both refuse and say this, instead of planning a NIC on a network called `host`.
 - **`--cap-add` / `--cap-drop`.** No instance option for capabilities. An unprivileged container has a fixed set; `--privileged` is the blunt instrument, and `raw.lxc` is a raw escape with no support
   promise. Pi-hole's `NET_ADMIN` is the case people hit.
+- **A read-only root (`--read-only`, compose `read_only`).** A root device of the instance's own with `readonly=true` makes `/` read-only, and an Alpine container started that way (checked live, Incus 7.5.1). The Matter.js server's image did not: it
+  stopped at start with "Failed to setup mount entries", and a mount point that is not already in the image cannot be created on a read-only root. So it is by hand, with `--incus-device 'root type=disk path=/ pool=POOL readonly=true'`,
+  and may not start. `tink import` refuses `read_only` for that reason.
+- **`--security-opt` / `security_opt` (`apparmor=unconfined`, `no-new-privileges`).** No instance key chooses an AppArmor profile or sets no-new-privileges. `raw.apparmor` and `raw.lxc` can carry one, with no support promise (docs; not tried).
+  `tink import` refuses the key and says so.
 - **Health checks.** An image's `HEALTHCHECK` is not run, and Compose's `depends_on: condition: service_healthy` has nothing to wait on. In a stack, `depends_on` is start order only; a `kind: exec`
   with a `check:` is the nearest to "wait until it answers".
 - **A stop timeout (`--stop-timeout`, `stop_grace_period`).** Only `boot.host_shutdown_timeout`, for the host shutting down. For a slow database, stop it with `incus stop --timeout` yourself.

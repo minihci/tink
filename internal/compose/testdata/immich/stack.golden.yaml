@@ -87,7 +87,6 @@ config:
   boot.autostart: "true"
 ---
 # healthcheck was dropped: an image's healthcheck is not run, and nothing waits for it
-# shm_size was dropped: Incus has no equivalent size for /dev/shm
 # environment POSTGRES_PASSWORD looks like a secret and is written as it is: add it with `tink secret set` and write ${secret:NAME} instead
 kind: instance
 name: database
@@ -102,6 +101,11 @@ config:
   environment.POSTGRES_PASSWORD: postgres
   environment.POSTGRES_USER: postgres
 devices:
+  tmpfs0:
+    type: disk
+    path: /dev/shm
+    size: 128MiB
+    source: 'tmpfs:'
   volume0:
     type: disk
     path: /var/lib/postgresql/data
