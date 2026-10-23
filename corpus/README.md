@@ -1,8 +1,8 @@
 # Corpus: how popular self-hosted projects describe their install
 
-Twenty-one projects' own install instructions, copied as published, one directory each (`NAME/upstream.md`). This is the
+Twenty-eight projects' own install instructions, copied as published, one directory each (`NAME/upstream.md`). This is the
 input to tink, before any tink stack exists for it: the docker run line or compose file a person finds in the project's
-README or docs. Retrieved 2026-10-21 from the URL on each page.
+README or docs. Retrieved from the URL on each page: the first 21 on 2026-10-21, and the seven Home Assistant companions at the end of the table on 2026-10-23.
 
 **Why it exists.** tink's job is to take that kind of description and turn it into a running, wired-up service on an Incus
 host. Progress is measured here: how many of these apps tink can bring up from a stack, and what each one that fails needs
@@ -34,6 +34,13 @@ licences and are quoted as test inputs. Where a page contained a template placeh
 | [Paperless-ngx](paperless-ngx/upstream.md) | three containers, compose + env file | app + database + broker, `env_file`, `depends_on` |
 | [Nextcloud](nextcloud/upstream.md) | four containers, compose + env file | app + cron + database + cache sharing one volume |
 | [Immich](immich/upstream.md) | multi-container, compose + env file | machine-learning, database, cache; GPU optional |
+| [Matter.js Server](matterjs-server/upstream.md) | one container, run + compose | the Matter controller: host network, mDNS and IPv6 multicast, an unprivileged user, a read-only root, Bluetooth over D-Bus if wanted |
+| [Python Matter server](python-matter-server/upstream.md) | one container, run + compose | the archived predecessor of the one above (kept: it is what Home Assistant's add-on, and so the usage statistics, ran); `apparmor=unconfined` |
+| [ESPHome](esphome/upstream.md) | one container, run + compose | the device-builder dashboard: host network for mDNS, `--privileged` and a serial device to flash over USB |
+| [Zigbee2MQTT](zigbee2mqtt/upstream.md) | one container, run + compose | a required serial adapter, a `/run/udev` mount, a broker that is somebody else's container |
+| [Frigate](frigate/upstream.md) | one container, run + compose | GPU/Coral devices, a shm size and a tmpfs, UDP ports, `privileged` only if the hardware needs it, an optional broker |
+| [Node-RED](node-red/upstream.md) | one container, run + compose | one container with a volume; the page wires it to a broker by name on a user-defined bridge |
+| [Music Assistant](music-assistant/upstream.md) | one container, run + compose | host networking or macvlan is "mandatory": it must be on the same layer 2 network as its players |
 
 Not chosen on purpose: anything that only ships as a VM or an appliance image, and anything needing a Kubernetes chart.
 
@@ -62,4 +69,5 @@ one bridge per stack first, and what it takes for a stack to pass. [site/](site/
 ## Status
 
 [status.md](status.md) runs each app's own line on a local Incus server and says, shape by shape, what tink does. Today 14
-of 21 answer on their published port; none is wired (name, proxy route, sign-on, backup) yet.
+of 21 answer on their published port; none is wired (name, proxy route, sign-on, backup) yet. Of the seven added on 2026-10-23, six answer on a
+bridge (two only once `--user` is given), one needs hardware, and one of seven compose examples imports.
