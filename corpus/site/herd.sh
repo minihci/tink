@@ -169,6 +169,13 @@ test() {
 	J=$(mktemp)
 	R="--resolve auth.home.example.org:443:127.0.0.1"
 	for a in $APPS; do R="$R --resolve ${a%%:*}.home.example.org:443:127.0.0.1"; done
+	# `up` ends as soon as the sign-on helper is restarted for its derived rules, and it takes several seconds to listen again: wait for it, up to a minute
+	n=0
+	while [ "$n" -lt 30 ]; do
+		case "$(curl -sk -m 5 $R -o /dev/null -w '%{http_code}' https://auth.home.example.org/ || true)" in 2* | 3*) break ;; esac
+		n=$((n + 1))
+		sleep 2
+	done
 	curl -sk -m 10 $R -c "$J" -H 'Content-Type: application/json' \
 		-d '{"username":"tester","password":"herd-test-password","keepMeLoggedIn":false}' https://auth.home.example.org/api/firstfactor >/dev/null || bad "signed in as tester"
 
