@@ -13,22 +13,22 @@ The one fact here that was run: Incus refuses a second instance with the same DN
 
 ## Proxy, sign-on and backup tags, most common first
 
-Counts are of 21 apps; the third column counts the `?` tags.
+Counts are of 28 apps; the third column counts the `?` tags.
 
 | Tag | Apps | Unsure or optional | Meaning | Apps with it |
 |---|---|---|---|---|
-| `embedded-db` | 16 |  | state is a file database (sqlite, leveldb) inside a volume | vaultwarden, uptime-kuma, audiobookshelf, actual-budget, navidrome, grafana, n8n, mosquitto, syncthing, home-assistant, jellyfin, pihole, adguard-home, sonarr, portainer, forgejo |
-| `app-clients` | 12 |  | non-browser clients (mobile apps, sync, git, API) that cannot follow a sign-on redirect | vaultwarden, audiobookshelf, actual-budget, navidrome, home-assistant, jellyfin, sonarr, qbittorrent, forgejo, paperless-ngx, nextcloud, immich |
-| `admin-ui` | 9 |  | an administration interface that should sit behind sign-on and not be public by default | uptime-kuma, grafana, n8n, syncthing, pihole, adguard-home, sonarr, qbittorrent, portainer |
-| `stream-port` | 7 | 1 | listens on ports that are not HTTP (ssh, mqtt, dns, sync), so no proxy route carries them | mosquitto, syncthing, jellyfin, pihole, adguard-home, qbittorrent, forgejo, home-assistant? |
+| `embedded-db` | 23 |  | state is a file database (sqlite, leveldb) inside a volume | vaultwarden, uptime-kuma, audiobookshelf, actual-budget, navidrome, grafana, n8n, mosquitto, syncthing, home-assistant, jellyfin, pihole, adguard-home, sonarr, portainer, forgejo, matterjs-server, python-matter-server, esphome, zigbee2mqtt, frigate, node-red, music-assistant |
+| `app-clients` | 16 |  | non-browser clients (mobile apps, sync, git, API) that cannot follow a sign-on redirect | vaultwarden, audiobookshelf, actual-budget, navidrome, home-assistant, jellyfin, sonarr, qbittorrent, forgejo, paperless-ngx, nextcloud, immich, matterjs-server, python-matter-server, frigate, music-assistant |
+| `admin-ui` | 14 | 1 | an administration interface that should sit behind sign-on and not be public by default | uptime-kuma, grafana, n8n, syncthing, pihole, adguard-home, sonarr, qbittorrent, portainer, esphome, zigbee2mqtt, frigate, node-red, music-assistant, matterjs-server? |
+| `stream-port` | 9 | 1 | listens on ports that are not HTTP (ssh, mqtt, dns, sync), so no proxy route carries them | mosquitto, syncthing, jellyfin, pihole, adguard-home, qbittorrent, forgejo, frigate, music-assistant, home-assistant? |
 | `oidc` | 4 | 6 | can sign users in through OIDC itself | grafana, forgejo, paperless-ngx, immich, vaultwarden?, audiobookshelf?, actual-budget?, jellyfin?, portainer?, nextcloud? |
 | `db-server` | 4 | 1 | a database server in its own container | wordpress, paperless-ngx, nextcloud, immich, forgejo? |
 | `big-upload` | 3 | 2 | takes large uploads (body size and timeouts) | paperless-ngx, nextcloud, immich, forgejo?, wordpress? |
-| `public-paths` | 2 | 2 | part of the app is meant to be reached without signing on (a public site, webhooks, a status page) | n8n, wordpress, uptime-kuma?, forgejo? |
+| `websocket` | 2 | 17 | needs WebSocket upgrade through the proxy | matterjs-server, python-matter-server, vaultwarden?, uptime-kuma?, audiobookshelf?, grafana?, n8n?, home-assistant?, jellyfin?, sonarr?, portainer?, paperless-ngx?, nextcloud?, immich?, esphome?, zigbee2mqtt?, frigate?, node-red?, music-assistant? |
+| `public-paths` | 2 | 3 | part of the app is meant to be reached without signing on (a public site, webhooks, a status page) | n8n, wordpress, uptime-kuma?, forgejo?, node-red? |
 | `is-dns` | 2 |  | is itself a DNS server, which overlaps with the site's DNS | pihole, adguard-home |
 | `trust-proxy` | 1 | 4 | must be told the proxy's address, or it refuses or misreports the client and the scheme | nextcloud, home-assistant?, forgejo?, wordpress?, paperless-ngx? |
-| `https-upstream` | 1 | 1 | its web port speaks TLS (the proxy must connect over TLS) | portainer, pihole? |
-| `websocket` | 0 | 12 | needs WebSocket upgrade through the proxy | vaultwarden?, uptime-kuma?, audiobookshelf?, grafana?, n8n?, home-assistant?, jellyfin?, sonarr?, portainer?, paperless-ngx?, nextcloud?, immich? |
+| `https-upstream` | 2 | 1 | its web port speaks TLS (the proxy must connect over TLS) | portainer, frigate, pihole? |
 
 ## By app
 
@@ -55,6 +55,13 @@ Counts are of 21 apps; the third column counts the `?` tags.
 | paperless-ngx | `websocket?` `big-upload` `trust-proxy?` `app-clients` `oidc` `db-server` | PAPERLESS_URL (?) |
 | nextcloud | `websocket?` `big-upload` `trust-proxy` `app-clients` `oidc?` `db-server` | OVERWRITEHOST, OVERWRITEPROTOCOL, TRUSTED_PROXIES, NEXTCLOUD_TRUSTED_DOMAINS (?) |
 | immich | `websocket?` `big-upload` `app-clients` `oidc` `db-server` | none required (?) |
+| matterjs-server | `websocket` `app-clients` `admin-ui?` `embedded-db` | none; HA connects to its WebSocket API on 5580; the dashboard is a separate listener (?) |
+| python-matter-server | `websocket` `app-clients` `embedded-db` | none; HA connects to its WebSocket API on 5580 |
+| esphome | `websocket?` `admin-ui` `embedded-db` | none; the dashboard has its own username and password (page) |
+| zigbee2mqtt | `websocket?` `admin-ui` `embedded-db` | none; its frontend is on 8080 (page) |
+| frigate | `websocket?` `stream-port` `https-upstream` `admin-ui` `app-clients` `embedded-db` | none; the page says reverse proxies should use 8971 (page), which speaks TLS with a self-signed certificate although the page's table says "without TLS" (live, status.md) |
+| node-red | `websocket?` `admin-ui` `public-paths?` `embedded-db` | none; the editor is open unless adminAuth is set (?) |
+| music-assistant | `websocket?` `stream-port` `app-clients` `admin-ui` `embedded-db` | none; players must reach it on its stream port 8097 by IP (page) |
 
 ## Backup: what each volume is
 
@@ -106,6 +113,16 @@ whether a crash-consistent snapshot is enough for those is an open question, not
 | immich | `UPLOAD_LOCATION` | keep | the photo library; large |
 | immich | `DB_DATA_LOCATION` | keep | the database; a consistent copy matters |
 | immich | `model-cache` | rebuild | downloaded models |
+| matterjs-server | `/data` | keep | the Matter fabric: losing it means re-commissioning every device |
+| python-matter-server | `/data` | keep | the Matter fabric (superseded server; the new one migrates this directory) |
+| esphome | `/config` | keep | the device configurations and secrets.yaml |
+| zigbee2mqtt | `/app/data` | keep | the Zigbee network key and the paired devices: losing it means re-pairing everything |
+| frigate | `/config` | keep | the configuration and the sqlite database |
+| frigate | `/media/frigate` | keep | recordings, clips and exports; large and rolling, so whether to copy them is a policy decision |
+| frigate | `/tmp/cache` | scratch | recording segments in flight; the page recommends a tmpfs |
+| node-red | `/data` | keep | flows, credentials (encrypted with a key kept in the same directory) and installed nodes |
+| music-assistant | `/data` | keep | the library database and provider settings |
+| music-assistant | `/media` | external | the music, mounted read-only |
 
-42 volumes in all: keep 24, rebuild 8, external 5, scratch 5.
-Every app but one has at least one `keep` volume (20 of 21; Mosquitto has none, because its config comes from the stack).
+52 volumes in all: keep 32, rebuild 8, external 6, scratch 6.
+Every app but one has at least one `keep` volume (27 of 28; Mosquitto has none, because its config comes from the stack).

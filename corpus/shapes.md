@@ -6,43 +6,50 @@ with `?` is shown only as an option or a variant. Restart policy is left out bec
 
 ## By shape, most common first
 
-Counts are of 21 apps. "Optional" counts the `?` tags.
+Counts are of 28 apps. "Optional" counts the `?` tags.
 
 | Shape | Apps | Optional | Meaning | Apps with it |
 |---|---|---|---|---|
-| `web-ui` | 20 |  | an HTTP(S) interface a person browses to (what a proxy, a name and sign-on would front) | vaultwarden, uptime-kuma, audiobookshelf, actual-budget, navidrome, grafana, n8n, syncthing, home-assistant, jellyfin, pihole, adguard-home, sonarr, qbittorrent, portainer, forgejo, wordpress, paperless-ngx, nextcloud, immich |
-| `tcp-port` | 19 |  | a published TCP port | vaultwarden, uptime-kuma, audiobookshelf, actual-budget, navidrome, grafana, n8n, mosquitto, jellyfin, pihole, adguard-home, sonarr, qbittorrent, portainer, forgejo, wordpress, paperless-ngx, nextcloud, immich |
-| `host-dir` | 16 |  | a bind mount of a host directory | vaultwarden, uptime-kuma, audiobookshelf, actual-budget, navidrome, mosquitto, syncthing, home-assistant, jellyfin, pihole, adguard-home, sonarr, qbittorrent, forgejo, paperless-ngx, immich |
-| `env-config` | 12 | 2 | settings in environment variables | vaultwarden, grafana, syncthing, home-assistant, jellyfin, pihole, sonarr, qbittorrent, forgejo, wordpress, paperless-ngx, nextcloud, actual-budget?, navidrome? |
-| `registry-named` | 9 |  | the image names a registry other than Docker Hub's default | audiobookshelf, actual-budget, n8n, home-assistant, sonarr, qbittorrent, forgejo, paperless-ngx, immich |
-| `named-volume` | 8 |  | a named volume for state | uptime-kuma, grafana, n8n, portainer, wordpress, paperless-ngx, nextcloud, immich |
-| `uid-gid` | 6 |  | runs as, or maps files to, a specific user (user:, PUID, USER_UID) | navidrome, syncthing, jellyfin, sonarr, qbittorrent, forgejo |
-| `secret` | 5 | 1 | a password or key in the environment | pihole, wordpress, paperless-ngx, nextcloud, immich, forgejo? |
-| `sibling` | 4 | 1 | other containers of its own (database, cache, broker) | wordpress, paperless-ngx, nextcloud, immich, forgejo? |
-| `media-lib` | 4 |  | a library of existing files (music, video, books) mounted in | audiobookshelf, navidrome, jellyfin, sonarr |
-| `ro-mount` | 4 |  | a read-only mount | navidrome, home-assistant, jellyfin, forgejo |
-| `udp-port` | 4 |  | a published UDP port | jellyfin, pihole, adguard-home, qbittorrent |
+| `web-ui` | 26 |  | an HTTP(S) interface a person browses to (what a proxy, a name and sign-on would front) | vaultwarden, uptime-kuma, audiobookshelf, actual-budget, navidrome, grafana, n8n, syncthing, home-assistant, jellyfin, pihole, adguard-home, sonarr, qbittorrent, portainer, forgejo, wordpress, paperless-ngx, nextcloud, immich, matterjs-server, esphome, zigbee2mqtt, frigate, node-red, music-assistant |
+| `tcp-port` | 22 | 2 | a published TCP port | vaultwarden, uptime-kuma, audiobookshelf, actual-budget, navidrome, grafana, n8n, mosquitto, jellyfin, pihole, adguard-home, sonarr, qbittorrent, portainer, forgejo, wordpress, paperless-ngx, nextcloud, immich, zigbee2mqtt, frigate, node-red, esphome?, music-assistant? |
+| `host-dir` | 22 |  | a bind mount of a host directory | vaultwarden, uptime-kuma, audiobookshelf, actual-budget, navidrome, mosquitto, syncthing, home-assistant, jellyfin, pihole, adguard-home, sonarr, qbittorrent, forgejo, paperless-ngx, immich, matterjs-server, python-matter-server, esphome, zigbee2mqtt, frigate, music-assistant |
+| `env-config` | 18 | 2 | settings in environment variables | vaultwarden, grafana, syncthing, home-assistant, jellyfin, pihole, sonarr, qbittorrent, forgejo, wordpress, paperless-ngx, nextcloud, matterjs-server, esphome, zigbee2mqtt, frigate, node-red, music-assistant, actual-budget?, navidrome? |
+| `registry-named` | 15 |  | the image names a registry other than Docker Hub's default | audiobookshelf, actual-budget, n8n, home-assistant, sonarr, qbittorrent, forgejo, paperless-ngx, immich, matterjs-server, python-matter-server, esphome, zigbee2mqtt, frigate, music-assistant |
+| `named-volume` | 9 |  | a named volume for state | uptime-kuma, grafana, n8n, portainer, wordpress, paperless-ngx, nextcloud, immich, node-red |
+| `ro-mount` | 8 |  | a read-only mount | navidrome, home-assistant, jellyfin, forgejo, esphome, zigbee2mqtt, frigate, music-assistant |
+| `secret` | 7 | 1 | a password or key in the environment | pihole, wordpress, paperless-ngx, nextcloud, immich, esphome, frigate, forgejo? |
+| `uid-gid` | 7 | 1 | runs as, or maps files to, a specific user (user:, PUID, USER_UID) | navidrome, syncthing, jellyfin, sonarr, qbittorrent, forgejo, matterjs-server, zigbee2mqtt? |
+| `host-network` | 6 | 2 | host networking | syncthing, home-assistant, matterjs-server, python-matter-server, esphome, music-assistant, jellyfin?, adguard-home? |
+| `media-lib` | 5 |  | a library of existing files (music, video, books) mounted in | audiobookshelf, navidrome, jellyfin, sonarr, music-assistant |
+| `udp-port` | 5 |  | a published UDP port | jellyfin, pihole, adguard-home, qbittorrent, frigate |
+| `sibling` | 4 | 4 | other containers of its own (database, cache, broker) | wordpress, paperless-ngx, nextcloud, immich, forgejo?, zigbee2mqtt?, frigate?, node-red? |
+| `compose-vars` | 4 |  | ${VAR} substitution from a .env file | immich, matterjs-server, python-matter-server, music-assistant |
+| `discover-mdns` | 4 |  | finds devices by multicast DNS on the LAN, so it needs the LAN's multicast (the pages say host networking) | matterjs-server, python-matter-server, esphome, music-assistant |
+| `host-file` | 4 |  | a single host file mounted in (/etc/localtime) | forgejo, immich, esphome, frigate |
+| `host-socket` | 3 | 2 | a host socket or runtime directory mounted in (docker.sock, D-Bus, udev) | home-assistant, portainer, zigbee2mqtt, matterjs-server?, python-matter-server? |
 | `depends-on` | 3 | 1 | start ordering between them | paperless-ngx, nextcloud, immich, forgejo? |
 | `env-file` | 3 |  | an env file next to the compose file | paperless-ngx, nextcloud, immich |
+| `ephemeral` | 3 |  | -it / --rm | n8n, mosquitto, esphome |
 | `healthcheck` | 3 |  | a healthcheck | actual-budget, syncthing, immich |
 | `public-url` | 3 |  | the app is told its own outside address or domain | vaultwarden, grafana, jellyfin |
 | `shared-data` | 3 |  | the same data used by more than one container or app | sonarr, qbittorrent, nextcloud |
-| `host-network` | 2 | 2 | host networking | syncthing, home-assistant, jellyfin?, adguard-home? |
-| `ephemeral` | 2 |  | -it / --rm | n8n, mosquitto |
-| `host-file` | 2 |  | a single host file mounted in (/etc/localtime) | forgejo, immich |
-| `host-socket` | 2 |  | a host socket mounted in (docker.sock, D-Bus) | home-assistant, portainer |
+| `privileged` | 2 | 1 | privileged | home-assistant, esphome, frigate? |
+| `stop-timeout` | 2 | 1 | a longer time to stop cleanly | home-assistant, frigate, qbittorrent? |
 | `loopback-port` | 2 |  | a port bound to 127.0.0.1 only | vaultwarden, nextcloud |
 | `low-port` | 2 |  | a host port below 1024 (53, 80, 443) | pihole, adguard-home |
-| `stop-timeout` | 1 | 1 | a longer time to stop cleanly | home-assistant, qbittorrent? |
-| `cap-add` | 1 |  | extra Linux capabilities | pihole |
+| `same-lan` | 2 |  | must be on the same layer 2 network (LAN or VLAN) as the devices it talks to; a bridge that translates addresses does not give that | matterjs-server, music-assistant |
+| `shm-tmpfs` | 2 |  | shared memory size or tmpfs | immich, frigate |
+| `device` | 1 | 4 | a hardware device (GPU, serial, a USB radio) | zigbee2mqtt, home-assistant?, immich?, esphome?, frigate? |
+| `cap-add` | 1 | 3 | extra Linux capabilities | pihole, matterjs-server?, frigate?, music-assistant? |
+| `security-opt` | 1 | 2 | a container security option (apparmor, no-new-privileges) | python-matter-server, frigate?, music-assistant? |
 | `cmd-override` | 1 |  | a command or entrypoint override | nextcloud |
-| `compose-vars` | 1 |  | ${VAR} substitution from a .env file | immich |
 | `digest-pin` | 1 |  | an image pinned by digest | immich |
-| `privileged` | 1 |  | privileged | home-assistant |
-| `shm-tmpfs` | 1 |  | shared memory size or tmpfs | immich |
-| `device` | 0 | 2 | a hardware device (GPU, serial, a USB radio) | immich?, home-assistant? |
-| `bluetooth` | 0 | 1 | the host's Bluetooth stack (reached through D-Bus) | home-assistant? |
+| `discover-ssdp` | 1 |  | finds devices by SSDP/uPnP multicast | music-assistant |
+| `ipv6-multicast` | 1 |  | needs IPv6 link-local multicast, router advertisements and neighbour discovery on the LAN (Matter, Thread) | matterjs-server |
+| `read-only-root` | 1 |  | a read-only root filesystem | matterjs-server |
+| `bluetooth` | 0 | 3 | the host's Bluetooth stack (reached through D-Bus) | home-assistant?, matterjs-server?, python-matter-server? |
 | `file-before-start` | 0 | 1 | a config file expected to exist before the first start | mosquitto? |
+| `discover-dhcp` | 0 |  | finds devices by watching DHCP requests on the LAN (defined from the integrations' manifests; no page states it yet) |  |
 
 ## By app
 
@@ -69,26 +76,38 @@ Counts are of 21 apps. "Optional" counts the `?` tags.
 | paperless-ngx | `web-ui` `tcp-port` `named-volume` `host-dir` `env-config` `env-file` `secret` `sibling` `depends-on` `registry-named` |
 | nextcloud | `web-ui` `tcp-port` `loopback-port` `named-volume` `shared-data` `cmd-override` `env-config` `env-file` `secret` `sibling` `depends-on` |
 | immich | `web-ui` `tcp-port` `named-volume` `host-dir` `host-file` `device?` `healthcheck` `shm-tmpfs` `env-file` `secret` `sibling` `depends-on` `compose-vars` `registry-named` `digest-pin` |
+| matterjs-server | `web-ui` `host-network` `host-dir` `env-config` `registry-named` `uid-gid` `read-only-root` `compose-vars` `discover-mdns` `ipv6-multicast` `same-lan` `host-socket?` `bluetooth?` `cap-add?` |
+| python-matter-server | `host-network` `host-dir` `registry-named` `security-opt` `compose-vars` `discover-mdns` `host-socket?` `bluetooth?` |
+| esphome | `web-ui` `tcp-port?` `host-network` `host-dir` `host-file` `ro-mount` `privileged` `ephemeral` `env-config` `secret` `registry-named` `discover-mdns` `device?` |
+| zigbee2mqtt | `web-ui` `tcp-port` `host-dir` `ro-mount` `host-socket` `device` `env-config` `registry-named` `sibling?` `uid-gid?` |
+| frigate | `web-ui` `tcp-port` `udp-port` `host-dir` `host-file` `ro-mount` `shm-tmpfs` `stop-timeout` `env-config` `secret` `registry-named` `sibling?` `device?` `privileged?` `security-opt?` `cap-add?` |
+| node-red | `web-ui` `tcp-port` `named-volume` `env-config` `sibling?` |
+| music-assistant | `web-ui` `tcp-port?` `host-network` `host-dir` `ro-mount` `media-lib` `env-config` `registry-named` `compose-vars` `discover-mdns` `discover-ssdp` `same-lan` `cap-add?` `security-opt?` |
 
-## Shapes the integrations ask for (defined here, not yet counted)
+## Shapes the integrations ask for
 
-The 21 pages above state almost nothing about how an app finds its devices: no page says it needs multicast, and the closest are Jellyfin's
+The first 21 pages state almost nothing about how an app finds its devices: no page says it needs multicast, and the closest are Jellyfin's
 "autodiscovery" address and Pi-hole's optional DHCP-server role, which are settings, not a need. Home Assistant's own page gives the container
 the host's network and never says why. The reason is on the integrations' side, and Home Assistant publishes it: each integration's manifest says
 how it finds its devices, and its usage statistics say how many installations run it.
 
-These shapes are named so the pages added next (the companions, #204) can be tagged with them when their text states the need. They are **not** in the
-counts above, because a tag here is a fact a page contains and these come from manifests. The counts below are from the survey of 2026-10-23 on
-#201 (method and script: [home-assistant/integrations.md](home-assistant/integrations.md)) (the top 200 integrations by installs, less the `default_config` bundle, which depends on all of them: 199), and will change.
+The companions added since (#204) do state it, and their tags are counted above: ESPHome ("`--net=host` lets the dashboard use mDNS, which is
+how it discovers devices"), the Matter servers (mDNS, and "Matter is based on IPv6 link-local multicast protocols"), and Music Assistant ("discovers and
+streams to players using multicast (mDNS and uPnP), so it must be on the same layer 2 network as your players"). So `discover-mdns`, `discover-ssdp`,
+`ipv6-multicast` and `same-lan` are tags with pages behind them. `discover-dhcp` is not: no page states it yet, and it stays defined from the manifests alone.
+
+For scale, the table below is the integrations' side, from the manifests in the survey of 2026-10-23 on #201 (method and script:
+[home-assistant/integrations.md](home-assistant/integrations.md); the top 200 integrations by installs, less the `default_config` bundle, which depends on all
+of them: 199). It counts integrations, not apps in this corpus, and it will change.
 
 | Shape | Meaning | Integrations in the top 199 |
 |---|---|---|
 | `discover-mdns` | finds devices by multicast DNS on the LAN (zeroconf, HomeKit), so it must hear the LAN's multicast | 39 |
 | `discover-ssdp` | finds devices by SSDP/UPnP multicast | 18 |
 | `discover-dhcp` | finds new devices by watching DHCP requests on the LAN, so it must see the LAN's broadcasts | 25 |
-| `bluetooth` | needs the host's Bluetooth adapter (already a tag above, from the one page that says so) | 11 |
-| `device` | a USB radio or serial device (Zigbee, Z-Wave); already a tag above | 6 find devices by USB |
+| `bluetooth` | needs the host's Bluetooth adapter | 11 |
+| `device` | a USB radio or serial device (Zigbee, Z-Wave) | 6 find devices by USB |
 
-What these have in common is a presence on the LAN, not a port: a bridge that NATs gives none of the three discoveries. `docs/docker-to-tink.md` says
-what the Incus answer is (a NIC of its own on the LAN bridge) and #206 is the proposal to declare it. Names are provisional until a page uses them.
-
+What these have in common is a presence on the LAN, not a port: a bridge that NATs gives none of the discoveries, and Music Assistant and the Matter server
+say so in their own words (their pages call host networking, or a network interface directly on the LAN, a requirement). `docs/docker-to-tink.md` says
+what the Incus answer is (a NIC of its own on the LAN bridge) and #206 is the proposal to declare it.
