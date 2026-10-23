@@ -136,5 +136,5 @@ the shell or defaults 3. `tink run` takes the same pages' flags except `--networ
    self-signed certificate. A proxy in front needs an HTTPS upstream (`https-upstream` in `platform.md`).
 5. **#176 is not an edge case here.** Two of seven (Node-RED and the Matter.js server) fail on a fresh volume for the same reason Grafana did, and a third
    page (Frigate) says its services run as an unprivileged user. Both start once `--user` is given; neither tells the person.
-6. **`read_only` and `security_opt` are in no subset.** Neither is a `tink run` flag nor an importer key; Incus has no per-instance read-only root.
+6. **`read_only` and `security_opt` are in no subset.** Neither is a `tink run` flag nor an importer key. Whether Incus has an equivalent for either was not checked.
 
