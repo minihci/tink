@@ -40,7 +40,8 @@ Counts are of 21 apps. "Optional" counts the `?` tags.
 | `digest-pin` | 1 |  | an image pinned by digest | immich |
 | `privileged` | 1 |  | privileged | home-assistant |
 | `shm-tmpfs` | 1 |  | shared memory size or tmpfs | immich |
-| `device` | 0 | 1 | a hardware device (GPU, serial) | immich? |
+| `device` | 0 | 2 | a hardware device (GPU, serial, a USB radio) | immich?, home-assistant? |
+| `bluetooth` | 0 | 1 | the host's Bluetooth stack (reached through D-Bus) | home-assistant? |
 | `file-before-start` | 0 | 1 | a config file expected to exist before the first start | mosquitto? |
 
 ## By app
@@ -56,7 +57,7 @@ Counts are of 21 apps. "Optional" counts the `?` tags.
 | n8n | `web-ui` `tcp-port` `named-volume` `ephemeral` `registry-named` |
 | mosquitto | `tcp-port` `host-dir` `file-before-start?` `ephemeral` |
 | syncthing | `web-ui` `host-network` `host-dir` `uid-gid` `healthcheck` `env-config` |
-| home-assistant | `web-ui` `host-network` `host-dir` `ro-mount` `host-socket` `privileged` `stop-timeout` `env-config` `registry-named` |
+| home-assistant | `web-ui` `host-network` `host-dir` `ro-mount` `host-socket` `privileged` `stop-timeout` `device?` `bluetooth?` `env-config` `registry-named` |
 | jellyfin | `web-ui` `tcp-port` `udp-port` `host-network?` `public-url` `host-dir` `ro-mount` `media-lib` `uid-gid` `env-config` |
 | pihole | `web-ui` `tcp-port` `udp-port` `low-port` `host-dir` `cap-add` `env-config` `secret` |
 | adguard-home | `web-ui` `tcp-port` `udp-port` `low-port` `host-network?` `host-dir` |
@@ -68,3 +69,26 @@ Counts are of 21 apps. "Optional" counts the `?` tags.
 | paperless-ngx | `web-ui` `tcp-port` `named-volume` `host-dir` `env-config` `env-file` `secret` `sibling` `depends-on` `registry-named` |
 | nextcloud | `web-ui` `tcp-port` `loopback-port` `named-volume` `shared-data` `cmd-override` `env-config` `env-file` `secret` `sibling` `depends-on` |
 | immich | `web-ui` `tcp-port` `named-volume` `host-dir` `host-file` `device?` `healthcheck` `shm-tmpfs` `env-file` `secret` `sibling` `depends-on` `compose-vars` `registry-named` `digest-pin` |
+
+## Shapes the integrations ask for (defined here, not yet counted)
+
+The 21 pages above state almost nothing about how an app finds its devices: no page says it needs multicast, and the closest are Jellyfin's
+"autodiscovery" address and Pi-hole's optional DHCP-server role, which are settings, not a need. Home Assistant's own page gives the container
+the host's network and never says why. The reason is on the integrations' side, and Home Assistant publishes it: each integration's manifest says
+how it finds its devices, and its usage statistics say how many installations run it.
+
+These shapes are named so the pages added next (the companions, #204) can be tagged with them when their text states the need. They are **not** in the
+counts above, because a tag here is a fact a page contains and these come from manifests. The counts below are from the survey of 2026-10-23 on
+#201 (the top 200 integrations by installs, less the `default_config` bundle, which depends on all of them: 199), and will change.
+
+| Shape | Meaning | Integrations in the top 199 |
+|---|---|---|
+| `discover-mdns` | finds devices by multicast DNS on the LAN (zeroconf, HomeKit), so it must hear the LAN's multicast | 39 |
+| `discover-ssdp` | finds devices by SSDP/UPnP multicast | 18 |
+| `discover-dhcp` | finds new devices by watching DHCP requests on the LAN, so it must see the LAN's broadcasts | 25 |
+| `bluetooth` | needs the host's Bluetooth adapter (already a tag above, from the one page that says so) | 11 |
+| `device` | a USB radio or serial device (Zigbee, Z-Wave); already a tag above | 6 find devices by USB |
+
+What these have in common is a presence on the LAN, not a port: a bridge that NATs gives none of the three discoveries. `docs/docker-to-tink.md` says
+what the Incus answer is (a NIC of its own on the LAN bridge) and #206 is the proposal to declare it. Names are provisional until a page uses them.
+
