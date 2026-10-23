@@ -22,7 +22,7 @@ licences and are quoted as test inputs. Where a page contained a template placeh
 | [n8n](n8n/upstream.md) | one container, run only | `--rm`, named volume |
 | [Mosquitto](mosquitto/upstream.md) | one container, run only | config file must exist before first start |
 | [Syncthing](syncthing/upstream.md) | one container, host network | host networking, healthcheck |
-| [Home Assistant](home-assistant/upstream.md) | one container, run only | `--privileged`, host network, D-Bus |
+| [Home Assistant](home-assistant/upstream.md) | one container, run + compose | `--privileged`, host network, D-Bus, an optional serial device |
 | [Jellyfin](jellyfin/upstream.md) | one container, run + compose | UDP port, media mounts, optional GPU |
 | [Pi-hole](pihole/upstream.md) | one container, compose | port 53, capabilities |
 | [AdGuard Home](adguard-home/upstream.md) | one container, run only | many ports incl. UDP and DHCP |

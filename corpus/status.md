@@ -15,6 +15,12 @@ compose-only app run here was translated by hand: into `tink run` flags when it 
 WordPress (live). The multi-container apps (Paperless-ngx, Nextcloud, Immich, and Forgejo with a database) need a stack
 written by hand. This is a gap in the milestone, not an edge case: no shape below matters until a person has done it.
 
+**Added 2026-10-23.** Home Assistant's page also gives a compose form (the corpus had only its `docker run` line), so 18 of 21 pages give a compose file and 3
+give only `docker run` (AdGuard Home, Mosquitto, n8n). `tink import` on that compose example, with tink built from `main` (d911aff), is **refused**:
+`privileged` is not in the supported subset, and `network_mode: host` has no equivalent; `stop_grace_period` is dropped with a warning ("Incus has no
+per-instance stop timeout"); nothing is written. `tink run` takes the same page's flags (`--privileged`, `--device`, a LAN profile), so the two commands
+disagree about the same page (#205). The 18 compose files `tink import` was surveyed on (`internal/compose/testdata`) did not include this one.
+
 ## Does each app run?
 
 | Result | Apps |
