@@ -1,5 +1,5 @@
 # The shared site the herd test applies stacks to: a DNS helper, a sign-on helper and an ingress helper on one platform bridge, in a
-# project of their own. A fixture, not the platform recipe (#131): the addresses and the zone are the documentation ones, certificates
+# project of their own. A fixture, not the platform recipe (#131): the zone is the documentation one and the platform bridge is picked by Incus (herd.sh renders the @NAME@ placeholders of this file and of files/ into .rendered/ with the addresses it chose), certificates
 # are Caddy's own local CA, and the site's one user is a throwaway.
 #
 # Put the platform bridge and the bridges tink makes for the stacks (named tink-*) in a firewall zone that lets them reach the host's DHCP and DNS
@@ -18,7 +18,7 @@ kind: network
 name: herd0
 description: the herd test's platform bridge
 config:
-  ipv4.address: 192.0.2.1/24
+  ipv4.address: auto                  # Incus picks the subnet (herd.sh creates the bridge first, to read it back for the addresses below)
   ipv4.nat: "true"
   ipv6.address: none
 ---
@@ -32,7 +32,7 @@ config:
   user.tink.role: dns
   user.tink.dns.zone: home.example.org
 devices:
-  eth0: {name: eth0, type: nic, network: herd0, ipv4.address: 192.0.2.10}
+  eth0: {name: eth0, type: nic, network: herd0, ipv4.address: "@DNS_IP@"}
 ---
 kind: file
 name: dns-corefile
@@ -69,7 +69,7 @@ config:
   # pointed at /app, which is.
   oci.entrypoint: authelia --config /app/configuration.yml
 devices:
-  eth0: {name: eth0, type: nic, network: herd0, ipv4.address: 192.0.2.11}
+  eth0: {name: eth0, type: nic, network: herd0, ipv4.address: "@SSO_IP@"}
 ---
 kind: file
 name: sso-configuration
@@ -96,7 +96,7 @@ config:
   user.tink.role: ingress
   user.tink.leg.eth0: serves, public
 devices:
-  eth0: {name: eth0, type: nic, network: herd0, ipv4.address: 192.0.2.3}
+  eth0: {name: eth0, type: nic, network: herd0, ipv4.address: "@INGRESS_IP@"}
   # The fixture's one way in from the host, on the loopback address only and on the port a browser would use, so that a Host header carries no
   # port (qBittorrent, for one, refuses one that is not its own). A real site reaches the ingress helper through a NAT proxy device on its public address.
   https: {type: proxy, listen: "tcp:127.0.0.1:443", connect: "tcp:127.0.0.1:443"}

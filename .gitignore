@@ -13,3 +13,6 @@ configs/*.env
 !configs/*.env.example
 configs/secrets/
 configs/authelia/users_database.yml
+
+# the herd test's rendered copy of its site (corpus/site/herd.sh)
+corpus/site/.rendered/

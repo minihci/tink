@@ -2,6 +2,6 @@ $ORIGIN home.example.org.
 $TTL 60
 @     IN SOA dns.home.example.org. hostmaster.home.example.org. 1 3600 600 86400 60
 @     IN NS  dns.home.example.org.
-dns   IN A   192.0.2.10
-auth  IN A   192.0.2.3
-ingress IN A 192.0.2.3
+dns   IN A   @DNS_IP@
+auth  IN A   @INGRESS_IP@
+ingress IN A @INGRESS_IP@
