@@ -79,7 +79,7 @@ how it finds its devices, and its usage statistics say how many installations ru
 
 These shapes are named so the pages added next (the companions, #204) can be tagged with them when their text states the need. They are **not** in the
 counts above, because a tag here is a fact a page contains and these come from manifests. The counts below are from the survey of 2026-10-23 on
-#201 (the top 200 integrations by installs, less the `default_config` bundle, which depends on all of them: 199), and will change.
+#201 (method and script: [home-assistant/integrations.md](home-assistant/integrations.md)) (the top 200 integrations by installs, less the `default_config` bundle, which depends on all of them: 199), and will change.
 
 | Shape | Meaning | Integrations in the top 199 |
 |---|---|---|

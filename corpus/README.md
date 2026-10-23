@@ -42,6 +42,12 @@ Not chosen on purpose: anything that only ships as a VM or an appliance image, a
 [shapes.md](shapes.md) tags each app with what its description states (a UDP port, a bind mount, a sibling database, ...) and
 counts the tags. The count ranks what tink needs; it does not yet say what tink already does.
 
+## What an ecosystem asks of the host
+
+The pages above are install instructions. For Home Assistant, whose value is the integrations people add, the demand is measured from the other side:
+[home-assistant/integrations.md](home-assistant/integrations.md) and its script rank the integrations by use and say how each finds its devices and
+what it needs. Its results are dated snapshots on the tracking issue (#201), not files here.
+
 ## What the apps ask of the shared services
 
 [platform.md](platform.md) tags each app with what it asks of the proxy, names, sign-on and backup (WebSockets, trusting the
