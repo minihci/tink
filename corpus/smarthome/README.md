@@ -35,7 +35,7 @@ For each published name (`ha`, `nodered`, `esphome`, `music`), the four of the f
 - the broker answers from Home Assistant and from Node-RED; MariaDB and the Matter server's web socket answer from Home Assistant;
 - Piper, Whisper and openWakeWord each answer a Wyoming `describe` from Home Assistant;
 - the platform's ingress and sign-on helpers do not reach the broker, MariaDB or the Matter server;
-- ESPHome and Music Assistant, in stacks of their own, do not reach the `home` stack's broker.
+- ESPHome and Music Assistant, in stacks of their own, do not reach the `home` stack's broker. **This one passes for two reasons and proves only that the connection fails**: their own bridges reject all outbound traffic too (#225), so it would fail without the `home` stack's ACL. It becomes a test of that ACL once they can reach out.
 
 A second `tink plan` of the rendered `home.yaml` and of the site says no changes.
 
@@ -61,5 +61,8 @@ A second `tink plan` of the rendered `home.yaml` and of the site says no changes
 - **The ESPHome and Music Assistant stacks run without host networking** and answer behind sign-on (`esphome` 200, `music` 302 to its own `setup` page). What their
   pages say host networking is for is not measured: ESPHome's mDNS discovery of devices, and Music Assistant's discovery of and streaming to players, which needs its
   stream port (8097) reachable by IP from the players' network. In the stack the port has no route and the bridge's ACL admits only the ingress helper to 8095.
-- **ESPHome's own login holds behind the site's.** `/` (the page's shell) answers 200 and `/devices` and `/info` answer 401 without the dashboard's credentials
-  (`ESPHOME_USERNAME` and `ESPHOME_PASSWORD`, set in the stack), so a person signs in twice. The signed-in check only sees the shell.
+- **ESPHome's own login is on behind the site's.** `/` (the page's shell) answers 200 and `/devices` and `/info` answer 401 without the dashboard's credentials
+  (`ESPHOME_USERNAME` and `ESPHOME_PASSWORD`, set in the stack). From those status codes, seen with `wget` through the ingress helper and not in a browser, a person would sign in
+  twice. The signed-in check only sees the shell. #200 (an app published with its own sign-on) is the proposal for this.
+- **Apps in different stacks cannot reach each other.** Each bridge's ACL admits only the ingress helper, so Home Assistant could not reach Music Assistant's stream port or
+  ESPHome from the `home` stack. Not tested; it follows from the ACL, and it is why the apps that talk to each other share a stack.

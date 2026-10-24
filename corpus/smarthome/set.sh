@@ -64,7 +64,8 @@ set_checks() {
 		done
 	done
 
-	# the other stacks of the set are not in this stack's ACL either: ESPHome and Music Assistant cannot reach the home stack's broker
+	# ESPHome and Music Assistant cannot reach the home stack's broker. Their own bridges reject outbound traffic too (#225), so this passes for that reason as
+	# well; it tests the home stack's ACL only once they can reach out.
 	for pair in esphome:herd-esphome:esphome music-assistant:herd-music:music-assistant; do
 		name=${pair%%:*}
 		rest=${pair#*:}
