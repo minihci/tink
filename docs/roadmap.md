@@ -80,7 +80,7 @@ Limit or retire:
 - **One page of architecture** (this one) that is true, plus one user page per built feature. No design note stays in the tree once its feature is built; the reasoning moves to the package comment. No design note for an unbuilt feature merges to the main branch; it lives in an issue.
 - **A demand gate, beside the shape gate.** A capability is built when a workload someone runs finds a gap in tink, and the workload's rerun is the exit test; with no workload to rerun it is a design note in an issue. It becomes a general feature (a new kind, a verb the user must learn, a recipe field) when a second kind of workload hits the same gap, or when the author says why one is enough. Where the docs claim something that no workload has run (a UDP proxy, `on_image_change: rebuild`, a host reboot with the helper), a trial comes before more building. The author is the only user today, so nothing is built for users who do not exist.
 - **A capability gate.** A new capability ships only with: an engine-neutral declaration on the app or the site; a default engine behind a role; a plan-time check; the three extension points above; a golden test. Anything else waits.
-- **A freeze list** until the converger is hardened: no new roles or helpers, no `kind: access`, no recipe, no network-forward kind, no restic engine. The consumer drives the order, not the design notes.
+- **A freeze list** until the converger is hardened: no new roles or helpers, no recipe, no network-forward kind, no restic engine. The consumer drives the order, not the design notes. (`kind: access` was on this list until 2026-10-24; see "Decided and open".)
 - **A size budget per ring,** reviewed each release: the converger stays the largest and most tested; a capability that grows past a few thousand lines is split or simplified before it grows further. The helper subsystem (3,800 lines, the largest piece outside the converger) is the next one to look at after backup verification lands.
 - **Few dependencies.** Seven direct today; adding one is a decision with a reason written down.
 - **A short list of deletions that is actually carried out.** No deprecation period and no migration code, deployed or not: a removal is a release note that says what to change, and a stack that needs changing is fixed by hand, by someone (or an agent) who can read the code. Code written only to carry old shapes forward is the compounding cost this project cannot afford.
@@ -177,6 +177,9 @@ Decided on 2026-10-19:
 - The helper subsystem is reviewed after Phase 4.
 - The freeze list and the capability gate.
 - Where a removal needs a stack changed, the repair is a page written for an agent, not code.
+
+Decided on 2026-10-24:
+- `kind: access` (one instance using another's offer, a broker for example) is off the freeze list. The smart-home herd (#207) is a consumer that needs it: an app in one stack cannot reach an app in another (Zigbee2MQTT and its broker), because each stack's ACL admits only the ingress helper (the evidence is a comment on #130). Unfreezing lifts the freeze only. The capability gate and the demand gate above still apply to the work, and the design stays in #130 until it is built.
 
 Open:
 1. **The name of the expanded-stack view,** leaning to a subcommand of plan: `tink plan explain`. It prints what the facts expanded to, and for each derived value where it came from (a default, a site fact, a publish). It sits beside `tink plan` and `tink plan apply`, takes the same files and flags, and is read-only like plan. Other candidates were `tink expand`, `tink show` and `tink render`.
