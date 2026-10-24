@@ -430,8 +430,8 @@ func TestPlaceVolumeFile_Failures(t *testing.T) {
 			func(s *mountFake) { s.readErr = api.StatusErrorf(http.StatusForbidden, "not authorized") }, "reading /sub/configuration.yaml in volume default/e2e-ha-config failed", false, 0},
 		{"a directory in the way is an error, and writes nothing",
 			func(s *mountFake) { s.dirs["default/e2e-ha-config:/sub/configuration.yaml"] = true }, "is a directory", false, 0},
-		{"a write that finds no parent directory says tink creates none",
-			func(s *mountFake) { s.writeErr = api.StatusErrorf(http.StatusNotFound, "no such file or directory") }, "writing /sub/configuration.yaml into volume default/e2e-ha-config failed", true, 1},
+		{"a write that finds no parent directory tries to make it (parentdirs.go), and says which directory could not be made",
+			func(s *mountFake) { s.writeErr = api.StatusErrorf(http.StatusNotFound, "no such file or directory") }, "creating directory /sub", true, 2},
 		{"any other failed write is reported with its cause and no hint",
 			func(s *mountFake) { s.writeErr = api.StatusErrorf(http.StatusInternalServerError, "disk full") }, "disk full", false, 1},
 	}
@@ -443,7 +443,7 @@ func TestPlaceVolumeFile_Failures(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("err = %v, want one containing %q", err, tc.wantErr)
 			}
-			if got := strings.Contains(err.Error(), "creates no directories"); got != tc.wantHint {
+			if got := strings.Contains(err.Error(), "check that the volume exists"); got != tc.wantHint {
 				t.Errorf("hint present = %v, want %v: %v", got, tc.wantHint, err)
 			}
 			writes := 0

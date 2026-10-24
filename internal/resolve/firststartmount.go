@@ -325,7 +325,7 @@ func readVolumeFile(s incus.InstanceServer, m mount, rel string) (content string
 
 // placeVolumeFile writes f's content to its path inside the custom volume mounted over it: the same file resource, converged, not a seed. It reads what
 // the volume holds and writes only when that differs, so a file already right is left untouched. It writes as placeFile does (mode 0644, owner as the
-// client's defaults give) and creates no directories: the parent must be in the volume already. The path is relative to the volume's root.
+// client's defaults give), and makes the parent directories a failed write finds missing (parentdirs.go). The path is relative to the volume's root.
 func placeVolumeFile(server incus.InstanceServer, f Resource, m mount) error {
 	s := scopedServer(server, f)
 	rel := m.inVolume(path.Clean(f.Path))
@@ -339,16 +339,18 @@ func placeVolumeFile(server incus.InstanceServer, f Resource, m mount) error {
 		return nil
 	}
 
-	err = s.CreateStorageVolumeFile(m.Pool, "custom", m.Volume, rel, incus.InstanceFileArgs{
-		Content:   strings.NewReader(f.Content),
-		Type:      "file",
-		WriteMode: "overwrite",
-		Mode:      0o644,
+	err = pushCreatingParents(rel, volumeDirOps(s, m.Pool, m.Volume), func() error {
+		return s.CreateStorageVolumeFile(m.Pool, "custom", m.Volume, rel, incus.InstanceFileArgs{
+			Content:   strings.NewReader(f.Content),
+			Type:      "file",
+			WriteMode: "overwrite",
+			Mode:      0o644,
+		})
 	})
 	if err != nil {
 		hint := ""
 		if incusapi.IsNotFound(err) {
-			hint = " (tink creates no directories: check that the volume exists and that the file's parent directory is in it)"
+			hint = " (check that the volume exists)"
 		}
 		return fmt.Errorf("writing %s into volume %s failed: %w%s", rel, vol, err, hint)
 	}
