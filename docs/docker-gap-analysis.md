@@ -79,7 +79,7 @@ Verdicts: ✅ covered, ◐ partial, ❌ gap (Incus can; tink's `run` cannot say 
 | `-e KEY=VAL` | 8 | ✅ | ✅ and `${secret:NAME}` | `environment.KEY` | ✅ **live** |
 | `--env-file` | 1 | ✅ **done** | ◐ one `${secret:}` per value | - | ✅ |
 | `--user UID:GID` | 4 | ✅ **done** | ✅ | `oci.uid` / `oci.gid` **live** (process runs as 1234) | ✅ |
-| volume owned by that user | 4 | ✅ **done** (new volumes) | ✅ (`config: initial.uid`) | volume config `initial.uid/gid/mode` at creation **live** (mounted as `1000:1000`, mode 750) | ✅ this is what your `kind: exec` + `chown` steps in the Matter and Mosquitto stacks work around |
+| volume owned by that user | 4 | ✅ **done** (new volumes; and, without `--user`, the image's own non-root user, #176) | ✅ (`config: initial.uid`) | volume config `initial.uid/gid/mode` at creation **live** (mounted as `1000:1000`, mode 750) | ✅ this is what your `kind: exec` + `chown` steps in the Matter and Mosquitto stacks work around |
 | `--name` | 12 | ✅ required | `name:` | instance name; also the hostname **live** | ✅ |
 | `container_name` / service names as hostnames | 3 | - | - | a bare name resolves between instances on the same network (`kuma-play`, no suffix) **live**, via the `incus` search domain | ✅ matches Compose; worth saying in the docs |
 
