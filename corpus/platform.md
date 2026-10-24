@@ -43,7 +43,7 @@ Counts are of 34 apps; the third column counts the `?` tags.
 | n8n | `websocket?` `admin-ui` `public-paths` `embedded-db` | WEBHOOK_URL, N8N_HOST, N8N_PROTOCOL (?) |
 | mosquitto | `stream-port` `embedded-db` | n/a (not HTTP) |
 | syncthing | `stream-port` `admin-ui` `embedded-db` | none; the GUI rejects an unexpected Host header (?) |
-| home-assistant | `websocket?` `trust-proxy?` `stream-port?` `app-clients` `embedded-db` | http: trusted_proxies in a config file (?) |
+| home-assistant | `websocket?` `trust-proxy` `stream-port?` `app-clients` `embedded-db` | `http:` `use_x_forwarded_for` and `trusted_proxies`, which must be in `configuration.yaml` at the **first** start: from 2026.8 it is imported once and the YAML ignored after, and the YAML stops working in 2027.2. The supported route is an admin WebSocket command, `http/config/configure` then `http/config/promote` (live, #223). Without the proxy trusted every proxied request is a 400 |
 | jellyfin | `websocket?` `stream-port` `app-clients` `oidc?` `embedded-db` | JELLYFIN_PublishedServerUrl (page) |
 | pihole | `https-upstream?` `stream-port` `is-dns` `admin-ui` `embedded-db` | none |
 | adguard-home | `stream-port` `is-dns` `admin-ui` `embedded-db` | none |

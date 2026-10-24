@@ -46,12 +46,18 @@ A second `tink plan` of the rendered `home.yaml` and of the site says no changes
   herd's README says to. Fixed: the glob is taken in the script's own directory.
 - **A site that is already there cannot be applied first once stacks have left it.** tink refuses to empty a derived file ("nothing is published"),
   which is right; so `up` applies the site first only when it does not exist, and the stacks come before the final apply.
-- **Home Assistant behind the ingress helper answers 400.** Caddy adds `X-Forwarded-For`, and Home Assistant refuses it until its `http:` block trusts the
-  proxy (`platform.md`, `trust-proxy`). The block is in `files/ha-configuration.yaml`, `check_config` accepts it and shows it, and the page still
-  answers 400 ("your HTTP integration is not set-up for reverse proxies", Home Assistant 2026.10.3). Not resolved: in this version the
-  `http` component reads its settings from a store and migrates YAML into it once (`components/http/config.py`), and no `.storage/http` file was ever
-  written here, so the YAML may be ignored. The signed-in check for `ha` fails until that is understood (#223).
-- **`ha` signed in fails, and is left failing on purpose** (above, #223).
+- **Home Assistant behind the ingress helper answered 400, and the cause was the fixture** (#223). Caddy adds `X-Forwarded-For`, and Home Assistant refuses it until its
+  `http:` block trusts the proxy (`platform.md`, `trust-proxy`). The block was in `files/ha-configuration.yaml`, but that file includes `automations.yaml`,
+  `scripts.yaml` and `scenes.yaml`, which Home Assistant writes itself only when it writes `configuration.yaml` too. tink places `configuration.yaml`
+  first, the includes were missing, and Home Assistant logged "Activating recovery mode", which ignores YAML and runs `http` with its default (no proxy trusted).
+  The stack now places the three files with `kind: file`. This is a **stopgap**: from 2026.8 Home Assistant imports `http:` once, on the first boot, and ignores
+  the YAML after that (a first boot without the block marks the migration done), and the YAML block stops working in 2027.2. The route it provides is an
+  admin WebSocket command, `http/config/configure`, then `http/config/promote` (a new config reverts after 5 minutes otherwise); tested under Podman, not built
+  here, because it needs an admin token and secrets are accepted only in `environment.*`. A second route, placing `.storage/http` before the first start, is #238
+  (blocked by #140). The evidence is on #223.
+  Run on a local Incus 7.5.1 server on 2026-10-24 (Home Assistant 2026.10.3): applying the stack to the instance that was in recovery mode created the three files and
+  updated the configuration, Home Assistant restarted, wrote `.storage/http` with `yaml_migration_done: true` and the ingress helper in `trusted_proxies`, the
+  `ha` signed-in check passed, and a second plan said no changes for all four files.
 - **The stacks say `egress: open`** (#225). The derived bridge of `network: own` rejects outbound traffic by default, so Whisper, which downloads its model on first
   start, could not, and its `describe` failed on a fresh `up`; Home Assistant's own update check could not connect either. With the field, a fresh `up` from nothing
   (volumes included) downloaded the model and every voice server answers. `open` is Incus's `allow` on the bridge and not a promise of internet access (`docs/network.md`).
