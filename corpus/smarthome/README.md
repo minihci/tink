@@ -1,7 +1,7 @@
 # The smart-home herd
 
 A second set of stacks for the herd test (`../herd.md`), applied to the same site as the first herd (`../site/`): the apps a Home Assistant install
-grows around it. Plan and checks: #207. So far (slices 1 and 2) one stack, `home`; `esphome`, `music` and the plan-only `radios` follow.
+grows around it. Plan and checks: #207. So far (slices 1 to 3) three stacks, `home`, `esphome` and `music`; the plan-only `radios` follows.
 
 ```
 TINK=./tink HERD_SET=corpus/smarthome corpus/site/herd.sh up      # the site if it is not there, the stacks of this set, then the site again
@@ -20,19 +20,22 @@ with no set removes everything, the site and every set beside it.
 | `home.yaml` | the stack `home`: Home Assistant, Mosquitto, a MariaDB recorder, Node-RED, the Matter server and the Wyoming voice trio (Piper, Whisper, openWakeWord), a project and a bridge of their own with an ACL that admits only the ingress helper. Starts from what `tink import` writes for compose files made of the corpus pages; Node-RED is published as `nodered` for admins |
 | `files/mosquitto.conf` | the broker's configuration: Mosquitto answers only on localhost without a file, so the stack places one before its first start |
 | `files/ha-configuration.yaml` | Home Assistant's default configuration plus an `http:` block that trusts the ingress helper |
-| `set.sh` | the names to check and the checks of the stack |
+| `esphome.yaml` | the stack `esphome`: the ESPHome device-builder dashboard, published as `esphome` for admins |
+| `music.yaml` | the stack `music`: Music Assistant, published as `music` for the family group |
+| `set.sh` | the names to check and the checks of the stacks |
 
 Home Assistant's page asks for host networking, which `tink import` refuses (`docs/docker-to-tink.md`). The stack leaves it out, so the app runs on its
 stack's bridge, and the herd does **not** measure what host networking is for (discovery by multicast). A NIC on a real LAN bridge waits for #206.
 
 ## The checks
 
-For each published name (`ha`, `nodered`), the four of the first herd. For the stack, 14 more, 22 in all. On the run that wrote this, 21 passed and `ha` signed in failed; on a fresh `up` Whisper's `describe` fails too (below):
+For each published name (`ha`, `nodered`, `esphome`, `music`), the four of the first herd. For the stacks, 16 more, 32 in all. On the run that wrote this, 31 passed and `ha` signed in failed; on a fresh `up` Whisper's `describe` fails too (below):
 
 - the ingress helper reaches the port it fronts (the control for the denials below);
 - the broker answers from Home Assistant and from Node-RED; MariaDB and the Matter server's web socket answer from Home Assistant;
 - Piper, Whisper and openWakeWord each answer a Wyoming `describe` from Home Assistant;
-- the platform's ingress and sign-on helpers do not reach the broker, MariaDB or the Matter server.
+- the platform's ingress and sign-on helpers do not reach the broker, MariaDB or the Matter server;
+- ESPHome and Music Assistant, in stacks of their own, do not reach the `home` stack's broker. **This one passes for two reasons and proves only that the connection fails**: their own bridges reject all outbound traffic too (#225), so it would fail without the `home` stack's ACL. It becomes a test of that ACL once they can reach out.
 
 A second `tink plan` of the rendered `home.yaml` and of the site says no changes.
 
@@ -55,3 +58,11 @@ A second `tink plan` of the rendered `home.yaml` and of the site says no changes
   (`initial.uid`, `initial.gid`: #176), and `entrypoint:` with `command:` (Piper, Whisper) becomes one `oci.entrypoint` that keeps the image's own entrypoint.
   The same line given to `tink run` without the entrypoint replaces it, and the instance never starts.
 - **The apps of a stack are not isolated from each other**, as in the first herd: Node-RED reaches the broker, and so would anything else on the bridge.
+- **The ESPHome and Music Assistant stacks run without host networking** and answer behind sign-on (`esphome` 200, `music` 302 to its own `setup` page). What their
+  pages say host networking is for is not measured: ESPHome's mDNS discovery of devices, and Music Assistant's discovery of and streaming to players, which needs its
+  stream port (8097) reachable by IP from the players' network. In the stack the port has no route and the bridge's ACL admits only the ingress helper to 8095.
+- **ESPHome's own login is on behind the site's.** `/` (the page's shell) answers 200 and `/devices` and `/info` answer 401 without the dashboard's credentials
+  (`ESPHOME_USERNAME` and `ESPHOME_PASSWORD`, set in the stack). From those status codes, seen with `wget` through the ingress helper and not in a browser, a person would sign in
+  twice. The signed-in check only sees the shell. #200 (an app published with its own sign-on) is the proposal for this.
+- **Apps in different stacks cannot reach each other.** Each bridge's ACL admits only the ingress helper, so Home Assistant could not reach Music Assistant's stream port or
+  ESPHome from the `home` stack. Not tested; it follows from the ACL, and it is why the apps that talk to each other share a stack.

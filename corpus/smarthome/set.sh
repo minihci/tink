@@ -1,13 +1,18 @@
 # The smart-home herd: a stack set for ../site/herd.sh (HERD_SET=corpus/smarthome). See README.md.
 # This file is read by herd.sh and may use its functions (ok, bad, addr_of).
 
-STACKS="home"
+STACKS="home esphome music"
 
-APPS="ha:herd-home:homeassistant:8123 nodered:herd-home:node-red:1880"
+APPS="ha:herd-home:homeassistant:8123 nodered:herd-home:node-red:1880 esphome:herd-esphome:esphome:6052 music:herd-music:music-assistant:8095"
 
 # reach PROJECT INSTANCE ADDRESS PORT succeeds when INSTANCE can open a TCP connection to ADDRESS:PORT. busybox nc exits 0 on a connection and 1 on a
 # timeout; the call has its own limit because an address whose ACL drops packets is waited out by the kernel otherwise.
 reach() { timeout 25 incus exec --project "$1" "$2" -- sh -c "nc -w 3 $3 $4 </dev/null >/dev/null 2>&1" </dev/null 2>/dev/null; }
+
+# reach_py PROJECT INSTANCE ADDRESS PORT is reach for an image that has python3 and no nc (ESPHome, Music Assistant).
+reach_py() {
+	timeout 25 incus exec --project "$1" "$2" -- python3 -c "import socket,sys; socket.create_connection((sys.argv[1],int(sys.argv[2])),4)" "$3" "$4" </dev/null >/dev/null 2>&1
+}
 
 # reach_node ADDRESS PORT is reach for Node-RED's image, which has node and no nc.
 reach_node() {
@@ -57,5 +62,13 @@ set_checks() {
 		for from in ingress sso; do
 			reach herd-site "$from" "${rest%%:*}" "${rest#*:}" && bad "home: the platform's $from helper reached $name" || ok "home: the platform's $from helper does not reach $name"
 		done
+	done
+
+	# ESPHome and Music Assistant cannot reach the home stack's broker. Their own bridges reject outbound traffic too (#225), so this passes for that reason as
+	# well; it tests the home stack's ACL only once they can reach out.
+	for pair in esphome:herd-esphome:esphome music-assistant:herd-music:music-assistant; do
+		name=${pair%%:*}
+		rest=${pair#*:}
+		reach_py "${rest%%:*}" "${rest#*:}" "$broker" 1883 && bad "stacks: $name reached the home stack's broker" || ok "stacks: $name does not reach the home stack's broker"
 	done
 }

@@ -1,0 +1,46 @@
+# The smart-home herd stack "music": Music Assistant. Imported with `tink import` from a compose file made of the corpus page (corpus/music-assistant);
+# the lines marked "site:" are the site's half, written by hand. The page calls host networking, or a network interface directly on the players' network,
+# "mandatory": the server must be on the same layer 2 network as its players, and hands them its own address to stream from. Import refuses it
+# (docs/docker-to-tink.md). The stack leaves it out, so the web UI runs on the stack's bridge, players cannot reach the stream port (8097) and discovery
+# is not measured (README.md). The page's media mount (a host library, read-only) and its `${USERDIR:-$HOME}` data path are left out: the fixture has no library.
+kind: stack
+name: music
+network: own                              # a bridge, its ACL and the apps' static addresses are derived (docs/network.md)
+project: herd-music                       # site: a project of its own
+site: herd                                # site: only needed on a server that has a platform already (docs/join.md#sites)
+---
+kind: project                             # site
+name: herd-music
+config:
+  features.profiles: "false"
+---
+kind: storage-volume
+name: music-data
+pool: default
+backup:                                   # site
+  none: "a throwaway fixture"
+---
+kind: instance
+name: music-assistant
+image: ghcr.io/music-assistant/server:latest
+profiles:
+  - default
+config:
+  boot.autorestart: "true"
+  boot.autostart: "true"
+  environment.LOG_LEVEL: info
+  user.tink.offer.web.port: "8095"        # site
+  user.tink.offer.web.proto: http
+devices:
+  # (the compose file's host ports 8095 and 8097 are gone: the web UI is reached through the ingress helper; the stream port has no route)  # site
+  volume0:
+    type: disk
+    path: /data/
+    pool: default
+    source: music-data
+---
+kind: publish                             # site: the name, and who may use it
+name: music
+instance: music-assistant
+offer: web
+allow: [family]
