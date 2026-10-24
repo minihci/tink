@@ -102,7 +102,7 @@ Verdicts: ✅ covered, ◐ partial, ❌ gap (Incus can; tink's `run` cannot say 
 | `--label` | 1 | ◐ `--incus-config user.KEY=VALUE` | ✅ | `user.*`. Reverse-proxy labels (Traefik/Caddy) are a hand-written route file here | ◐ |
 | `healthcheck` / `depends_on: condition: service_healthy` | 0 | ⛔ | ⛔ | Incus has no health check for application containers docs. `depends_on` is start order only; `kind: exec` with a `check` is the closest | ⛔ |
 | `depends_on` | 3 | n/a | ✅ | tink's graph | ✅ |
-| `IMAGE CMD...` | 0 | ◐ **replaces** entrypoint and command | ✅ | `oci.entrypoint`. Docker keeps the ENTRYPOINT and replaces only CMD | ◐ code: a semantic difference |
+| `IMAGE CMD...` | 0 | ✅ after the image's entrypoint | ✅ | `oci.entrypoint`, with the entrypoint read from the registry (#230). If it cannot be read the command replaces it, with a warning | ✅ code, run live (Piper, MariaDB) |
 | `--rm` | 0 | ✅ | ✅ **done**: `ephemeral:`, and `export` keeps it | `ephemeral` | ◐ |
 | `-d`, `-it`, `--init`, `--pull` | many | n/a | n/a | always detached; `incus exec`; image freshness is `on_image_change` | n/a |
 | `/var/run/docker.sock` mounts (Portainer, Traefik, Watchtower) | - | n/a | n/a | no Docker here | n/a |

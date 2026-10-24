@@ -181,6 +181,7 @@ exists is Z-Wave JS UI's and it publishes ports. The OpenThread page's line is t
    registry on 2026-10-23). `tink run` set `oci.entrypoint` to the arguments, as `docs/docker-to-tink.md` says it does, and the instance never started: `starting/restarting piper to
    apply its config: giving up after 5 attempts: bad file descriptor`, and the container log says only `Failed to receive file descriptors for command "get_init_pid"`. Two of the
    four pages that can run here hit it. The way out is to write the entrypoint out. Whether `tink run` could say so when the image has an entrypoint was not looked at.
+   **Since #230** `tink run` reads the entrypoint from the image's registry and puts the command after it: Piper's line, as its page writes it, started and answered a Wyoming `describe` (live, Incus 7.5.1). A registry it cannot read gives a warning, and then the old behavior.
 2. **The OpenThread page's line has two parts that `tink run` does not take.** `--network=host` is refused with the host-networking explanation, and `--cap-add=NET_ADMIN` is
    `unknown flag` (the importer drops `cap_add` with a warning). The page says host networking "is often necessary for OTBR, as it needs to have direct access to network
    interfaces" and gives `OT_INFRA_IF` as "the network interface used for the adjacent infrastructure network". It does not say layer 2 or multicast, so the corpus tags it

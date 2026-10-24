@@ -157,6 +157,9 @@ func Run(opts Options) (*Result, error) {
 		if !hasNIC(spec.Devices) {
 			note("no --network given: the profiles layered on %s must supply a NIC (checked for real when run, and refused if ports are published without one)", spec.Name)
 		}
+		if len(opts.Cmd) > 0 {
+			note("a command given after the image goes after the image's own entrypoint, which the real run reads from the image's registry; this dry run does not, so the line above shows it alone")
+		}
 		note("would start %s", spec.Name)
 		return result, nil
 	}
@@ -190,6 +193,17 @@ func Run(opts Options) (*Result, error) {
 		note("warning: %s", q.Warning)
 	}
 	spec.Image = q.Image
+	if len(opts.Cmd) > 0 {
+		// A command goes after the image's own entrypoint, as docker run puts it (#230); oci.entrypoint, as Build set it, would replace the entrypoint.
+		switch entry, err := imageEntrypoint(server, spec.Image); {
+		case errors.Is(err, errNotOCI):
+		case err != nil:
+			note("warning: could not read the image's entrypoint from its registry (%v), so the command replaces it, where docker run puts it after it. If the image has an entrypoint it will not start; write the entrypoint out before the command", err)
+		case len(entry) > 0:
+			spec.Config["oci.entrypoint"] = withEntrypoint(entry, opts.Cmd)
+			note("the command goes after the image's entrypoint (%s), as docker run puts it", strings.Join(entry, " "))
+		}
+	}
 	if warning, err := checkNetwork(scoped, spec); err != nil {
 		return result, err
 	} else if warning != "" {

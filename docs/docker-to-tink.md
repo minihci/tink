@@ -42,7 +42,7 @@ how to say so (`docker.io/deluan/navidrome:latest`). `ghcr.io/org/app` and `quay
 | `--privileged` | `--privileged` | Incus's `security.privileged`: no user-namespace isolation. It does **not** also grant every host device |
 | `--network NAME` | `--network NAME` | an Incus managed network. `--ip ADDR` for a fixed address. `--network host` is refused, with the reason (below) |
 | `--rm` | `--rm` | |
-| `IMAGE CMD...` | `IMAGE CMD...` | replaces the image's entrypoint **and** command (Docker replaces only the command) |
+| `IMAGE CMD...` | `IMAGE CMD...` | goes after the image's own entrypoint, as in Docker (CMD is replaced). `tink run` reads the entrypoint from the image's registry, anonymously, and prints it; a registry it cannot read (private, offline) gives a warning, and then the command **replaces** the entrypoint, which for an image that has one starts nothing: write the entrypoint out before the command (#230) |
 | `--platform`, `--pull`, `-d`, `-it`, `--init` | - | not applicable: see [the `run` design](../internal/run/DESIGN.md) |
 
 ### Bind mounts and `:shift`

@@ -57,7 +57,7 @@ A second `tink plan` of the rendered `home.yaml` and of the site says no changes
   (volumes included) downloaded the model and every voice server answers. `open` is Incus's `allow` on the bridge and not a promise of internet access (`docs/network.md`).
 - **`tink import` did what the fixture needed.** A compose service with `user: "1000:1000"` (Node-RED, the Matter server) gets a volume owned by that user
   (`initial.uid`, `initial.gid`: #176), and `entrypoint:` with `command:` (Piper, Whisper) becomes one `oci.entrypoint` that keeps the image's own entrypoint.
-  The same line given to `tink run` without the entrypoint replaces it, and the instance never starts.
+  The same line given to `tink run` used to replace the entrypoint, and the instance never started (#230); `tink run` now reads the entrypoint from the registry and puts the command after it.
 - **The apps of a stack are not isolated from each other**, as in the first herd: Node-RED reaches the broker, and so would anything else on the bridge.
 - **The ESPHome and Music Assistant stacks run without host networking** and answer behind sign-on (`esphome` 200, `music` 302 to its own `setup` page). What their
   pages say host networking is for is not measured: ESPHome's mDNS discovery of devices, and Music Assistant's discovery of and streaming to players, which needs its

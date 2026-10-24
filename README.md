@@ -128,6 +128,7 @@ internal/incusapi/   shared Incus API client, used by every capability
 internal/incusconf/  the Incus client configuration (and built-in image remotes), for --remote
 internal/bootstrap/  tink deploy
 internal/run/        tink run - see internal/run/DESIGN.md
+internal/imageconfig/ an OCI image's own ENTRYPOINT and CMD, read from its registry (Incus keeps them merged), for tink run
 internal/compose/   tink import - a compose file in, a stack out (docs/import.md)
 internal/prepare/    the one preparation `plan` and `plan apply` share: load, secrets, connect, qualify images, build the levels, in that order
 internal/resolve/    tink plan / tink plan apply - see docs/resolver-architecture.md
