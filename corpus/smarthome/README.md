@@ -40,4 +40,4 @@ broker answers from Home Assistant; the ingress helper and the site's sign-on he
   proxy (`platform.md`, `trust-proxy`). The block is in `files/ha-configuration.yaml`, `check_config` accepts it and shows it, and the page still
   answers 400 ("your HTTP integration is not set-up for reverse proxies", Home Assistant 2026.10.3). Not resolved: in this version the
   `http` component reads its settings from a store and migrates YAML into it once (`components/http/config.py`), and no `.storage/http` file was ever
-  written here, so the YAML may be ignored. The signed-in check for `ha` fails until that is understood.
+  written here, so the YAML may be ignored. The signed-in check for `ha` fails until that is understood (#223).
