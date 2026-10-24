@@ -154,3 +154,44 @@ device. Host networking remains (ESPHome, Music Assistant, the two Matter server
   an AppArmor profile choice); `raw.apparmor` and `raw.lxc` can carry one, **not tried**.
 - A tmpfs device honours its size at any path, including `/dev/shm` (**live**: 64 MiB by default, replaced by 512 MiB), and takes a size in bytes or with a suffix; a stack that
   `tink import` wrote from a compose file with `privileged`, a device, a tmpfs and `shm_size` applied, the mounts and the device were there, and a second plan said no changes.
+
+## Added 2026-10-23, batch 2: Z-Wave, OpenThread, the voice trio and a database
+
+Six pages added by #212: Z-Wave JS UI, the OpenThread border router, Piper, Whisper, openWakeWord and MariaDB (the page for each is `NAME/upstream.md`). Run on a local Incus
+7.5.1 server in a disposable project (since deleted), tink built from `main` (9aaba7f), the same way as the batch above: each page's own `docker run` line through `tink run`
+with only the always-different changes (a project, a managed volume for a host path, host ports on loopback, no `-it`), and each page's compose example through `tink import`.
+"Answered" is a reply to the protocol the app speaks: a Wyoming `describe` request for the voice trio, the MySQL greeting for MariaDB. Evidence is **live** unless it says **dry run**.
+
+| App | Its own line through `tink run` | Its compose example through `tink import` |
+|---|---|---|
+| openWakeWord | answered (`info`) at once; first run in about 18 s with the image pull | none on the page |
+| Piper | **did not start** as the page writes it (finding 1). With `bash docker_run.sh` before the page's arguments: started in about 4 s and answered (`info`) 2 s later (the image had been pulled by the failed attempt) | none on the page |
+| Whisper | **did not start** the same way. With `bash docker_run.sh` before the page's arguments (`--model tiny-int8 --language en`): started in about 4 s, answered (`info`) 4 s later | none on the page |
+| MariaDB | answered with the server greeting (13.0.2-MariaDB) 4 s after start; about 23 s with the pull. The page's minimal line has no volume, so the data is on the instance's root disk (the page's "Where to store data" shows `-v /my/own/datadir:/var/lib/mysql`) | imports (a stack and two instances: `db` and Adminer on 8080); a warning that `MARIADB_ROOT_PASSWORD` looks like a secret |
+| Z-Wave JS UI | **not run**: it needs a Z-Wave stick. **Dry run** of the page's line, with `-it` and `--rm` dropped and `--mount source=...,target=...` written as `-v`: the serial device, two ports and the store volume all translate (finding 3) | refused: `stop_signal` and `tty` are not in the supported subset; `container_name` and `networks` are notes, `SESSION_SECRET` a secret warning |
+| OpenThread border router | **not run**: it needs a radio, and the page's line cannot be given to `tink run` (findings 2 and 4). **Dry run** of the rest (two devices, `/data`, the env file, a restart policy) translates | none on the page |
+
+**One of two compose examples imports; the other is refused for two keys.** Nothing in this batch is refused for host networking at import, because the only compose example that
+exists is Z-Wave JS UI's and it publishes ports. The OpenThread page's line is the one that asks for it.
+
+**Findings**
+
+1. **A command after the image replaces the image's entrypoint, and the failure does not say so.** Piper's and Whisper's pages put their arguments after the image
+   name (`rhasspy/wyoming-piper --voice en_US-lessac-medium`), which Docker appends to the image's entrypoint. The images' entrypoint is `bash docker_run.sh` (read from the
+   registry on 2026-10-23). `tink run` set `oci.entrypoint` to the arguments, as `docs/docker-to-tink.md` says it does, and the instance never started: `starting/restarting piper to
+   apply its config: giving up after 5 attempts: bad file descriptor`, and the container log says only `Failed to receive file descriptors for command "get_init_pid"`. Two of the
+   four pages that can run here hit it. The way out is to write the entrypoint out. Whether `tink run` could say so when the image has an entrypoint was not looked at.
+2. **The OpenThread page's line has two parts that `tink run` does not take.** `--network=host` is refused with the host-networking explanation, and `--cap-add=NET_ADMIN` is
+   `unknown flag` (the importer drops `cap_add` with a warning). The page says host networking "is often necessary for OTBR, as it needs to have direct access to network
+   interfaces" and gives `OT_INFRA_IF` as "the network interface used for the adjacent infrastructure network". It does not say layer 2 or multicast, so the corpus tags it
+   `host-network` and not `same-lan`; whether it is a case for #206 is for the page to decide, and this one does not.
+3. **Z-Wave JS UI is the one page whose line translates completely.** The device is a `unix-char` device with the path inside the container. Its compose example is refused only for
+   two keys that say how the process is run (`stop_signal: SIGINT`, `tty: true`).
+4. **The OpenThread page asks for a change to the host first** (step 2: enable IP forwarding with a `setup-host` script), tagged `host-setup`. Whether an Incus instance key can carry it
+   (a sysctl) was not checked.
+5. **`-it` as one flag is `unknown shorthand flag: 'i' in -it`.** `docs/docker-to-tink.md` says it does not apply; the four pages that use it (the voice trio and Z-Wave JS UI) were run without it.
+
+**What was left out.** Z-Wave JS: the issue's "server and its UI" is one page, because the UI image contains the Z-Wave JS server and the page says so (it names the web socket
+server on port 3000). The server alone (`zwave-js-server`) has its own repository and was not fetched. A recorder database: MariaDB only, as the issue said. PostgreSQL and InfluxDB were
+not fetched; add one if a workload asks for it.
+
