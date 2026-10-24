@@ -235,6 +235,13 @@ which Docker flags map to which key or device.`,
 		},
 	}
 
+	bindRunFlags(cmd, &opts)
+	return cmd
+}
+
+// bindRunFlags declares tink run's flags on cmd, filling opts. It is its own function so that a test can parse a docker-run-shaped command line with the
+// real flag set (cmd/tink/corpus_doors_test.go) instead of a copy of it.
+func bindRunFlags(cmd *cobra.Command, opts *run.Options) {
 	cmd.Flags().StringVar(&opts.Socket, "socket", opts.Socket, "Incus daemon unix socket path (default: Incus's own resolution)")
 	cmd.Flags().StringVar(&opts.Project, "project", "", "Incus project to create the instance in (default: the daemon's own default project)")
 	cmd.Flags().StringVar(&opts.Name, "name", "", "instance name (required)")
@@ -262,7 +269,6 @@ which Docker flags map to which key or device.`,
 	// try to parse a CMD arg that happens to look like "--enable-app" as
 	// an unknown flag on `run` itself, rather than passing it through.
 	cmd.Flags().SetInterspersed(false)
-	return cmd
 }
 
 func newPlanCmd() *cobra.Command {

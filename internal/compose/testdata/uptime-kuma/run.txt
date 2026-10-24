@@ -1,0 +1,5 @@
+# Upstream's two forms differ. docker run: --restart=always and a docker volume named uptime-kuma. The compose file: unless-stopped and ./data,
+# which import makes a managed volume named uptime-kuma-data. This line says what the compose file says.
+--name uptime-kuma --restart unless-stopped -p 3001:3001
+-v uptime-kuma-data:/app/data
+louislam/uptime-kuma:2

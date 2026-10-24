@@ -1,6 +1,6 @@
 # `tink import`: a compose file in, a stack out
 
-**Status: built as a spike for the proposal in #179, unit-tested against the survey's compose files, and run live on a local Incus 7.5.1 server (L-2026-10-21b): five imported stacks (Vaultwarden, Uptime Kuma, Audiobookshelf, Actual Budget, WordPress with MySQL) were applied with `tink plan apply`, each answered on its port, and a second plan said no changes. #205 widened the subset to what `tink run` already accepts (`privileged`, `devices`, tmpfs) and added two tests so the two cannot drift; a stack with those keys was applied on a local Incus 7.5.1 server, the tmpfs sizes and the device were there, and a second plan said no changes.** Claims are marked **[code]**, **[lab]** or **[corpus]**.
+**Status: built as a spike for the proposal in #179, unit-tested against the survey's compose files, and run live on a local Incus 7.5.1 server (L-2026-10-21b): five imported stacks (Vaultwarden, Uptime Kuma, Audiobookshelf, Actual Budget, WordPress with MySQL) were applied with `tink plan apply`, each answered on its port, and a second plan said no changes. #205 widened the subset to what `tink run` already accepts (`privileged`, `devices`, tmpfs) and added three tests so the two cannot drift; a stack with those keys was applied on a local Incus 7.5.1 server, the tmpfs sizes and the device were there, and a second plan said no changes.** Claims are marked **[code]**, **[lab]** or **[corpus]**.
 
 ```
 tink import compose.yaml > tink.yaml          # warnings and notes go to stderr, the stack to stdout
@@ -42,10 +42,11 @@ explains does not build (`internal/compose/classify.go`): see the next section.
 
 ## Why `tink run` and `tink import` cannot drift (#205)
 
-Import builds on `tink run`'s translation, but fills its options key by key, so a flag added to `tink run` would not reach import by itself. That is how `devices`, `privileged` and a tmpfs came to be accepted by one door and refused by the other. Two tests close that **[code]**:
+Import builds on `tink run`'s translation, but fills its options key by key, so a flag added to `tink run` would not reach import by itself. That is how `devices`, `privileged` and a tmpfs came to be accepted by one door and refused by the other. Three tests close that **[code]**:
 
 1. Every field of `run.Options` is classified in `internal/compose/classify.go`: the compose keys that fill it, or the reason import does not (a site decision, run-only, or not built yet). A new flag fails `go test` until it is classified, with the message "classify it for import".
 2. Every compose key the importer knows has a row in the table above, and every key in the table is known to the importer.
+3. For six corpus apps whose upstream page gives a `docker run` line and a compose file, the line is parsed with `tink run`'s own flags, the compose file with the importer, and the instance config and devices must be equal (`cmd/tink/corpus_doors_test.go`, with the line in `internal/compose/testdata/APP/run.txt`). In five of the six, upstream's two forms disagree (a restart policy, a stop timeout, a user, a volume, an environment variable); `run.txt` follows the compose file and a comment names each difference. An app with an importable compose file and a `docker run` line that has no `run.txt` fails the test.
 
 A service called `actual_server` is written `actual-server`: an instance name cannot hold an underscore, and a note says so. A volume that shares a service's name (WordPress's `wordpress`) gets `-data`, because a stack has one namespace for every kind.
 

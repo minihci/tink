@@ -1,0 +1,6 @@
+--name sonarr
+-e PUID=1000 -e PGID=1000 -e TZ=Etc/UTC
+-p 8989:8989
+-v /path/to/sonarr/data:/config -v /path/to/tvseries:/tv -v /path/to/downloadclient-downloads:/downloads
+--restart unless-stopped
+lscr.io/linuxserver/sonarr:latest

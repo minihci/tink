@@ -1,0 +1,6 @@
+# Upstream's two forms differ. docker run: --user $(id -u):$(id -g), the music volume read-write at another path, ND_LOGLEVEL=info.
+# This line says what the compose file says: user 1000:1000, the music volume read-only, no environment. Volumes follow the compose order.
+--name navidrome --restart unless-stopped --user 1000:1000
+-v /path/to/data:/data -v /path/to/your/music/folder:/music:ro
+-p 4533:4533
+navidrome/navidrome:latest

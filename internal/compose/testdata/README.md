@@ -1,3 +1,5 @@
 # Test inputs
 
 The compose files here are the install instructions of 17 popular self-hosted projects, copied as published (see `corpus/` and its README for the sources and the date retrieved), plus the env files they name. They stay under their projects' licences and are quoted as test inputs. A file is not edited to make the importer accept it: a file the importer refuses is part of what the tests record.
+
+An app whose upstream page gives a `docker run` line as well as the compose file also has a `run.txt`: that line, hand-transcribed as a `tink run` command line. `cmd/tink/corpus_doors_test.go` (guard 3 of #205) feeds it to `tink run`'s own flags and the compose file to the importer, and requires the same instance config and devices. Where upstream's two forms disagree, `run.txt` says what the compose file says and a comment names the difference. `# skip: reason` records an app that is not compared (a compose file with two services, say). An app with an importable compose file and a `docker run` line upstream that has no `run.txt` fails the test. The order of `-v` and `-p` follows the compose file, because device names are numbered by it.

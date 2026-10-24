@@ -1,0 +1,7 @@
+# Upstream's two forms differ. docker run: the host path /vw-data/ and --publish 127.0.0.1:8000:80. The compose file: ./vw-data/, which import
+# makes a managed volume named vaultwarden-vw-data. This line says what the compose file says.
+--name vaultwarden --restart unless-stopped
+-e DOMAIN=https://vw.domain.tld
+-v vaultwarden-vw-data:/data/
+-p 127.0.0.1:8000:80
+vaultwarden/server:latest

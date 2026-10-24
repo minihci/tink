@@ -1,0 +1,1 @@
+# skip: two services. Upstream's docker run lines start two containers that find each other by a docker network's names; the compose file's default network does that, and tink run has no flag for it.

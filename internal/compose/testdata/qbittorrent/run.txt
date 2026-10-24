@@ -1,0 +1,7 @@
+# Upstream's docker run also gives --stop-timeout=10s; the compose file's stop_grace_period is dropped by import (Incus has no such option), so it is left out here.
+--name qbittorrent
+-e PUID=1000 -e PGID=1000 -e TZ=Etc/UTC -e WEBUI_PORT=8080 -e TORRENTING_PORT=6881
+-p 8080:8080 -p 6881:6881 -p 6881:6881/udp
+-v /path/to/qbittorrent/appdata:/config -v /path/to/downloads:/downloads
+--restart unless-stopped
+lscr.io/linuxserver/qbittorrent:latest
