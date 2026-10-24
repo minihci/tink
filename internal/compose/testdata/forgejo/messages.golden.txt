@@ -1,4 +1,4 @@
-note: top-level networks is ignored: a stack gets its own network from #177
+note: top-level networks is not made: the stack's apps share the one bridge tink derives (network: own). Only `internal: true` is read, and it becomes the stack's egress
 note: service server: ./forgejo was a path relative to the compose file; it is now the managed volume server-forgejo. Write it as a bind mount to keep it a directory you can see
 note: service server: container_name is ignored: the instance is named for the service, which is the name siblings use
-note: service server: networks is ignored: a stack gets its own network from #177
+note: service server: networks is ignored: the stack's apps share the one bridge tink derives (network: own). Only `internal: true` on a network is read

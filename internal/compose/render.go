@@ -10,11 +10,17 @@ import (
 
 // render writes the stack: the stack's name, the managed volumes, then the instances in the order of the compose file. Written by hand, not
 // marshalled, because a person will edit it: the order of fields, the comments and the quoting are chosen.
-func (im *importer) render(stack string) string {
+func (im *importer) render(stack, egress string) string {
 	var b strings.Builder
 	b.WriteString("# Imported by `tink import` from a compose file. A starting point to review, not the stack: it states what the compose file\n")
-	b.WriteString("# says about the app, and nothing about the site (its project, network, address, name, sign-on or backup).\n")
+	b.WriteString("# says about the app, and nothing about the site (its project, address, name, sign-on or backup).\n")
 	fmt.Fprintf(&b, "kind: stack\nname: %s\n", scalar(stack))
+	b.WriteString("network: own  # a bridge of its own, made and secured by tink; egress needs it\n")
+	if egress == "open" {
+		b.WriteString("egress: open  # compose lets a service send traffic out unless every network it is on is `internal: true`\n")
+	} else {
+		b.WriteString("egress: none  # every service is on `internal: true` networks only\n")
+	}
 
 	names := make([]string, 0, len(im.volumes))
 	for n, v := range im.volumes {

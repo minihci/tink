@@ -1,1 +1,1 @@
-note: top-level networks is ignored: a stack gets its own network from #177
+note: top-level networks is not made: the stack's apps share the one bridge tink derives (network: own). Only `internal: true` is read, and it becomes the stack's egress

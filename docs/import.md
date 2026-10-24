@@ -30,8 +30,9 @@ The subset began as the keys the survey's 18 compose files use (`corpus/`; the f
 | `devices` | a `unix-char` device, as `tink run --device`: `HOST:CONTAINER[:rwm]`. A directory, a GPU, the whole USB bus and a block device are refused with the `--incus-device` that does it. The long form is refused. The device is required: the instance does not start without it |
 | `tmpfs`, `shm_size` | a `disk` device with `source: tmpfs:` and a size (`/dev/shm` for `shm_size`; an instance already has a 64 MiB one, and the device replaces it). Any tmpfs option other than `size` is noted as ignored: Incus's tmpfs device has none |
 | `healthcheck`, `stop_grace_period`, `extra_hosts`, `cap_add` | dropped, with a warning and a comment in the output |
-| `container_name`, `hostname`, `networks`, top-level `networks`, `version` | ignored, with a note |
-| `network_mode` | refused: host networking has no equivalent. The message says what the Incus answer is (a NIC on the LAN's bridge, which is the site's decision) and where it is described |
+| `container_name`, `hostname`, `version` | ignored, with a note |
+| `networks`, top-level `networks` | the networks are not made: a stack's apps share the one bridge tink derives (`network: own`). One thing is read, `internal: true` on a network, and it becomes the stack's `egress` (below) |
+| `network_mode` | refused. `host`: host networking has no equivalent, and the message says what the Incus answer is (a NIC on the LAN's bridge, which is the site's decision) and where it is described. `none`: it gives the container no network at all, tink has no equivalent for one instance, and the message points at `internal: true`, which becomes `egress: none`. Any other value says which are explained |
 | `read_only` | refused: a read-only root disk is possible but an app image tried did not start with one ([docker-to-tink.md](docker-to-tink.md)) |
 | `security_opt`, `cap_drop` | refused: Incus has no instance key for an AppArmor profile, no-new-privileges or a dropped capability, and a hardening that silently does not happen is worse than a refusal |
 | `name` (top level) | the stack's name |
@@ -39,6 +40,18 @@ The subset began as the keys the survey's 18 compose files use (`corpus/`; the f
 
 Anything not in this table is refused, naming the key and the service. The table is checked against the code in both directions (`internal/compose/drift_test.go`), and a field of `tink run`'s options that import neither fills nor
 explains does not build (`internal/compose/classify.go`): see the next section.
+
+## Network and egress (#225)
+
+The stack the importer writes says `network: own` (a bridge of its own, made and secured by tink) and an `egress`, because the second needs the first (`docs/network.md`). The egress follows what Compose does: a service can send traffic out unless every network it is on is `internal: true`. A service with no `networks:` key is on the project's `default` network, which a file can mark internal too; a network the file does not define counts as not internal.
+
+| The file | The stack says |
+|---|---|
+| no network is internal (nearly every file) | `egress: open` |
+| every service is on internal networks only (the corpus has one: Whisper's page, "Running Without Internet Access") | `egress: none` |
+| some services are, some are not | refused, naming both: a stack has one bridge, so it cannot isolate some of its apps from the outside |
+
+`open` is Incus's `allow` on the bridge, not a promise of internet access. Before this, `internal: true` was dropped with a note that networks are ignored, and the stack came out allowing what the author had asked to forbid. **[code]**
 
 ## Why `tink run` and `tink import` cannot drift (#205)
 

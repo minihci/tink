@@ -1,7 +1,9 @@
 # Imported by `tink import` from a compose file. A starting point to review, not the stack: it states what the compose file
-# says about the app, and nothing about the site (its project, network, address, name, sign-on or backup).
+# says about the app, and nothing about the site (its project, address, name, sign-on or backup).
 kind: stack
 name: actual-budget
+network: own  # a bridge of its own, made and secured by tink; egress needs it
+egress: open  # compose lets a service send traffic out unless every network it is on is `internal: true`
 ---
 kind: storage-volume
 name: actual-server-actual-data
