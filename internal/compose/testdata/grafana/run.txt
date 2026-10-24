@@ -1,0 +1,4 @@
+# Upstream's docker run has no restart policy; its compose file says unless-stopped, so the flag is added.
+--name grafana -p 3000:3000 --restart unless-stopped
+-v grafana-storage:/var/lib/grafana
+grafana/grafana-enterprise
