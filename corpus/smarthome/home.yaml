@@ -1,7 +1,9 @@
-# The smart-home herd's stack "home": Home Assistant and its Mosquitto broker. Imported from a compose file made of the two corpus pages
-# (corpus/home-assistant, corpus/mosquitto) with `tink import`; the lines marked "site:" are the site's half, written by hand. Home Assistant's page
-# asks for host networking, which import refuses (docs/docker-to-tink.md); the stack leaves the key out, so the app runs on its stack's bridge and
-# discovery by multicast is not measured (README.md).
+# The smart-home herd's stack "home": Home Assistant, its Mosquitto broker, a MariaDB recorder, Node-RED, the Matter server and the Wyoming voice trio
+# (Piper, Whisper, openWakeWord). Imported from compose files made of the corpus pages (corpus/home-assistant, mosquitto, mariadb, node-red,
+# matterjs-server, piper, whisper, openwakeword) with `tink import`; the lines marked "site:" are the site's half, written by hand. The pages of Home
+# Assistant and the Matter server ask for host networking, which import refuses (docs/docker-to-tink.md); the stack leaves the key out, so those apps run
+# on the stack's bridge and discovery by multicast is not measured (README.md). Piper and Whisper write the image's entrypoint out, because a command
+# after the image replaces it (the importer does this from the compose file's `entrypoint:` and `command:`).
 kind: stack
 name: home
 network: own                              # a bridge, its ACL and the apps' static addresses are derived (docs/network.md)
@@ -60,6 +62,149 @@ devices:
     pool: default
     source: mosquitto-config
 ---
+kind: storage-volume
+name: mariadb-data
+pool: default
+backup:                                   # site
+  none: "a throwaway fixture"
+---
+kind: storage-volume
+name: matter-data
+pool: default
+config:
+  initial.gid: "1000"
+  initial.uid: "1000"
+backup:                                   # site
+  none: "a throwaway fixture"
+---
+kind: storage-volume
+name: node-red-data
+pool: default
+config:
+  initial.gid: "1000"
+  initial.uid: "1000"
+backup:                                   # site
+  none: "a throwaway fixture"
+---
+kind: storage-volume
+name: piper-data
+pool: default
+backup:                                   # site
+  none: "a throwaway fixture"
+---
+kind: storage-volume
+name: whisper-data
+pool: default
+backup:                                   # site
+  none: "a throwaway fixture"
+---
+# environment MARIADB_PASSWORD looks like a secret and is written as it is: add it with `tink secret set` and write ${secret:NAME} instead
+# environment MARIADB_ROOT_PASSWORD looks like a secret and is written as it is: add it with `tink secret set` and write ${secret:NAME} instead
+kind: instance
+name: mariadb
+image: mariadb:latest
+profiles:
+  - default
+config:
+  boot.autorestart: "true"
+  boot.autostart: "true"
+  environment.MARIADB_DATABASE: homeassistant
+  environment.MARIADB_PASSWORD: herd-database-password
+  environment.MARIADB_ROOT_PASSWORD: herd-root-password
+  environment.MARIADB_USER: homeassistant
+devices:
+  volume0:
+    type: disk
+    path: /var/lib/mysql
+    pool: default
+    source: mariadb-data
+---
+kind: instance
+name: node-red
+image: nodered/node-red:latest
+profiles:
+  - default
+config:
+  user.tink.offer.web.port: "1880"        # site
+  user.tink.offer.web.proto: http
+  boot.autorestart: "true"
+  boot.autostart: "true"
+  oci.gid: "1000"
+  oci.uid: "1000"
+devices:
+  # (the compose file's host port 1880 is gone: it is reached on the stack's bridge and through the ingress helper)  # site
+  volume0:
+    type: disk
+    path: /data
+    pool: default
+    source: node-red-data
+---
+kind: instance
+name: piper
+image: rhasspy/wyoming-piper
+profiles:
+  - default
+config:
+  boot.autorestart: "true"
+  boot.autostart: "true"
+  oci.entrypoint: bash docker_run.sh --voice en_US-lessac-medium
+devices:
+  # (the compose file's host port 10200 is gone: it is reached on the stack's bridge)  # site
+  volume0:
+    type: disk
+    path: /data
+    pool: default
+    source: piper-data
+---
+kind: instance
+name: whisper
+image: rhasspy/wyoming-whisper
+profiles:
+  - default
+config:
+  boot.autorestart: "true"
+  boot.autostart: "true"
+  oci.entrypoint: bash docker_run.sh --model tiny-int8 --language en
+devices:
+  # (the compose file's host port 10300 is gone: it is reached on the stack's bridge)  # site
+  volume0:
+    type: disk
+    path: /data
+    pool: default
+    source: whisper-data
+---
+kind: instance
+name: openwakeword
+image: rhasspy/wyoming-openwakeword
+profiles:
+  - default
+config:
+  boot.autorestart: "true"
+  boot.autostart: "true"
+devices:
+  proxy0:
+    type: proxy
+    connect: tcp:127.0.0.1:10400
+    listen: tcp:0.0.0.0:10400
+---
+kind: instance
+name: matter-server
+image: ghcr.io/matter-js/matterjs-server:stable
+profiles:
+  - default
+config:
+  boot.autorestart: "true"
+  boot.autostart: "true"
+  oci.gid: "1000"
+  oci.uid: "1000"
+devices:
+  # (the compose file's host port 5580 is gone: it is reached on the stack's bridge)  # site
+  volume0:
+    type: disk
+    path: /data
+    pool: default
+    source: matter-data
+---
 kind: file                                # site: the page says the config directory must hold a file before the broker serves anyone but localhost
 name: mosquitto-conf
 instance: mosquitto
@@ -79,3 +224,9 @@ name: ha
 instance: homeassistant
 offer: web
 allow: [family]
+---
+kind: publish                             # site: the flow editor is an admin UI, and open unless adminAuth is set (platform.md)
+name: nodered
+instance: node-red
+offer: web
+allow: [admins]
