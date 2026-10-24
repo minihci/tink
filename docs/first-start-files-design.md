@@ -37,7 +37,7 @@ Files are placed in declaration order.
 
 ### What a failure to place means
 
-**Placing is an ordering improvement, never a new way to fail.** If a push into the stopped instance fails (a directory that is not there, say), the instance is still started and the file resource fails in its own turn, with the message it has always had. The alternative, failing the creation, would leave a created-but-stopped instance and a new class of half-done state for no benefit.
+**Placing is an ordering improvement, never a new way to fail.** If a push into the stopped instance fails (a parent directory that cannot be made, say), the instance is still started and the file resource fails in its own turn, with the message it has always had. The alternative, failing the creation, would leave a created-but-stopped instance and a new class of half-done state for no benefit.
 
 ### What is said
 
@@ -102,7 +102,7 @@ The pinned Incus client (`github.com/lxc/incus/v7` v7.4.0) has a storage-volume 
 
 The volume exists by then: a `storage-volume` resource the instance depends on is created before the instance, and a managed volume named by the instance's own devices is created by the instance's config step in any case.
 
-What is done keeps the file resource's meaning, converge and not seed: read the file in the volume, **write only when it differs** (so a file already right is left untouched, and a different one is overwritten), with the mode `0644` and the owner defaults of the instance push, **no parent directories created** (a missing one fails, and the message says tink creates none). A failure is, as before, not a new way to fail: the instance still starts, the file is written by its own turn, and the apply now says why it was not placed.
+What is done keeps the file resource's meaning, converge and not seed: read the file in the volume, **write only when it differs** (so a file already right is left untouched, and a different one is overwritten), with the mode `0644` and the owner defaults of the instance push, **missing parent directories made** by a write that finds one missing ("Parent directories" below). A failure is, as before, not a new way to fail: the instance still starts, the file is written by its own turn, and the apply now says why it was not placed.
 
 ### Run live **[lab]**
 
@@ -115,7 +115,7 @@ On the lab host (project `e2e-lab`), the instance `ha-e2e` (Home Assistant 2026.
 
 **[verify]** Still only covered by fakes:
 
-- A write into a volume that **fails** (a missing parent directory, say): the instance should still start, and the apply should print `... not placed before the first start, because writing /sub/x into volume default/vol failed: ...`.
+- A write into a volume that **fails** (a parent directory that cannot be made, say): the instance should still start, and the apply should print `... not placed before the first start, because writing /sub/x into volume default/vol failed: ...`.
 - A volume that **has been attached before**: it has a `volatile.idmap.last`, which the volume's `forkfile` applies, so the owner the file gets there is the one thing not seen. The fresh volume above gave uid/gid 0 in the container.
 
 ### What is said
@@ -154,7 +154,7 @@ The state is asked **only for a file under a mount**. A file outside every mount
 | the file is | the instance is running | the instance is **not** running |
 |---|---|---|
 | outside every mount | its own file API | its own file API (unchanged) |
-| under a **custom volume** mount | its own file API (it sees the mount) | **read from, compared in, and written into the volume**: the same read-compare-write-if-different as the first start, mode `0644`, the owner the client defaults give, no parent directories created |
+| under a **custom volume** mount | its own file API (it sees the mount) | **read from, compared in, and written into the volume**: the same read-compare-write-if-different as the first start, mode `0644`, the owner the client defaults give, missing parent directories made ("Parent directories" below) |
 | under a **host directory** mount, a disk that is not a plain volume, or *is* the mount path | its own file API | **not pushed**: `DEFERRED`, with a warning; the next apply that finds the instance running writes it |
 
 `plan` reads where `apply` will write, so it no longer says `no changes` or `would update` from a place the application never sees: for a volume file it reads the volume's copy, and for a deferred file it says it did not look. The file's `no changes` in an apply is therefore a statement about the volume when the instance is not running, and the line below it says so.
@@ -188,6 +188,23 @@ Against fakes (`filemount_test.go`, `state_test.go` in `incusapi`): the state de
 ### Tests
 
 The selection against a table (a file under a volume mount, the mount path itself, `/etc/caddy/Caddyfile` next to a `/config` mount, the root disk, a device from a declared profile, a profile that cannot be read, `/configuration` against `/config`, nested mounts, a host directory, a virtual machine, a file that waits for an exec, a file that waits for a skipped one); the profile lookup (declared first, then the server, a failing server is "cannot be read"); `placeVolumeFile` against a fake server (absent, already right, different, a read that fails, a directory in the way, a missing parent); the sequence with the steps `createInstance` uses; the apply and plan sentences; the `note:` line of `plan`.
+
+## Parent directories
+
+**Status: built for both write paths (#140, slice 1); unit-tested against fakes, and run on a local Incus 7.5.1 server on 2026-10-24 (below).** Claims are marked **[code]**, **[lab]** or **[verify]**.
+
+A `kind: file` whose directory the image or the volume does not have used to fail with Incus's 404 (`pushing /config/configuration.yml to sso: Not Found`), and the instance went on without the file, often crash-looping on its absence and blocking the apply that would have fixed it (the fixture site of #181; the Home Assistant store file, #238).
+
+**[code]** When a write is answered with not-found, tink makes the directories above the file, top down, and writes once more (`parentdirs.go`). It applies to the instance's own file API (`placeFile`) and to a custom volume's (`placeVolumeFile`), so the placement before the first start has it too.
+
+- **Only a failed write makes directories**, so a file whose parents exist costs no extra call, and a plan changes nothing. Only the missing levels are made: it walks up from the file to the first directory that exists, so an existing directory keeps the mode and owner it has.
+- **It is always on, with no field.** A missing parent is never what a stack wants. A path with a typo now makes a stray directory and a file the app does not read, where it used to fail; the app would not have found the file either way.
+- **A directory tink makes is `0755`, owned as the client's defaults give (root).** An app that runs as another user cannot write beside the file; that is the neighbouring problem of #176, and not fixed here.
+- **Refusals:** an ancestor that is a file is an error that names it. A directory that cannot be made is an error that names it and the cause. A read that fails for a reason other than absence is not read as absence. A not-found with every parent in place (the instance is gone) is returned as it came, with no second write.
+- **[lab]** Measured on a local Incus 7.5.1 server, an OCI Alpine instance with a custom volume at `/data` and two files, `/data/sub/deep/x.txt` (in the volume) and `/etc/tinkcheck/conf.d/y.conf` (in the root filesystem), neither with its directories:
+  - the build from before this change failed both (`pushing … Not Found`, `2 failed`);
+  - the new build, applied to the same stack, created both through the instance's file API (the instance was running), made the directories as `root`, `0755`, and a second plan said `no changes`;
+  - with the instance and the volume deleted and the stack applied again, the instance was created with `placed 2 file(s) before its first start: file/pc-vol (in volume default/pc-data), file/pc-root`, so the volume's file API accepts `Type: "directory"` as well, and the second plan said `no changes`.
 
 ## Not in this slice
 

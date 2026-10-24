@@ -384,7 +384,7 @@ func TestPushFile_WhereTheContentGoes(t *testing.T) {
 			return s
 		}(), func() Resource { return fileAt("ha-yaml", "/config/sub/configuration.yaml") },
 			func(*fileFake) {},
-			[]string{"read custom default/e2e-ha-config:/sub/configuration.yaml", "write custom default/e2e-ha-config:/sub/configuration.yaml"}, "", "", "writing /sub/configuration.yaml into volume default/e2e-ha-config failed"},
+			[]string{"read custom default/e2e-ha-config:/sub/configuration.yaml", "write custom default/e2e-ha-config:/sub/configuration.yaml", "read custom default/e2e-ha-config:/sub", "write custom default/e2e-ha-config:/sub"}, "", "", "writing /sub/configuration.yaml into volume default/e2e-ha-config failed"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

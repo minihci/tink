@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -380,11 +381,13 @@ func pushFile(server incus.InstanceServer, r Resource, limit time.Duration) erro
 // disk-device mount would hide, which go into the volume (placeVolumeFile) or wait for the start.
 func placeFile(server incus.InstanceServer, r Resource) error {
 	s := scopedServer(server, r)
-	err := s.CreateInstanceFile(r.Instance, r.Path, incus.InstanceFileArgs{
-		Content:   strings.NewReader(r.Content),
-		Type:      "file",
-		WriteMode: "overwrite",
-		Mode:      0o644,
+	err := pushCreatingParents(path.Clean(r.Path), instanceDirOps(s, r.Instance), func() error {
+		return s.CreateInstanceFile(r.Instance, r.Path, incus.InstanceFileArgs{
+			Content:   strings.NewReader(r.Content),
+			Type:      "file",
+			WriteMode: "overwrite",
+			Mode:      0o644,
+		})
 	})
 	if err != nil {
 		return fmt.Errorf("pushing %s to %s: %w", r.Path, r.Instance, err)
