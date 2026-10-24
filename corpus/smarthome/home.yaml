@@ -220,6 +220,27 @@ path: /config/configuration.yaml
 source_path: files/ha-configuration.yaml
 restart: true
 ---
+kind: file                                # site: the configuration above includes these three. Home Assistant writes them itself only when configuration.yaml is absent, and tink places that file first; without them it starts in recovery mode, which ignores `http:` (#223). tink owns them: a change made in the app's editors shows as a difference at the next plan
+name: ha-automations
+instance: homeassistant
+path: /config/automations.yaml
+content: |
+  []
+---
+kind: file                                # site: see ha-automations
+name: ha-scripts
+instance: homeassistant
+path: /config/scripts.yaml
+content: |
+  {}
+---
+kind: file                                # site: see ha-automations
+name: ha-scenes
+instance: homeassistant
+path: /config/scenes.yaml
+content: |
+  []
+---
 kind: publish                             # site: the name, and who may use it
 name: ha
 instance: homeassistant
