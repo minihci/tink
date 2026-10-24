@@ -514,7 +514,7 @@ func (im *importer) command(service string, sv map[string]any) ([]string, bool) 
 	ep, hasEP := sv["entrypoint"]
 	cm, hasCM := sv["command"]
 	if hasCM && !hasEP {
-		im.refuse(service, "command", "it adds arguments to the image's own entrypoint, and tink's replaces the entrypoint as well as the command; write the entrypoint and the command together")
+		im.refuse(service, "command", "it adds arguments to the image's own entrypoint, and an oci.entrypoint written in a stack replaces the entrypoint as well as the command, so import cannot tell what to put before them offline; write `entrypoint:` too, with the image's own (Entrypoint in `docker inspect IMAGE` or `skopeo inspect --config docker://IMAGE`; `tink run IMAGE ARGS` prints it)")
 		return nil, false
 	}
 	var out []string
