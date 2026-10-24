@@ -67,8 +67,13 @@ set_checks() {
 		done
 	done
 
-	# ESPHome and Music Assistant cannot reach the home stack's broker. Their own bridges reject outbound traffic too (#225), so this passes for that reason as
-	# well; it tests the home stack's ACL only once they can reach out.
+	# ESPHome and Music Assistant cannot reach the home stack's broker. Both stacks say egress: open, so their traffic can leave, and the control shows it: each
+	# reaches the platform's dns helper, on a bridge with no ACL. The denial is then the home stack's ACL.
+	for pair in esphome:herd-esphome:esphome music-assistant:herd-music:music-assistant; do
+		name=${pair%%:*}
+		rest=${pair#*:}
+		reach_py "${rest%%:*}" "${rest#*:}" "$DNS_IP" 53 && ok "stacks: $name reaches the platform's dns helper (the control: egress is open)" || bad "stacks: $name reaches the platform's dns helper (the control: egress is open)"
+	done
 	for pair in esphome:herd-esphome:esphome music-assistant:herd-music:music-assistant; do
 		name=${pair%%:*}
 		rest=${pair#*:}

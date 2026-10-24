@@ -161,6 +161,11 @@ type Resource struct {
 	NetworkPool   string
 	NetworkPrefix int
 
+	// EgressMode (stack-only, written `egress:`) is what a stack's apps may send out: EgressNone (the default) or EgressOpen. It needs network: own, because it is
+	// a setting of the derived bridge (internal/derive): open sets the bridge's default egress action to allow, none sets it to reject. On a network-ACL the same
+	// key, `egress:`, is the list of rules (Egress below). See stack.go.
+	EgressMode string
+
 	// File-only: push Content to Path inside the named Instance.
 	Instance string
 	Path     string

@@ -49,7 +49,7 @@ type yamlResource struct {
 	// Network-ACL-only -- see Resource.Ingress. Incus's own rule type, so a rule pastes in from `incus network acl show` unchanged and an unknown
 	// rule field is as much a load error as an unknown resource field.
 	Ingress []api.NetworkACLRule `yaml:"ingress"`
-	Egress  []api.NetworkACLRule `yaml:"egress"`
+	Egress  yamlEgress           `yaml:"egress"` // a list of rules on a network-ACL, a word on a stack -- see yamlEgress
 
 	// DeriveIngress -- see Resource.DeriveIngress.
 	DeriveIngress bool `yaml:"derive_ingress"`
@@ -187,6 +187,30 @@ type yamlVerify struct {
 		Command []string `yaml:"command"`
 		Mount   string   `yaml:"mount"`
 	}
+}
+
+// yamlEgress is a document's `egress:`. On a network-ACL it is the list of egress rules (Incus's own rule type, read strictly like the ingress list); on a
+// stack it is a word, what the stack's apps may send out (Resource.EgressMode). Which one it is follows from the node, and validation then checks that the
+// kind may have it.
+type yamlEgress struct {
+	Rules []api.NetworkACLRule
+	Word  string
+}
+
+func (e *yamlEgress) UnmarshalYAML(node *yaml.Node) error {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		return node.Decode(&e.Word)
+	case yaml.SequenceNode:
+		// Load with WithKnownFields, as the ingress list is decoded: an unknown rule field is a load error.
+		rules := []api.NetworkACLRule{}
+		if err := node.Load(&rules, yaml.WithKnownFields()); err != nil {
+			return err
+		}
+		e.Rules = rules
+		return nil
+	}
+	return fmt.Errorf("line %d: egress must be a list of rules (a network-acl) or a word (a stack)", node.Line)
 }
 
 func (v *yamlVerify) UnmarshalYAML(node *yaml.Node) error {
@@ -421,7 +445,8 @@ func (d yamlResource) toResource(dir string) (Resource, error) {
 		Description:     d.Description,
 		AllowDisruption: d.AllowDisruption,
 		Ingress:         d.Ingress,
-		Egress:          d.Egress,
+		Egress:          d.Egress.Rules,
+		EgressMode:      d.Egress.Word,
 		DeriveIngress:   d.DeriveIngress,
 		Config:          d.Config,
 		Devices:         d.Devices,

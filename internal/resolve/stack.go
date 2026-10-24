@@ -28,7 +28,12 @@ func validateStack(r Resource) error {
 // when the stack says nothing: a /24 out of 10.0.0.0/8, taken the way Incus's own `auto` does, but chosen by tink so that the address of each app can be
 // written into the plan before the bridge exists.
 const (
-	StackNetworkOwn      = "own"
+	StackNetworkOwn = "own"
+	// EgressNone and EgressOpen are the values of a stack's egress: what its apps may send out. None is the default and means the derived bridge rejects
+	// outbound traffic that no rule allows; open means it allows it, so traffic goes where the host routes it and the destinations accept it. Open is not a
+	// promise of internet access: that also depends on NAT on the bridge and on the host. See docs/network.md.
+	EgressNone           = "none"
+	EgressOpen           = "open"
 	DefaultNetworkPool   = "10.0.0.0/8"
 	DefaultNetworkPrefix = 24
 	// MaxNetworkPrefix is the longest subnet the derive stage will make: it keeps a few static addresses and a DHCP range apart (a /29 has six hosts).
@@ -36,6 +41,14 @@ const (
 )
 
 func validateStackNetwork(r Resource) error {
+	switch r.EgressMode {
+	case "", EgressNone, EgressOpen:
+	default:
+		return fmt.Errorf("resource %q: egress %q is not understood: write %s (the default) or %s", r.Name, r.EgressMode, EgressNone, EgressOpen)
+	}
+	if r.EgressMode != "" && r.Network == "" {
+		return fmt.Errorf("resource %q: egress needs network: %s: it is a setting of the bridge tink derives, and a stack without one has no ACL, so tink does not restrict its apps' outbound traffic", r.Name, StackNetworkOwn)
+	}
 	if r.Network == "" {
 		if r.NetworkPool != "" || r.NetworkPrefix != 0 {
 			return fmt.Errorf("resource %q: network_pool and network_prefix need network: %s", r.Name, StackNetworkOwn)

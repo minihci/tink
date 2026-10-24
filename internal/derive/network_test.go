@@ -300,3 +300,38 @@ func TestPassesWithNoServer(t *testing.T) {
 		t.Errorf("a stack that asks for nothing needs no server: %v", err)
 	}
 }
+
+// What a stack's apps may send out is a setting of the bridge tink derives: allow for egress: open, and reject for none and for nothing said, written
+// out so that a hand-set allow shows as drift.
+func TestOwnNetworkSetsTheBridgesDefaultEgressAction(t *testing.T) {
+	for _, c := range []struct{ egress, want string }{
+		{"", "reject"},
+		{resolve.EgressNone, "reject"},
+		{resolve.EgressOpen, "allow"},
+	} {
+		got, _, err := OwnNetwork(&serverFake{}, stackOf("blog", func(st *resolve.Resource) { st.EgressMode = c.egress }))
+		if err != nil {
+			t.Fatalf("egress %q: %v", c.egress, err)
+		}
+		nw := find(got, resolve.KindNetwork, "tink-blog")
+		if nw == nil || nw.Config["security.acls.default.egress.action"] != c.want {
+			t.Errorf("egress %q: the bridge's default egress action = %v, want %s", c.egress, nw, c.want)
+		}
+	}
+}
+
+// A stack that writes its own bridge keeps what it wrote, so egress cannot change it: that is an error that says where to set it.
+func TestOwnNetworkRefusesEgressOnABridgeTheStackDeclares(t *testing.T) {
+	rs := stackOf("blog", func(st *resolve.Resource) { st.EgressMode = resolve.EgressOpen })
+	rs = append(rs, resolve.Resource{Kind: resolve.KindNetwork, Name: "tink-blog", Config: map[string]string{"ipv4.address": "198.51.100.1/24"}})
+	_, _, err := OwnNetwork(&serverFake{}, rs)
+	if err == nil || !strings.Contains(err.Error(), "declares the network tink-blog itself") || !strings.Contains(err.Error(), "security.acls.default.egress.action") {
+		t.Errorf("err = %v", err)
+	}
+	// and with no egress said, the declared bridge is used as it was written
+	rs = stackOf("blog")
+	rs = append(rs, resolve.Resource{Kind: resolve.KindNetwork, Name: "tink-blog", Config: map[string]string{"ipv4.address": "198.51.100.1/24"}})
+	if _, _, err := OwnNetwork(&serverFake{}, rs); err != nil {
+		t.Errorf("a declared bridge with no egress said: %v", err)
+	}
+}

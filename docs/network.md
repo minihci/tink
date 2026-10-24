@@ -71,16 +71,23 @@ A NIC's `network:` (on an instance or on a profile) is an ordering edge **when t
 kind: stack
 name: blog
 network: own          # optional: network_pool: 203.0.113.0/24, network_prefix: 27
+egress: open          # optional: none (the default) or open
 ```
 
 For a stack that says `network: own`, `tink plan` (the fifth pass of `prepare`, `internal/derive`) adds, before anything is planned:
 
-- **A `kind: network`** named `tink-` and up to ten characters of the stack's name (a longer name is cut to five characters and a short hash, so the whole fits an interface name), with a subnet, `ipv4.nat: "true"`, `ipv6.address: none`, a DHCP range, and the ACL below attached.
+- **A `kind: network`** named `tink-` and up to ten characters of the stack's name (a longer name is cut to five characters and a short hash, so the whole fits an interface name), with a subnet, `ipv4.nat: "true"`, `ipv6.address: none`, a DHCP range, the default egress action (below), and the ACL below attached.
 - **A `kind: network-acl`** named after the bridge with `-in`, that derives its ingress rules from the publishes ([network-acl.md](network-acl.md#rules-derived-from-the-publishes)).
 - **A NIC on the bridge** for each instance that names no network. An instance with no NIC gets `eth0`; a NIC device with no network and no parent (what `defaults:` leaves) gets the bridge. A NIC that names a network, or has an address, is left as written.
 - **A static address** on that NIC for each instance that has an offer (`user.tink.offer.*`), because the proxy and the ACL name the app by address.
 
 Whatever the stack writes itself wins: a `kind: network` or `kind: network-acl` of those names is used as it is.
+
+**Egress: what the stack's apps may send out.** Outbound traffic is denied unless the stack grants it, as inbound traffic is denied unless a publish admits the ingress helper. `egress: none` (the default) sets the bridge's `security.acls.default.egress.action` to `reject`, and `egress: open` sets it to `allow`. The default is written out, not left unset, so that a hand-set `allow` on the bridge shows in `plan` as a change.
+
+`open` is Incus's own meaning of `allow`, not a promise of internet access: traffic goes where the host routes it and the destinations accept it. It also depends on NAT on the bridge (`ipv4.nat` is on), the host's forwarding and firewall, and the upstream network, none of which tink guarantees. It is wider than the internet, too: it covers the host, the LAN and the platform bridge, minus what the destination's own ACL rejects (another stack's bridge admits only its ingress helper). A narrower grant is not available: Incus applies reject rules before allow rules whatever their order, so "everything but the private ranges" would also block the bridge's own DNS. The bridge is the unit, so `egress` covers all of a stack's apps or none. With the default, a name still resolves (the bridge answers DNS) and the connection is then refused, which looks like a broken app: Whisper, which downloads its model on first start, is the case seen **[lab]**.
+
+`egress` needs `network: own`. A stack without it has no tink ACL, so tink restricts nothing and the field is refused. A stack that declares the bridge itself (`kind: network` named as above) is refused too, because what it writes wins and `egress` could not change it: set `security.acls.default.egress.action` in that network's config. On a `kind: network-acl`, the same key `egress:` is the list of egress rules.
 
 **Where the numbers come from.** The subnet is chosen by tink, not by Incus's `auto`, because an address has to be in the plan before the bridge exists. It is a `network_prefix` (default /24) out of `network_pool` (default 10.0.0.0/8), starting at the place a hash of the stack's name points at and moving on past every subnet any network on the server already holds. The subnet is divided as the bridge is made: the gateway, then a run of static addresses (a quarter of the hosts, at least four), then the DHCP range for the rest, so a lease handed out later never lands on an address tink allocated. An app's address is the lowest free one in that run, below every static address any NIC on the server holds (every project is read, because Incus refuses a duplicate across projects).
 

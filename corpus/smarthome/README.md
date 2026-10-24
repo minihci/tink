@@ -30,13 +30,13 @@ stack's bridge, and the herd does **not** measure what host networking is for (d
 
 ## The checks
 
-For each published name (`ha`, `nodered`, `esphome`, `music`), the four of the first herd. For the stacks, 16 more; and for `radios` 5, which need no radio because they read the plan: it is accepted, it would create the stack, nothing of it exists on the server, it derives the ACL rules for its two publishes, and it allocates their addresses. 37 in all. On the run that wrote this, 36 passed and `ha` signed in failed; on a fresh `up` Whisper's `describe` fails too (below):
+For each published name (`ha`, `nodered`, `esphome`, `music`), the four of the first herd. For the stacks, 16 more and 2 controls; and for `radios` 5, which need no radio because they read the plan: it is accepted, it would create the stack, nothing of it exists on the server, it derives the ACL rules for its two publishes, and it allocates their addresses. 39 in all. On the run that wrote this, 38 passed and `ha` signed in failed (below):
 
 - the ingress helper reaches the port it fronts (the control for the denials below);
 - the broker answers from Home Assistant and from Node-RED; MariaDB and the Matter server's web socket answer from Home Assistant;
 - Piper, Whisper and openWakeWord each answer a Wyoming `describe` from Home Assistant;
 - the platform's ingress and sign-on helpers do not reach the broker, MariaDB or the Matter server;
-- ESPHome and Music Assistant, in stacks of their own, do not reach the `home` stack's broker. **This one passes for two reasons and proves only that the connection fails**: their own bridges reject all outbound traffic too (#225), so it would fail without the `home` stack's ACL. It becomes a test of that ACL once they can reach out.
+- ESPHome and Music Assistant, in stacks of their own, do not reach the `home` stack's broker. Their stacks say `egress: open`, and a control shows it (each reaches the platform's dns helper), so the denial is the `home` stack's ACL.
 
 A second `tink plan` of the rendered `home.yaml` and of the site says no changes.
 
@@ -51,10 +51,10 @@ A second `tink plan` of the rendered `home.yaml` and of the site says no changes
   answers 400 ("your HTTP integration is not set-up for reverse proxies", Home Assistant 2026.10.3). Not resolved: in this version the
   `http` component reads its settings from a store and migrates YAML into it once (`components/http/config.py`), and no `.storage/http` file was ever
   written here, so the YAML may be ignored. The signed-in check for `ha` fails until that is understood (#223).
-- **Two checks fail, and are left failing on purpose.** `ha` signed in (above, #223). And Whisper's `describe` on a fresh `up`: Whisper downloads its model on
-  first start, and the stack cannot reach the outside, because the derived bridge has an ACL and no default egress action, so Incus rejects outbound traffic
-  (#225). With `security.acls.default.egress.action=allow` set on the bridge by hand the model downloaded and the check passed; the key was then unset. The stack
-  will say `egress: internet` when that exists.
+- **`ha` signed in fails, and is left failing on purpose** (above, #223).
+- **The stacks say `egress: open`** (#225). The derived bridge of `network: own` rejects outbound traffic by default, so Whisper, which downloads its model on first
+  start, could not, and its `describe` failed on a fresh `up`; Home Assistant's own update check could not connect either. With the field, a fresh `up` from nothing
+  (volumes included) downloaded the model and every voice server answers. `open` is Incus's `allow` on the bridge and not a promise of internet access (`docs/network.md`).
 - **`tink import` did what the fixture needed.** A compose service with `user: "1000:1000"` (Node-RED, the Matter server) gets a volume owned by that user
   (`initial.uid`, `initial.gid`: #176), and `entrypoint:` with `command:` (Piper, Whisper) becomes one `oci.entrypoint` that keeps the image's own entrypoint.
   The same line given to `tink run` without the entrypoint replaces it, and the instance never starts.
@@ -80,4 +80,4 @@ A second `tink plan` of the rendered `home.yaml` and of the site says no changes
 - **Zigbee2MQTT's broker**: its page puts the broker (`mqtt://...`) beside it. The broker is in the `home` stack, on another bridge whose ACL admits only the ingress
   helper, so Zigbee2MQTT in `radios` could not reach it (not tested; it follows from the ACL). An app that talks to a broker goes in the broker's stack.
 - **Backup**: every volume says `none` ("a throwaway fixture"). The first herd's `vault` is the only one with a real policy.
-- **The two failing checks** (`ha` signed in, #223; Whisper on a fresh `up`, #225), and the broker check that passes for two reasons (above).
+- **The failing check** (`ha` signed in, #223).

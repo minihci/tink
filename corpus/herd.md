@@ -38,9 +38,9 @@ problems the layout really removes (the `db` name clash is the known one).
 A second herd on the same site (`smarthome/README.md`; the plan and the checks are #207): the apps a Home Assistant install grows around it. Four stacks and thirteen
 apps. `home` (Home Assistant, Mosquitto, MariaDB, Node-RED, the Matter server, Piper, Whisper, openWakeWord), `esphome` and `music` are applied: ten apps, four published
 names (`ha`, `nodered`, `esphome`, `music`). `radios` (Zigbee2MQTT, Z-Wave JS UI, the OpenThread border router) is planned and never applied, because it needs a radio.
-Of 37 checks, 36 passed on the run that wrote this. The apps that ask for host networking run on their stack's bridge, so what that is for (discovery on the LAN) is not
-measured, and the list of what else is not measured, with the reason, is in the set's README. Two failures are open: Home Assistant answers 400 behind the proxy (#223), and
-Whisper cannot download its model on a fresh `up` because a stack's apps cannot reach the outside (#225).
+Of 39 checks, 38 passed on the run that wrote this. The apps that ask for host networking run on their stack's bridge, so what that is for (discovery on the LAN) is not
+measured, and the list of what else is not measured, with the reason, is in the set's README. One failure is open: Home Assistant answers 400 behind the proxy (#223). The stacks
+say `egress: open` (#225), because a stack's apps cannot reach the outside otherwise.
 
 ## A stack passes level 3 when
 
