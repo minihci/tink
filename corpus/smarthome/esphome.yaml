@@ -1,0 +1,48 @@
+# The smart-home herd stack "esphome": the ESPHome device-builder dashboard. Imported with `tink import` from a compose file made of the corpus page
+# (corpus/esphome); the lines marked "site:" are the site's half, written by hand. The page asks for host networking, which import refuses
+# (docs/docker-to-tink.md): ESPHome says `--net=host` lets the dashboard use mDNS to discover devices. The stack leaves it out, as the page's own
+# bridge variant (`-p 6052:6052`) does, so the dashboard runs on its stack's bridge and discovery is not measured (README.md). The dashboard has a
+# sign-on of its own, and it is behind the site's as well.
+kind: stack
+name: esphome
+network: own                              # a bridge, its ACL and the apps' static addresses are derived (docs/network.md)
+project: herd-esphome                     # site: a project of its own
+site: herd                                # site: only needed on a server that has a platform already (docs/join.md#sites)
+---
+kind: project                             # site
+name: herd-esphome
+config:
+  features.profiles: "false"
+---
+kind: storage-volume
+name: esphome-config
+pool: default
+backup:                                   # site
+  none: "a throwaway fixture"
+---
+kind: instance
+name: esphome
+image: ghcr.io/esphome/esphome
+profiles:
+  - default
+config:
+  boot.autorestart: "true"
+  boot.autostart: "true"
+  environment.ESPHOME_PASSWORD: herd-esphome-password   # site: a throwaway fixture's value (import warns that it looks like a secret)
+  environment.ESPHOME_USERNAME: admin
+  security.privileged: "true"
+  user.tink.offer.web.port: "6052"        # site
+  user.tink.offer.web.proto: http
+devices:
+  # (the compose file's host port 6052 is gone: the app is reached through the ingress helper)  # site
+  volume0:
+    type: disk
+    path: /config
+    pool: default
+    source: esphome-config
+---
+kind: publish                             # site: the name, and who may use it
+name: esphome
+instance: esphome
+offer: web
+allow: [admins]
