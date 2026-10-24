@@ -138,3 +138,19 @@ the shell or defaults 3. `tink run` takes the same pages' flags except `--networ
    page (Frigate) says its services run as an unprivileged user. Both start once `--user` is given; neither tells the person.
 6. **`read_only` and `security_opt` are in no subset.** Neither is a `tink run` flag nor an importer key. Whether Incus has an equivalent for either was not checked.
 
+
+**After #205 (2026-10-23, tink built from the branch that closes it, on the same local Incus 7.5.1).** `tink import` over the same seven examples and Home Assistant's own:
+**two of seven import** (Node-RED, and Zigbee2MQTT, which `tink run` already translated), six do not. `privileged`, `devices`, a `tmpfs` volume and `shm_size` now
+translate, as `tink run` does them; Frigate is then refused only for listing `/dev/bus/usb` (the whole USB bus, a directory), with the `--incus-device` for one USB
+device. Host networking remains (ESPHome, Music Assistant, the two Matter servers, Home Assistant), and so does `read_only` and `security_opt`. The detail is in
+[`docs/import.md`](../docs/import.md). Findings 2, 3 and 6 above, as they stand now:
+
+- Finding 2 (**live**): `tink run --network host` is refused with the same explanation `tink import` gives, and not planned as a NIC on a network called `host`.
+- Finding 3 (**code**): `${USERDIR:-$HOME}` expands its default; `$HOME` is read from a `.env` beside the file like any variable, so the variable resolves once that file says what
+  `HOME` is. The shell's environment is still never read.
+- Finding 6 (**live**): a root device of the instance's own with `readonly=true` makes `/` read-only (an Alpine container started and `touch /x` failed with "Read-only file
+  system"), and a mount point that is not in the image then cannot be created. The Matter.js server's image **did not start** with a read-only root and a volume at
+  `/data` ("Failed to setup mount entries"), nor without the volume, so `read_only` stays refused, with that reason. `security_opt` has no instance key (`no-new-privileges`,
+  an AppArmor profile choice); `raw.apparmor` and `raw.lxc` can carry one, **not tried**.
+- A tmpfs device honours its size at any path, including `/dev/shm` (**live**: 64 MiB by default, replaced by 512 MiB), and takes a size in bytes or with a suffix; a stack that
+  `tink import` wrote from a compose file with `privileged`, a device, a tmpfs and `shm_size` applied, the mounts and the device were there, and a second plan said no changes.

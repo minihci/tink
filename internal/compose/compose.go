@@ -64,23 +64,47 @@ type Result struct {
 	Refused []Refusal
 }
 
-// supportedService is the subset: the keys the survey's compose files use. Anything else is refused.
-var supportedService = map[string]bool{
-	"image": true, "restart": true, "volumes": true, "ports": true, "environment": true, "env_file": true, "depends_on": true, "user": true,
-	"command": true, "entrypoint": true, "container_name": true, "hostname": true, "networks": true,
-	// dropped with a warning
-	"healthcheck": true, "stop_grace_period": true, "shm_size": true, "extra_hosts": true, "cap_add": true,
-	// refused with a reason of its own
-	"network_mode": true,
+// keyKind says what the importer does with a compose key it knows. Any key not in serviceKeys or topKeys is refused as "not in the supported subset".
+type keyKind int
+
+const (
+	translated keyKind = iota // becomes part of the stack
+	dropped                   // dropped with a warning and a comment in the output: the app may or may not need it
+	ignored                   // ignored with a note: the stack says it another way
+	refused                   // refused, with a reason of its own
+)
+
+type keyRule struct {
+	kind keyKind
+	why  string // the reason, for dropped and refused
 }
 
-// dropped keys have no Incus equivalent; the app may or may not need them.
-var dropped = map[string]string{
-	"healthcheck":       "an image's healthcheck is not run, and nothing waits for it",
-	"stop_grace_period": "Incus has no per-instance stop timeout",
-	"shm_size":          "Incus has no equivalent size for /dev/shm",
-	"extra_hosts":       "nothing sets extra hosts entries on an Incus instance",
-	"cap_add":           "Incus has no per-capability option; privileged is the blunt instrument",
+// serviceKeys is the subset of a service's keys, and docs/import.md has a row for each of them (a test reads both). The keys the survey's compose
+// files use are the first ones; the rest were added with their rule because a real example needs them (#205).
+var serviceKeys = map[string]keyRule{
+	"image": {kind: translated}, "restart": {kind: translated}, "volumes": {kind: translated}, "ports": {kind: translated}, "environment": {kind: translated},
+	"env_file": {kind: translated}, "depends_on": {kind: translated}, "user": {kind: translated}, "command": {kind: translated}, "entrypoint": {kind: translated},
+	"privileged": {kind: translated}, "devices": {kind: translated}, "tmpfs": {kind: translated}, "shm_size": {kind: translated},
+
+	"healthcheck":       {dropped, "an image's healthcheck is not run, and nothing waits for it"},
+	"stop_grace_period": {dropped, "Incus has no per-instance stop timeout"},
+	"extra_hosts":       {dropped, "nothing sets extra hosts entries on an Incus instance"},
+	"cap_add":           {dropped, "Incus has no per-capability option; privileged is the blunt instrument"},
+
+	"container_name": {kind: ignored},
+	"hostname":       {kind: ignored},
+	"networks":       {kind: ignored},
+
+	"network_mode": {refused, run.HostNetworkAdvice},
+	"read_only":    {refused, "Incus can make an instance's root disk read-only (a root device of its own with readonly=true), but the one instance made so that was tried, the image of an app whose page asks for read_only, did not start (\"Failed to setup mount entries\", Incus 7.5.1); if the app needs it, add that device by hand with --incus-device and see whether it starts"},
+	"security_opt": {refused, "Incus confines a container with an AppArmor profile of its own and has no instance key for a choice of profile or for no-new-privileges; raw.apparmor and raw.lxc can carry one by hand, with --incus-config, if the app really needs it"},
+	"cap_drop":     {refused, "an unprivileged Incus container has a fixed set of capabilities and nothing narrows it, so the hardening the file asks for would silently not happen; delete the key if that is acceptable"},
+}
+
+// topKeys is the same for the top level of the file.
+var topKeys = map[string]keyRule{
+	"services": {kind: translated}, "volumes": {kind: translated}, "name": {kind: translated},
+	"networks": {kind: ignored}, "version": {kind: ignored},
 }
 
 var instanceNameRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9-]{0,62}$`)
@@ -141,6 +165,10 @@ func Import(src []byte, opts Options) (*Result, error) {
 	var services map[string]any
 	for i := 0; i+1 < len(doc.Content); i += 2 {
 		key, val := doc.Content[i].Value, doc.Content[i+1]
+		if _, known := topKeys[key]; !known {
+			im.refuse("", key, "not in the supported subset")
+			continue
+		}
 		switch key {
 		case "services":
 			if err := val.Decode(&services); err != nil {
@@ -164,8 +192,6 @@ func Import(src []byte, opts Options) (*Result, error) {
 			im.note("top-level networks is ignored: a stack gets its own network from #177")
 		case "version":
 			im.note("version is ignored")
-		default:
-			im.refuse("", key, "not in the supported subset")
 		}
 	}
 	if stack == "" {
@@ -237,13 +263,25 @@ func (im *importer) declareVolumes(v map[string]any) {
 
 func (im *importer) service(compose string, sv map[string]any) {
 	name := im.svcName[compose]
+	keys := make([]string, 0, len(sv))
 	for k := range sv {
-		if !supportedService[k] {
-			im.refuse(compose, k, "not in the supported subset")
-		}
+		keys = append(keys, k)
 	}
-	if _, ok := sv["network_mode"]; ok {
-		im.refuse(compose, "network_mode", "host networking has no equivalent: an Incus instance has its own network namespace. Give it an address of its own on the LAN, or decide what it needed the host's network for")
+	sort.Strings(keys)
+	for _, k := range keys {
+		rule, known := serviceKeys[k]
+		switch {
+		case !known:
+			im.refuse(compose, k, "not in the supported subset")
+		case rule.kind == refused && k == "network_mode":
+			if v := fmt.Sprint(sv[k]); v != "host" {
+				im.refuse(compose, k, fmt.Sprintf("%q is not supported; the only network_mode tink explains is host: %s", v, rule.why))
+			} else {
+				im.refuse(compose, k, rule.why)
+			}
+		case rule.kind == refused:
+			im.refuse(compose, k, rule.why)
+		}
 	}
 	// Interpolate everything the translation reads.
 	val, err := im.interpolate(sv)
@@ -266,6 +304,19 @@ func (im *importer) service(compose string, sv map[string]any) {
 	if u, ok := sv["user"]; ok {
 		o.User = fmt.Sprint(u)
 	}
+	if v, present := sv["privileged"]; present {
+		b, ok := asBool(v)
+		if !ok {
+			im.refuse(compose, "privileged", fmt.Sprintf("%v is not true or false", v))
+			return
+		}
+		o.Privileged = b
+	}
+	devs, ok := im.devices(compose, sv["devices"])
+	if !ok {
+		return
+	}
+	o.Device = devs
 	env, ok := im.environment(compose, sv["environment"])
 	if !ok {
 		return
@@ -285,19 +336,22 @@ func (im *importer) service(compose string, sv map[string]any) {
 	}
 	o.Cmd = cmd
 
-	vols, made, ok := im.volumeArgs(compose, name, sv["volumes"])
+	vols, made, tmpfs, ok := im.volumeArgs(compose, name, sv["volumes"])
 	if !ok {
 		return
 	}
 	o.Volume = vols
-
+	if o.IncusDevice, ok = im.tmpfsDevices(compose, tmpfs, sv); !ok {
+		return
+	}
 	var comments []string
-	for _, k := range []string{"healthcheck", "stop_grace_period", "shm_size", "extra_hosts", "cap_add"} {
-		if _, ok := sv[k]; ok {
-			msg := fmt.Sprintf("%s was dropped: %s", k, dropped[k])
-			im.warn(compose, msg)
-			comments = append(comments, msg)
+	for _, k := range keys {
+		if serviceKeys[k].kind != dropped {
+			continue
 		}
+		msg := fmt.Sprintf("%s was dropped: %s", k, serviceKeys[k].why)
+		im.warn(compose, msg)
+		comments = append(comments, msg)
 	}
 	for _, k := range []string{"container_name", "hostname"} {
 		if _, ok := sv[k]; ok {
@@ -495,12 +549,16 @@ func (im *importer) depName(k string) string {
 	return k
 }
 
-// volumeArgs turns the service's volumes into tink run -v arguments and registers the managed volumes they name.
-func (im *importer) volumeArgs(service, instance string, raw any) (args []string, made []string, ok bool) {
+// tmpfsMount is a tmpfs a service asks for, from a tmpfs: entry, a long-form volume of type tmpfs, or shm_size.
+type tmpfsMount struct{ path, size string }
+
+// volumeArgs turns the service's volumes into tink run -v arguments and registers the managed volumes they name. A long-form volume of type tmpfs
+// is returned in tmpfs, because it is not a -v argument.
+func (im *importer) volumeArgs(service, instance string, raw any) (args []string, made []string, tmpfs []tmpfsMount, ok bool) {
 	list, isList := raw.([]any)
 	if raw != nil && !isList {
 		im.refuse(service, "volumes", "not a list")
-		return nil, nil, false
+		return nil, nil, nil, false
 	}
 	for _, item := range list {
 		var src, dst string
@@ -510,7 +568,7 @@ func (im *importer) volumeArgs(service, instance string, raw any) (args []string
 			parts := strings.Split(v, ":")
 			if len(parts) < 2 || len(parts) > 3 {
 				im.refuse(service, "volumes", fmt.Sprintf("%q: expected SOURCE:TARGET[:OPTIONS]", v))
-				return nil, nil, false
+				return nil, nil, nil, false
 			}
 			src, dst = parts[0], parts[1]
 			if len(parts) == 3 {
@@ -518,15 +576,27 @@ func (im *importer) volumeArgs(service, instance string, raw any) (args []string
 			}
 		case map[string]any:
 			for k := range v {
-				if k != "type" && k != "source" && k != "target" && k != "read_only" {
+				if k != "type" && k != "source" && k != "target" && k != "read_only" && k != "tmpfs" {
 					im.refuse(service, "volumes."+k, "not in the supported subset")
-					return nil, nil, false
+					return nil, nil, nil, false
 				}
 			}
 			t, _ := v["type"].(string)
+			if t == "tmpfs" {
+				m, ok := im.longTmpfs(service, v)
+				if !ok {
+					return nil, nil, nil, false
+				}
+				tmpfs = append(tmpfs, m)
+				continue
+			}
+			if _, has := v["tmpfs"]; has {
+				im.refuse(service, "volumes.tmpfs", "only a volume of type tmpfs has tmpfs options")
+				return nil, nil, nil, false
+			}
 			if t != "bind" && t != "volume" {
-				im.refuse(service, "volumes.type", fmt.Sprintf("%q is not supported (bind and volume are)", t))
-				return nil, nil, false
+				im.refuse(service, "volumes.type", fmt.Sprintf("%q is not supported (bind, volume and tmpfs are)", t))
+				return nil, nil, nil, false
 			}
 			src, _ = v["source"].(string)
 			dst, _ = v["target"].(string)
@@ -535,15 +605,15 @@ func (im *importer) volumeArgs(service, instance string, raw any) (args []string
 			}
 			if src == "" || dst == "" {
 				im.refuse(service, "volumes", "a long-form volume needs a source and a target")
-				return nil, nil, false
+				return nil, nil, nil, false
 			}
 		default:
 			im.refuse(service, "volumes", "an entry that is neither a string nor a mapping")
-			return nil, nil, false
+			return nil, nil, nil, false
 		}
 		if strings.HasSuffix(src, "docker.sock") {
 			im.refuse(service, "volumes", "the Docker socket: there is no Docker on an Incus host")
-			return nil, nil, false
+			return nil, nil, nil, false
 		}
 		source := src
 		switch {
@@ -553,7 +623,7 @@ func (im *importer) volumeArgs(service, instance string, raw any) (args []string
 			base := strings.Trim(filepath.Base(filepath.Clean(src)), ".")
 			if base == "" || base == "~" {
 				im.refuse(service, "volumes", fmt.Sprintf("%q is a whole directory; name a subdirectory", src))
-				return nil, nil, false
+				return nil, nil, nil, false
 			}
 			source = im.volumeName(instance + "-" + sanitize(base))
 			im.note(fmt.Sprintf("service %s: %s was a path relative to the compose file; it is now the managed volume %s. Write it as a bind mount to keep it a directory you can see", service, src, source))
@@ -563,7 +633,7 @@ func (im *importer) volumeArgs(service, instance string, raw any) (args []string
 			decl, declared := im.volDecl[src]
 			if !declared {
 				im.refuse(service, "volumes", fmt.Sprintf("volume %q is not declared in the top-level volumes", src))
-				return nil, nil, false
+				return nil, nil, nil, false
 			}
 			source = im.volumeName(decl)
 			im.useVolume(source)
@@ -575,7 +645,138 @@ func (im *importer) volumeArgs(service, instance string, raw any) (args []string
 		}
 		args = append(args, arg)
 	}
-	return args, made, true
+	return args, made, tmpfs, true
+}
+
+// longTmpfs reads a long-form volume of type tmpfs: a target, and tmpfs: {size, mode}. A mode means nothing to Incus's tmpfs device and is noted.
+func (im *importer) longTmpfs(service string, v map[string]any) (tmpfsMount, bool) {
+	target, _ := v["target"].(string)
+	if target == "" {
+		im.refuse(service, "volumes", "a tmpfs volume needs a target")
+		return tmpfsMount{}, false
+	}
+	if src, _ := v["source"].(string); src != "" {
+		im.refuse(service, "volumes.source", "a tmpfs volume has no source")
+		return tmpfsMount{}, false
+	}
+	m := tmpfsMount{path: target}
+	opts, _ := v["tmpfs"].(map[string]any)
+	for k, val := range opts {
+		switch k {
+		case "size":
+			m.size = fmt.Sprint(val)
+		case "mode":
+			im.note(fmt.Sprintf("service %s: the mode of the tmpfs at %s is ignored: Incus's tmpfs device has no mode option", service, target))
+		default:
+			im.refuse(service, "volumes.tmpfs."+k, "not in the supported subset (size is)")
+			return tmpfsMount{}, false
+		}
+	}
+	return m, true
+}
+
+// shortTmpfs reads the tmpfs: key: a path or a list of paths, each with docker's options after a colon (/run:size=64m,noexec).
+func (im *importer) shortTmpfs(service string, raw any) ([]tmpfsMount, bool) {
+	var items []string
+	switch t := raw.(type) {
+	case nil:
+		return nil, true
+	case string:
+		items = []string{t}
+	case []any:
+		for _, it := range t {
+			s, ok := it.(string)
+			if !ok {
+				im.refuse(service, "tmpfs", "an entry that is not a path")
+				return nil, false
+			}
+			items = append(items, s)
+		}
+	default:
+		im.refuse(service, "tmpfs", "neither a path nor a list of paths")
+		return nil, false
+	}
+	var out []tmpfsMount
+	for _, it := range items {
+		path, optstr, _ := strings.Cut(it, ":")
+		m := tmpfsMount{path: path}
+		for _, o := range strings.Split(optstr, ",") {
+			switch k, v, _ := strings.Cut(o, "="); k {
+			case "":
+			case "size":
+				m.size = v
+			default:
+				im.note(fmt.Sprintf("service %s: the tmpfs option %q at %s is ignored: Incus's tmpfs device takes a size and nothing else", service, o, path))
+			}
+		}
+		out = append(out, m)
+	}
+	return out, true
+}
+
+// tmpfsDevices turns every tmpfs a service asks for (volumes of type tmpfs, tmpfs:, shm_size) into --incus-device entries, in a fixed order.
+func (im *importer) tmpfsDevices(service string, fromVolumes []tmpfsMount, sv map[string]any) ([]string, bool) {
+	short, ok := im.shortTmpfs(service, sv["tmpfs"])
+	if !ok {
+		return nil, false
+	}
+	mounts := append(append([]tmpfsMount{}, fromVolumes...), short...)
+	if v, present := sv["shm_size"]; present {
+		mounts = append(mounts, tmpfsMount{path: "/dev/shm", size: fmt.Sprint(v)})
+	}
+	var out []string
+	seen := map[string]bool{}
+	for i, m := range mounts {
+		if seen[m.path] {
+			im.refuse(service, "tmpfs", fmt.Sprintf("two tmpfs mounts at %s", m.path))
+			return nil, false
+		}
+		seen[m.path] = true
+		e, err := run.TmpfsIncusDevice(fmt.Sprintf("tmpfs%d", i), m.path, m.size)
+		if err != nil {
+			im.refuse(service, "tmpfs", err.Error())
+			return nil, false
+		}
+		out = append(out, e)
+	}
+	return out, true
+}
+
+// devices reads devices: HOST:CONTAINER[:rwm], docker's form, as tink run --device does. The long form is not supported.
+func (im *importer) devices(service string, raw any) ([]string, bool) {
+	var out []string
+	switch d := raw.(type) {
+	case nil:
+	case []any:
+		for _, it := range d {
+			s, ok := it.(string)
+			if !ok {
+				im.refuse(service, "devices", "the long form is not supported; write HOST:CONTAINER")
+				return nil, false
+			}
+			out = append(out, s)
+		}
+	default:
+		im.refuse(service, "devices", "not a list")
+		return nil, false
+	}
+	return out, true
+}
+
+// asBool reads a compose boolean, which interpolation may have turned into a string.
+func asBool(v any) (b, ok bool) {
+	switch x := v.(type) {
+	case bool:
+		return x, true
+	case string:
+		switch strings.ToLower(x) {
+		case "true":
+			return true, true
+		case "false":
+			return false, true
+		}
+	}
+	return false, false
 }
 
 // volumeName returns the name a managed volume is made with. A volume that shares a name with a service would be a "duplicate resource name" in a
@@ -629,8 +830,9 @@ func readDotEnv(path string) (map[string]string, error) {
 	return vars, nil
 }
 
-// interpolate replaces ${VAR}, ${VAR:-default} and ${VAR-default} in every string, from the .env file beside the compose file only (never the shell's
-// environment). An unset variable with no default is an error, and so is any other form.
+// interpolate replaces $VAR, ${VAR}, ${VAR:-default} and ${VAR-default} in every string, from the .env file beside the compose file only (never the
+// shell's environment, so the result does not depend on who ran the import). A default is itself expanded, as compose does (${USERDIR:-$HOME}). An
+// unset variable with no default is an error, and so is any other form.
 func (im *importer) interpolate(v any) (any, error) {
 	switch x := v.(type) {
 	case string:
@@ -671,15 +873,41 @@ func (im *importer) expand(s string) (string, error) {
 			i++
 			continue
 		}
-		if i+1 >= len(s) || s[i+1] != '{' {
-			return "", fmt.Errorf("%q: a $ that is not ${...} is not supported", s)
+		if i+1 < len(s) && s[i+1] != '{' {
+			j := i + 1
+			for j < len(s) && isNameByte(s[j], j == i+1) {
+				j++
+			}
+			if j == i+1 {
+				return "", fmt.Errorf("%q: a $ that is not $NAME or ${...} is not supported", s)
+			}
+			val, set := im.vars[s[i+1:j]]
+			if !set {
+				return "", fmt.Errorf("$%s is not set: put it in a .env file beside the compose file (the shell's environment is not read)", s[i+1:j])
+			}
+			b.WriteString(val)
+			i = j - 1
+			continue
 		}
-		end := strings.IndexByte(s[i:], '}')
+		if i+1 >= len(s) {
+			return "", fmt.Errorf("%q: a $ that is not $NAME or ${...} is not supported", s)
+		}
+		end, depth := -1, 0
+		for j := i + 1; j < len(s); j++ {
+			if s[j] == '{' {
+				depth++
+			} else if s[j] == '}' {
+				if depth--; depth == 0 {
+					end = j
+					break
+				}
+			}
+		}
 		if end < 0 {
 			return "", fmt.Errorf("%q: unclosed ${", s)
 		}
-		expr := s[i+2 : i+end]
-		i += end
+		expr := s[i+2 : end]
+		i = end
 		name, def, hasDef, colon := expr, "", false, false
 		if n, d, ok := strings.Cut(expr, ":-"); ok {
 			name, def, hasDef, colon = n, d, true, true
@@ -694,12 +922,20 @@ func (im *importer) expand(s string) (string, error) {
 		case set && (val != "" || !colon):
 			b.WriteString(val)
 		case hasDef:
-			b.WriteString(def)
+			d, err := im.expand(def)
+			if err != nil {
+				return "", err
+			}
+			b.WriteString(d)
 		default:
-			return "", fmt.Errorf("${%s} is not set: put it in a .env file beside the compose file", name)
+			return "", fmt.Errorf("${%s} is not set: put it in a .env file beside the compose file (the shell's environment is not read)", name)
 		}
 	}
 	return b.String(), nil
+}
+
+func isNameByte(c byte, first bool) bool {
+	return c == '_' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (!first && c >= '0' && c <= '9')
 }
 
 // flagLike reports a value that is a switch and not a secret (MYSQL_RANDOM_ROOT_PASSWORD: "1"), or empty.
@@ -712,9 +948,9 @@ func flagLike(v string) bool {
 }
 
 // buildFlag is how run.Build names what it refused: by the docker-run flag. The person wrote a compose key, so say that.
-var buildFlag = regexp.MustCompile(`^--(user|publish|volume|env-file|env) `)
+var buildFlag = regexp.MustCompile(`^--(user|publish|volume|env-file|env|device) `)
 
-var flagKey = map[string]string{"user": "user", "publish": "ports", "volume": "volumes", "env-file": "env_file", "env": "environment"}
+var flagKey = map[string]string{"user": "user", "publish": "ports", "volume": "volumes", "env-file": "env_file", "env": "environment", "device": "devices"}
 
 func translationRefusal(err error) (key, reason string) {
 	msg := err.Error()

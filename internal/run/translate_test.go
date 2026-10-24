@@ -164,6 +164,7 @@ func TestDeviceMakesACharacterDeviceAndRefusesWhatItCannot(t *testing.T) {
 	}
 	for in, want := range map[string]string{
 		"/dev/dri":            "gpu type=gpu",
+		"/dev/bus/usb":        "type=usb",
 		"/dev/dri/":           "gpu type=gpu",
 		"/dev/sda":            "unix-block",
 		"/dev/nvme0n1:/dev/x": "unix-block source=/dev/nvme0n1 path=/dev/x",
@@ -238,5 +239,42 @@ func TestTheRecordedCommandCarriesMemoryCPUsAndDevices(t *testing.T) {
 	want := "tink run --name n --memory 512m --cpus 1.5 --device /dev/ttyUSB0 -p 53:53/udp i"
 	if got != want {
 		t.Errorf("\n got: %s\nwant: %s", got, want)
+	}
+}
+
+// A tmpfs is the disk device docs/docker-to-tink.md gives for --tmpfs, and tink import writes the same entry.
+func TestTmpfsIncusDevice(t *testing.T) {
+	for _, c := range []struct{ path, size, want string }{
+		{"/cache", "64m", "t type=disk source=tmpfs: path=/cache size=64MiB"},
+		{"/dev/shm", "512mb", "t type=disk source=tmpfs: path=/dev/shm size=512MiB"},
+		{"/tmp/cache", "1000000000", "t type=disk source=tmpfs: path=/tmp/cache size=1000000000"},
+		{"/run", "1g", "t type=disk source=tmpfs: path=/run size=1GiB"},
+		{"/run", "", "t type=disk source=tmpfs: path=/run"},
+	} {
+		got, err := TmpfsIncusDevice("t", c.path, c.size)
+		if err != nil || got != c.want {
+			t.Errorf("%q %q = %q %v, want %q", c.path, c.size, got, err, c.want)
+		}
+		// and it is an entry --incus-device accepts
+		spec := &Spec{Devices: map[string]map[string]string{}}
+		if err := addIncusDevices(spec, []string{got}); err != nil || spec.Devices["t"]["source"] != "tmpfs:" {
+			t.Errorf("%q is not a valid --incus-device: %v %v", got, err, spec.Devices)
+		}
+	}
+	for _, c := range []struct{ path, size string }{{"cache", ""}, {"/a b", ""}, {"/x", "big"}, {"/x", "0"}} {
+		if got, err := TmpfsIncusDevice("t", c.path, c.size); err == nil {
+			t.Errorf("%q %q should be refused, got %q", c.path, c.size, got)
+		}
+	}
+}
+
+// Docker's host networking has no equivalent, and tink run says so as tink import does, instead of planning a NIC on a network called host.
+func TestBuildExplainsHostNetworking(t *testing.T) {
+	_, err := Build(Options{Name: "a", Image: "x", Network: "host"})
+	if err == nil || !strings.Contains(err.Error(), "--network host: "+HostNetworkAdvice) {
+		t.Fatalf("--network host must be refused with the advice, got %v", err)
+	}
+	if _, err := Build(Options{Name: "a", Image: "x", Network: "lan"}); err != nil {
+		t.Errorf("another network is fine: %v", err)
 	}
 }
