@@ -45,7 +45,7 @@ measuring stick, and it is Phase 3's work.
 | `env-config` | 12 | handled | live |
 | `registry-named` | 9 | partly: `docker.io`, `ghcr.io` and `lscr.io` work as typed; any other registry needs a one-time `incus remote add` | live |
 | `named-volume` | 8 | handled | live |
-| `uid-gid` | 6 | `--user` and `PUID` work, and a volume `tink run` creates is owned by the image's own non-root user (finding 1, #176 slice 1, live); a start that fails because the process exited still names the proxy device, not the cause (#176 slice 2) | live |
+| `uid-gid` | 6 | `--user` and `PUID` work, and a volume `tink run` creates is owned by the image's own non-root user (finding 1, #176 slice 1, live); a start that fails because the process exited prints the console log's last lines (#176 slice 2, live) | live |
 | `secret` | 5 | handled by the age store for `environment.*`; not exercised today | docs |
 | `sibling` | 4 | handled in a stack: a sibling resolves by bare name | live (`db`) |
 | `media-lib` | 4 | partly: mounting an existing host directory works; filling a managed volume with existing files does not (#144) | live; issue |
@@ -82,7 +82,8 @@ measuring stick, and it is Phase 3's work.
    *Slice 1 of #176, run on a local Incus 7.5.1 server on 2026-10-24:* a volume `tink run` creates is now owned by the image's `oci.uid` and `oci.gid` when
    `--user` is not given (the "creating volume" line says `owned by 472:0 (the image's user)`). The command above, with no flag beyond what Grafana's page
    gives, started Grafana (`/api/health` answered 200); Node-RED with no `--user` stayed up and answered 200, where the build from before stopped at once. What the
-   person is told when the process exits (the proxy-device message) is slice 2 and not built.
+   person is told when the process exits is slice 2: `tink run` now checks two seconds after the start and, if the process is gone, prints the last lines of the
+   console log (here, `GF_PATHS_DATA='/var/lib/grafana' is not writable`) and exits non-zero, also when the start itself fails with Incus's proxy-device error.
 2. **A service and a volume cannot share a name.** WordPress's own compose names both `wordpress`; tink stops with
    "duplicate resource name" (the flat namespace noted in the roadmap).
 3. **A registry other than Docker Hub, GitHub and LinuxServer needs a one-time `incus remote add`.** The message is exact.
