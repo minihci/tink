@@ -1,0 +1,128 @@
+# The smart-home herd stack "radios": the three apps that need a radio on the host, declared and planned, never applied (README.md): Zigbee2MQTT, Z-Wave JS UI
+# and the OpenThread border router. Zigbee2MQTT and Z-Wave JS UI are what `tink import` writes for compose files made of the corpus pages; the border router's
+# page has only a `docker run` line, so its instance is written by hand from it. The lines marked "site:" are the site's half.
+#
+# What each page asks for that this stack does not say:
+#   - Z-Wave JS UI: `stop_signal: SIGINT` and `tty: true` are refused by import and left out.
+#   - the border router: `--network=host` and `--cap-add=NET_ADMIN`. Neither has a translation here (docs/docker-to-tink.md), and its page also asks for IP
+#     forwarding to be switched on in the host first (a `setup-host` script), which no stack says.
+#   - Zigbee2MQTT: its MQTT broker (`mqtt://...`) is the `home` stack's, in another project and on another bridge, which this stack cannot reach.
+# The device paths are the pages' own examples; a stack for a real radio names the real path.
+kind: stack
+name: radios
+network: own                              # a bridge, its ACL and the apps' static addresses are derived (docs/network.md)
+project: herd-radios                      # site: a project of its own
+site: herd                                # site: only needed on a server that has a platform already (docs/join.md#sites)
+---
+kind: project                             # site
+name: herd-radios
+config:
+  features.profiles: "false"
+---
+kind: storage-volume
+name: zigbee2mqtt-data
+pool: default
+backup:                                   # site
+  none: "a throwaway fixture"
+---
+kind: storage-volume
+name: zwave-config
+pool: default
+backup:                                   # site
+  none: "a throwaway fixture"
+---
+kind: storage-volume
+name: otbr-data
+pool: default
+backup:                                   # site
+  none: "a throwaway fixture"
+---
+kind: instance
+name: zigbee2mqtt
+image: ghcr.io/koenkk/zigbee2mqtt
+profiles:
+  - default
+config:
+  boot.autorestart: "true"
+  boot.autostart: "true"
+  environment.TZ: Etc/UTC
+  user.tink.offer.web.port: "8080"        # site
+  user.tink.offer.web.proto: http
+devices:
+  device0:
+    type: unix-char
+    path: /dev/ttyACM0
+    source: /dev/serial/by-id/usb-Texas_Instruments_TI_CC2531_USB_CDC___0X00124B0018ED3DDF-if00
+  # (the compose file's host port 8080 is gone: the app is reached through the ingress helper)  # site
+  volume0:
+    type: disk
+    path: /app/data
+    pool: default
+    source: zigbee2mqtt-data
+  volume1:
+    type: disk
+    path: /run/udev
+    readonly: "true"
+    source: /run/udev
+---
+kind: instance
+name: zwave-js-ui
+image: zwavejs/zwave-js-ui:latest
+profiles:
+  - default
+config:
+  boot.autorestart: "true"
+  boot.autostart: "true"
+  environment.SESSION_SECRET: herd-session-secret   # site: a throwaway fixture's value (import warns that it looks like a secret)
+  user.tink.offer.web.port: "8091"        # site
+  user.tink.offer.web.proto: http
+devices:
+  device0:
+    type: unix-char
+    path: /dev/zwave
+    source: /dev/serial/by-id/insert_stick_reference_here
+  # (the compose file's host ports 8091 and 3000 are gone: the web UI is reached through the ingress helper, and the web socket on 3000 on the bridge)  # site
+  volume0:
+    type: disk
+    path: /usr/src/app/store
+    pool: default
+    source: zwave-config
+---
+kind: instance
+name: otbr
+image: openthread/border-router
+profiles:
+  - default
+config:
+  boot.autorestart: "true"
+  boot.autostart: "true"
+  environment.OT_RCP_DEVICE: spinel+hdlc+uart:///dev/ttyACM0?uart-baudrate=1000000
+  environment.OT_INFRA_IF: eth0           # site: the instance's NIC (the page's wlan0 is the host's Wi-Fi)
+  environment.OT_THREAD_IF: wpan0
+  environment.OT_LOG_LEVEL: "7"
+devices:
+  device0:
+    type: unix-char
+    path: /dev/ttyACM0
+    source: /dev/ttyACM0
+  tun:
+    type: unix-char
+    path: /dev/net/tun
+    source: /dev/net/tun
+  volume0:
+    type: disk
+    path: /data
+    pool: default
+    source: otbr-data
+---
+kind: publish                             # site: the name, and who may use it
+name: z2m
+instance: zigbee2mqtt
+offer: web
+allow: [admins]
+---
+kind: publish                             # site
+name: zwave
+instance: zwave-js-ui
+offer: web
+allow: [admins]

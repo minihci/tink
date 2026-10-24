@@ -9,7 +9,7 @@ backup, with a person managing as little as possible. The herd test is the corpu
 |---|---|---|
 | 1. Runs | Does the app answer when its own line is pasted into tink? | 14 of 21 (`status.md`) |
 | 2. Imports | Does its published compose line become a stack with no hand editing? | 13 of the 17 apps with a compose file (14 of 18 files); the other four are refused with a reason (#179, #180) |
-| 3. Herd | Is it applied together with the others, onto one site, and wired? | all 6 stacks (7 names) are on the fixture site and answer behind sign-on. Against the 5 criteria below: 2 and 3 hold for every stack; 5 holds (tried on one, `status`); 4 holds for one stack (`vault`); 1 holds except for eight lines each stack still writes (`site/README.md`) |
+| 3. Herd | Is it applied together with the others, onto one site, and wired? | all 6 stacks (7 names) are on the fixture site and answer behind sign-on. Against the 5 criteria below: 2 and 3 hold for every stack; 5 holds (tried on one, `status`); 4 holds for one stack (`vault`); 1 holds except for eight lines each stack still writes (`site/README.md`); the smart-home herd adds four stacks, three applied (see below) |
 
 ## The first herd
 
@@ -32,6 +32,15 @@ target. It is a fixture of the test, not of the stacks, and it is in [site/](sit
 One project and one bridge per stack, with an ACL on each bridge that lets only the ingress helper in. This is what
 `docs/network.md`, `docs/network-acl.md` and `docs/join.md` already describe. A second run uses a single shared bridge, to see which
 problems the layout really removes (the `db` name clash is the known one).
+
+## The smart-home herd
+
+A second herd on the same site (`smarthome/README.md`; the plan and the checks are #207): the apps a Home Assistant install grows around it. Four stacks and thirteen
+apps. `home` (Home Assistant, Mosquitto, MariaDB, Node-RED, the Matter server, Piper, Whisper, openWakeWord), `esphome` and `music` are applied: ten apps, four published
+names (`ha`, `nodered`, `esphome`, `music`). `radios` (Zigbee2MQTT, Z-Wave JS UI, the OpenThread border router) is planned and never applied, because it needs a radio.
+Of 37 checks, 36 passed on the run that wrote this. The apps that ask for host networking run on their stack's bridge, so what that is for (discovery on the LAN) is not
+measured, and the list of what else is not measured, with the reason, is in the set's README. Two failures are open: Home Assistant answers 400 behind the proxy (#223), and
+Whisper cannot download its model on a fresh `up` because a stack's apps cannot reach the outside (#225).
 
 ## A stack passes level 3 when
 

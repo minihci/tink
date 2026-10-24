@@ -1,15 +1,15 @@
 # The smart-home herd
 
 A second set of stacks for the herd test (`../herd.md`), applied to the same site as the first herd (`../site/`): the apps a Home Assistant install
-grows around it. Plan and checks: #207. So far (slices 1 to 3) three stacks, `home`, `esphome` and `music`; the plan-only `radios` follows.
+grows around it. Plan and checks: #207. Four stacks: `home`, `esphome` and `music` are applied; `radios` is planned and never applied.
 
 ```
 TINK=./tink HERD_SET=corpus/smarthome corpus/site/herd.sh up      # the site if it is not there, the stacks of this set, then the site again
-HERD_SET=corpus/smarthome corpus/site/herd.sh test                # the per-name checks and the checks in set.sh
+HERD_SET=corpus/smarthome corpus/site/herd.sh test                # the per-name checks, the checks in set.sh, and the plan of the plan-only stack
 HERD_SET=corpus/smarthome corpus/site/herd.sh down                # removes this set's stacks only; the site and the other herd stay
 ```
 
-`HERD_SET` names a directory with a `set.sh` (`STACKS`, `APPS`, `set_checks`). Its `*.yaml` and `files/*` get the same `@DNS_IP@`, `@SSO_IP@` and
+`HERD_SET` names a directory with a `set.sh` (`STACKS`, `PLAN_ONLY`, `APPS`, `set_checks`). A stack in `PLAN_ONLY` is planned by `up` and `test` and never applied. Its `*.yaml` and `files/*` get the same `@DNS_IP@`, `@SSO_IP@` and
 `@INGRESS_IP@` placeholders as the site's, filled in from the platform bridge. Run with no `HERD_SET`, `herd.sh` is the first herd, as before. `down`
 with no set removes everything, the site and every set beside it.
 
@@ -22,6 +22,7 @@ with no set removes everything, the site and every set beside it.
 | `files/ha-configuration.yaml` | Home Assistant's default configuration plus an `http:` block that trusts the ingress helper |
 | `esphome.yaml` | the stack `esphome`: the ESPHome device-builder dashboard, published as `esphome` for admins |
 | `music.yaml` | the stack `music`: Music Assistant, published as `music` for the family group |
+| `radios.yaml` | the stack `radios`: Zigbee2MQTT, Z-Wave JS UI and the OpenThread border router, which need a radio on the host. Declared and planned, never applied (below). Zigbee2MQTT and Z-Wave JS UI are published as `z2m` and `zwave` for admins in the plan |
 | `set.sh` | the names to check and the checks of the stacks |
 
 Home Assistant's page asks for host networking, which `tink import` refuses (`docs/docker-to-tink.md`). The stack leaves it out, so the app runs on its
@@ -29,7 +30,7 @@ stack's bridge, and the herd does **not** measure what host networking is for (d
 
 ## The checks
 
-For each published name (`ha`, `nodered`, `esphome`, `music`), the four of the first herd. For the stacks, 16 more, 32 in all. On the run that wrote this, 31 passed and `ha` signed in failed; on a fresh `up` Whisper's `describe` fails too (below):
+For each published name (`ha`, `nodered`, `esphome`, `music`), the four of the first herd. For the stacks, 16 more; and for `radios` 5, which need no radio because they read the plan: it is accepted, it would create the stack, nothing of it exists on the server, it derives the ACL rules for its two publishes, and it allocates their addresses. 37 in all. On the run that wrote this, 36 passed and `ha` signed in failed; on a fresh `up` Whisper's `describe` fails too (below):
 
 - the ingress helper reaches the port it fronts (the control for the denials below);
 - the broker answers from Home Assistant and from Node-RED; MariaDB and the Matter server's web socket answer from Home Assistant;
@@ -66,3 +67,17 @@ A second `tink plan` of the rendered `home.yaml` and of the site says no changes
   twice. The signed-in check only sees the shell. #200 (an app published with its own sign-on) is the proposal for this.
 - **Apps in different stacks cannot reach each other.** Each bridge's ACL admits only the ingress helper, so Home Assistant could not reach Music Assistant's stream port or
   ESPHome from the `home` stack. Not tested; it follows from the ACL, and it is why the apps that talk to each other share a stack.
+
+## What is not measured, and why
+
+- **Discovery by multicast** (mDNS, SSDP, DHCP sniffing, Thread): Home Assistant, ESPHome, the Matter server and Music Assistant ask for host networking, which
+  import refuses and which has no equivalent here. They run on their stack's bridge, so what host networking is for is not measured. A NIC on a real LAN bridge
+  waits for #206 (declare that an app needs the LAN). Upstream Incus has no host-network mode for OCI containers (checked 2026-10-24).
+- **`radios`**: Zigbee2MQTT and Z-Wave JS UI need a USB adapter and the border router a Thread radio, and this host has none. The stack is declared (two of its three instances are
+  what `tink import` writes), and `tink plan` accepts it: it would create a project, a bridge and an ACL with a rule for each of the two published names, three
+  volumes and three instances with their addresses. It was **never applied**, so nothing about those three apps running is claimed. The border router's page also asks
+  for `--network=host`, `--cap-add=NET_ADMIN` and IP forwarding switched on in the host first; none has a translation, and the stack leaves them out.
+- **Zigbee2MQTT's broker**: its page puts the broker (`mqtt://...`) beside it. The broker is in the `home` stack, on another bridge whose ACL admits only the ingress
+  helper, so Zigbee2MQTT in `radios` could not reach it (not tested; it follows from the ACL). An app that talks to a broker goes in the broker's stack.
+- **Backup**: every volume says `none` ("a throwaway fixture"). The first herd's `vault` is the only one with a real policy.
+- **The two failing checks** (`ha` signed in, #223; Whisper on a fresh `up`, #225), and the broker check that passes for two reasons (above).
