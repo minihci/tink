@@ -117,6 +117,17 @@ type importer struct {
 	volumes map[string]*volume
 	volDecl map[string]string // top-level volume key -> the name it is made with
 	docs    []instanceDoc
+
+	// internalNet is the top-level networks marked `internal: true`; reach holds, for each service, whether every network it is on is one of them (or it is on none).
+	// Together they say what the stack's apps may send out (egress).
+	internalNet map[string]bool
+	reach       []serviceReach
+}
+
+// serviceReach says whether a service can send traffic out: false when every network it is attached to is `internal: true`.
+type serviceReach struct {
+	service string
+	out     bool
 }
 
 type volume struct {
@@ -153,7 +164,7 @@ func Import(src []byte, opts Options) (*Result, error) {
 	if doc.Kind != yaml.MappingNode {
 		return nil, fmt.Errorf("not a compose file: the top level is not a mapping")
 	}
-	im := &importer{opts: opts, res: &Result{}, svcName: map[string]string{}, volumes: map[string]*volume{}, volDecl: map[string]string{}}
+	im := &importer{opts: opts, res: &Result{}, svcName: map[string]string{}, volumes: map[string]*volume{}, volDecl: map[string]string{}, internalNet: map[string]bool{}}
 	vars, err := readDotEnv(filepath.Join(opts.Dir, ".env"))
 	if err != nil {
 		return nil, err
@@ -189,7 +200,16 @@ func Import(src []byte, opts Options) (*Result, error) {
 				stack = n
 			}
 		case "networks":
-			im.note("top-level networks is ignored: a stack gets its own network from #177")
+			var n map[string]any
+			if err := val.Decode(&n); err != nil {
+				return nil, fmt.Errorf("networks: %w", err)
+			}
+			for name, def := range n {
+				if m, ok := def.(map[string]any); ok && truthy(m["internal"]) {
+					im.internalNet[name] = true
+				}
+			}
+			im.note("top-level networks is not made: the stack's apps share the one bridge tink derives (network: own). Only `internal: true` is read, and it becomes the stack's egress")
 		case "version":
 			im.note("version is ignored")
 		}
@@ -220,10 +240,11 @@ func Import(src []byte, opts Options) (*Result, error) {
 		}
 		im.service(k, sv)
 	}
+	egress := im.egress()
 	if len(im.res.Refused) > 0 {
 		return im.res, nil
 	}
-	im.res.YAML = im.render(stack)
+	im.res.YAML = im.render(stack, egress)
 	return im.res, nil
 }
 
@@ -274,8 +295,10 @@ func (im *importer) service(compose string, sv map[string]any) {
 		case !known:
 			im.refuse(compose, k, "not in the supported subset")
 		case rule.kind == refused && k == "network_mode":
-			if v := fmt.Sprint(sv[k]); v != "host" {
-				im.refuse(compose, k, fmt.Sprintf("%q is not supported; the only network_mode tink explains is host: %s", v, rule.why))
+			if v := fmt.Sprint(sv[k]); v == "none" {
+				im.refuse(compose, k, "none gives the container no network at all, not even towards the other services of the file. tink has no equivalent for one instance (an instance with no NIC is a separate question). If what the file means is no outbound traffic, put its networks on `internal: true`: that becomes `egress: none` for the whole stack")
+			} else if v != "host" {
+				im.refuse(compose, k, fmt.Sprintf("%q is not supported; the only network_mode values tink explains are host and none: %s", v, rule.why))
 			} else {
 				im.refuse(compose, k, rule.why)
 			}
@@ -359,8 +382,9 @@ func (im *importer) service(compose string, sv map[string]any) {
 		}
 	}
 	if _, ok := sv["networks"]; ok {
-		im.note(fmt.Sprintf("service %s: networks is ignored: a stack gets its own network from #177", compose))
+		im.note(fmt.Sprintf("service %s: networks is ignored: the stack's apps share the one bridge tink derives (network: own). Only `internal: true` on a network is read", compose))
 	}
+	im.reach = append(im.reach, serviceReach{service: compose, out: im.canSendOut(sv["networks"])})
 
 	spec, err := run.Build(o)
 	if err != nil {
@@ -958,4 +982,64 @@ func translationRefusal(err error) (key, reason string) {
 		return flagKey[m[1]], strings.TrimPrefix(msg, m[0])
 	}
 	return "translation", msg
+}
+
+// truthy reads a compose boolean, which a file may write as true, "true" or yes.
+func truthy(v any) bool {
+	switch x := v.(type) {
+	case bool:
+		return x
+	case string:
+		switch strings.ToLower(x) {
+		case "true", "yes", "on", "1":
+			return true
+		}
+	}
+	return false
+}
+
+// canSendOut says whether a service with these networks can send traffic out. Compose lets it unless every network it is on is `internal: true`: a service
+// with no networks key is on the project's `default` network, which a file can mark internal too. A network the file does not define counts as not internal.
+func (im *importer) canSendOut(raw any) bool {
+	var names []string
+	switch n := raw.(type) {
+	case []any:
+		for _, x := range n {
+			names = append(names, fmt.Sprint(x))
+		}
+	case map[string]any:
+		for k := range n {
+			names = append(names, k)
+		}
+	}
+	if len(names) == 0 {
+		names = []string{"default"}
+	}
+	for _, name := range names {
+		if !im.internalNet[name] {
+			return true
+		}
+	}
+	return false
+}
+
+// egress is the stack's egress, from what its services can send out: open when all of them can, none when none can. Mixed is refused: a bridge is the stack's,
+// so it cannot isolate one app of a file from the outside.
+func (im *importer) egress() string {
+	var out, in []string
+	for _, r := range im.reach {
+		if r.out {
+			out = append(out, r.service)
+		} else {
+			in = append(in, r.service)
+		}
+	}
+	switch {
+	case len(in) == 0:
+		return "open"
+	case len(out) == 0:
+		return "none"
+	}
+	im.refuse("", "networks", fmt.Sprintf("%s can send traffic out and %s cannot (every network they are on is `internal: true`). A stack has one bridge, so it cannot isolate some of its apps from the outside: put them all on internal networks, or none, or split the file", strings.Join(out, ", "), strings.Join(in, ", ")))
+	return ""
 }

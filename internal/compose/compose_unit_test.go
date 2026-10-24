@@ -268,3 +268,54 @@ func TestRefusalsSayWhatToDo(t *testing.T) {
 		}
 	}
 }
+
+// A compose service can send traffic out unless every network it is on is `internal: true`; the stack's egress follows (#225).
+func TestEgressFollowsInternalNetworks(t *testing.T) {
+	whisper := "services:\n  whisper:\n    image: rhasspy/wyoming-whisper\n    networks:\n      - no-internet\n\nnetworks:\n  no-internet:\n    internal: true\n"
+	for name, c := range map[string]struct{ src, want string }{
+		"no networks key at all":                        {"services:\n  a:\n    image: x\n", "egress: open"},
+		"the corpus's offline example (Whisper's page)": {whisper, "egress: none"},
+		"the default network marked internal":           {"services:\n  a:\n    image: x\nnetworks:\n  default:\n    internal: true\n", "egress: none"},
+		"internal written as a string":                  {"services:\n  a:\n    image: x\n    networks: [n]\nnetworks:\n  n:\n    internal: \"true\"\n", "egress: none"},
+		"internal false":                                {"services:\n  a:\n    image: x\n    networks: [n]\nnetworks:\n  n:\n    internal: false\n", "egress: open"},
+		"on an internal and an ordinary network":        {"services:\n  a:\n    image: x\n    networks: [inner, outer]\nnetworks:\n  inner:\n    internal: true\n  outer: {}\n", "egress: open"},
+		"a network the file does not define":            {"services:\n  a:\n    image: x\n    networks: [elsewhere]\n", "egress: open"},
+		"networks written as a mapping":                 {"services:\n  a:\n    image: x\n    networks:\n      n:\n        aliases: [db]\nnetworks:\n  n:\n    internal: true\n", "egress: none"},
+		"every service internal":                        {"services:\n  a:\n    image: x\n    networks: [n]\n  b:\n    image: y\n    networks: [n]\nnetworks:\n  n:\n    internal: true\n", "egress: none"},
+	} {
+		res := imp(t, c.src, nil)
+		if len(res.Refused) > 0 {
+			t.Errorf("%s: refused: %s", name, refusals(res))
+			continue
+		}
+		if !strings.Contains(res.YAML, "network: own") || !strings.Contains(res.YAML, c.want) {
+			t.Errorf("%s: want network: own and %s in:\n%s", name, c.want, res.YAML)
+		}
+	}
+}
+
+// Some services out and some in is refused, naming both: a bridge cannot isolate one app of a stack.
+func TestEgressRefusesAFileThatMixesInternalAndOrdinary(t *testing.T) {
+	res := imp(t, "services:\n  web:\n    image: x\n  db:\n    image: y\n    networks: [back]\nnetworks:\n  back:\n    internal: true\n", nil)
+	got := refusals(res)
+	if res.YAML != "" || !strings.Contains(got, "web can send traffic out and db cannot") || !strings.Contains(got, "cannot isolate some of its apps") {
+		t.Errorf("YAML = %q, refusals:\n%s", res.YAML, got)
+	}
+}
+
+// network_mode: none says what it is and how to get what the file probably meant; host still gets the LAN advice; an unknown mode says what is explained.
+func TestNetworkModeNoneAndOthersAreRefusedWithTheirMeaning(t *testing.T) {
+	for mode, want := range map[string]string{
+		"none":        "no network at all",
+		"host":        "host networking has no equivalent",
+		"service:web": "host and none",
+	} {
+		got := refusals(imp(t, "services:\n  a:\n    image: x\n    network_mode: "+mode+"\n", nil))
+		if !strings.Contains(got, want) {
+			t.Errorf("network_mode: %s: want %q in:\n%s", mode, want, got)
+		}
+	}
+	if got := refusals(imp(t, "services:\n  a:\n    image: x\n    network_mode: none\n", nil)); !strings.Contains(got, "internal: true") || !strings.Contains(got, "egress: none") {
+		t.Errorf("network_mode: none must point at internal: true and egress: none:\n%s", got)
+	}
+}
