@@ -1,8 +1,8 @@
 # Corpus: how popular self-hosted projects describe their install
 
-Twenty-eight projects' own install instructions, copied as published, one directory each (`NAME/upstream.md`). This is the
+Thirty-four projects' own install instructions, copied as published, one directory each (`NAME/upstream.md`). This is the
 input to tink, before any tink stack exists for it: the docker run line or compose file a person finds in the project's
-README or docs. Retrieved from the URL on each page: the first 21 on 2026-10-21, and the seven Home Assistant companions at the end of the table on 2026-10-23.
+README or docs. Retrieved from the URL on each page: the first 21 on 2026-10-21, and the thirteen Home Assistant companions at the end of the table on 2026-10-23.
 
 **Why it exists.** tink's job is to take that kind of description and turn it into a running, wired-up service on an Incus
 host. Progress is measured here: how many of these apps tink can bring up from a stack, and what each one that fails needs
@@ -41,6 +41,12 @@ licences and are quoted as test inputs. Where a page contained a template placeh
 | [Frigate](frigate/upstream.md) | one container, run + compose | GPU/Coral devices, a shm size and a tmpfs, UDP ports, `privileged` only if the hardware needs it, an optional broker |
 | [Node-RED](node-red/upstream.md) | one container, run + compose | one container with a volume; the page wires it to a broker by name on a user-defined bridge |
 | [Music Assistant](music-assistant/upstream.md) | one container, run + compose | host networking or macvlan is "mandatory": it must be on the same layer 2 network as its players |
+| [Z-Wave JS UI](zwave-js-ui/upstream.md) | one container, run + compose | a serial device for a Z-Wave stick, a web socket server on 3000 for Home Assistant, a store volume |
+| [OpenThread border router](openthread-border-router/upstream.md) | one container, run | host networking, `NET_ADMIN`, a radio and `/dev/net/tun`, an env file, and IP forwarding switched on in the host first |
+| [Piper](piper/upstream.md) | one container, run | the Wyoming text-to-speech server: a TCP port and a data volume, arguments after the image |
+| [Whisper](whisper/upstream.md) | one container, run | the Wyoming speech-to-text server: a TCP port, a data volume that holds the downloaded models, arguments after the image |
+| [openWakeWord](openwakeword/upstream.md) | one container, run | the Wyoming wake-word server: one TCP port, an optional directory of custom models |
+| [MariaDB](mariadb/upstream.md) | one container, run + compose | the recorder database: a root password in the environment, an optional data directory, a compose example with Adminer |
 
 Not chosen on purpose: anything that only ships as a VM or an appliance image, and anything needing a Kubernetes chart.
 
@@ -70,4 +76,5 @@ one bridge per stack first, and what it takes for a stack to pass. [site/](site/
 
 [status.md](status.md) runs each app's own line on a local Incus server and says, shape by shape, what tink does. Today 14
 of 21 answer on their published port; none is wired (name, proxy route, sign-on, backup) yet. Of the seven added on 2026-10-23, six answer on a
-bridge (two only once `--user` is given), one needs hardware, and one of seven compose examples imports.
+bridge (two only once `--user` is given), one needs hardware, and one of seven compose examples imports. Of the six added by #212, four answer (Piper and Whisper only once the
+image's entrypoint is written out), two need hardware, and one of two compose examples imports.

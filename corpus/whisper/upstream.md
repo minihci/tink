@@ -1,0 +1,239 @@
+# Whisper, as the Wyoming Faster Whisper image (Docker)
+
+Upstream install instructions, verbatim. Retrieved 2026-10-23.
+
+Source: https://github.com/rhasspy/wyoming-faster-whisper#docker-image (source: github.com/rhasspy/wyoming-faster-whisper, README.md, main at b03d4e40cf)
+
+## The Docker Image section, to the end of the README
+
+From the README's "Docker Image" heading to its end, unchanged. The earlier sections (the Home Assistant add-on, a local install, endpointing, languages, biasing) are not copied.
+
+## Docker Image
+
+``` sh
+docker run -it -p 10300:10300 -v /path/to/local/data:/data rhasspy/wyoming-whisper \
+    --model tiny-int8 --language en
+```
+
+**NOTE**: Models are downloaded to `/data`, so make sure this points to a Docker volume.
+
+[Source](https://github.com/rhasspy/wyoming-addons/tree/master/whisper)
+
+### Running Without Internet Access
+
+A model that is already downloaded is loaded from disk without contacting
+Hugging Face, so a container that has been started once keeps working on a
+network with no route out. Only a model that is *missing* is fetched.
+
+That matters on a network which drops outbound traffic rather than refusing it —
+a Docker bridge marked `internal`, for example. The update check that used to
+run on every start would sit there until the TCP connection timed out, and with
+`restart: always` the container boot-looped.
+
+To rule out downloads entirely, pass `--local-files-only` (or
+`WYO_WHISPER_LOCAL_FILES_ONLY=true`) once the models you want are in `/data`. A
+model that is not there is then an error instead of a download:
+
+```yaml
+services:
+  whisper:
+    image: rhasspy/wyoming-whisper
+    volumes:
+      - ./data:/data
+    environment:
+      WYO_WHISPER_MODEL: tiny-int8
+      WYO_WHISPER_LANGUAGE: en
+      WYO_WHISPER_LOCAL_FILES_ONLY: "true"
+    networks:
+      - no-internet
+
+networks:
+  no-internet:
+    internal: true
+```
+
+Both images point `HF_HOME`, `XDG_CACHE_HOME`, and `MODELSCOPE_CACHE` at `/data`
+so the caches these libraries keep outside the model directory land on the
+volume too. The largest is the Xet chunk cache used while downloading, which can
+run to several GB. Outside Docker, set them yourself if you don't want them in
+`~/.cache`.
+
+### Health Check
+
+Both images carry a `HEALTHCHECK`, so `docker ps` reports `healthy` or
+`unhealthy` and a Compose stack can wait on it with `depends_on:` /
+`condition: service_healthy`. It sends the server a `Describe` and requires an
+`Info` with an ASR program back, rather than only opening a socket: the port is
+bound by the OS, so a connect-only check stays green even when the event loop is
+wedged, while a round trip proves the accept loop and the event handler are both
+still running.
+
+The first 5 minutes don't count against it, because the server only starts
+listening once the model is loaded — which means downloading it on first run —
+and it takes 3 consecutive failures to turn the container unhealthy, because
+transcription runs on the event loop and a check can time out behind a long
+request.
+
+To run it by hand:
+
+``` sh
+docker exec whisper \
+    /usr/src/.venv/bin/python3 -m wyoming_faster_whisper.health_check
+```
+
+It prints nothing and exits 0 when healthy, or prints `unhealthy: <reason>` and
+exits 1. That reason is what `docker inspect` shows under `.State.Health`.
+
+The URI it checks is `tcp://127.0.0.1:10300`, or `WYO_WHISPER_URI` when the
+container sets one (a listen-everywhere host like `0.0.0.0` is rewritten to
+loopback). A `--uri` passed to `docker run` instead of the variable is invisible
+to the check, so give it the same one:
+
+```yaml
+    healthcheck:
+      test: ["CMD", "/usr/src/.venv/bin/python3", "-m",
+             "wyoming_faster_whisper.health_check",
+             "--uri", "tcp://127.0.0.1:10400"]
+```
+
+### GPU Image
+
+`Dockerfile.gpu` runs the speech-to-text backends on an NVIDIA GPU. **It is not
+published to Docker Hub — you build it yourself**, because it comes out around
+10.7 GB (mostly the CUDA torch wheel) against ~1.6 GB for the CPU image, and
+Home Assistant OS has no GPU passthrough, so everyone who can use it is already
+running Docker directly.
+
+``` sh
+git clone https://github.com/OHF-Voice/wyoming-faster-whisper.git
+cd wyoming-faster-whisper
+docker build -f Dockerfile.gpu -t wyoming-whisper:gpu .
+```
+
+Running it needs the
+[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
+on the host, and `--gpus`:
+
+``` sh
+docker run -it --gpus all -p 10300:10300 -v /path/to/local/data:/data \
+    wyoming-whisper:gpu --language en
+```
+
+`--device cuda` is the default in this image; pass `--device cuda:1` to pick a
+GPU or `--device cpu` to fall back. The default faster-whisper model is
+`Systran/faster-whisper-small` (float16) rather than the int8 model used on the
+CPU, and a GPU can comfortably run much larger ones:
+
+``` sh
+docker run -it --gpus all -p 10300:10300 -v /path/to/local/data:/data \
+    wyoming-whisper:gpu --model Systran/faster-whisper-large-v3 --language en
+```
+
+Notes and limits:
+
+- **NVIDIA and amd64 only.** CTranslate2, which faster-whisper is built on, has
+  no ROCm or Intel XPU backend and publishes no arm64 CUDA wheel. The
+  torch-based backends (`--stt-library transformers`, `--stt-library funasr`)
+  would work on ROCm or XPU, but that would be a different image.
+- **Budget the disk.** ~10.7 GB for the image, plus build cache. Don't build it
+  on a Pi by accident.
+- **`--stt-library sherpa` runs on the CPU even in this image.** A CUDA
+  sherpa-onnx build exists, but sherpa-onnx bundles its own onnxruntime, and two
+  CUDA-enabled onnxruntime builds in one process segfault. Its default Parakeet
+  models are int8, which the CUDA provider gains little on, so the CPU wheel is
+  the better half of that trade.
+
+If `--device cuda` produces no speedup, check the log: the server warns when the
+installed onnxruntime or sherpa-onnx build has no usable CUDA support.
+
+### GPU Without Docker
+
+For a local install rather than a container, the two onnxruntime-based backends
+have GPU counterparts of their extras — `onnx-asr-gpu` and `qwen3-asr-gpu`,
+which pull `onnxruntime-gpu` in place of `onnxruntime`:
+
+``` sh
+pip install 'wyoming-faster-whisper[transformers,onnx-asr-gpu,qwen3-asr-gpu]'
+```
+
+faster-whisper additionally needs a CUDA-enabled CTranslate2 and torch built for
+your CUDA version, and it depends on `onnxruntime` (for its bundled Silero VAD),
+which will pull the CPU package back in and clobber `onnxruntime-gpu` — both
+install the same `onnxruntime` module and whichever lands second wins, silently,
+since the CPU provider still loads every model. Reinstall `onnxruntime-gpu`
+last. `Dockerfile.gpu` does exactly this and is the working reference.
+
+## Environment Variables
+
+Every command-line option can also be set from the environment, which is what
+Docker Compose gives you to configure a container without rewriting its
+`command:`. The variable is the option's name, uppercased, with dashes as
+underscores and a `WYO_WHISPER_` prefix:
+
+| Option | Variable |
+| --- | --- |
+| `--model` | `WYO_WHISPER_MODEL` |
+| `--language` | `WYO_WHISPER_LANGUAGE` |
+| `--stt-library` | `WYO_WHISPER_STT_LIBRARY` |
+| `--vad-endpointing` | `WYO_WHISPER_VAD_ENDPOINTING` |
+| `--hass-token` | `WYO_WHISPER_HASS_TOKEN` |
+| ...and so on for every option in `--help` | |
+
+**Precedence**: a command-line argument always wins over the environment, so a
+variable left over in a container can never silently override an explicit
+argument. A variable that starts with `WYO_WHISPER_` but matches no option is
+reported at startup rather than ignored, so a typo doesn't leave the server
+running with a default you thought you had changed.
+
+A few options don't take a plain string on the command line, so they read one
+specially:
+
+- **Flags** (`--debug`, `--vad-filter`, `--local-files-only`, ...) take
+  `1`/`true`/`yes`/`on` or `0`/`false`/`no`/`off`/empty. Unlike a plain "is it
+  set?" test, `WYO_WHISPER_DEBUG=false` really does mean off.
+- **`--data-dir`**, which can be repeated, splits on `:` —
+  `WYO_WHISPER_DATA_DIR=/data:/media/models`. Passing any `--data-dir` on the
+  command line replaces the list rather than adding to it.
+- **`--vad-clip`**, which takes any number of values, splits on commas or
+  spaces. Empty means the flag with no values, i.e. every library.
+- **`--zeroconf`**, whose value is optional, takes the name to announce, or
+  empty for the default name.
+
+Any other variable left empty means the same as not setting it at all, which is
+what a compose file or a `.env` produces for a value whose author left it blank.
+An empty `WYO_WHISPER_URI` gets you argparse's "the following arguments are
+required", not a server that starts up and fails on an empty string.
+
+### Secrets
+
+Each variable also has a `_FILE` form naming a file to read the value out of:
+`WYO_WHISPER_HASS_TOKEN_FILE=/run/secrets/hass_token`. That is the convention
+Docker Compose and Swarm secrets use — a secret is mounted as a file rather than
+handed over as a variable — and it keeps a long-lived Home Assistant token out
+of both the process's command line and its environment. The file is preferred
+over the plain variable when both are set, and its trailing newline is stripped.
+
+```yaml
+services:
+  whisper:
+    image: rhasspy/wyoming-whisper
+    ports:
+      - "10300:10300"
+    volumes:
+      - ./data:/data
+    environment:
+      WYO_WHISPER_MODEL: tiny-int8
+      WYO_WHISPER_LANGUAGE: en
+      WYO_WHISPER_HASS_API: http://homeassistant.local:8123/api
+      WYO_WHISPER_HASS_TOKEN_FILE: /run/secrets/hass_token
+    secrets:
+      - hass_token
+
+secrets:
+  hass_token:
+    file: ./secrets/hass_token.txt
+```
+
+In the Docker image, `--uri`, `--data-dir`, and `--device` have defaults baked
+into the entrypoint; those are dropped when the matching variable is set, so
+`WYO_WHISPER_URI` and friends work there too.
