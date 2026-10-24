@@ -7,6 +7,10 @@
 #   ./herd.sh down                # removes everything it made
 #   ./herd.sh preflight           # what `up` checks first: the tools, that a container starts, and a warning for br_netfilter (changes nothing)
 #
+# A stack set is a directory with a set.sh (see ../smarthome/set.sh): its stacks go onto the same site. HERD_SET=DIR chooses one; with none, the first herd
+# (the six stacks of this directory) is the set. `up` and `test` act on the chosen set and on the site; `down` with a set removes that set's stacks and leaves
+# the site and the other sets, and `down` with none removes everything this script and the sets beside it made.
+#
 # It touches the host in one place only, the firewall: on a host running firewalld it puts the platform bridge and every bridge named tink-*
 # in the trusted zone of the running firewall (not permanently), so that a new bridge gets DHCP and DNS from the host. Nothing else outside Incus.
 set -eu
@@ -15,10 +19,25 @@ TINK=${TINK:-tink}
 HERE=$(cd "$(dirname "$0")" && pwd)
 SUDO=sudo
 [ -n "${SUDO_ASKPASS:-}" ] && SUDO="sudo -A"
-STACKS="vault status blog shop media metrics"
 
-# name:project:instance:port of each published app, for the checks. The address is read from the server (addr_of), because tink picks it.
-APPS="vault:herd-vault:vaultwarden:80 status:herd-status:uptime-kuma:3001 blog:herd-blog:wordpress:80 shop:herd-shop:wordpress:80 sonarr:herd-media:sonarr:8989 qbittorrent:herd-media:qbittorrent:8080 metrics:herd-metrics:grafana:3000"
+# The stack set this run acts on. A set says: STACKS (the names of its stack files), SET_DIR (where they are), APPS (name:project:instance:port of each
+# published app, for the checks; the address is read from the server, addr_of, because tink picks it) and set_checks (the checks of the set's stacks, run after
+# the per-name ones). The first herd is the default set and is defined here.
+SET=
+if [ -n "${HERD_SET:-}" ]; then
+	SET=$(cd "$HERD_SET" 2>/dev/null && pwd) || { echo "herd.sh: HERD_SET='$HERD_SET' is not a directory" >&2; exit 2; }
+	[ -f "$SET/set.sh" ] || { echo "herd.sh: $SET has no set.sh" >&2; exit 2; }
+	SET_DIR=$SET
+	STACKS=
+	APPS=
+	set_checks() { :; }
+	. "$SET/set.sh"
+else
+	SET_DIR=$HERE
+	STACKS="vault status blog shop media metrics"
+	APPS="vault:herd-vault:vaultwarden:80 status:herd-status:uptime-kuma:3001 blog:herd-blog:wordpress:80 shop:herd-shop:wordpress:80 sonarr:herd-media:sonarr:8989 qbittorrent:herd-media:qbittorrent:8080 metrics:herd-metrics:grafana:3000"
+	set_checks() { first_herd_checks; }
+fi
 
 # The platform bridge is picked by Incus, so no address of it is in the repository: the helpers' addresses are placeholders (@DNS_IP@, @SSO_IP@,
 # @INGRESS_IP@) in site.yaml and files/, filled in by render() from the subnet the bridge was given and written to .rendered/ (gitignored).
@@ -73,9 +92,18 @@ render() {
 	platform
 	rm -rf "$RENDERED"
 	mkdir -p "$RENDERED/files"
-	for f in site.yaml files/*; do
+	for f in site.yaml $(cd "$HERE" && echo files/*); do
 		sed -e "s|@DNS_IP@|$DNS_IP|g" -e "s|@SSO_IP@|$SSO_IP|g" -e "s|@INGRESS_IP@|$INGRESS_IP|g" "$HERE/$f" >"$RENDERED/$f"
 	done
+	# a set's own yaml and files get the same placeholders (Home Assistant has to be told which proxy to trust), and its stacks are applied from there
+	if [ -n "$SET" ]; then
+		mkdir -p "$RENDERED/set/files"
+		for f in $(cd "$SET" && echo *.yaml files/*); do
+			[ -f "$SET/$f" ] || continue
+			sed -e "s|@DNS_IP@|$DNS_IP|g" -e "s|@SSO_IP@|$SSO_IP|g" -e "s|@INGRESS_IP@|$INGRESS_IP|g" "$SET/$f" >"$RENDERED/set/$f"
+		done
+		SET_DIR=$RENDERED/set
+	fi
 }
 
 # addr_of PROJECT INSTANCE prints the instance's IPv4 address.
@@ -85,7 +113,7 @@ addr_of() {
 
 files() {
 	f="$HERE/site.yaml"
-	for s in $STACKS; do f="$f $HERE/$s.yaml"; done
+	for s in $STACKS; do f="$f $SET_DIR/$s.yaml"; done
 	echo "$f"
 }
 
@@ -153,14 +181,29 @@ up() {
 	fw add 'tink-+'
 	ensure_bridge
 	render
-	apply "$RENDERED/site.yaml"
-	for s in $STACKS; do apply "$HERE/$s.yaml"; done
+	# A site that is already there is not applied first: its proxy, sign-on and dns files hold the names of stacks that may have been taken down since
+	# (`down` with a set leaves them), and tink refuses to empty a derived file, so applying it with fewer stacks than it remembers is blocked. The stacks
+	# come first, and the site follows them below.
+	exists incus project show herd-site || apply "$RENDERED/site.yaml"
+	for s in $STACKS; do apply "$SET_DIR/$s.yaml"; done
 	# the site's proxy, sign-on and dns files hold what the stacks publish, read from the server, so the site is applied again once they are
 	apply "$RENDERED/site.yaml"
 }
 
 ok() { printf '  ok    %s\n' "$1"; }
 bad() { printf '  FAIL  %s\n' "$1"; fail=1; }
+
+# set_checks of the first herd: what is true of its stacks beyond their names.
+first_herd_checks() {
+	# wget's -T does not bound the connect to an address whose ACL drops packets (it waited out the kernel's retries, about five minutes), so the call has its own limit
+	if timeout 15 incus exec --project herd-site sso -- wget -q -O /dev/null -T 4 "http://$(addr_of herd-vault vaultwarden)/" </dev/null 2>/dev/null; then bad "another platform instance reached an app"; else ok "another platform instance does not reach an app"; fi
+	for p in herd-blog herd-shop; do
+		[ "$(incus list --project $p db -c s -f csv </dev/null)" = RUNNING ] && ok "$p: db is running" || bad "$p: db is running"
+	done
+	incus exec --project herd-media sonarr -- sh -c 'echo shared > /downloads/herd-check' </dev/null 2>/dev/null &&
+		[ "$(incus exec --project herd-media qbittorrent -- cat /downloads/herd-check </dev/null 2>/dev/null)" = shared ] &&
+		ok "media: the two apps share /downloads" || bad "media: the two apps share /downloads"
+}
 
 # test: the herd's checks, by hand until the derive stage and a heartbeat exist.
 test() {
@@ -204,14 +247,7 @@ test() {
 	done
 
 	echo "the stacks"
-	# wget's -T does not bound the connect to an address whose ACL drops packets (it waited out the kernel's retries, about five minutes), so the call has its own limit
-	if timeout 15 incus exec --project herd-site sso -- wget -q -O /dev/null -T 4 "http://$(addr_of herd-vault vaultwarden)/" </dev/null 2>/dev/null; then bad "another platform instance reached an app"; else ok "another platform instance does not reach an app"; fi
-	for p in herd-blog herd-shop; do
-		[ "$(incus list --project $p db -c s -f csv </dev/null)" = RUNNING ] && ok "$p: db is running" || bad "$p: db is running"
-	done
-	incus exec --project herd-media sonarr -- sh -c 'echo shared > /downloads/herd-check' </dev/null 2>/dev/null &&
-		[ "$(incus exec --project herd-media qbittorrent -- cat /downloads/herd-check </dev/null 2>/dev/null)" = shared ] &&
-		ok "media: the two apps share /downloads" || bad "media: the two apps share /downloads"
+	set_checks
 	rm -f "$J"
 	return $fail
 }
@@ -226,8 +262,12 @@ backup() {
 	"$TINK" backup verify "$v" -f "$HERE/vault.yaml" --from vmpool
 }
 
-down() {
-	for p in $(for s in $STACKS; do echo "herd-$s"; done) herd-site; do
+# stacks_of DIR prints the stack names of the set in DIR (read in a subshell, so its functions and variables do not reach this one).
+stacks_of() { ( STACKS=; . "$1/set.sh"; echo "$STACKS" ); }
+
+# down_stacks NAMES removes the projects, networks and ACLs of those stacks.
+down_stacks() {
+	for p in $(for s in $1; do echo "herd-$s"; done); do
 		exists incus project show "$p" || continue
 		# a delete is refused now and then while a stop is still ending ("Instance is running"), so it is tried once more
 		for i in $(incus list --project "$p" -c n -f csv </dev/null); do incus delete --project "$p" "$i" -f </dev/null || { sleep 5; incus delete --project "$p" "$i" -f </dev/null; }; done
@@ -239,10 +279,25 @@ down() {
 		for f in $(incus image list --project "$p" -c f -f csv </dev/null); do incus image delete --project "$p" "$f" </dev/null; done
 		incus project delete "$p" </dev/null
 	done
-	for s in $STACKS; do
+	for s in $1; do
 		exists incus network show "tink-$s" && incus network delete "tink-$s" </dev/null
 		exists incus network acl show "tink-$s-in" && incus network acl delete "tink-$s-in" </dev/null
 	done
+}
+
+# down with a set removes that set's stacks and nothing else, so the site and the other sets stay. Without one it removes the first herd, the stacks of
+# every set in a directory beside this one, and the site.
+down() {
+	if [ -n "$SET" ]; then
+		down_stacks "$STACKS"
+		return 0
+	fi
+	all=$STACKS
+	for d in "$HERE"/../*/; do
+		[ -f "$d/set.sh" ] && all="$all $(stacks_of "$d")"
+	done
+	# the site is the project herd-site, so it goes the way a stack does (it has no tink-site network, which down_stacks skips)
+	down_stacks "$all site"
 	exists incus network show herd0 && incus network delete herd0 </dev/null
 	rm -rf "$RENDERED"
 	fw remove herd0 || true
