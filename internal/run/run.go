@@ -64,6 +64,9 @@ type Options struct {
 	// Out, when set, gets each action line as it happens (the first pull of an image can take a minute, and a silent minute reads as a
 	// hang). The lines are still collected in Result.Actions.
 	Out io.Writer
+
+	// Settle is how long Run waits after a start before it asks whether the instance is still running (earlyexit.go). Zero asks at once.
+	Settle time.Duration
 }
 
 // DefaultOptions returns sensible defaults: "default" as the storage pool a
@@ -72,7 +75,8 @@ type Options struct {
 // is Incus's own resolution of the local daemon's socket.
 func DefaultOptions() Options {
 	return Options{
-		Pool: "default",
+		Pool:   "default",
+		Settle: DefaultSettle,
 	}
 }
 
@@ -230,9 +234,13 @@ func Run(opts Options) (*Result, error) {
 	note("applied config and devices to %s", spec.Name)
 
 	if err := EnsureRunning(server, spec.Name); err != nil {
+		explainConsole(server, spec, note, fmt.Sprintf("%s did not start", spec.Name))
 		return result, err
 	}
 	note("started %s", spec.Name)
+	if err := checkStillRunning(server, spec, opts.Settle, note); err != nil {
+		return result, err
+	}
 
 	return result, nil
 }

@@ -38,6 +38,7 @@ var optionClasses = map[string]optionClass{
 	"VM":          {why: "compose has no key for a virtual machine; the person who wants one edits the stack"},
 	"DryRun":      {why: "run-only: import never connects, and prints a file"},
 	"Out":         {why: "run-only: progress lines for a command that creates"},
+	"Settle":      {why: "run-only: how long tink run waits after a start before it checks that the process is still running; import creates nothing"},
 	"Memory":      {why: "not built: compose's mem_limit and deploy.resources.limits.memory have no file of the corpus using them yet; add the key when one does (the translation, run's -m, exists)"},
 	"CPUs":        {why: "not built: compose's cpus and deploy.resources.limits.cpus have no file of the corpus using them yet; add the key when one does (the translation, run's --cpus, exists)"},
 	"IncusConfig": {why: "the escape hatch for what no flag says; a compose file has no key for it, and the person edits the stack's config instead"},

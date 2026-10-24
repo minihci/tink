@@ -73,6 +73,19 @@ What tink does, by door **[code]**, and **[lab]** for Piper and MariaDB (Incus 7
 
 One limit that is not solved: `oci.entrypoint` is a single string, and tink joins the arguments with spaces and no quoting, so an argument that contains a space is split.
 
+## When the process exits at once
+
+Docker would show the exit in `docker ps -a` and the reason in `docker logs`. `tink run` checks for it: after a start, it waits two seconds and asks whether the instance is still running. If it is not, it prints the last 20 lines of the instance's console log and exits non-zero:
+
+```
+started grafana
+grafana stopped straight after it started (status Stopped); the last lines of its console log:
+  GF_PATHS_DATA='/var/lib/grafana' is not writable.
+Error: grafana stopped straight after it started: the process exited
+```
+
+When the start itself fails (an instance with a published port reports Incus's `Error occurred when starting proxy device`, because the proxy is started after the process and the process is already gone), the same lines are printed before the error. Two limits: the check is one look, so an instance with a restart policy that crashes in a loop may be running when it is asked, and an ephemeral instance (`--rm`) is deleted when it stops, with its console log. The values of `-e` variables whose names look like secrets (`PASSWORD`, `TOKEN`, ...) are redacted from the lines. This is not `docker logs`: tink prints the tail once, on a failure, and does not follow the log (`internal/run/DESIGN.md`). Checked live on a local Incus 7.5.1 server (2026-10-24) with Grafana on a root-owned existing volume: with a published port the cause was printed before Incus's error, without one it was printed after `started` and the exit status was 1, and a healthy instance printed nothing extra and exited 0.
+
 ## When there is no flag: the escape hatch
 
 `--incus-config KEY=VALUE` and `--incus-device 'NAME type=TYPE key=value ...'` take Incus's own vocabulary, for anything the flags above do not cover. They add to what the flags decide and refuse to

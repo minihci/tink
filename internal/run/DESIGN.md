@@ -53,7 +53,10 @@ translation, at instance-creation time only.
   `/var/log/incus/<instance>/console.log`, root-only, and rotates/resets;
   there's an open, unresolved upstream request for exactly this
   (`lxc/incus#2527`). No wrapper can paper over a capability Incus itself
-  doesn't expose yet.
+  doesn't expose yet. What `tink run` does print is the tail of the console
+  log once, when the instance stopped straight after its start or failed to
+  start (`earlyexit.go`, #176): the one moment a person has no other way to
+  learn why.
 
 ## Flag mapping
 
