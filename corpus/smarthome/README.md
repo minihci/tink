@@ -19,7 +19,7 @@ with no set removes everything, the site and every set beside it.
 |---|---|
 | `home.yaml` | the stack `home`: Home Assistant, Mosquitto, a MariaDB recorder, Node-RED, the Matter server and the Wyoming voice trio (Piper, Whisper, openWakeWord), a project and a bridge of their own with an ACL that admits only the ingress helper. Starts from what `tink import` writes for compose files made of the corpus pages; Node-RED is published as `nodered` for admins |
 | `files/mosquitto.conf` | the broker's configuration: Mosquitto answers only on localhost without a file, so the stack places one before its first start |
-| `files/ha-configuration.yaml` | Home Assistant's default configuration plus an `http:` block that trusts the ingress helper |
+| `files/ha-http-store.json` | Home Assistant's HTTP settings store (`/config/.storage/http`) trusting the ingress helper, placed before its first start with `seed: true`; Home Assistant writes the rest of its configuration itself |
 | `esphome.yaml` | the stack `esphome`: the ESPHome device-builder dashboard, published as `esphome` for admins |
 | `music.yaml` | the stack `music`: Music Assistant, published as `music` for the family group |
 | `radios.yaml` | the stack `radios`: Zigbee2MQTT, Z-Wave JS UI and the OpenThread border router, which need a radio on the host. Declared and planned, never applied (below). Zigbee2MQTT and Z-Wave JS UI are published as `z2m` and `zwave` for admins in the plan |
@@ -46,18 +46,21 @@ A second `tink plan` of the rendered `home.yaml` and of the site says no changes
   herd's README says to. Fixed: the glob is taken in the script's own directory.
 - **A site that is already there cannot be applied first once stacks have left it.** tink refuses to empty a derived file ("nothing is published"),
   which is right; so `up` applies the site first only when it does not exist, and the stacks come before the final apply.
-- **Home Assistant behind the ingress helper answered 400, and the cause was the fixture** (#223). Caddy adds `X-Forwarded-For`, and Home Assistant refuses it until its
-  `http:` block trusts the proxy (`platform.md`, `trust-proxy`). The block was in `files/ha-configuration.yaml`, but that file includes `automations.yaml`,
-  `scripts.yaml` and `scenes.yaml`, which Home Assistant writes itself only when it writes `configuration.yaml` too. tink places `configuration.yaml`
-  first, the includes were missing, and Home Assistant logged "Activating recovery mode", which ignores YAML and runs `http` with its default (no proxy trusted).
-  The stack now places the three files with `kind: file`. This is a **stopgap**: from 2026.8 Home Assistant imports `http:` once, on the first boot, and ignores
-  the YAML after that (a first boot without the block marks the migration done), and the YAML block stops working in 2027.2. The route it provides is an
-  admin WebSocket command, `http/config/configure`, then `http/config/promote` (a new config reverts after 5 minutes otherwise); tested under Podman, not built
-  here, because it needs an admin token and secrets are accepted only in `environment.*`. A second route, placing `.storage/http` before the first start, is #238
-  (blocked by #140). The evidence is on #223.
-  Run on a local Incus 7.5.1 server on 2026-10-24 (Home Assistant 2026.10.3): applying the stack to the instance that was in recovery mode created the three files and
-  updated the configuration, Home Assistant restarted, wrote `.storage/http` with `yaml_migration_done: true` and the ingress helper in `trusted_proxies`, the
-  `ha` signed-in check passed, and a second plan said no changes for all four files.
+- **Home Assistant behind the ingress helper answered 400, and the cause was the fixture** (#223, #238). Caddy adds `X-Forwarded-For`, and Home Assistant refuses it until its
+  HTTP settings trust the proxy (`platform.md`, `trust-proxy`). The first fixture placed a `configuration.yaml` with an `http:` block, which includes
+  `automations.yaml`, `scripts.yaml` and `scenes.yaml`; Home Assistant writes those itself only when it writes `configuration.yaml` too, so they were missing
+  and it started in recovery mode, which ignores YAML and runs `http` with its default (no proxy trusted). Adding the three files fixed it for 2026.10 (PR #239),
+  but from 2026.8 Home Assistant imports `http:` **once**, on the first boot, and ignores the YAML after that (a first boot without the block marks the migration
+  done), and the YAML block stops working in 2027.2. So the stack now places the store file itself, `/config/.storage/http`, before the first start, and nothing
+  else: Home Assistant bootstraps its own `configuration.yaml` and include files. The file is `seed: true`, because Home Assistant rewrites it (a trial
+  config that is promoted, or the UI), and `kind: file` makes the missing `.storage` directory (#140). The other route Home Assistant provides is an admin
+  WebSocket command, `http/config/configure`, then `http/config/promote` (a new config reverts after 5 minutes otherwise); tested under Podman, not built here,
+  because it needs an admin token and secrets are accepted only in `environment.*`. The evidence is on #223 and #238.
+  Run on a local Incus 7.5.1 server on 2026-10-24 (Home Assistant 2026.10.3), from a fresh `ha-config` volume: the instance was created with the store file
+  placed in the volume before its first start; Home Assistant wrote `configuration.yaml`, the three include files and `secrets.yaml` itself, logged no
+  recovery mode and no proxy error, and left the store file as placed; the herd test passed, `ha` signed in included; a second plan said no changes.
+  **Limits:** the store file is undocumented (a forum reply calls editing it unsupported), so a Home Assistant release may change it; and because it is seeded,
+  changing the trusted address in the stack does not reach a running instance (the UI or the WebSocket command does).
 - **The stacks say `egress: open`** (#225). The derived bridge of `network: own` rejects outbound traffic by default, so Whisper, which downloads its model on first
   start, could not, and its `describe` failed on a fresh `up`; Home Assistant's own update check could not connect either. With the field, a fresh `up` from nothing
   (volumes included) downloaded the model and every voice server answers. `open` is Incus's `allow` on the bridge and not a promise of internet access (`docs/network.md`).

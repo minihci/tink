@@ -213,33 +213,12 @@ path: /mosquitto/config/mosquitto.conf
 source_path: files/mosquitto.conf
 restart: true
 ---
-kind: file                                # site: behind a reverse proxy Home Assistant answers 400 until its `http:` block trusts the proxy (platform.md, trust-proxy)
-name: ha-configuration
+kind: file                                # site: behind a reverse proxy Home Assistant answers 400 until its HTTP settings trust the proxy (platform.md, trust-proxy). From 2026.8 those settings live in this store file and the `http:` YAML block stops working in 2027.2; Home Assistant writes the rest of its configuration itself. seed: it rewrites this file (a trial config, promoted, or the UI), so tink writes it once and leaves it alone (#238, #140)
+name: ha-http-store
 instance: homeassistant
-path: /config/configuration.yaml
-source_path: files/ha-configuration.yaml
-restart: true
----
-kind: file                                # site: the configuration above includes these three. Home Assistant writes them itself only when configuration.yaml is absent, and tink places that file first; without them it starts in recovery mode, which ignores `http:` (#223). tink owns them: a change made in the app's editors shows as a difference at the next plan
-name: ha-automations
-instance: homeassistant
-path: /config/automations.yaml
-content: |
-  []
----
-kind: file                                # site: see ha-automations
-name: ha-scripts
-instance: homeassistant
-path: /config/scripts.yaml
-content: |
-  {}
----
-kind: file                                # site: see ha-automations
-name: ha-scenes
-instance: homeassistant
-path: /config/scenes.yaml
-content: |
-  []
+path: /config/.storage/http
+source_path: files/ha-http-store.json
+seed: true
 ---
 kind: publish                             # site: the name, and who may use it
 name: ha
