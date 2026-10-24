@@ -52,6 +52,27 @@ the app can read but not write. Verified on the lab host: with a plain bind moun
 (so files keep their numbers, and the container's root writes as root on the host, as it would in Docker). It is opt-in because it needs idmapped-mount support from the filesystem, which a network
 filesystem may not have; when a writable bind mount has neither `:ro` nor `:shift`, `tink run` says so. A managed volume needs none of this.
 
+## A command after the image, and the image's entrypoint
+
+An image carries two things: `ENTRYPOINT` (the program) and `CMD` (its default arguments). Docker always runs the entrypoint followed by arguments, and what you write only chooses which:
+
+| You write | The process that runs (Docker, and Compose) |
+|---|---|
+| nothing | `ENTRYPOINT` + `CMD` |
+| arguments after the image, or Compose `command:` | `ENTRYPOINT` + your arguments (CMD is replaced) |
+| Compose `entrypoint:` alone | your entrypoint (CMD is cleared) |
+| `entrypoint:` and `command:` | your entrypoint + your command |
+
+Incus keeps one merged string for an OCI container's process, the entrypoint and the command joined, and records no boundary between them. The one setting, `oci.entrypoint`, is a single string that replaces all of it. So the second row is the one place the two disagree: Docker means "append to an entrypoint you cannot see", and a value set as `oci.entrypoint` would have replaced it. `tink run` used to do that, and an image with an entrypoint started nothing: Piper's page writes `rhasspy/wyoming-piper --voice en_US-lessac-medium`, its entrypoint is `bash docker_run.sh`, and the container tried to run a program called `--voice` (#230). The other rows already agree. An image with only a `CMD` is fine, because replacing the CMD and replacing everything are the same.
+
+What tink does, by door **[code]**, and **[lab]** for Piper and MariaDB (Incus 7.5.1):
+
+- **`tink run IMAGE ARGS`** reads the image's own `ENTRYPOINT` from its registry (the one place it is still apart from the `CMD`; `internal/imageconfig`), prints it, and sets `oci.entrypoint` to the entrypoint followed by your arguments, which is Docker's result. It reads anonymously. A registry it cannot read (a private one, no network) gives a warning, and then the command replaces the entrypoint as before; for an image that has one, write the entrypoint out before the command. An image with no entrypoint, and one that is not an OCI image, are left as they were. `--dry-run` does not read the registry and says so.
+- **`tink import`** joins `entrypoint:` and `command:` when a service has both. A `command:` alone is refused, because import connects to nothing and cannot see the entrypoint it would follow; the message says how to find it (`docker inspect IMAGE`, or `skopeo inspect --config docker://IMAGE`, or the line `tink run IMAGE ARGS` prints).
+- **A stack written by hand** says the whole `oci.entrypoint` line, so there is nothing to resolve.
+
+One limit that is not solved: `oci.entrypoint` is a single string, and tink joins the arguments with spaces and no quoting, so an argument that contains a space is split.
+
 ## When there is no flag: the escape hatch
 
 `--incus-config KEY=VALUE` and `--incus-device 'NAME type=TYPE key=value ...'` take Incus's own vocabulary, for anything the flags above do not cover. They add to what the flags decide and refuse to
