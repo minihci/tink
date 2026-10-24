@@ -1,0 +1,81 @@
+# The smart-home herd's stack "home": Home Assistant and its Mosquitto broker. Imported from a compose file made of the two corpus pages
+# (corpus/home-assistant, corpus/mosquitto) with `tink import`; the lines marked "site:" are the site's half, written by hand. Home Assistant's page
+# asks for host networking, which import refuses (docs/docker-to-tink.md); the stack leaves the key out, so the app runs on its stack's bridge and
+# discovery by multicast is not measured (README.md).
+kind: stack
+name: home
+network: own                              # a bridge, its ACL and the apps' static addresses are derived (docs/network.md)
+project: herd-home                        # site: a project of its own
+site: herd                                # site: only needed on a server that has a platform already (docs/join.md#sites)
+---
+kind: project                             # site
+name: herd-home
+config:
+  features.profiles: "false"
+---
+kind: storage-volume
+name: ha-config
+pool: default
+backup:                                   # site
+  none: "a throwaway fixture"
+---
+kind: storage-volume
+name: mosquitto-config
+pool: default
+backup:                                   # site
+  none: "a throwaway fixture"
+---
+kind: instance
+name: homeassistant
+image: ghcr.io/home-assistant/home-assistant:stable
+profiles:
+  - default
+config:
+  boot.autorestart: "true"
+  boot.autostart: "true"
+  environment.TZ: Etc/UTC
+  security.privileged: "true"
+  user.tink.offer.web.port: "8123"        # site
+  user.tink.offer.web.proto: http
+devices:
+  volume0:
+    type: disk
+    path: /config
+    pool: default
+    source: ha-config
+---
+kind: instance
+name: mosquitto
+image: eclipse-mosquitto
+profiles:
+  - default
+config:
+  boot.autorestart: "true"
+  boot.autostart: "true"
+devices:
+  # (the compose file's host port 1883 is gone: Home Assistant reaches the broker on the stack's bridge)  # site
+  volume0:
+    type: disk
+    path: /mosquitto/config
+    pool: default
+    source: mosquitto-config
+---
+kind: file                                # site: the page says the config directory must hold a file before the broker serves anyone but localhost
+name: mosquitto-conf
+instance: mosquitto
+path: /mosquitto/config/mosquitto.conf
+source_path: files/mosquitto.conf
+restart: true
+---
+kind: file                                # site: behind a reverse proxy Home Assistant answers 400 until its `http:` block trusts the proxy (platform.md, trust-proxy)
+name: ha-configuration
+instance: homeassistant
+path: /config/configuration.yaml
+source_path: files/ha-configuration.yaml
+restart: true
+---
+kind: publish                             # site: the name, and who may use it
+name: ha
+instance: homeassistant
+offer: web
+allow: [family]

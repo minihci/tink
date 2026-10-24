@@ -1,0 +1,16 @@
+# Home Assistant's own default configuration, plus the one block a reverse proxy needs: without `http:`, a request that carries X-Forwarded-For is
+# answered 400 ("your HTTP integration is not set-up for reverse proxies"). Only the ingress helper may be a proxy (@INGRESS_IP@ is its address on the
+# platform bridge, filled in by herd.sh); the stack's ACL admits nothing else.
+default_config:
+
+frontend:
+  themes: !include_dir_merge_named themes
+
+automation: !include automations.yaml
+script: !include scripts.yaml
+scene: !include scenes.yaml
+
+http:
+  use_x_forwarded_for: true
+  trusted_proxies:
+    - @INGRESS_IP@
