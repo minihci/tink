@@ -381,6 +381,19 @@ func pushFile(server incus.InstanceServer, r Resource, limit time.Duration) erro
 // disk-device mount would hide, which go into the volume (placeVolumeFile) or wait for the start.
 func placeFile(server incus.InstanceServer, r Resource) error {
 	s := scopedServer(server, r)
+	if r.Seed {
+		// A seed file is never written over one that is there, and the image may ship its own: the plan before creating the instance could not see it.
+		rc, _, found, err := incusapi.LookupInstanceFile(s, r.Instance, r.Path)
+		if err != nil {
+			return fmt.Errorf("reading %s on %s to see whether it is there: %w", r.Path, r.Instance, err)
+		}
+		if rc != nil {
+			_ = rc.Close()
+		}
+		if found {
+			return nil
+		}
+	}
 	err := pushCreatingParents(path.Clean(r.Path), instanceDirOps(s, r.Instance), func() error {
 		return s.CreateInstanceFile(r.Instance, r.Path, incus.InstanceFileArgs{
 			Content:   strings.NewReader(r.Content),

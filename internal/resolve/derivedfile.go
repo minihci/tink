@@ -35,6 +35,9 @@ func validateDerivedFile(r Resource) error {
 	if r.Kind != KindFile {
 		return nil
 	}
+	if r.Seed && r.Derive != "" {
+		return fmt.Errorf("resource %q: seed and derive cannot be combined: a derived file is rewritten whenever the stacks change, and a seed file is never rewritten", r.Name)
+	}
 	if r.Derive == "" {
 		if r.AdoptExisting || r.AllowEmpty {
 			return fmt.Errorf("resource %q: adopt_existing and allow_empty belong to a file that has a derive field", r.Name)

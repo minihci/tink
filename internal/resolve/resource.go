@@ -187,6 +187,11 @@ type Resource struct {
 
 	Content string
 
+	// Seed (file-only) makes the file a starting point and not a declaration to converge: it is written when the path does not exist, and left alone
+	// whatever it holds once it does. For a file the app edits itself (Home Assistant's store, an app's own configuration), where overwriting on any
+	// difference would undo the app's work. A file that exists counts as present even when it is empty. See planSeeded, and docs/first-start-files-design.md.
+	Seed bool
+
 	// Restart controls whether converging this resource also restarts
 	// the instance it affects, for the cases where Incus doesn't apply
 	// the change live on its own. Shared between two kinds, both found

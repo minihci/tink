@@ -206,6 +206,36 @@ A `kind: file` whose directory the image or the volume does not have used to fai
   - the new build, applied to the same stack, created both through the instance's file API (the instance was running), made the directories as `root`, `0755`, and a second plan said `no changes`;
   - with the instance and the volume deleted and the stack applied again, the instance was created with `placed 2 file(s) before its first start: file/pc-vol (in volume default/pc-data), file/pc-root`, so the volume's file API accepts `Type: "directory"` as well, and the second plan said `no changes`.
 
+## Seed
+
+**Status: built (#140, slice 2); unit-tested against fakes, and run on a local Incus 7.5.1 server on 2026-10-24 (below).** Claims are marked **[code]** or **[lab]**.
+
+A `kind: file` converges: it is rewritten whenever the live content differs from the declared. That is wrong for a file the application edits itself, an app's own configuration or Home Assistant's `.storage/http` (#238), where the declaration is only what the file should start with. `seed: true` makes the file a starting point.
+
+```yaml
+kind: file
+name: ha-http-store
+instance: homeassistant
+path: /config/.storage/http
+seed: true
+content: ...
+```
+
+**[code]**
+- The file is written when the path does not exist, and never again. Where it exists the plan says `no changes` whatever it holds, so the apply writes nothing and a `restart: true` has nothing to follow. When the live content differs from the declared, the plan and the apply add a note, `seed: PATH on INSTANCE exists and differs from the declared content; it is left as it is`, so a person reading `no changes` is not left to wonder.
+- A file that exists and is empty counts as present.
+- The default stays converge: a file without `seed` behaves as before.
+- It holds for each way a file is written: the instance's file API, a custom volume's when the instance is not running, and the placement before the first start. In that last case an image that ships the file keeps its own: the plan before the instance exists cannot see it, so the write looks first.
+- `seed` with `derive:` is a load error (a derived file is rewritten whenever the stacks change). A `check_output.equals` that names a seed file is a load error too: its declared content is only what the file started with, so the live output would be compared with something the file no longer holds.
+- A directory at the path is an error (`PATH on INSTANCE is a directory`), as it is for a file without `seed`. Before this slice an instance file read of a directory had no reader to close; it now says so.
+- Parent directories are made as for any file (above), so `/config/.storage/http` on a fresh volume works with `seed`.
+
+**[lab]** On a local Incus 7.5.1 server, a throwaway OCI Alpine instance with a seed file (`restart: true`) and an ordinary file beside it, in a directory the image does not have:
+- the first apply created the instance with both files placed before its first start, directories included;
+- both files were then edited inside the instance. The plan said `would update` for the ordinary file and `no changes` with the seed note for the seed file; the apply rewrote the ordinary file, left the seed file as the app had it, and did not restart (the instance's PID was the same);
+- the seed file emptied still planned `no changes`; removed, it planned `would create`, the apply wrote it and restarted the instance (a new PID), and the next plan was quiet;
+- an instance created with a seed file at a path the image ships (`/etc/alpine-release`) kept the image's file. The apply line still says `placed 1 file(s) before its first start` for it, since the file is in place; it does not say it was kept.
+
 ## Not in this slice
 
 A virtual machine's files; files that wait for an exec; an option to leave an instance stopped; changing when an existing instance is started.

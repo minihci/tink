@@ -335,7 +335,7 @@ func placeVolumeFile(server incus.InstanceServer, f Resource, m mount) error {
 	if err != nil {
 		return err
 	}
-	if found && current == f.Content {
+	if found && (current == f.Content || f.Seed) {
 		return nil
 	}
 
