@@ -87,6 +87,7 @@ type yamlResource struct {
 	// File-only, with derive -- see Resource.AdoptExisting.
 	AdoptExisting bool   `yaml:"adopt_existing"`
 	AllowEmpty    bool   `yaml:"allow_empty"`
+	Seed          bool   `yaml:"seed"` // file-only -- see Resource.Seed
 	Content       string `yaml:"content"`
 	SourcePath    string `yaml:"source_path"` // read at load time, relative to this YAML file's own directory
 
@@ -464,6 +465,7 @@ func (d yamlResource) toResource(dir string) (Resource, error) {
 		Derive:          d.Derive,
 		AdoptExisting:   d.AdoptExisting,
 		AllowEmpty:      d.AllowEmpty,
+		Seed:            d.Seed,
 		Content:         content,
 		Restart:         d.Restart,
 		OnImageChange:   d.OnImageChange,

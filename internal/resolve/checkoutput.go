@@ -79,6 +79,9 @@ func validateCheckOutputs(resources []Resource) error {
 		if f.Content == "" {
 			return fmt.Errorf("resource %q: check_output.equals names file %q, which has no declared content (content or source_path) to compare with", r.Name, eq)
 		}
+		if f.Seed {
+			return fmt.Errorf("resource %q: check_output.equals names file %q, which is seed: true; its declared content is only what the file starts with, so the live output would be compared with something the file no longer holds", r.Name, eq)
+		}
 	}
 	return nil
 }

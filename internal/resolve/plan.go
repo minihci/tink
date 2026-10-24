@@ -286,6 +286,9 @@ func planFile(server incus.InstanceServer, r Resource) (PlannedResource, error) 
 	if !found {
 		return PlannedResource{Resource: r, Action: ActionCreate}, nil
 	}
+	if rc == nil {
+		return PlannedResource{}, fmt.Errorf("%s on %s is a directory", r.Path, r.Instance)
+	}
 	defer rc.Close()
 
 	current, err := io.ReadAll(rc)
@@ -295,6 +298,9 @@ func planFile(server incus.InstanceServer, r Resource) (PlannedResource, error) 
 
 	if string(current) == r.Content {
 		return PlannedResource{Resource: r, Action: ActionNone}, nil
+	}
+	if r.Seed {
+		return seededFile(r), nil
 	}
 	return PlannedResource{Resource: r, Action: ActionUpdate, Changes: []string{fmt.Sprintf("content of %s on %s differs", r.Path, r.Instance)}, liveContent: string(current)}, nil
 }

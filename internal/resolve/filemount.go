@@ -128,6 +128,10 @@ func planVolumeFile(s incus.InstanceServer, f Resource, t fileTarget) (PlannedRe
 	switch {
 	case !found:
 		p.Action = ActionCreate
+	case f.Seed:
+		if current != f.Content {
+			p.Notes = append(p.Notes, seedNote(f))
+		}
 	case current != f.Content:
 		p.Action = ActionUpdate
 		p.Changes = []string{fmt.Sprintf("content of %s on %s differs", f.Path, f.Instance)}
