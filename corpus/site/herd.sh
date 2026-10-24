@@ -20,7 +20,8 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 SUDO=sudo
 [ -n "${SUDO_ASKPASS:-}" ] && SUDO="sudo -A"
 
-# The stack set this run acts on. A set says: STACKS (the names of its stack files), SET_DIR (where they are), APPS (name:project:instance:port of each
+# The stack set this run acts on. A set says: STACKS (the names of its stack files), PLAN_ONLY (stacks that are planned and never applied, because they need
+# hardware this host has not: `up` plans them and `test` checks the plan), SET_DIR (where they are), APPS (name:project:instance:port of each
 # published app, for the checks; the address is read from the server, addr_of, because tink picks it) and set_checks (the checks of the set's stacks, run after
 # the per-name ones). The first herd is the default set and is defined here.
 SET=
@@ -29,12 +30,14 @@ if [ -n "${HERD_SET:-}" ]; then
 	[ -f "$SET/set.sh" ] || { echo "herd.sh: $SET has no set.sh" >&2; exit 2; }
 	SET_DIR=$SET
 	STACKS=
+	PLAN_ONLY=
 	APPS=
 	set_checks() { :; }
 	. "$SET/set.sh"
 else
 	SET_DIR=$HERE
 	STACKS="vault status blog shop media metrics"
+	PLAN_ONLY=
 	APPS="vault:herd-vault:vaultwarden:80 status:herd-status:uptime-kuma:3001 blog:herd-blog:wordpress:80 shop:herd-shop:wordpress:80 sonarr:herd-media:sonarr:8989 qbittorrent:herd-media:qbittorrent:8080 metrics:herd-metrics:grafana:3000"
 	set_checks() { first_herd_checks; }
 fi
@@ -188,6 +191,11 @@ up() {
 	for s in $STACKS; do apply "$SET_DIR/$s.yaml"; done
 	# the site's proxy, sign-on and dns files hold what the stacks publish, read from the server, so the site is applied again once they are
 	apply "$RENDERED/site.yaml"
+	for s in $PLAN_ONLY; do
+		echo "planned, not applied: $s"
+		out=$("$TINK" plan "$SET_DIR/$s.yaml" 2>&1) || { echo "$out"; return 1; }
+		echo "$out" | grep -v '^warning'
+	done
 }
 
 ok() { printf '  ok    %s\n' "$1"; }
@@ -248,6 +256,12 @@ test() {
 
 	echo "the stacks"
 	set_checks
+	for s in $PLAN_ONLY; do
+		echo "planned, not applied: $s"
+		out=$("$TINK" plan "$SET_DIR/$s.yaml" 2>&1) && ok "$s: tink plan accepts the stack" || bad "$s: tink plan accepts the stack"
+		case "$out" in *"would create"*) ok "$s: the plan would create it" ;; *) bad "$s: the plan would create it" ;; esac
+		exists incus project show "herd-$s" && bad "$s: nothing of it exists on the server (the project herd-$s does)" || ok "$s: nothing of it exists on the server"
+	done
 	rm -f "$J"
 	return $fail
 }

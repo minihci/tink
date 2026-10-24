@@ -3,6 +3,9 @@
 
 STACKS="home esphome music"
 
+# declared and planned, never applied: they need a radio this host has not (README.md)
+PLAN_ONLY="radios"
+
 APPS="ha:herd-home:homeassistant:8123 nodered:herd-home:node-red:1880 esphome:herd-esphome:esphome:6052 music:herd-music:music-assistant:8095"
 
 # reach PROJECT INSTANCE ADDRESS PORT succeeds when INSTANCE can open a TCP connection to ADDRESS:PORT. busybox nc exits 0 on a connection and 1 on a
@@ -71,4 +74,9 @@ set_checks() {
 		rest=${pair#*:}
 		reach_py "${rest%%:*}" "${rest#*:}" "$broker" 1883 && bad "stacks: $name reached the home stack's broker" || ok "stacks: $name does not reach the home stack's broker"
 	done
+
+	# radios is only planned; what the plan derives from its two publishes is checked here, because it is all the stack can show
+	plan=$("$TINK" plan "$SET_DIR/radios.yaml" 2>&1) || plan=
+	case "$plan" in *"ingress rule(s) derived from the publishes z2m, zwave"*) ok "radios: the plan derives the ACL rules for z2m and zwave" ;; *) bad "radios: the plan derives the ACL rules for z2m and zwave" ;; esac
+	case "$plan" in *"zigbee2mqtt: address "*"zwave-js-ui: address "*) ok "radios: the plan allocates their addresses" ;; *) bad "radios: the plan allocates their addresses" ;; esac
 }
