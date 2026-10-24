@@ -25,8 +25,11 @@ type Spec struct {
 	// Notes are things the person should be told about what was asked for (a bind mount that will not be writable, an option that was ignored).
 	Notes []string
 
-	// VolumeConfig is the config a managed storage volume gets when this run has to CREATE it (one that exists is not changed). From --user.
+	// VolumeConfig is the config a managed storage volume gets when this run has to CREATE it (one that exists is not changed). From --user, or, when
+	// --user is not given, from the user the image runs as (inheritImageUser).
 	VolumeConfig map[string]string
+	// VolumeOwnerFromImage says VolumeConfig's owner is the image's user and not one --user named, so the lines about the volumes say so.
+	VolumeOwnerFromImage bool
 
 	// RootDiskAtCreate sends the root disk in Devices (the disk at path /) in the creation request itself, as `incus init --storage` does, instead of
 	// leaving it for ApplyConfig. Incus needs a root disk when it writes the instance record, and by default it is sent only the profiles, so profiles that

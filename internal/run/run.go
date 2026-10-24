@@ -218,6 +218,9 @@ func Run(opts Options) (*Result, error) {
 
 	server = scoped
 
+	if warning := inheritImageUser(server, spec); warning != "" {
+		note("warning: %s", warning)
+	}
 	for _, line := range describeVolumes(server, spec) {
 		note("%s", line)
 	}
@@ -687,11 +690,11 @@ func describeVolumes(server incus.InstanceServer, spec *Spec) []string {
 		case err != nil:
 			// ApplyConfig reports the real error; this is only a courtesy line
 		case found && len(spec.VolumeConfig) > 0:
-			lines = append(lines, fmt.Sprintf("reusing volume %s/%s (its ownership is not changed: if the app cannot write to it, chown it to %s)", dev["pool"], dev["source"], ownerOf(spec.VolumeConfig)))
+			lines = append(lines, fmt.Sprintf("reusing volume %s/%s (its ownership is not changed: if the app cannot write to it, chown it to %s%s)", dev["pool"], dev["source"], ownerOf(spec.VolumeConfig), ownerSource(spec)))
 		case found:
 			lines = append(lines, fmt.Sprintf("reusing volume %s/%s", dev["pool"], dev["source"]))
 		case len(spec.VolumeConfig) > 0:
-			lines = append(lines, fmt.Sprintf("creating volume %s/%s, owned by %s", dev["pool"], dev["source"], ownerOf(spec.VolumeConfig)))
+			lines = append(lines, fmt.Sprintf("creating volume %s/%s, owned by %s%s", dev["pool"], dev["source"], ownerOf(spec.VolumeConfig), ownerSource(spec)))
 		default:
 			lines = append(lines, fmt.Sprintf("creating volume %s/%s", dev["pool"], dev["source"]))
 		}
