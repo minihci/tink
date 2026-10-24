@@ -139,3 +139,39 @@ func TestLoadFile_StackNetwork(t *testing.T) {
 		}
 	}
 }
+
+// A stack's egress is a word, and on a network-acl the same key is the list of rules: each kind reads its own, and the other is a load error.
+func TestLoadFile_StackEgress(t *testing.T) {
+	for _, mode := range []string{"open", "none"} {
+		rs, err := LoadFile(writeTemp(t, "kind: stack\nname: blog\nnetwork: own\negress: "+mode+"\n"))
+		if err != nil {
+			t.Fatalf("egress: %s: %v", mode, err)
+		}
+		if len(rs) != 1 || rs[0].EgressMode != mode || rs[0].Egress != nil {
+			t.Errorf("egress: %s: got %+v", mode, rs)
+		}
+	}
+	if rs, err := LoadFile(writeTemp(t, "kind: stack\nname: blog\nnetwork: own\n")); err != nil || rs[0].EgressMode != "" {
+		t.Errorf("no egress is the empty mode, which derive reads as none: %v %+v", err, rs)
+	}
+	// the ACL's list is as it was, an empty one included
+	acl, err := LoadFile(writeTemp(t, "kind: network-acl\nname: a\negress: []\ningress:\n  - action: allow\n    protocol: tcp\n    destination_port: \"80\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if acl[0].Egress == nil || len(acl[0].Egress) != 0 || acl[0].EgressMode != "" || len(acl[0].Ingress) != 1 {
+		t.Errorf("an ACL's egress: [] is declared and empty: %+v", acl[0])
+	}
+	for name, c := range map[string]struct{ yaml, want string }{
+		"a value that is not understood": {"kind: stack\nname: a\nnetwork: own\negress: internet\n", "is not understood"},
+		"egress with no network: own":    {"kind: stack\nname: a\negress: open\n", "egress needs network: own"},
+		"a word on a network-acl":        {"kind: network-acl\nname: a\negress: open\n", "EgressMode"},
+		"rules on a stack":               {"kind: stack\nname: a\nnetwork: own\negress:\n  - action: allow\n", "Egress"},
+		"a word on an instance":          {"kind: instance\nname: a\nimage: x\negress: open\n", "EgressMode"},
+		"a mapping":                      {"kind: stack\nname: a\nnetwork: own\negress: {to: anywhere}\n", "must be a list of rules"},
+	} {
+		if _, err := LoadFile(writeTemp(t, c.yaml)); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: err = %v, want it to contain %q", name, err, c.want)
+		}
+	}
+}

@@ -7,6 +7,7 @@
 kind: stack
 name: home
 network: own                              # a bridge, its ACL and the apps' static addresses are derived (docs/network.md)
+egress: open                              # site: Whisper downloads its model on first start, and Home Assistant calls out; without it the bridge rejects outbound traffic (#225)
 project: herd-home                        # site: a project of its own
 site: herd                                # site: only needed on a server that has a platform already (docs/join.md#sites)
 ---

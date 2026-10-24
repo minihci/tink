@@ -42,6 +42,7 @@ var fieldOwners = map[string][]Kind{
 	"Network":         {KindHelper, KindStack},
 	"NetworkPool":     {KindStack},
 	"NetworkPrefix":   {KindStack},
+	"EgressMode":      {KindStack},
 	"Timezone":        {KindHelper},
 	"Remotes":         {KindHelper},
 	"Allow":           {KindPublish},

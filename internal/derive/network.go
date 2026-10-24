@@ -84,6 +84,10 @@ func OwnNetwork(server incus.InstanceServer, resources []resolve.Resource) ([]re
 		}
 	}
 
+	if declaredNet != nil && stack.EgressMode != "" {
+		return nil, nil, fmt.Errorf("stack %s: egress: the stack declares the network %s itself, so tink cannot set its egress; set security.acls.default.egress.action in that network's config and remove the egress key", stack.Name, bridge)
+	}
+
 	var notices []string
 	var subnet netip.Prefix
 	var gateway netip.Addr
@@ -142,6 +146,8 @@ func OwnNetwork(server incus.InstanceServer, resources []resolve.Resource) ([]re
 				"ipv4.dhcp.ranges": dhcpRange,
 				"ipv6.address":     "none",
 				"security.acls":    aclName,
+				// What the apps may send out: denied unless the stack says egress: open. Written even when it is the default, so that a hand-set allow is drift.
+				"security.acls.default.egress.action": egressAction(stack.EgressMode),
 			},
 		})
 	}
@@ -383,4 +389,12 @@ func addrToUint(a netip.Addr) uint32 {
 
 func uintToAddr(u uint32) netip.Addr {
 	return netip.AddrFrom4([4]byte{byte(u >> 24), byte(u >> 16), byte(u >> 8), byte(u)})
+}
+
+// egressAction is the default egress action of a stack's bridge for the stack's egress: allow for open, reject for none and for no answer.
+func egressAction(mode string) string {
+	if mode == resolve.EgressOpen {
+		return "allow"
+	}
+	return "reject"
 }
