@@ -11,6 +11,7 @@
 kind: stack
 name: radios
 network: own                              # a bridge, its ACL and the apps' static addresses are derived (docs/network.md)
+egress: none                              # site: the radios apps are planned only; Zigbee2MQTT talks to a broker in another stack, which egress would not reach anyway
 project: herd-radios                      # site: a project of its own
 site: herd                                # site: only needed on a server that has a platform already (docs/join.md#sites)
 ---

@@ -357,6 +357,7 @@ not counted. See docs/plan-extras.md.`, resolve.DefaultFile),
 			}
 			noteUndeclaredPolicies(cmd.OutOrStdout(), backuprun.ServerEngine{Server: server}, resources)
 			noteHelper(cmd.OutOrStdout(), server, time.Now(), resources)
+			noteEgress(cmd.OutOrStdout(), resources)
 			return nil
 		},
 	}
@@ -426,6 +427,7 @@ restarted, whatever its restart: says. See docs/ownership.md.`, resolve.DefaultF
 			}
 			noteUndeclaredPolicies(cmd.OutOrStdout(), backuprun.ServerEngine{Server: server}, resources)
 			noteHelper(cmd.OutOrStdout(), server, time.Now(), resources)
+			noteEgress(cmd.OutOrStdout(), resources)
 			return err
 		},
 	}
