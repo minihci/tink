@@ -8,6 +8,22 @@ tink turns the docker-run and compose examples people self-host from into a comp
 
 The platform is optional. The converger must be useful with no helper installed.
 
+## What 1.0 means
+
+The goal is to run a homelab, self-hosted services and a VPS from one git repo of stacks and secrets. Convergence (`plan` and `plan apply`) is the core. `tink run` and `tink compose import` are on-ramps into it, and a stack can equally be written by hand. The services (names and TLS, sign-on, backup, the mesh) are facts added to a stack, and they rest on the converger, so it has to be solid first. The platform stays optional.
+
+1.0 is reached when, on a fresh Incus host:
+
+1. **The repo is the truth.** Every kind tink creates plans honestly, a second plan says no changes, failures and drift are named, and removing a declaration can remove the object it made (ownership and prune, #133; authoritative apply, #138).
+2. **Two on-ramps.** A published `docker run` line or compose file becomes a stack that applies, or is refused with a reason.
+3. **Services switch on with facts, each alone.** A name needs only a zone and an ingress helper. Sign-on, the mesh and the network ACL each follow when their facts are added, in the order a homelabber reaches for them ([capability-review.md](capability-review.md)). Reaching the site from outside means over the mesh, with little friction.
+4. **Backup you can restore.** A copy to a second place exists for every volume that matters, a restore has been checked, and a failed copy or an overdue check reaches a person.
+5. **Secrets live in the repo,** encrypted, and never reach output, including in files.
+6. **Lifecycle.** An update, a graceful stop, a readiness wait and a dependent's restart are declared, not scripted by hand; an instance can be declared not running.
+7. **A stable surface, and a rebuild.** The names and keys a person writes are settled (renames wait for this), each change after it comes with a fix-up page, and an empty host plus the repo and one identity gives back the site.
+
+Not in 1.0: the platform recipe (Phase 6), `kind: network-forward`, and swapping the proxy for another product.
+
 ## The architecture of the core
 
 tink is one binary of about 24,500 lines (plus about 28,000 of tests) with seven direct dependencies. No file is over 810 lines. The size is not in any one place; it is in breadth: a dozen top-level commands, four jobs done by two mechanisms (listed below), and compatibility code for shapes that were once deployed. The fix is boundaries and a rule for adding things, with deletion as the smaller part.
@@ -151,6 +167,24 @@ This runs beside Phases 3 and 4, not after them. The helper already holds root-e
 - Role contracts as data, the recipe as Go code, `deploy` folded in, mesh policy and the identity helper as derived artifacts. The recipe is a load-time expander: a site document expands into ordinary resources that the normal plan converges, and the printout of that expansion (`tink plan explain`) is also how a user ejects. One role at a time, starting with the ones two sites share (the proxy and sign-on), each with a fixture taken from a live site that plans "no changes" against it; the hand-written platform stack stays the oracle until the recipe reproduces it.
 - *Done when* the platform stack plans clean against a live platform, built from about fifteen site facts.
 
+### From phases to arcs (2026-10-25)
+
+Phases 0 to 2 are done, and Phase 3's own test is met on the herd site (the six stacks are applied with no hand-made bridge, ACL, address, route, record or rule). What is left is regrouped from the layers the code is built in into arcs toward the 1.0 above, in the order a homelabber reaches for them. Each is a milestone, closed when its test passes; the issues and their state live in the milestones, not here.
+
+| Milestone | 1.0 | Done when |
+|---|---|---|
+| Converge: honest plan, safe apply | 1 | each kind plans honestly, a second plan says no changes, and a removed declaration can remove its object |
+| On-ramps: run and compose import | 2 | the corpus apps the importer does not refuse become stacks that apply |
+| Names, sign-on and sites | 3 | a name needs only a zone and an ingress helper; sign-on, mesh and ACL each switch on alone; a second site does not disturb the first |
+| Backup you can restore | 4 | a failed copy and an overdue check reach a person; one copy per `keep` volume is restored and checked |
+| Secrets and the mesh | 3, 5 | a secret in a file is encrypted in git and never printed; a new device reaches the site with a few lines of facts |
+| Lifecycle | 6 | a stop saves, a dependent restarts after its dependency, an instance can be declared not running |
+| Stable surface and rebuild | 7 | the pre-1.0 renames are done, each with a fix-up page; an empty host, the repo and one identity give back the site |
+
+The credential cut-over (Phase 5) and the helper review sit in the last row, because what they decide is the surface a person depends on. After 1.0 is a milestone too, a place to park what is not an arc toward it.
+
+For planning, work has three areas, which are issue labels: **core** (the adapters and the converger, on-ramps, secrets, ownership), **daemon** (`tink daemon run` and the helper install: the unattended runtime and the credential it holds) and **service** (backup, the derive stage, the mesh and identity: each a declaration, an actor and checks). They replace the `ring:*` labels. The rings above stay as the dependency rule that `internal/resolve/imports_test.go` enforces. Two things are not yet where this puts them. A volume's backup block and `kind: backup-target` are still declared in the converger (about 465 lines in `resolve`), and need the same kind extension point as `kind: helper` (#128). The derive stage keeps every rendering in one package; that is internal and waits for a second product (#190), while the names a person writes in a stack are settled before 1.0 (#249).
+
 ### In parallel, outside the roadmap
 The workloads are how tink is tested, and they run beside the phases, not behind them. The first real consumer, a home-automation migration, needs the converger, backup with restore checks, and the helper, and can proceed on hand-written platform pieces while Phases 1 to 3 land. A second, a stateful game server on a clean public host, exercises what the first never did and needs three small things that are not features: a measurement of a UDP port through a `nat` proxy; the helper installed on a clean host and put through a host reboot, which has never been done; and a hand-written host unit that asks the app to save before Incus stops it, with no tink code. The graceful-stop verb and field wait for the gate: that unit has been through a real reboot and an image update, and a second kind of workload (a database-primary app) shows the same gap. Two more trials would fill empty cells: an app that signs in through the platform's OIDC, and `on_image_change: rebuild` on real data.
 
@@ -180,6 +214,11 @@ Decided on 2026-10-19:
 
 Decided on 2026-10-24:
 - `kind: access` (one instance using another's offer, a broker for example) is off the freeze list. The smart-home herd (#207) is a consumer that needs it: an app in one stack cannot reach an app in another (Zigbee2MQTT and its broker), because each stack's ACL admits only the ingress helper (the evidence is a comment on #130). Unfreezing lifts the freeze only. The capability gate and the demand gate above still apply to the work, and the design stays in #130 until it is built.
+
+Decided on 2026-10-25:
+- The goal and the seven tests above ("What 1.0 means"). Prune and lifecycle are part of 1.0; outside access means the mesh.
+- Milestones are arcs toward 1.0 (the table above), and the area labels `area:core`, `area:daemon` and `area:service` replace `ring:*`.
+- The names in a stack file say the function, not the product (`derive: proxy`, not `derive: caddy`); the rest of the surface is #249.
 
 Open:
 1. **The name of the expanded-stack view,** leaning to a subcommand of plan: `tink plan explain`. It prints what the facts expanded to, and for each derived value where it came from (a default, a site fact, a publish). It sits beside `tink plan` and `tink plan apply`, takes the same files and flags, and is read-only like plan. Other candidates were `tink expand`, `tink show` and `tink render`.
