@@ -237,7 +237,7 @@ type Resource struct {
 	// section): importing a VM image under a local alias is exactly this
 	// shape of problem, deliberately not solved by teaching resolve or
 	// tink run about image building/registry management (an explicit
-	// non-goal -- see internal/run/DESIGN.md). Both Check and Command are
+	// non-goal -- see internal/dockerrun/DESIGN.md). Both Check and Command are
 	// argv for the `incus` binary specifically (exec.Command("incus",
 	// ...), never a shell) -- narrower on purpose than a bare shell
 	// string: this can only ever do what the incus CLI itself can do,
@@ -316,7 +316,7 @@ type Resource struct {
 
 	// Image-only: wraps an already-complete VM disk image (a qcow2 or
 	// similar file -- never built from a rootfs; that stays out of
-	// scope on purpose, the same non-goal internal/run/DESIGN.md already
+	// scope on purpose, the same non-goal internal/dockerrun/DESIGN.md already
 	// draws around image building/registry management) into Incus's own
 	// split-image format and imports it under Alias. Source is resolved
 	// relative to this YAML file's own directory at load time, the same

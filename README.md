@@ -45,7 +45,7 @@ comment for the working bash it's replacing.
 volumes, profiles, the `ingress`/`authelia`/`incus-ui` instances, the
 daemon's OIDC/authorization config. `run` translates a docker-run-shaped
 invocation onto real Incus primitives - see
-[`internal/run/DESIGN.md`](internal/run/DESIGN.md) for the flag-mapping
+[`internal/dockerrun/DESIGN.md`](internal/dockerrun/DESIGN.md) for the flag-mapping
 table and its deliberate non-goals (not a Docker CLI clone). `plan`
 computes a dependency graph for a set of project/network/network-acl/profile/storage-volume/
 instance/file resources declared in YAML and reports what would change;
@@ -127,7 +127,8 @@ cmd/tink/            thin CLI entrypoint (cobra) - argument parsing only
 internal/incusapi/   shared Incus API client, used by every capability
 internal/incusconf/  the Incus client configuration (and built-in image remotes), for --remote
 internal/bootstrap/  tink deploy
-internal/run/        tink run - see internal/run/DESIGN.md
+internal/dockerrun/  tink run, and the docker-run translation tink import shares - see internal/dockerrun/DESIGN.md
+internal/instance/   the instance engine: create, apply config, start, qualify. What applying an instance IS; tink run, plan apply and the helper all use it
 internal/imageconfig/ an OCI image's own ENTRYPOINT and CMD, read from its registry (Incus keeps them merged), for tink run
 internal/compose/   tink import - a compose file in, a stack out (docs/import.md)
 internal/prepare/    the one preparation `plan` and `plan apply` share: load, secrets, connect, qualify images, build the levels, in that order

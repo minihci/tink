@@ -43,7 +43,7 @@ how to say so (`docker.io/deluan/navidrome:latest`). `ghcr.io/org/app` and `quay
 | `--network NAME` | `--network NAME` | an Incus managed network. `--ip ADDR` for a fixed address. `--network host` is refused, with the reason (below) |
 | `--rm` | `--rm` | |
 | `IMAGE CMD...` | `IMAGE CMD...` | goes after the image's own entrypoint, as in Docker (CMD is replaced). `tink run` reads the entrypoint from the image's registry, anonymously, and prints it; a registry it cannot read (private, offline) gives a warning, and then the command **replaces** the entrypoint, which for an image that has one starts nothing: write the entrypoint out before the command (#230) |
-| `--platform`, `--pull`, `-d`, `-it`, `--init` | - | not applicable: see [the `run` design](../internal/run/DESIGN.md) |
+| `--platform`, `--pull`, `-d`, `-it`, `--init` | - | not applicable: see [the `run` design](../internal/dockerrun/DESIGN.md) |
 
 ### Bind mounts and `:shift`
 
@@ -84,7 +84,7 @@ grafana stopped straight after it started (status Stopped); the last lines of it
 Error: grafana stopped straight after it started: the process exited
 ```
 
-When the start itself fails (an instance with a published port reports Incus's `Error occurred when starting proxy device`, because the proxy is started after the process and the process is already gone), the same lines are printed before the error. Two limits: the check is one look, so an instance with a restart policy that crashes in a loop may be running when it is asked, and an ephemeral instance (`--rm`) is deleted when it stops, with its console log. The values of `-e` variables whose names look like secrets (`PASSWORD`, `TOKEN`, ...) are redacted from the lines. This is not `docker logs`: tink prints the tail once, on a failure, and does not follow the log (`internal/run/DESIGN.md`). Checked live on a local Incus 7.5.1 server (2026-10-24) with Grafana on a root-owned existing volume: with a published port the cause was printed before Incus's error, without one it was printed after `started` and the exit status was 1, and a healthy instance printed nothing extra and exited 0.
+When the start itself fails (an instance with a published port reports Incus's `Error occurred when starting proxy device`, because the proxy is started after the process and the process is already gone), the same lines are printed before the error. Two limits: the check is one look, so an instance with a restart policy that crashes in a loop may be running when it is asked, and an ephemeral instance (`--rm`) is deleted when it stops, with its console log. The values of `-e` variables whose names look like secrets (`PASSWORD`, `TOKEN`, ...) are redacted from the lines. This is not `docker logs`: tink prints the tail once, on a failure, and does not follow the log (`internal/dockerrun/DESIGN.md`). Checked live on a local Incus 7.5.1 server (2026-10-24) with Grafana on a root-owned existing volume: with a published port the cause was printed before Incus's error, without one it was printed after `started` and the exit status was 1, and a healthy instance printed nothing extra and exited 0.
 
 ## When there is no flag: the escape hatch
 

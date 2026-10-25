@@ -211,7 +211,7 @@ func newRunCmd() *cobra.Command {
 		Long: `run creates an instance from docker-run-shaped flags, translated
 onto Incus primitives: the image is created (not started), the config
 keys and devices the flags correspond to are applied, then it starts.
-See internal/run/DESIGN.md for the full flag-mapping table and its
+See internal/dockerrun/DESIGN.md for the full flag-mapping table and its
 deliberate non-goals -- this is not a Docker CLI clone: incus's own
 ps/exec/logs/stop/rm are already just as short as their Docker
 equivalents, and docker logs specifically has no Incus equivalent to

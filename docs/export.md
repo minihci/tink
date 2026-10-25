@@ -2,7 +2,7 @@
 
 `tink plan` and `tink plan apply` take a YAML stack to live Incus objects. `tink export` goes the other way: it reads live instances (with
 the project and storage volumes they use) and writes the stack YAML that describes them. It is the step that follows
-[`tink run`](../internal/run/DESIGN.md): `run` is the quick way to find a stack's shape without knowing Incus's device vocabulary, and the
+[`tink run`](../internal/dockerrun/DESIGN.md): `run` is the quick way to find a stack's shape without knowing Incus's device vocabulary, and the
 file `export` writes is what you keep and apply from then on.
 
 ```
