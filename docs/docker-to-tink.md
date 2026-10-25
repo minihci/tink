@@ -34,7 +34,7 @@ how to say so (`docker.io/deluan/navidrome:latest`). `ghcr.io/org/app` and `quay
 | `-p [IP:]H:C[/udp]`, `-p 8000-8010:8000-8010` | `-p ...` | the same forms. A container port alone is refused |
 | `-v name:/path` | `-v name:/path` | a managed volume, created if absent (in `--pool`, default `default`) |
 | `-v /host:/path[:ro]` | `-v /host:/path[:ro]` | absolute, and on the server. **Add `:shift` if the app must write to it** (below); options combine with a comma, `:ro,shift` |
-| `-e K=V`, `--env-file F` | `-e K=V`, `--env-file F` | the file is read on the machine running tink; `-e` wins |
+| `-e K=V`, `--env-file F` | `-e K=V`, `--env-file F` | the file is read on the machine running tink; `-e` wins. **An empty value (`-e K=`) is an unset variable:** Incus never stores an empty config value, so the process does not see `K` at all, where Docker sets it to the empty string. A program that tells the two apart behaves differently; most read the environment in a way that cannot |
 | `--user UID[:GID]` | `--user UID[:GID]` | numbers only. Volumes tink creates for this run are owned by that user. Without `--user`, they are owned by the user the image runs as when that is not root (Docker copies the image's ownership into a new named volume; Incus does not, so tink reads `oci.uid` and `oci.gid` from the new instance and says so in the "creating volume" line). A volume that already exists keeps its owner, and `--dry-run` does not read the image, so it cannot say |
 | `-m 512m` | `-m 512m` | |
 | `--cpus 1.5` | `--cpus 1.5` | CPU *time*, as in Docker (not how many CPUs the instance sees) |

@@ -360,6 +360,10 @@ func planImage(server incus.InstanceServer, r Resource, readStamp bool) (Planned
 // drift, the same "only touch what we set" idea tink run's own
 // ApplyConfig already uses.
 //
+// A desired "" for a key the live object does not have is not a difference. Incus never stores an empty config value: it reads one as "unset" and
+// writes nothing (#214), for every kind this function serves, so a "" that was applied reads back as a missing key and would otherwise be reported
+// again on every plan. A desired "" against a live key that has a value is still a change; applying it removes the key.
+//
 // Neither side of a change to a sensitive key is printed: not the new value, and not the old one
 // (replacing a plain password with a ${secret:} reference would otherwise print the old one in
 // clear). A key is sensitive when its name looks like one (secrets.SensitiveKey) or when it is in
@@ -368,7 +372,7 @@ func diffConfig(current, desired map[string]string, hidden map[string]bool) []st
 	var changes []string
 	for k, v := range desired {
 		cur, ok := current[k]
-		if ok && cur == v {
+		if ok && cur == v || !ok && v == "" {
 			continue
 		}
 		switch {
