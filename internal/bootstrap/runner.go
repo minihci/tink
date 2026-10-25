@@ -1,7 +1,6 @@
 package bootstrap
 
 import (
-	"bytes"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -37,27 +36,6 @@ func (r *runner) run(description string, name string, args ...string) (string, e
 	}
 	r.note("%s", description)
 	return string(out), nil
-}
-
-// runWithStdin is like run, but pipes content to the command's stdin --
-// used for `incus profile edit`/`incus config edit`, which read their new
-// value from stdin rather than an argument.
-func (r *runner) runWithStdin(description string, content string, name string, args ...string) error {
-	cmdline := name + " " + strings.Join(args, " ")
-	if r.dryRun {
-		r.note("would run: %s < (rendered content) (%s)", cmdline, description)
-		return nil
-	}
-	cmd := exec.Command(name, args...)
-	cmd.Stdin = strings.NewReader(content)
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("%s: %s: %w\n%s", description, cmdline, err, out.String())
-	}
-	r.note("%s", description)
-	return nil
 }
 
 // runWithRetry is like run, but retries on failure -- for operations

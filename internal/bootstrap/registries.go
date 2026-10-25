@@ -54,6 +54,10 @@ func remoteExists(name string) (bool, error) {
 // if it's pointed somewhere else, since keying on name alone would
 // silently keep a stale registry across a deploy.env change (this bit
 // incus-host for real once already, see registries.go's git history).
+//
+// It shells out to `incus remote add|remove` on purpose, as one of the exceptions named in CLAUDE.md: a remote is an entry in the Incus CLIENT's
+// configuration, not an object the daemon holds, so there is no API call to make (the same reason `incus launch` stays a CLI call, see
+// recreateInstance).
 func applyRegistries(r *runner, opts Options) error {
 	exists, err := remoteExists("docker-oci")
 	if err != nil {
