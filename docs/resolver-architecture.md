@@ -9,7 +9,7 @@ wrong; the YAML is the primary interface).
 
 It is a synthesis of a real day's worth of experimentation, not a whiteboard
 guess — every claim below was verified live against a real 5-instance stack, not
-assumed. See `internal/run/DESIGN.md` for `tink run`'s own design, which this
+assumed. See `internal/dockerrun/DESIGN.md` for `tink run`'s own design, which this
 document builds on directly.
 
 ## Where this comes from
@@ -41,7 +41,7 @@ problem. It's two, bundled into one word.
    what order to create things in and what to change vs. leave alone.
 
 **(1) is already solved and working**: `tink run`'s own
-`internal/run/flags.go` *is* a translator in exactly this shape, with
+`internal/dockerrun/flags.go` *is* a translator in exactly this shape, with
 Docker CLI flags as its source vocabulary. A Kubernetes-Pod-spec
 translator would be a sibling to that file, not a new kind of thing —
 same job, richer source schema.
@@ -180,7 +180,7 @@ either the bug or the fix's status.
 ```
 
 - **Translators, plural** — one per source vocabulary. `tink run`'s
-  `internal/run/flags.go` already is one, for Docker flags. A
+  `internal/dockerrun/flags.go` already is one, for Docker flags. A
   Kubernetes-Pod-spec translator is the only genuinely new component
   this whole idea still needs.
 - **A shared, resolver-agnostic IR** — in the spirit of `tink run`'s own
@@ -283,7 +283,7 @@ hand. There's a structural reason it could only ever have been that: a
 Pod spec, like a `docker run` command, describes one container-shaped
 thing, not a stack's whole graph — it has no native way to say "these
 belong to one project" or "this profile is shared across three of
-these," the same ceiling `internal/run/DESIGN.md`'s own non-goals
+these," the same ceiling `internal/dockerrun/DESIGN.md`'s own non-goals
 already document for Docker flags. Once a description has to span a
 whole graph, not one instance, it has already outgrown what either
 per-container vocabulary can express on its own.
@@ -517,12 +517,12 @@ Checked against fakes (`internal/resolve/rebuild_test.go`, `rebuild_pull_test.go
 - **Planning stops at once.** A plan is pure reads, so `PlanWithOptions` checks the context before each resource reads anything and returns `planning interrupted`; there is nothing to leave half-done.
 - **A rebuild is interrupted only while nothing has changed.** `runRebuild` takes the context and checks it before the snapshot listing, before the pull, and after the pull, all before the stop. The pull waits with `WaitContext`, so Ctrl-C abandons it and the client cancels the server's download, which touches no instance. A rebuild waiting for its turn behind another (`rebuildSlot`, which replaced a mutex so the wait can end) gives up the same way. The error says `nothing was changed` and wraps `context.Canceled`. From the stop on the context is not consulted: the stop, volume snapshots, rebuild, config and restart run to their end, because stopping between the stop and the restart leaves the instance down on a root filesystem that is deleted and not yet recreated. See [`image-updates.md`](image-updates.md).
 - **Left to finish on purpose:** instance create (create, config, file placement and first start are one unit: an instance cut off after its create would be started later by the next apply without the files placed at first start), storage-volume create and the config update. A half-finished create cannot be told from an operation that is merely slow, and cancelling an Incus operation is not the same as undoing it, so these keep the "the level in flight finishes" rule from above. Ctrl-C does not end them; a deadline does (see the next update).
-- **Still without a context:** `tink run`, `deploy`, `backup` and `export`, and the Incus calls in `internal/run`, `internal/volbackup`, `internal/bootstrap` and `internal/helper`.
+- **Still without a context:** `tink run`, `deploy`, `backup` and `export`, and the Incus calls in `internal/instance`, `internal/volbackup`, `internal/bootstrap` and `internal/helper`.
 - **Run live** on an OCI instance with `on_image_change: rebuild`, a digest-pinned image and a newer digest: Ctrl-C 0.4 s into the pull of an image not yet pulled printed `nothing was changed` and exited non-zero after 1.3 s, with the instance still running. Ctrl-C during the stop (with the image not yet in the store, and with it cached) and again just after the instance had stopped, i.e. during the rebuild itself, each ran to the end: the instance was rebuilt onto the new image and started, the apply exited 0 and the next plan said `no changes`. Two Ctrl-Cs 1 s apart killed the process at 2.6 s; the instance ended up running on the new image, so that run did not leave it down (the kill landed late in the sequence; that is a matter of timing and not a guarantee).
 
 ## Update, 2026-10-20: every other call the resolver makes to the server has a deadline
 
-A daemon that accepted a create and never answered was ended only by a second Ctrl-C. Now no call the resolver makes to the Incus server waits without a bound. Checked against fakes whose operations never finish (`internal/incusapi/bounded_test.go`, `internal/run/optimeout_test.go`, `internal/resolve/opdeadline_test.go`); **not run against a live server**: reaching the five and thirty minute deadlines, and so the `OUTCOME UNKNOWN` report, needs a daemon that has stopped answering, and no safe way to produce one on a live host was found. The calls themselves ran live in the applies above (Incus 7.5.1, tink 22db2a2, 2026-10-20) and none reached its deadline.
+A daemon that accepted a create and never answered was ended only by a second Ctrl-C. Now no call the resolver makes to the Incus server waits without a bound. Checked against fakes whose operations never finish (`internal/incusapi/bounded_test.go`, `internal/instance/optimeout_test.go`, `internal/resolve/opdeadline_test.go`); **not run against a live server**: reaching the five and thirty minute deadlines, and so the `OUTCOME UNKNOWN` report, needs a daemon that has stopped answering, and no safe way to produce one on a live host was found. The calls themselves ran live in the applies above (Incus 7.5.1, tink 22db2a2, 2026-10-20) and none reached its deadline.
 
 **What a deadline does, and why it does only that.** `incusapi.Bounded` runs the call and stops waiting for it when the time is up. It does not cancel the call, because cancelling an Incus operation does not undo it: an instance create or a rebuild stopped part way is left part way, and a client that gives up while the server carries on has made the state harder to know, not easier. So for a call that changes the server, the deadline is a decision to stop waiting, and everything else follows from "the work may still be running, and may finish later":
 
@@ -597,3 +597,13 @@ So an applied `""` read back as a missing key, and every later plan said `would 
 - **What it does not do.** An empty `environment.X` is stored as no variable, so a process sees `X` unset where Docker's `X=` sets it to the empty string. A program that tells the two apart behaves differently. Nothing tink sends can change that, so it is documented ([docker-to-tink.md](docker-to-tink.md)); `tink import` and `tink run -e X=` do not say it at translation time, and will when a workload shows an app that tells empty from unset.
 - **[lab]** Run on a local Incus 7.5.1 server with the real file: Syncthing's example imported (with `network_mode: host` and the bind mount removed), plus a project, profile and storage volume that each declare `user.note: ""`. After one apply the next plan said `no changes` for all four; the build before this change reported `config.environment.STGUIADDRESS: "" -> ""` on every plan. A live `user.note` of `old` against a declared `""` planned `"old" -> ""`, applied, and the key was gone from the profile and the volume; the next plan was quiet.
 - **Two claims in the issue, measured against different things.** That a plan reaches `no changes` is tink's own contract, whichever of Docker and Incus is right; that is what this fixes. That the variable is empty is Docker's intent, which Incus cannot represent.
+
+## Update, 2026-10-24: `internal/run` is two packages (#216)
+
+`internal/run` began as `tink run` and grew a second job its name did not say: writing an instance to Incus. It is now two packages, and the older sections of this document that say `internal/run` describe the package as it was.
+
+- **`internal/instance`** is the instance engine: `Spec`, `Create` (the record, not started), `ApplyConfig` (config and devices, and the managed volumes they name), `EnsureRunning[Within]`, `Qualify` (an image reference Incus can resolve), `StaleOwnedKeys`, `HasRootDisk` and `KeyCommand`. It imports only `incusapi` and `incusconf`. A stack apply, a rebuild, the helper's install and upgrade and the backup check instance all use it.
+- **`internal/dockerrun`** is the docker-run translation: `Options`, `Build`, `Run` and everything that reads Docker's flags (`tink run`, and the translation `tink import` shares). It imports `instance`, and nothing the converger imports reaches it.
+- **The rule is now stated.** `resolve/imports_test.go` lists `instance` as ring 1 and does not list `dockerrun`, so the test fails if the converger ever imports the docker-flag half. That could not be said while both halves were one package. Before the split, the two files `tink run` gained this week (`earlyexit.go`, `imageuser.go`) were linked into every stack apply.
+- **Nothing else changed.** A move: the tests went with what they test (95, one more than before), and `Create`, `ApplyConfig` and `Build` keep their names.
+- **[lab]** Run on a local Incus 7.5.1 server after the move: `tink run` of a small image with a volume and `-e FOO=bar` created the volume, set the variable and started (exit 0, nothing extra printed), and a `plan apply` of a stack with an instance and a file created it, placed the file before the first start, and a second plan said no changes. Adding an import of `dockerrun` to a `resolve` file made the import test fail, and removing it made it pass.

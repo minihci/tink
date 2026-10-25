@@ -7,7 +7,7 @@ tink import compose.yaml > tink.yaml          # warnings and notes go to stderr,
 tink import --stack blog compose.yaml         # name the stack when the file has no name:
 ```
 
-It is `tink run` for a compose file. Each service becomes the same options `tink run` takes and goes through the same translation (`internal/run`), so a port or a volume means the same thing in both **[code]**. What it writes is a stack you keep and edit; nothing reads the compose file again, and tink holds no record of the import.
+It is `tink run` for a compose file. Each service becomes the same options `tink run` takes and goes through the same translation (`internal/dockerrun`), so a port or a volume means the same thing in both **[code]**. What it writes is a stack you keep and edit; nothing reads the compose file again, and tink holds no record of the import.
 
 It carries what the compose file says about the app and nothing about the site: no project, network, address, published name or backup policy. A comment after each volume says its backup answer is missing, and `tink plan` warns until you give one.
 

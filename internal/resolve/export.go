@@ -13,8 +13,8 @@ import (
 
 	"github.com/minihci/tink/internal/backupext"
 	"github.com/minihci/tink/internal/incusapi"
+	"github.com/minihci/tink/internal/instance"
 	"github.com/minihci/tink/internal/ownership"
-	"github.com/minihci/tink/internal/run"
 	"github.com/minihci/tink/internal/secrets"
 )
 
@@ -249,9 +249,9 @@ func exportInstance(server, scoped incus.InstanceServer, env *imageEnv, inst *ap
 		d.res.Devices[name] = copyMap(dev)
 	}
 
-	if cmd := cfg[run.KeyCommand]; cmd != "" {
+	if cmd := cfg[instance.KeyCommand]; cmd != "" {
 		d.comments = append(d.comments, "created by: "+cmd)
-		delete(cfg, run.KeyCommand)
+		delete(cfg, instance.KeyCommand)
 	}
 
 	// 1. The image, and with it what the image itself says about oci.* and environment.*

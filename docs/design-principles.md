@@ -26,7 +26,7 @@ It exists so that a new design can be tested against the old ones. For any propo
 
 **The pattern.** "Resolving" was never one problem but two: *translation* of a foreign vocabulary, and *convergence* of a description already in Incus's words. Translators sit at the edge (`tink run` turns a `docker run` line into Incus primitives; a Compose or Kubernetes translator would too); convergence happens once, in Incus's vocabulary. An Incus object or key keeps Incus's exact word, so `config:` and `devices:` blocks paste in unchanged. A concept Incus lacks gets tink's own word, checked first against Incus, Compose and Kubernetes.
 
-**Evidence.** Written: [resolver-architecture.md](resolver-architecture.md#two-problems-not-one), [the glossary's rules for choosing words](glossary.md#choosing-words) and its table of collisions (ingress, project, profile, publish, volume), `internal/run/DESIGN.md` (the flag mapping and its non-goals), [docker-to-tink.md](docker-to-tink.md). Built: `internal/run`, `tink export` (the reverse direction, [export.md](export.md)).
+**Evidence.** Written: [resolver-architecture.md](resolver-architecture.md#two-problems-not-one), [the glossary's rules for choosing words](glossary.md#choosing-words) and its table of collisions (ingress, project, profile, publish, volume), `internal/dockerrun/DESIGN.md` (the flag mapping and its non-goals), [docker-to-tink.md](docker-to-tink.md). Built: `internal/dockerrun` and `internal/instance`, `tink export` (the reverse direction, [export.md](export.md)).
 
 **The question to ask.** Is this in Incus's words? If it needs a word of its own, was it checked for collisions, and is it a deliberate step away from the rule?
 
@@ -78,7 +78,7 @@ It exists so that a new design can be tested against the old ones. For any propo
 
 **The pattern.** tink works on an Incus that has never heard of it, manages only what it is told to, and leaves the rest alone. You can come in from a hand-built host and go back out: `tink export` writes live objects as a stack (and checks the result with `plan`), `tink run` is a quick start you distill, and an existing helper is adopted in place and changed by nothing. A stack is proved read-only first: `plan` against a live server until it says no changes.
 
-**Evidence.** Built: `internal/resolve/export.go` ([export.md](export.md)), `internal/run`, `kind: helper` adoption (`helperkind.go`), `--remote` for planning a server from elsewhere ([remote.md](remote.md)). Written: [docker-to-tink.md](docker-to-tink.md), the exploration notes ([explore-uptime-kuma.md](explore-uptime-kuma.md)).
+**Evidence.** Built: `internal/resolve/export.go` ([export.md](export.md)), `internal/dockerrun`, `internal/instance`, `kind: helper` adoption (`helperkind.go`), `--remote` for planning a server from elsewhere ([remote.md](remote.md)). Written: [docker-to-tink.md](docker-to-tink.md), the exploration notes ([explore-uptime-kuma.md](explore-uptime-kuma.md)).
 
 **The question to ask.** Can this be adopted from what exists, and can it be left again? Does `plan` say "no changes" against a host that already matches?
 

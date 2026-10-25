@@ -1,4 +1,4 @@
-package run
+package instance
 
 import (
 	"reflect"

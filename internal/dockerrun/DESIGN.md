@@ -103,8 +103,12 @@ Checked rather than assumed, since these look like they should map:
 
 ## Architecture
 
-New package `internal/run`, following this repo's existing split (a
-plain importable package, not logic embedded in `cmd/tink`):
+Two plain importable packages, following this repo's existing split (not
+logic embedded in `cmd/tink`). `internal/dockerrun` (this document) is the
+docker-run translation. The instance engine it drives, `Spec`, `Create`,
+`ApplyConfig`, `EnsureRunning` and `Qualify`, is `internal/instance`, which
+a stack apply and the helper use too (#216); the steps below name the calls
+it makes there:
 
 - **`flags.go`** — pure parsing and mapping, no Incus dependency at all:
   Docker-flag strings in, an Incus `Spec` (image, instance name,

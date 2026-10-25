@@ -16,11 +16,12 @@ import (
 	"go.yaml.in/yaml/v4"
 
 	"github.com/minihci/tink/internal/compose"
-	"github.com/minihci/tink/internal/run"
+	"github.com/minihci/tink/internal/dockerrun"
+	"github.com/minihci/tink/internal/instance"
 )
 
 // Guard 3 of #205 (the corpus through both doors). For an app whose upstream page gives both a `docker run` line and a compose file, the line
-// goes through tink run's own flags and run.Build, the compose file goes through the importer, and the two must give the same instance config and
+// goes through tink run's own flags and dockerrun.Build, the compose file goes through the importer, and the two must give the same instance config and
 // devices. What differs is the site's half (project, network, profiles), which neither side states, and the command line tink run records.
 //
 // The line is hand-transcribed into internal/compose/testdata/APP/run.txt, beside the compose file. Where upstream's two forms disagree, run.txt
@@ -73,7 +74,7 @@ func TestCorpusThroughBothDoors(t *testing.T) {
 			}
 			imported := doors[0]
 
-			opts := run.DefaultOptions() // as newRunCmd starts: the pool a bare volume name is made in
+			opts := dockerrun.DefaultOptions() // as newRunCmd starts: the pool a bare volume name is made in
 			cmd := &cobra.Command{Use: "run"}
 			bindRunFlags(cmd, &opts)
 			cmd.SetOut(io.Discard)
@@ -86,11 +87,11 @@ func TestCorpusThroughBothDoors(t *testing.T) {
 				t.Fatal("run.txt has no image")
 			}
 			opts.Image, opts.Cmd = rest[0], rest[1:]
-			spec, err := run.Build(opts)
+			spec, err := dockerrun.Build(opts)
 			if err != nil {
 				t.Fatalf("tink run refuses the line: %v", err)
 			}
-			delete(spec.Config, run.KeyCommand) // how tink run was typed: the importer has no such command
+			delete(spec.Config, instance.KeyCommand) // how tink run was typed: the importer has no such command
 
 			if spec.Name != imported.Name {
 				t.Errorf("name: tink run %q, import %q", spec.Name, imported.Name)

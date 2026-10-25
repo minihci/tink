@@ -1,4 +1,4 @@
-package run
+package dockerrun
 
 import (
 	"errors"
@@ -10,6 +10,7 @@ import (
 
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
+	"github.com/minihci/tink/internal/instance"
 )
 
 // consoleFake is a server whose instance "app" has the status status (or is not there, or cannot be read), and whose console log is log (or cannot be read).
@@ -46,7 +47,7 @@ func collect() (func(string, ...any), *[]string) {
 	return func(format string, a ...any) { lines = append(lines, fmt.Sprintf(format, a...)) }, &lines
 }
 
-func appSpec() *Spec { return &Spec{Name: "app", Config: map[string]string{}} }
+func appSpec() *instance.Spec { return &instance.Spec{Name: "app", Config: map[string]string{}} }
 
 func TestCheckStillRunning(t *testing.T) {
 	t.Run("running: nothing is said and the console is not read", func(t *testing.T) {

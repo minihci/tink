@@ -1,4 +1,4 @@
-package run
+package instance
 
 import (
 	"reflect"
@@ -79,3 +79,7 @@ func TestApplyConfigWithNoOwnedPrefixRemovesNothing(t *testing.T) {
 		t.Errorf("config = %v, want %v", f.updated.Config, want)
 	}
 }
+
+type doneOp struct{ incus.Operation }
+
+func (doneOp) Wait() error { return nil }

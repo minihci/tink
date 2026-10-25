@@ -1,10 +1,12 @@
-package run
+package dockerrun
 
 import (
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/minihci/tink/internal/instance"
 )
 
 func writeEnvFile(t *testing.T, content string) string {
@@ -81,7 +83,7 @@ func TestTheEnvFilesValuesAreNeverInTheRecordedCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := spec.Config[KeyCommand]
+	cmd := spec.Config[instance.KeyCommand]
 	if !strings.Contains(cmd, "--env-file "+p) || strings.Contains(cmd, "hunter2") {
 		t.Errorf("the path is recorded, never the values: %s", cmd)
 	}
@@ -112,8 +114,8 @@ func TestPrivilegedSetsTheKeyAndSaysWhatItIsNot(t *testing.T) {
 			t.Errorf("the note should say %q: %s", want, joined)
 		}
 	}
-	if !strings.Contains(spec.Config[KeyCommand], "--privileged") {
-		t.Errorf("recorded: %s", spec.Config[KeyCommand])
+	if !strings.Contains(spec.Config[instance.KeyCommand], "--privileged") {
+		t.Errorf("recorded: %s", spec.Config[instance.KeyCommand])
 	}
 	if spec, _ := Build(Options{Name: "n", Image: "i"}); spec.Config["security.privileged"] != "" || len(spec.Notes) != 0 {
 		t.Errorf("not asked for, not said: %v %v", spec.Config, spec.Notes)

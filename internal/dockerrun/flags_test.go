@@ -1,8 +1,10 @@
-package run
+package dockerrun
 
 import (
 	"reflect"
 	"testing"
+
+	"github.com/minihci/tink/internal/instance"
 )
 
 func TestBuild_RequiresNameAndImage(t *testing.T) {
@@ -36,7 +38,7 @@ func TestBuild_Env(t *testing.T) {
 func withoutStamp(config map[string]string) map[string]string {
 	out := map[string]string{}
 	for k, v := range config {
-		if k != KeyCommand {
+		if k != instance.KeyCommand {
 			out[k] = v
 		}
 	}

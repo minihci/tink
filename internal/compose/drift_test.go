@@ -8,19 +8,19 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/minihci/tink/internal/run"
+	"github.com/minihci/tink/internal/dockerrun"
 )
 
-// Guard 1 of #205. Every field of run.Options is either filled from compose keys or deliberately not, and the table says which (classify.go).
+// Guard 1 of #205. Every field of dockerrun.Options is either filled from compose keys or deliberately not, and the table says which (classify.go).
 func TestEveryRunOptionIsClassified(t *testing.T) {
-	typ := reflect.TypeOf(run.Options{})
+	typ := reflect.TypeOf(dockerrun.Options{})
 	fields := map[string]bool{}
 	for i := 0; i < typ.NumField(); i++ {
 		name := typ.Field(i).Name
 		fields[name] = true
 		c, ok := optionClasses[name]
 		if !ok {
-			t.Errorf("run.Options.%s is not in optionClasses: classify it for import (internal/compose/classify.go): the compose keys that fill it, or the reason import does not", name)
+			t.Errorf("dockerrun.Options.%s is not in optionClasses: classify it for import (internal/compose/classify.go): the compose keys that fill it, or the reason import does not", name)
 			continue
 		}
 		if (len(c.keys) == 0) == (c.why == "") {
@@ -36,7 +36,7 @@ func TestEveryRunOptionIsClassified(t *testing.T) {
 	}
 	for name := range optionClasses {
 		if !fields[name] {
-			t.Errorf("optionClasses has %s, which is not a field of run.Options (removed? delete the entry)", name)
+			t.Errorf("optionClasses has %s, which is not a field of dockerrun.Options (removed? delete the entry)", name)
 		}
 	}
 }
@@ -54,7 +54,7 @@ func TestEveryTranslatedKeyHasAHome(t *testing.T) {
 			continue
 		}
 		if _, ok := notOptions[k]; !named[k] && !ok {
-			t.Errorf("service key %q is translated but no run.Options field in optionClasses names it, and it is not in notOptions", k)
+			t.Errorf("service key %q is translated but no dockerrun.Options field in optionClasses names it, and it is not in notOptions", k)
 		}
 	}
 	for k := range notOptions {

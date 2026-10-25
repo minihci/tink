@@ -9,8 +9,7 @@ import (
 
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
-
-	"github.com/minihci/tink/internal/run"
+	"github.com/minihci/tink/internal/instance"
 )
 
 // bridgeHost is a fakeHost that knows what its networks are: a managed bridge has an address, and the default profile's NIC can name one.
@@ -55,7 +54,7 @@ func hostWith(listen string, nets ...*api.Network) *bridgeHost {
 	return b
 }
 
-func bridgeInstaller(b *bridgeHost, specs *[]*run.Spec) (*Installer, *strings.Builder) {
+func bridgeInstaller(b *bridgeHost, specs *[]*instance.Spec) (*Installer, *strings.Builder) {
 	in, out := installer(b.fakeHost, specs)
 	in.Server = b
 	return in, out
@@ -63,7 +62,7 @@ func bridgeInstaller(b *bridgeHost, specs *[]*run.Spec) (*Installer, *strings.Bu
 
 // route runs what Install runs before it creates anything, and returns the decision.
 func route(b *bridgeHost, opts InstallOptions) (apiRoute, error) {
-	in, _ := bridgeInstaller(b, new([]*run.Spec))
+	in, _ := bridgeInstaller(b, new([]*instance.Spec))
 	opts.defaults()
 	addr, err := in.apiAddress()
 	if err != nil {
@@ -206,7 +205,7 @@ func TestParseAPIVia(t *testing.T) {
 // The instance itself: in network mode it has no proxy device, and the remote it is enrolled at is the bridge's address.
 func TestNetworkModeGivesTheHelperNoProxyDeviceAndEnrolsItAtTheBridgesAddress(t *testing.T) {
 	b := hostWith(":8443", bridge("tink0", "192.0.2.1/24"))
-	var specs []*run.Spec
+	var specs []*instance.Spec
 	in, out := bridgeInstaller(b, &specs)
 	if err := in.Install(InstallOptions{Image: "x", Network: "tink0", Wait: -1}); err != nil {
 		t.Fatal(err)
@@ -250,7 +249,7 @@ func TestNetworkModeGivesTheHelperNoProxyDeviceAndEnrolsItAtTheBridgesAddress(t 
 func TestTheDefaultIsTheNetworkWhenTheDefaultProfilesNICIsOnAManagedBridge(t *testing.T) {
 	b := hostWith("192.0.2.1:8443", bridge("tink0", "192.0.2.1/24"))
 	b.profileNIC = map[string]string{"type": "nic", "network": "tink0"}
-	var specs []*run.Spec
+	var specs []*instance.Spec
 	in, _ := bridgeInstaller(b, &specs)
 	if err := in.Install(InstallOptions{Image: "x", Wait: -1}); err != nil {
 		t.Fatal(err)
@@ -282,7 +281,7 @@ func TestProxyModeKeepsTheProxyDeviceAndTheLoopbackAddress(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			b := hostWith(tc.listen, bridge("tink0", "192.0.2.1/24"))
-			var specs []*run.Spec
+			var specs []*instance.Spec
 			in, out := bridgeInstaller(b, &specs)
 			if err := in.Install(InstallOptions{Image: "x", Network: "tink0", APIVia: tc.via, Wait: -1}); err != nil {
 				t.Fatal(err)
@@ -312,7 +311,7 @@ func TestProxyModeKeepsTheProxyDeviceAndTheLoopbackAddress(t *testing.T) {
 
 func TestANetworkInstallThatCannotBeDoneSaysSoBeforeCreatingAnything(t *testing.T) {
 	b := hostWith("127.0.0.1:8443", bridge("tink0", "192.0.2.1/24"))
-	var specs []*run.Spec
+	var specs []*instance.Spec
 	in, _ := bridgeInstaller(b, &specs)
 	err := in.Install(InstallOptions{Image: "x", Network: "tink0", APIVia: APIViaNetwork, Wait: -1})
 	if err == nil || !strings.Contains(err.Error(), "core.https_address") || !strings.Contains(err.Error(), "--api-via proxy") {
@@ -326,7 +325,7 @@ func TestANetworkInstallThatCannotBeDoneSaysSoBeforeCreatingAnything(t *testing.
 // What exists is left alone: a helper keeps the way it has, and install says how to change it instead of doing it.
 func TestInstallingAgainFollowsTheHelperThatExistsNotTheServerAsItIsNow(t *testing.T) {
 	b := hostWith(":8443", bridge("tink0", "192.0.2.1/24"))
-	in, _ := bridgeInstaller(b, new([]*run.Spec))
+	in, _ := bridgeInstaller(b, new([]*instance.Spec))
 	if err := in.Install(InstallOptions{Image: "x", Network: "tink0", Wait: -1}); err != nil {
 		t.Fatal(err)
 	}
@@ -352,7 +351,7 @@ func TestInstallingAgainFollowsTheHelperThatExistsNotTheServerAsItIsNow(t *testi
 
 func TestAnExistingProxyHelperStaysAProxyHelperWhateverTheNetworkWouldAllow(t *testing.T) {
 	b := hostWith(":8443", bridge("tink0", "192.0.2.1/24"))
-	in, _ := bridgeInstaller(b, new([]*run.Spec))
+	in, _ := bridgeInstaller(b, new([]*instance.Spec))
 	if err := in.Install(InstallOptions{Image: "x", Network: "tink0", APIVia: APIViaProxy, Wait: -1}); err != nil {
 		t.Fatal(err)
 	}
@@ -384,10 +383,10 @@ func TestAnImageUpgradeKeepsAHelperThatReachesTheAPIOverTheNetworkWithoutAProxyD
 		t.Fatalf("the fixture is a network helper: %v", got)
 	}
 
-	var specs []*run.Spec
+	var specs []*instance.Spec
 	in, out := installer(h, &specs)
 	base := in.Create
-	in.Create = func(s incus.InstanceServer, spec *run.Spec, project string) error {
+	in.Create = func(s incus.InstanceServer, spec *instance.Spec, project string) error {
 		if err := base(s, spec, project); err != nil {
 			return err
 		}
@@ -459,7 +458,7 @@ func TestAFirstConnectionThatFailsOverTheNetworkSaysWhatToCheck(t *testing.T) {
 func TestEnrolmentThatCannotReachTheBridgeAddressFailsWithTheHint(t *testing.T) {
 	b := hostWith(":8443", bridge("tink0", "192.0.2.1/24"))
 	b.execCode, b.execOut = 1, "Error: could not reach the server: dial tcp 192.0.2.1:8443: connect: connection refused\n"
-	in, _ := bridgeInstaller(b, new([]*run.Spec))
+	in, _ := bridgeInstaller(b, new([]*instance.Spec))
 	err := in.Install(InstallOptions{Image: "x", Network: "tink0", Wait: -1})
 	if err == nil || !strings.Contains(err.Error(), "could not reach the server") || !strings.Contains(err.Error(), "--api-via proxy") {
 		t.Errorf("err = %v", err)

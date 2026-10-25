@@ -2,7 +2,7 @@
 
 **Status: a dated record, 2026-10-09, updated as rows were fixed.** A row marked **done** has shipped; an open row (⛔ or ◐) was a gap when this was written and is not a promise. What works today is in [docker-to-tink.md](docker-to-tink.md).
 
-2026-10-09. Not a plan to replace `docker run` ([DESIGN.md](../internal/run/DESIGN.md) says why not). The question is narrower: **when someone
+2026-10-09. Not a plan to replace `docker run` ([DESIGN.md](../internal/dockerrun/DESIGN.md) says why not). The question is narrower: **when someone
 pastes the install instructions of a popular self-hosted project, what do they hit?** So the gaps are ranked by how often the real instructions use a feature, and by what your
 own stacks needed, not by what Docker can do.
 

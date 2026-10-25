@@ -1,9 +1,11 @@
-package run
+package dockerrun
 
 import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/minihci/tink/internal/instance"
 )
 
 // --user and the escape hatch (--incus-config, --incus-device).
@@ -39,7 +41,7 @@ func parseUser(u string) (uid, gid string, err error) {
 
 // applyUser sets the process user, and the ownership of any managed volume this run has to create (a new volume is root-owned, which a
 // non-root process cannot write to; Incus applies initial.uid/gid when the volume is created, and never to one that exists).
-func applyUser(spec *Spec, user string) error {
+func applyUser(spec *instance.Spec, user string) error {
 	if user == "" {
 		return nil
 	}
@@ -57,7 +59,7 @@ func applyUser(spec *Spec, user string) error {
 }
 
 // addIncusConfig adds --incus-config KEY=VALUE entries.
-func addIncusConfig(spec *Spec, entries []string) error {
+func addIncusConfig(spec *instance.Spec, entries []string) error {
 	for _, e := range entries {
 		k, v, ok := strings.Cut(e, "=")
 		if !ok || k == "" {
@@ -66,7 +68,7 @@ func addIncusConfig(spec *Spec, entries []string) error {
 		if strings.HasPrefix(k, "volatile.") {
 			return fmt.Errorf("--incus-config %q: volatile.* keys belong to Incus", k)
 		}
-		if k == KeyCommand {
+		if k == instance.KeyCommand {
 			return fmt.Errorf("--incus-config %q: tink run records the command there itself", k)
 		}
 		if _, set := spec.Config[k]; set {
@@ -100,7 +102,7 @@ func flagFor(key string) string {
 
 // addIncusDevices adds --incus-device 'NAME type=TYPE key=value ...' entries, the words separated by spaces as `incus config device add` takes
 // them (so a value cannot contain a space). The name may not be one a flag made (eth0, proxyN, volumeN), nor repeat.
-func addIncusDevices(spec *Spec, entries []string) error {
+func addIncusDevices(spec *instance.Spec, entries []string) error {
 	for _, e := range entries {
 		words := strings.Fields(e)
 		if len(words) == 0 || strings.Contains(words[0], "=") {
