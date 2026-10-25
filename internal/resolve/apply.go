@@ -290,49 +290,53 @@ func updateInPlace(s incus.InstanceServer, r Resource, env volumeEnv) error {
 	case KindNetworkACL:
 		return updateNetworkACL(s, r)
 	case KindProfile:
-		current, etag, err := s.GetProfile(r.Name)
-		if err != nil {
-			return err
-		}
-		put := current.Writable()
-		if put.Config == nil {
-			put.Config = map[string]string{}
-		}
-		for k, v := range r.Config {
-			put.Config[k] = v
-		}
-		if put.Devices == nil {
-			put.Devices = api.DevicesMap{}
-		}
-		for name, dev := range r.Devices {
-			put.Devices[name] = dev
-		}
-		return s.UpdateProfile(r.Name, put, etag)
+		return incusapi.RetryOnConflict(func() error {
+			current, etag, err := s.GetProfile(r.Name)
+			if err != nil {
+				return err
+			}
+			put := current.Writable()
+			if put.Config == nil {
+				put.Config = map[string]string{}
+			}
+			for k, v := range r.Config {
+				put.Config[k] = v
+			}
+			if put.Devices == nil {
+				put.Devices = api.DevicesMap{}
+			}
+			for name, dev := range r.Devices {
+				put.Devices[name] = dev
+			}
+			return s.UpdateProfile(r.Name, put, etag)
+		})
 	case KindStorageVolume:
 		pool := r.Pool
 		if pool == "" {
 			pool = "default"
 		}
-		current, etag, err := s.GetStoragePoolVolume(pool, "custom", r.Name)
-		if err != nil {
-			return err
-		}
-		put := current.Writable()
-		if put.Config == nil {
-			put.Config = map[string]string{}
-		}
-		set, remove, err := volumeBackupConfig(r, env)
-		if err != nil {
-			return err
-		}
-		splitCreationOnly(set) // how a volume was made is not changed afterwards (decideVolume warns about it)
-		for k, v := range set {
-			put.Config[k] = v
-		}
-		for _, k := range remove {
-			delete(put.Config, k)
-		}
-		return s.UpdateStoragePoolVolume(pool, "custom", r.Name, put, etag)
+		return incusapi.RetryOnConflict(func() error {
+			current, etag, err := s.GetStoragePoolVolume(pool, "custom", r.Name)
+			if err != nil {
+				return err
+			}
+			put := current.Writable()
+			if put.Config == nil {
+				put.Config = map[string]string{}
+			}
+			set, remove, err := volumeBackupConfig(r, env)
+			if err != nil {
+				return err
+			}
+			splitCreationOnly(set) // how a volume was made is not changed afterwards (decideVolume warns about it)
+			for k, v := range set {
+				put.Config[k] = v
+			}
+			for _, k := range remove {
+				delete(put.Config, k)
+			}
+			return s.UpdateStoragePoolVolume(pool, "custom", r.Name, put, etag)
+		})
 	default:
 		// Not implemented yet: projects are create-only so far,
 		// matching every real deployment on this platform to date --

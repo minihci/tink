@@ -103,7 +103,7 @@ func TestMergeVolumeConfigReadsAgainWhenSomeoneWroteInBetween(t *testing.T) {
 	// a volume that keeps changing is given up on, not retried forever
 	s = &volServer{conflicts: 10, vol: api.StorageVolume{}}
 	err := MergeVolumeConfig(s, "", "fast", "helper-status", map[string]string{"user.a": "b"})
-	if err == nil || !api.StatusErrorCheck(err, http.StatusPreconditionFailed) || len(s.updates) != volumeConfigAttempts {
+	if err == nil || !api.StatusErrorCheck(err, http.StatusPreconditionFailed) || len(s.updates) != conflictAttempts {
 		t.Errorf("err = %v after %d writes", err, len(s.updates))
 	}
 }

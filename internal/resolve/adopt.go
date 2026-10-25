@@ -125,7 +125,19 @@ type adoptOutcome struct {
 
 // adoptOne reads one declared object and, if it exists and has no stamp, writes the stamp. Every kind reads its object with the lookup that tells "absent"
 // from "could not ask" (incusapi.Lookup*), so a server that does not answer is an error and never "nothing to do".
+//
+// A write refused because the object changed since it was read is redone from a new read (incusapi.RetryOnConflict), which asks again whether the object
+// still has no stamp: one that was stamped meanwhile is nothing to do, not an error.
 func adoptOne(server incus.InstanceServer, r Resource, stack string) (adoptOutcome, error) {
+	var out adoptOutcome
+	err := incusapi.RetryOnConflict(func() (err error) {
+		out, err = adoptOnce(server, r, stack)
+		return err
+	})
+	return out, err
+}
+
+func adoptOnce(server incus.InstanceServer, r Resource, stack string) (adoptOutcome, error) {
 	s := scopedServer(server, r)
 	unstamped := func(config map[string]string) bool {
 		state, _ := ownership.Classify(config, stack)

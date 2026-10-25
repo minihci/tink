@@ -185,19 +185,21 @@ func createNetwork(server incus.InstanceServer, r Resource, stack string) error 
 }
 
 func updateNetwork(server incus.InstanceServer, r Resource) error {
-	current, etag, err := server.GetNetwork(r.Name)
-	if err != nil {
-		return err
-	}
-	put := current.Writable()
-	if put.Config == nil {
-		put.Config = map[string]string{}
-	}
-	for k, v := range networkWanted(current.Config, r.Config) {
-		put.Config[k] = v
-	}
-	if r.Description != "" {
-		put.Description = r.Description
-	}
-	return server.UpdateNetwork(r.Name, put, etag)
+	return incusapi.RetryOnConflict(func() error {
+		current, etag, err := server.GetNetwork(r.Name)
+		if err != nil {
+			return err
+		}
+		put := current.Writable()
+		if put.Config == nil {
+			put.Config = map[string]string{}
+		}
+		for k, v := range networkWanted(current.Config, r.Config) {
+			put.Config[k] = v
+		}
+		if r.Description != "" {
+			put.Description = r.Description
+		}
+		return server.UpdateNetwork(r.Name, put, etag)
+	})
 }

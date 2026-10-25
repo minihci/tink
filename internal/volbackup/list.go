@@ -7,6 +7,7 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 
 	"github.com/minihci/tink/internal/backupmeta"
+	"github.com/minihci/tink/internal/incusapi"
 )
 
 // ListedVolume is a custom volume found by listing the server, with the config it carries now.
@@ -54,18 +55,26 @@ func ListVolumes(s incus.InstanceServer) (vols []ListedVolume, poolErrs map[stri
 // forgetting stops the schedule and nothing else. owner is the stack the volume points back at (its user.tink.stack),
 // if any, so the caller can say whose YAML still has to change.
 func Forget(s incus.InstanceServer, v Volume) (had bool, owner string, err error) {
-	vol, etag, err := v.scoped(s).GetStoragePoolVolume(v.pool(), "custom", v.Name)
+	err = incusapi.RetryOnConflict(func() error {
+		vol, etag, err := v.scoped(s).GetStoragePoolVolume(v.pool(), "custom", v.Name)
+		if err != nil {
+			return fmt.Errorf("volume %s/%s: %w", v.pool(), v.Name, err)
+		}
+		owner = vol.Config[backupmeta.StackKey]
+		if _, has := vol.Config[backupmeta.PolicyKey]; !has {
+			had = false
+			return nil
+		}
+		put := vol.Writable()
+		delete(put.Config, backupmeta.PolicyKey)
+		if err := v.scoped(s).UpdateStoragePoolVolume(v.pool(), "custom", v.Name, put, etag); err != nil {
+			return fmt.Errorf("clearing the copy policy of %s/%s: %w", v.pool(), v.Name, err)
+		}
+		had = true
+		return nil
+	})
 	if err != nil {
-		return false, "", fmt.Errorf("volume %s/%s: %w", v.pool(), v.Name, err)
+		return false, owner, err
 	}
-	owner = vol.Config[backupmeta.StackKey]
-	if _, has := vol.Config[backupmeta.PolicyKey]; !has {
-		return false, owner, nil
-	}
-	put := vol.Writable()
-	delete(put.Config, backupmeta.PolicyKey)
-	if err := v.scoped(s).UpdateStoragePoolVolume(v.pool(), "custom", v.Name, put, etag); err != nil {
-		return false, owner, fmt.Errorf("clearing the copy policy of %s/%s: %w", v.pool(), v.Name, err)
-	}
-	return true, owner, nil
+	return had, owner, nil
 }
