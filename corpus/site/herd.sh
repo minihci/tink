@@ -297,6 +297,10 @@ down_stacks() {
 		exists incus network show "tink-$s" && incus network delete "tink-$s" </dev/null
 		exists incus network acl show "tink-$s-in" && incus network acl delete "tink-$s-in" </dev/null
 	done
+	# The site (and a stack that was never applied) has no bridge or ACL of its own, so the last test above fails and ends the loop with status 1,
+	# which set -e would take for a failed delete and stop `down` before it removes herd0. A delete that fails still stops it: it is the last command
+	# of its list, which set -e does not excuse.
+	return 0
 }
 
 # down with a set removes that set's stacks and nothing else, so the site and the other sets stay. Without one it removes the first herd, the stacks of
