@@ -12,6 +12,7 @@ import (
 
 	"github.com/minihci/tink/internal/imageconfig"
 	"github.com/minihci/tink/internal/incusconf"
+	"github.com/minihci/tink/internal/instance"
 )
 
 // A command given after the image goes after the image's ENTRYPOINT, as `docker run IMAGE ARGS` does (#230). Incus keeps one merged string for the process
@@ -41,7 +42,7 @@ func imageEntrypoint(server incus.InstanceServer, image string) ([]string, error
 	if !known || remote.Protocol != "oci" || len(remote.Addrs) == 0 {
 		return nil, errNotOCI
 	}
-	host := remoteHostOf(remote)
+	host := instance.RemoteHost(remote)
 	base := registryBase(remote.Addrs[0])
 	repo, tag := splitRef(ref, isDockerHub(host))
 	srv, _, err := server.GetServer()

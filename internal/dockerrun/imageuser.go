@@ -7,6 +7,7 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 
 	"github.com/minihci/tink/internal/incusapi"
+	"github.com/minihci/tink/internal/instance"
 )
 
 // A volume `tink run` creates is owned by the user the image runs as (#176).
@@ -22,7 +23,7 @@ import (
 
 // inheritImageUser sets spec.VolumeConfig from the new instance's oci.uid and oci.gid. server must be scoped to the instance's project. It returns a
 // warning when it could not read the instance (the volumes are then created root-owned, as before), and "" otherwise.
-func inheritImageUser(server incus.InstanceServer, spec *Spec) string {
+func inheritImageUser(server incus.InstanceServer, spec *instance.Spec) string {
 	if len(spec.VolumeConfig) > 0 || !createsManagedVolume(spec) {
 		return ""
 	}
@@ -46,7 +47,7 @@ func inheritImageUser(server incus.InstanceServer, spec *Spec) string {
 }
 
 // createsManagedVolume reports whether the spec attaches a managed volume, which this run may have to create.
-func createsManagedVolume(spec *Spec) bool {
+func createsManagedVolume(spec *instance.Spec) bool {
 	for _, dev := range spec.Devices {
 		if dev["type"] == "disk" && dev["pool"] != "" && dev["source"] != "" {
 			return true
@@ -56,7 +57,7 @@ func createsManagedVolume(spec *Spec) bool {
 }
 
 // ownerSource is what the lines about a volume's owner add when the owner is the image's user.
-func ownerSource(spec *Spec) string {
+func ownerSource(spec *instance.Spec) string {
 	if spec.VolumeOwnerFromImage {
 		return " (the image's user)"
 	}

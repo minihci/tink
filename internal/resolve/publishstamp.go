@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/minihci/tink/internal/dockerrun"
+	"github.com/minihci/tink/internal/instance"
 	"github.com/minihci/tink/internal/secrets"
 )
 
@@ -28,11 +28,11 @@ import (
 // The prefix is OWNED by tink, and that is the one place tink takes a config key back. Everywhere else a key that is no longer declared is left on the
 // instance (docs/plan-extras.md; removing them is proposed in #138), but a stamp that stays after its publish is deleted would keep the name rendered: it would go on being
 // routed and let in. So when planning an instance that the stack declares, a live key under the prefix that the stack no longer derives is reported as a
-// removal and removed on apply (dockerrun.StaleOwnedKeys). Only that prefix, and only on instances the stack declares: any other key, tink's or not, is untouched.
+// removal and removed on apply (instance.StaleOwnedKeys). Only that prefix, and only on instances the stack declares: any other key, tink's or not, is untouched.
 const PublishStampPrefix = "user.tink.publish."
 
 // ownedConfigPrefixes are what tink owns on a stack's instances: the family of publish stamps (above) and the one key of the site stamp (SiteKey, site.go).
-// The first ends in a dot and owns everything under it; the second does not, and owns only itself (dockerrun.StaleOwnedKeys).
+// The first ends in a dot and owns everything under it; the second does not, and owns only itself (instance.StaleOwnedKeys).
 var ownedConfigPrefixes = []string{PublishStampPrefix, SiteKey}
 
 // publishStamp is the stamped value. Its fields are in key order, which is the order the JSON is written in.
@@ -218,7 +218,7 @@ func derivePublishStamps(resources []Resource) error {
 // staleOwnedChanges are the plan lines for the owned keys that are live on an instance and that the stack no longer derives: one removal per key, sorted.
 func staleOwnedChanges(live, desired map[string]string) []string {
 	var changes []string
-	for _, k := range dockerrun.StaleOwnedKeys(live, desired, ownedConfigPrefixes) {
+	for _, k := range instance.StaleOwnedKeys(live, desired, ownedConfigPrefixes) {
 		if secrets.SensitiveKey(k) { // a stamp holds group names only, but a key under the prefix is whatever is on the instance: print no value tink would not print elsewhere
 			changes = append(changes, fmt.Sprintf("config.%s: %s -> (unset)", k, secrets.HiddenValue))
 			continue

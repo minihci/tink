@@ -17,6 +17,7 @@ import (
 
 	"github.com/minihci/tink/internal/compose"
 	"github.com/minihci/tink/internal/dockerrun"
+	"github.com/minihci/tink/internal/instance"
 )
 
 // Guard 3 of #205 (the corpus through both doors). For an app whose upstream page gives both a `docker run` line and a compose file, the line
@@ -90,7 +91,7 @@ func TestCorpusThroughBothDoors(t *testing.T) {
 			if err != nil {
 				t.Fatalf("tink run refuses the line: %v", err)
 			}
-			delete(spec.Config, dockerrun.KeyCommand) // how tink run was typed: the importer has no such command
+			delete(spec.Config, instance.KeyCommand) // how tink run was typed: the importer has no such command
 
 			if spec.Name != imported.Name {
 				t.Errorf("name: tink run %q, import %q", spec.Name, imported.Name)

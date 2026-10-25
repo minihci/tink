@@ -25,6 +25,7 @@ import (
 	yaml "go.yaml.in/yaml/v4"
 
 	"github.com/minihci/tink/internal/dockerrun"
+	"github.com/minihci/tink/internal/instance"
 	"github.com/minihci/tink/internal/secrets"
 )
 
@@ -392,7 +393,7 @@ func (im *importer) service(compose string, sv map[string]any) {
 		im.refuse(compose, key, reason)
 		return
 	}
-	delete(spec.Config, dockerrun.KeyCommand)
+	delete(spec.Config, instance.KeyCommand)
 	for _, n := range spec.Notes {
 		im.note(fmt.Sprintf("service %s: %s", compose, n))
 	}

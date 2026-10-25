@@ -11,8 +11,7 @@ import (
 
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
-
-	"github.com/minihci/tink/internal/dockerrun"
+	"github.com/minihci/tink/internal/instance"
 )
 
 var notFound = api.StatusErrorf(http.StatusNotFound, "not found")
@@ -264,9 +263,9 @@ func (h *fakeHost) ExecInstance(_ string, post api.InstanceExecPost, args *incus
 	return fakeOp{meta: map[string]any{"return": float64(h.execCode)}}, nil
 }
 
-// creator is Installer.Create: it makes the stopped instance the way dockerrun.Create would, and records the spec it was given.
-func (h *fakeHost) creator(specs *[]*dockerrun.Spec) func(incus.InstanceServer, *dockerrun.Spec, string) error {
-	return func(_ incus.InstanceServer, s *dockerrun.Spec, project string) error {
+// creator is Installer.Create: it makes the stopped instance the way instance.Create would, and records the spec it was given.
+func (h *fakeHost) creator(specs *[]*instance.Spec) func(incus.InstanceServer, *instance.Spec, string) error {
+	return func(_ incus.InstanceServer, s *instance.Spec, project string) error {
 		*specs = append(*specs, s)
 		h.instances[s.Name] = &api.Instance{Name: s.Name, Project: project, Status: "Stopped"}
 		h.log = append(h.log, "create "+s.Name+" from "+s.Image)
@@ -274,7 +273,7 @@ func (h *fakeHost) creator(specs *[]*dockerrun.Spec) func(incus.InstanceServer, 
 	}
 }
 
-func installer(h *fakeHost, specs *[]*dockerrun.Spec) (*Installer, *strings.Builder) {
+func installer(h *fakeHost, specs *[]*instance.Spec) (*Installer, *strings.Builder) {
 	out := new(strings.Builder)
 	return &Installer{Server: h, Out: out, Create: h.creator(specs), ReadFile: func(p string) ([]byte, error) { return []byte("ELF-" + p), nil },
 		Sleep: func(time.Duration) {}}, out
@@ -282,7 +281,7 @@ func installer(h *fakeHost, specs *[]*dockerrun.Spec) (*Installer, *strings.Buil
 
 func TestInstallCreatesTheHelperAndEnrolsItWithTheTokenOnStandardInput(t *testing.T) {
 	h := newHost()
-	var specs []*dockerrun.Spec
+	var specs []*instance.Spec
 	in, out := installer(h, &specs)
 
 	if err := in.Install(InstallOptions{Binary: "/tmp/tink-linux", TZ: "America/Denver", Wait: -1}); err != nil {
@@ -372,7 +371,7 @@ func contains(list []string, s string) bool {
 
 func TestInstallTwiceDoesNotCreateOrEnrolTwice(t *testing.T) {
 	h := newHost()
-	var specs []*dockerrun.Spec
+	var specs []*instance.Spec
 	in, out := installer(h, &specs)
 	if err := in.Install(InstallOptions{Image: "ghcr.io/x/tink-helper:1", Wait: -1}); err != nil {
 		t.Fatal(err)
@@ -391,7 +390,7 @@ func TestInstallTwiceDoesNotCreateOrEnrolTwice(t *testing.T) {
 
 func TestReissueReplacesTheCertificate(t *testing.T) {
 	h := newHost()
-	var specs []*dockerrun.Spec
+	var specs []*instance.Spec
 	in, _ := installer(h, &specs)
 	in.Install(InstallOptions{Image: "x", Wait: -1})
 	old := h.certs[0].Fingerprint
@@ -412,7 +411,7 @@ func TestReissueReplacesTheCertificate(t *testing.T) {
 func TestInstallRefusesASecondHelper(t *testing.T) {
 	h := newHost()
 	h.instances["other"] = &api.Instance{Name: "other", Project: "elsewhere", Status: "Running", InstancePut: api.InstancePut{Config: map[string]string{MarkerKey: "1"}}}
-	var specs []*dockerrun.Spec
+	var specs []*instance.Spec
 	in, _ := installer(h, &specs)
 	err := in.Install(InstallOptions{Image: "x", Wait: -1})
 	if err == nil || !strings.Contains(err.Error(), "already a helper") || !strings.Contains(err.Error(), "elsewhere/other") {
@@ -438,7 +437,7 @@ func TestInstallSaysWhatIsMissingBeforeTouchingAnything(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h := newHost()
 			tc.mut(h)
-			var specs []*dockerrun.Spec
+			var specs []*instance.Spec
 			in, _ := installer(h, &specs)
 			tc.opts.Wait = -1
 			err := in.Install(tc.opts)
@@ -455,7 +454,7 @@ func TestInstallSaysWhatIsMissingBeforeTouchingAnything(t *testing.T) {
 func TestTheNICComesFromTheDefaultProfileWhenItHasOne(t *testing.T) {
 	h := newHost()
 	h.defaultNIC = true
-	var specs []*dockerrun.Spec
+	var specs []*instance.Spec
 	in, _ := installer(h, &specs)
 	if err := in.Install(InstallOptions{Image: "x", Wait: -1}); err != nil {
 		t.Fatal(err)
@@ -491,7 +490,7 @@ func TestConnectAddress(t *testing.T) {
 func TestAnEnrolmentThatFailsSaysWhy(t *testing.T) {
 	h := newHost()
 	h.execCode, h.execOut = 1, "Error: the token was already used\n"
-	var specs []*dockerrun.Spec
+	var specs []*instance.Spec
 	in, _ := installer(h, &specs)
 	err := in.Install(InstallOptions{Image: "x", Wait: -1})
 	if err == nil || !strings.Contains(err.Error(), "exit 1") || !strings.Contains(err.Error(), "already used") {
@@ -510,7 +509,7 @@ func TestInstallWaitsForTheFirstStatusAndSaysWhatItSaw(t *testing.T) {
 	for name, onInstance := range map[string]bool{"on the status volume": false, "on the instance": true} {
 		t.Run(name, func(t *testing.T) {
 			h := newHost()
-			var specs []*dockerrun.Spec
+			var specs []*instance.Spec
 			in, out := installer(h, &specs)
 			clock := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
 			in.Now = func() time.Time { return clock }
@@ -575,7 +574,7 @@ func helperRunning(h *fakeHost) {
 func TestRemoveRevokesTheCertificateStopsAndDeletesButKeepsTheVolumes(t *testing.T) {
 	h := newHost()
 	helperRunning(h)
-	in, out := installer(h, new([]*dockerrun.Spec))
+	in, out := installer(h, new([]*instance.Spec))
 	if err := in.Remove(RemoveOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -600,7 +599,7 @@ func TestRemoveRevokesTheCertificateStopsAndDeletesButKeepsTheVolumes(t *testing
 func TestRemovePurgeDeletesTheVolumesInTheirOwnPoolAndTheProject(t *testing.T) {
 	h := newHost()
 	helperRunning(h)
-	in, _ := installer(h, new([]*dockerrun.Spec))
+	in, _ := installer(h, new([]*instance.Spec))
 	if err := in.Remove(RemoveOptions{Purge: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -615,13 +614,13 @@ func TestRemovePurgeDeletesTheVolumesInTheirOwnPoolAndTheProject(t *testing.T) {
 }
 
 func TestRemoveWithNoHelperIsAnError(t *testing.T) {
-	in, _ := installer(newHost(), new([]*dockerrun.Spec))
+	in, _ := installer(newHost(), new([]*instance.Spec))
 	if err := in.Remove(RemoveOptions{}); err == nil || !strings.Contains(err.Error(), "no helper found") {
 		t.Errorf("%v", err)
 	}
 	h := newHost()
 	helperRunning(h)
-	in, _ = installer(h, new([]*dockerrun.Spec))
+	in, _ = installer(h, new([]*instance.Spec))
 	if err := in.Remove(RemoveOptions{Name: "someone-else"}); err == nil {
 		t.Error("a name that matches no helper removes nothing")
 	}
@@ -642,7 +641,7 @@ func commandsRun(h *fakeHost) []string {
 
 func TestAFirstInstallDoesNotForgetAnythingBecauseThereIsNothingToForget(t *testing.T) {
 	h := newHost()
-	in, _ := installer(h, new([]*dockerrun.Spec))
+	in, _ := installer(h, new([]*instance.Spec))
 	if err := in.Install(InstallOptions{Image: "x", Wait: -1}); err != nil {
 		t.Fatal(err)
 	}
@@ -653,7 +652,7 @@ func TestAFirstInstallDoesNotForgetAnythingBecauseThereIsNothingToForget(t *test
 
 func TestInstallingAgainAfterARevocationEnrolsTheSameKeyAgain(t *testing.T) {
 	h := newHost()
-	in, out := installer(h, new([]*dockerrun.Spec))
+	in, out := installer(h, new([]*instance.Spec))
 	in.Install(InstallOptions{Image: "x", Wait: -1})
 	h.certs = nil // revoked: incus config trust remove
 	h.log = nil
@@ -682,7 +681,7 @@ func TestInstallingAgainAfterARevocationEnrolsTheSameKeyAgain(t *testing.T) {
 // installed through a proxy device was removed and installed again over the network, which failed with `remote "host" already exists`.
 func TestInstallingAfterARemoveThatKeptTheVolumesForgetsTheOldRemote(t *testing.T) {
 	h := newHost()
-	in, out := installer(h, new([]*dockerrun.Spec))
+	in, out := installer(h, new([]*instance.Spec))
 	if err := in.Install(InstallOptions{Image: "x", Wait: -1}); err != nil {
 		t.Fatal(err)
 	}
@@ -712,7 +711,7 @@ func TestInstallingAfterARemoveThatKeptTheVolumesForgetsTheOldRemote(t *testing.
 
 func TestReissueAlsoRemovesTheOldKeyPairSoANewOneIsMade(t *testing.T) {
 	h := newHost()
-	in, _ := installer(h, new([]*dockerrun.Spec))
+	in, _ := installer(h, new([]*instance.Spec))
 	in.Install(InstallOptions{Image: "x", Wait: -1})
 	h.log = nil
 	if err := in.Install(InstallOptions{Image: "x", Reissue: true, Wait: -1}); err != nil {
@@ -778,7 +777,7 @@ func TestInstallSendsTheRootDiskInTheCreationRequest(t *testing.T) {
 	for _, pool := range []string{"", "nas"} {
 		t.Run("pool "+pool, func(t *testing.T) {
 			h := newHost()
-			var specs []*dockerrun.Spec
+			var specs []*instance.Spec
 			in, _ := installer(h, &specs)
 			if err := in.Install(InstallOptions{Image: "ghcr:minihci/tink-helper:v1.2.3", Pool: pool, Wait: -1}); err != nil {
 				t.Fatal(err)
@@ -790,7 +789,7 @@ func TestInstallSendsTheRootDiskInTheCreationRequest(t *testing.T) {
 			if wantPool == "" {
 				wantPool = "default"
 			}
-			if root := specs[0].Devices["root"]; !dockerrun.HasRootDisk(specs[0].Devices) || root["pool"] != wantPool {
+			if root := specs[0].Devices["root"]; !instance.HasRootDisk(specs[0].Devices) || root["pool"] != wantPool {
 				t.Errorf("a root disk on pool %s: %v", wantPool, specs[0].Devices)
 			}
 			if len(specs[0].Profiles) != 0 {
@@ -802,10 +801,10 @@ func TestInstallSendsTheRootDiskInTheCreationRequest(t *testing.T) {
 
 func TestInstallRecordsTheExactImageSoAnUpgradeCanTellWhichItIs(t *testing.T) {
 	h := newHost()
-	var specs []*dockerrun.Spec
+	var specs []*instance.Spec
 	in, _ := installer(h, &specs)
 	base := in.Create
-	in.Create = func(s incus.InstanceServer, spec *dockerrun.Spec, project string) error {
+	in.Create = func(s incus.InstanceServer, spec *instance.Spec, project string) error {
 		if err := base(s, spec, project); err != nil {
 			return err
 		}
@@ -878,7 +877,7 @@ func indexOf(log []string, s string) int {
 func TestUpgradeDrainsFirstThenReplacesThenLiftsTheDrain(t *testing.T) {
 	h := newHost()
 	upgradeFixture(h)
-	in, out := installer(h, new([]*dockerrun.Spec))
+	in, out := installer(h, new([]*instance.Spec))
 	clocked(in, func(n int, now time.Time) {
 		switch n {
 		case 1: // the helper has seen the drain: one job is running
@@ -920,7 +919,7 @@ func TestUpgradeDrainsFirstThenReplacesThenLiftsTheDrain(t *testing.T) {
 func TestAnUpgradeThatTimesOutLiftsTheDrainAndReplacesNothingUnlessForced(t *testing.T) {
 	h := newHost()
 	upgradeFixture(h)
-	in, out := installer(h, new([]*dockerrun.Spec))
+	in, out := installer(h, new([]*instance.Spec))
 	clocked(in, func(n int, now time.Time) {
 		publish(h, now, func(s *Status) { s.Draining, s.Running = true, 1 }) // a job that never ends
 	})
@@ -941,7 +940,7 @@ func TestAnUpgradeThatTimesOutLiftsTheDrainAndReplacesNothingUnlessForced(t *tes
 	// --force goes on, and says what that does
 	h = newHost()
 	upgradeFixture(h)
-	in, out = installer(h, new([]*dockerrun.Spec))
+	in, out = installer(h, new([]*instance.Spec))
 	clocked(in, func(n int, now time.Time) { publish(h, now, func(s *Status) { s.Draining, s.Running = true, 1 }) })
 	if err := in.Upgrade(UpgradeOptions{Binary: "/tmp/new-tink", DrainTimeout: time.Minute, Force: true, Wait: -1}); err != nil {
 		t.Fatal(err)
@@ -954,10 +953,10 @@ func TestAnUpgradeThatTimesOutLiftsTheDrainAndReplacesNothingUnlessForced(t *tes
 func TestAnImageUpgradeRecreatesTheInstanceWithTheSameConfigDevicesAndVolumes(t *testing.T) {
 	h := newHost()
 	upgradeFixture(h)
-	var specs []*dockerrun.Spec
+	var specs []*instance.Spec
 	in, out := installer(h, &specs)
 	base := in.Create
-	in.Create = func(s incus.InstanceServer, spec *dockerrun.Spec, project string) error {
+	in.Create = func(s incus.InstanceServer, spec *instance.Spec, project string) error {
 		if err := base(s, spec, project); err != nil {
 			return err
 		}
@@ -1002,7 +1001,7 @@ func TestAnImageUpgradeRecreatesTheInstanceWithTheSameConfigDevicesAndVolumes(t 
 func TestUpgradeGoesOnWhenTheHelperIsNotReportingAndStoppedHelpersNeedNoDrain(t *testing.T) {
 	h := newHost()
 	upgradeFixture(h)
-	in, out := installer(h, new([]*dockerrun.Spec))
+	in, out := installer(h, new([]*instance.Spec))
 	clocked(in, func(n int, now time.Time) {}) // it never says anything
 	if err := in.Upgrade(UpgradeOptions{Binary: "/tmp/new-tink", Wait: -1}); err != nil {
 		t.Fatal(err)
@@ -1014,7 +1013,7 @@ func TestUpgradeGoesOnWhenTheHelperIsNotReportingAndStoppedHelpersNeedNoDrain(t 
 	h = newHost()
 	upgradeFixture(h)
 	h.instances["helper"].Status = "Stopped"
-	in, out = installer(h, new([]*dockerrun.Spec))
+	in, out = installer(h, new([]*instance.Spec))
 	if err := in.Upgrade(UpgradeOptions{Binary: "/tmp/new-tink", Wait: -1}); err != nil {
 		t.Fatal(err)
 	}
@@ -1026,7 +1025,7 @@ func TestUpgradeGoesOnWhenTheHelperIsNotReportingAndStoppedHelpersNeedNoDrain(t 
 func TestUpgradeNeedsExactlyOneThingToUpgradeToAndAHelper(t *testing.T) {
 	h := newHost()
 	upgradeFixture(h)
-	in, _ := installer(h, new([]*dockerrun.Spec))
+	in, _ := installer(h, new([]*instance.Spec))
 	for name, opts := range map[string]UpgradeOptions{"neither": {}, "both": {Image: "x", Binary: "y"}} {
 		if err := in.Upgrade(opts); err == nil || !strings.Contains(err.Error(), "exactly one of --image") {
 			t.Errorf("%s: %v", name, err)
@@ -1035,7 +1034,7 @@ func TestUpgradeNeedsExactlyOneThingToUpgradeToAndAHelper(t *testing.T) {
 	if len(h.log) != 0 {
 		t.Errorf("nothing is done: %v", h.log)
 	}
-	in, _ = installer(newHost(), new([]*dockerrun.Spec))
+	in, _ = installer(newHost(), new([]*instance.Spec))
 	if err := in.Upgrade(UpgradeOptions{Binary: "y"}); err == nil || !strings.Contains(err.Error(), "no helper found") {
 		t.Errorf("%v", err)
 	}
@@ -1043,7 +1042,7 @@ func TestUpgradeNeedsExactlyOneThingToUpgradeToAndAHelper(t *testing.T) {
 
 func TestTheHelperRunsOnlyTheBackupWorkAndPassesNoIngressFlags(t *testing.T) {
 	h := newHost()
-	var specs []*dockerrun.Spec
+	var specs []*instance.Spec
 	in, _ := installer(h, &specs)
 	in.Install(InstallOptions{Image: "x", Wait: -1})
 	if e := specs[0].Config["oci.entrypoint"]; strings.Contains(e, "ingress") || !strings.Contains(e, "--jobs") {

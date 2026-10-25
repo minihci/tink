@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/minihci/tink/internal/instance"
 )
 
 func TestPublishAcceptsWhatInstallLinesWrite(t *testing.T) {
@@ -256,7 +258,7 @@ func TestTmpfsIncusDevice(t *testing.T) {
 			t.Errorf("%q %q = %q %v, want %q", c.path, c.size, got, err, c.want)
 		}
 		// and it is an entry --incus-device accepts
-		spec := &Spec{Devices: map[string]map[string]string{}}
+		spec := &instance.Spec{Devices: map[string]map[string]string{}}
 		if err := addIncusDevices(spec, []string{got}); err != nil || spec.Devices["t"]["source"] != "tmpfs:" {
 			t.Errorf("%q is not a valid --incus-device: %v %v", got, err, spec.Devices)
 		}

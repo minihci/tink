@@ -1,4 +1,4 @@
-package dockerrun
+package instance
 
 import (
 	"reflect"

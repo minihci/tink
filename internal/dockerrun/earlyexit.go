@@ -9,6 +9,7 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 
 	"github.com/minihci/tink/internal/incusapi"
+	"github.com/minihci/tink/internal/instance"
 	"github.com/minihci/tink/internal/secrets"
 )
 
@@ -35,7 +36,7 @@ const (
 )
 
 // secretRedactor holds the values of the environment variables of spec whose names look like secrets.
-func secretRedactor(spec *Spec) *secrets.Redactor {
+func secretRedactor(spec *instance.Spec) *secrets.Redactor {
 	r := secrets.NewRedactor()
 	for k, v := range spec.Config {
 		if name, ok := strings.CutPrefix(k, "environment."); ok && secrets.SensitiveKey(name) {
@@ -69,7 +70,7 @@ func consoleTail(server incus.InstanceServer, name string, n int, redact *secret
 
 // explainConsole notes the end of the instance's console log, under a line that says what it is. A log that cannot be read is said, not left out, unless the
 // instance has none to read (a start that failed before the process existed).
-func explainConsole(server incus.InstanceServer, spec *Spec, note func(string, ...any), what string) {
+func explainConsole(server incus.InstanceServer, spec *instance.Spec, note func(string, ...any), what string) {
 	lines, err := consoleTail(server, spec.Name, consoleTailLines, secretRedactor(spec))
 	switch {
 	case err != nil && incusapi.IsNotFound(err):
@@ -88,7 +89,7 @@ func explainConsole(server incus.InstanceServer, spec *Spec, note func(string, .
 
 // checkStillRunning is asked after a start that succeeded. It waits settle, and when the instance is not running prints the end of its console log and returns an
 // error. server must be scoped to the instance's project.
-func checkStillRunning(server incus.InstanceServer, spec *Spec, settle time.Duration, note func(string, ...any)) error {
+func checkStillRunning(server incus.InstanceServer, spec *instance.Spec, settle time.Duration, note func(string, ...any)) error {
 	if settle > 0 {
 		time.Sleep(settle)
 	}

@@ -10,8 +10,8 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
 
-	"github.com/minihci/tink/internal/dockerrun"
 	"github.com/minihci/tink/internal/incusapi"
+	"github.com/minihci/tink/internal/instance"
 )
 
 // on_image_change: rebuild -- converge an image change by rebuilding the
@@ -345,7 +345,7 @@ func (o incusRebuildOps) Stop(name string) error {
 }
 
 func (o incusRebuildOps) Start(name string) error {
-	return dockerrun.EnsureRunningWithin(o.server, name, o.limit(false))
+	return instance.EnsureRunningWithin(o.server, name, o.limit(false))
 }
 
 // SnapshotVolumes snapshots every custom volume attached to the instance.
@@ -389,5 +389,5 @@ func (o incusRebuildOps) Rebuild(name, fingerprint string) error {
 }
 
 func (o incusRebuildOps) ApplyConfig(r Resource) error {
-	return dockerrun.ApplyConfig(o.server, &dockerrun.Spec{Name: r.Name, Config: r.Config, Devices: r.Devices, OwnedConfigPrefixes: ownedConfigPrefixes, OpTimeout: o.limit(false)})
+	return instance.ApplyConfig(o.server, &instance.Spec{Name: r.Name, Config: r.Config, Devices: r.Devices, OwnedConfigPrefixes: ownedConfigPrefixes, OpTimeout: o.limit(false)})
 }

@@ -7,6 +7,7 @@ import (
 
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
+	"github.com/minihci/tink/internal/instance"
 )
 
 // instFake is a server whose instance "app" has the config in cfg, and which counts how often it was asked for it.
@@ -33,7 +34,7 @@ func (f *instFake) GetInstance(name string) (*api.Instance, string, error) {
 
 func (f *instFake) UseProject(string) incus.InstanceServer { return f }
 
-func specWithVolume() *Spec {
+func specWithVolume() *instance.Spec {
 	s := diskOnPool()
 	s.Name = "app"
 	return s
@@ -82,7 +83,7 @@ func TestInheritImageUser_LeavesWhatItShouldAlone(t *testing.T) {
 	})
 	t.Run("no managed volume: the instance is not read", func(t *testing.T) {
 		f := &instFake{cfg: map[string]string{"oci.uid": "472"}}
-		spec := &Spec{Name: "app", Devices: map[string]map[string]string{"host": {"type": "disk", "source": "/srv/data", "path": "/data"}}}
+		spec := &instance.Spec{Name: "app", Devices: map[string]map[string]string{"host": {"type": "disk", "source": "/srv/data", "path": "/data"}}}
 		inheritImageUser(f, spec)
 		if len(spec.VolumeConfig) != 0 || f.reads != 0 {
 			t.Errorf("config %v, reads %d", spec.VolumeConfig, f.reads)
@@ -105,7 +106,7 @@ func TestInheritImageUser_LeavesWhatItShouldAlone(t *testing.T) {
 	})
 }
 
-// The owner reaches the volume that is created, and the lines about the volume say where it came from.
+// The lines about the volume say where its owner came from. That the engine creates the volume with that owner is internal/instance's test.
 func TestInheritedOwner_ReachesTheVolumeAndTheLines(t *testing.T) {
 	f := &instFake{readFake: readFake{volErr: errNotFound}, cfg: map[string]string{"oci.uid": "472", "oci.gid": "0"}}
 	spec := specWithVolume()
@@ -113,12 +114,6 @@ func TestInheritedOwner_ReachesTheVolumeAndTheLines(t *testing.T) {
 
 	if got := describeVolumes(f, spec); !reflect.DeepEqual(got, []string{"creating volume default/vol1, owned by 472:0 (the image's user)"}) {
 		t.Errorf("lines = %q", got)
-	}
-	if err := ensureManagedVolumes(f, spec); err != nil {
-		t.Fatal(err)
-	}
-	if want := []map[string]string{{"initial.uid": "472", "initial.gid": "0"}}; !reflect.DeepEqual(f.createdConfig, want) {
-		t.Errorf("the volume was created with %v, want %v", f.createdConfig, want)
 	}
 
 	t.Run("a volume that exists keeps its owner, and the line says what to chown it to", func(t *testing.T) {
@@ -129,15 +124,12 @@ func TestInheritedOwner_ReachesTheVolumeAndTheLines(t *testing.T) {
 		if len(got) != 1 || !strings.Contains(got[0], "its ownership is not changed") || !strings.Contains(got[0], "chown it to 472:0 (the image's user)") {
 			t.Errorf("lines = %q", got)
 		}
-		if err := ensureManagedVolumes(g, s); err != nil || len(g.created) != 0 {
-			t.Errorf("err %v, created %v", err, g.created)
-		}
 	})
 
 	t.Run("--user's owner has no such suffix", func(t *testing.T) {
 		g := &instFake{readFake: readFake{volErr: errNotFound}}
 		s := specWithVolume()
-		if err := applyUser(&Spec{Config: map[string]string{}}, "472:0"); err != nil {
+		if err := applyUser(&instance.Spec{Config: map[string]string{}}, "472:0"); err != nil {
 			t.Fatal(err)
 		}
 		s.VolumeConfig = map[string]string{"initial.uid": "472", "initial.gid": "0"}

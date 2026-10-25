@@ -8,6 +8,7 @@ import (
 
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
+	"github.com/minihci/tink/internal/instance"
 )
 
 func TestParseUserTakesNumbersAndRefusesNames(t *testing.T) {
@@ -52,27 +53,6 @@ func TestUserSetsTheProcessAndTheOwnerOfNewVolumes(t *testing.T) {
 	}
 }
 
-func TestOnlyNewlyCreatedVolumesGetTheOwner(t *testing.T) {
-	spec := diskOnPool()
-	spec.VolumeConfig = map[string]string{"initial.uid": "1000"}
-	f := &readFake{volErr: errNotFound}
-	if err := ensureManagedVolumes(f, spec); err != nil {
-		t.Fatal(err)
-	}
-	if len(f.createdConfig) != 1 || f.createdConfig[0]["initial.uid"] != "1000" {
-		t.Errorf("a new volume is created with the owner: %v", f.createdConfig)
-	}
-	f = &readFake{} // exists
-	if err := ensureManagedVolumes(f, spec); err != nil || len(f.created) != 0 {
-		t.Errorf("an existing volume is not touched: %v %v", f.created, err)
-	}
-	// and the callers that set no VolumeConfig (apply, helper) create exactly what they always did
-	f = &readFake{volErr: errNotFound}
-	if err := ensureManagedVolumes(f, diskOnPool()); err != nil || len(f.createdConfig) != 1 || f.createdConfig[0] != nil {
-		t.Errorf("no VolumeConfig, no config: %v %v", f.createdConfig, err)
-	}
-}
-
 func TestVolumeLinesSayWhoOwnsIt(t *testing.T) {
 	spec := diskOnPool()
 	spec.VolumeConfig = map[string]string{"initial.uid": "1000", "initial.gid": "1001"}
@@ -103,7 +83,7 @@ func TestIncusConfigAddsAndNeverOverrides(t *testing.T) {
 		"the command": {Options{Cmd: []string{"x"}, IncusConfig: []string{"oci.entrypoint=y"}}, "the command after the image"},
 		"twice":       {Options{IncusConfig: []string{"limits.cpu=1", "limits.cpu=2"}}, "already set"},
 		"volatile":    {Options{IncusConfig: []string{"volatile.uuid=x"}}, "belong to Incus"},
-		"the stamp":   {Options{IncusConfig: []string{KeyCommand + "=x"}}, "records the command"},
+		"the stamp":   {Options{IncusConfig: []string{instance.KeyCommand + "=x"}}, "records the command"},
 		"no equals":   {Options{IncusConfig: []string{"limits.cpu"}}, "KEY=VALUE"},
 		"empty key":   {Options{IncusConfig: []string{"=1"}}, "KEY=VALUE"},
 	} {
@@ -128,11 +108,6 @@ func TestIncusDeviceParsesLikeIncusConfigDeviceAdd(t *testing.T) {
 	}
 	if spec.Devices["zigbee"]["required"] != "false" {
 		t.Errorf("zigbee = %v", spec.Devices["zigbee"])
-	}
-	// a tmpfs source has no pool, so tink does not try to create a managed volume for it
-	f := &readFake{volErr: errNotFound}
-	if err := ensureManagedVolumes(f, spec); err != nil || len(f.created) != 0 {
-		t.Errorf("tmpfs and unix-char devices are not volumes: %v %v", f.created, err)
 	}
 }
 
@@ -208,7 +183,7 @@ func (doneOp) Wait() error { return nil }
 
 func TestAFailedConfigRemovesTheInstanceItJustMade(t *testing.T) {
 	f := &removeFake{}
-	err := configureOrRemove(f, &Spec{Name: "abs-play"})
+	err := configureOrRemove(f, &instance.Spec{Name: "abs-play"})
 	if err == nil || !strings.Contains(err.Error(), "device validation failed") || !strings.Contains(err.Error(), "abs-play was removed again") {
 		t.Errorf("err = %v", err)
 	}
@@ -219,7 +194,7 @@ func TestAFailedConfigRemovesTheInstanceItJustMade(t *testing.T) {
 
 func TestIfTheInstanceCannotBeRemovedBothFailuresAreReported(t *testing.T) {
 	f := &removeFake{deleteErr: fmt.Errorf("busy")}
-	err := configureOrRemove(f, &Spec{Name: "abs-play"})
+	err := configureOrRemove(f, &instance.Spec{Name: "abs-play"})
 	if err == nil || !strings.Contains(err.Error(), "device validation failed") || !strings.Contains(err.Error(), "could not be removed: busy") {
 		t.Errorf("err = %v", err)
 	}
