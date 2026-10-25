@@ -361,22 +361,24 @@ func (c checkSite) left() string {
 }
 
 func stamp(s incus.InstanceServer, v Volume, snap, with, from string, at time.Time) error {
-	vol, etag, err := s.GetStoragePoolVolume(v.pool(), "custom", v.Name)
-	if err != nil {
-		return fmt.Errorf("reading %s/%s to record the verification: %w", v.pool(), v.Name, err)
-	}
-	put := vol.Writable()
-	if put.Config == nil {
-		put.Config = map[string]string{}
-	}
-	put.Config[backupmeta.StampVerifiedAt] = at.UTC().Format(time.RFC3339)
-	put.Config[backupmeta.StampVerifiedSnapshot] = snap
-	put.Config[backupmeta.StampVerifiedWith] = with
-	put.Config[backupmeta.StampVerifiedFrom] = from
-	if err := s.UpdateStoragePoolVolume(v.pool(), "custom", v.Name, put, etag); err != nil {
-		return fmt.Errorf("recording the verification on %s/%s: %w", v.pool(), v.Name, err)
-	}
-	return nil
+	return incusapi.RetryOnConflict(func() error {
+		vol, etag, err := s.GetStoragePoolVolume(v.pool(), "custom", v.Name)
+		if err != nil {
+			return fmt.Errorf("reading %s/%s to record the verification: %w", v.pool(), v.Name, err)
+		}
+		put := vol.Writable()
+		if put.Config == nil {
+			put.Config = map[string]string{}
+		}
+		put.Config[backupmeta.StampVerifiedAt] = at.UTC().Format(time.RFC3339)
+		put.Config[backupmeta.StampVerifiedSnapshot] = snap
+		put.Config[backupmeta.StampVerifiedWith] = with
+		put.Config[backupmeta.StampVerifiedFrom] = from
+		if err := s.UpdateStoragePoolVolume(v.pool(), "custom", v.Name, put, etag); err != nil {
+			return fmt.Errorf("recording the verification on %s/%s: %w", v.pool(), v.Name, err)
+		}
+		return nil
+	})
 }
 
 func snapshotToUse(s incus.InstanceServer, v Volume, wanted string) (string, error) {

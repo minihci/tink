@@ -7,6 +7,7 @@ import (
 	"time"
 
 	incus "github.com/lxc/incus/v7/client"
+	"github.com/lxc/incus/v7/shared/api"
 
 	"github.com/minihci/tink/internal/backupmeta"
 )
@@ -155,5 +156,24 @@ func TestRecordFailureOnlyCountsAFailureNewerThanTheLastSuccess(t *testing.T) {
 	}
 	if got := local.vols["default/lib"].Config[backupmeta.CopyFailCount("nas")]; got != "1" {
 		t.Errorf("a stale failure must not count: got %q, want 1", got)
+	}
+}
+
+// A failure recorded while another run recorded one too is counted from what the other run left, not from what was read first: the write is
+// refused with a 412 and redone from a new read.
+func TestRecordFailureCountsFromWhatAnotherWriterLeft(t *testing.T) {
+	local := newFake("homelab", "default")
+	local.add("default", "lib", map[string]string{
+		backupmeta.CopyFailAt("nas"):    "2026-10-07T08:00:00Z",
+		backupmeta.CopyFailCount("nas"): "1",
+	})
+	local.interfere = map[string]func(*api.StorageVolume){"default/lib": func(v *api.StorageVolume) {
+		v.Config[backupmeta.CopyFailCount("nas")] = "4"
+	}}
+	if err := recordFailure(local, Volume{Name: "lib"}, "nas", time.Date(2026, 10, 7, 10, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	if got := local.vols["default/lib"].Config[backupmeta.CopyFailCount("nas")]; got != "5" {
+		t.Errorf("count = %q, want 5: one more than the other writer's 4, not than the 1 first read", got)
 	}
 }

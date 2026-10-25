@@ -42,13 +42,14 @@ type fakeIncus struct {
 	contentTypes []string
 
 	// More ways to fail, for the branches of a copy that a clean server never reaches.
-	failSnapCreate error            // taking a snapshot fails at once
-	failSnapWait   error            // taking a snapshot fails when it is waited for
-	failSnapDelete error            // removing a snapshot fails
-	failServer     error            // reading the server's name fails
-	failUpdate     map[string]error // updating one volume ("pool/name") fails
-	failList       map[string]error // listing this pool's volumes (the project's own) fails
-	failListOnce   bool             // ... but only the first time, so what comes after it can succeed
+	failSnapCreate error                               // taking a snapshot fails at once
+	failSnapWait   error                               // taking a snapshot fails when it is waited for
+	failSnapDelete error                               // removing a snapshot fails
+	failServer     error                               // reading the server's name fails
+	failUpdate     map[string]error                    // updating one volume ("pool/name") fails
+	interfere      map[string]func(*api.StorageVolume) // the next update of one volume ("pool/name") is preceded by this other writer's change, and refused with a 412
+	failList       map[string]error                    // listing this pool's volumes (the project's own) fails
+	failListOnce   bool                                // ... but only the first time, so what comes after it can succeed
 }
 
 func newFake(name string, pools ...string) *fakeIncus {
@@ -164,6 +165,11 @@ func (f *fakeIncus) UpdateStoragePoolVolume(pool, _, name string, put api.Storag
 	v, ok := f.vols[pool+"/"+name]
 	if !ok {
 		return api.StatusErrorf(http.StatusNotFound, "storage volume not found")
+	}
+	if other, ok := f.interfere[pool+"/"+name]; ok { // another writer got in first: its change lands, and this write is refused, once
+		delete(f.interfere, pool+"/"+name)
+		other(v)
+		return api.StatusErrorf(http.StatusPreconditionFailed, "ETag doesn't match")
 	}
 	v.StorageVolumePut = put
 	return nil

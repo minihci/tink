@@ -46,7 +46,7 @@ func applyOneProfile(r *runner, server incus.InstanceServer, spec profileSpec, o
 		return err
 	}
 
-	_, etag, found, err := incusapi.LookupProfile(server, spec.name)
+	_, _, found, err := incusapi.LookupProfile(server, spec.name)
 	if err != nil {
 		// Not "does not exist": a failed read would otherwise be answered by trying to create a profile that is there.
 		return fmt.Errorf("checking whether profile %s exists: %w", spec.name, err)
@@ -69,19 +69,23 @@ func applyOneProfile(r *runner, server incus.InstanceServer, spec profileSpec, o
 			return fmt.Errorf("creating profile %s: %w", spec.name, err)
 		}
 		r.note("created profile %s", spec.name)
-		// A freshly created profile has its own ETag; re-fetch rather
-		// than assume CreateProfile already applied the full content
-		// (it does, but UpdateProfile below still needs a real ETag).
-		_, etag, err = server.GetProfile(spec.name)
-		if err != nil {
-			return fmt.Errorf("re-reading just-created profile %s: %w", spec.name, err)
-		}
 	} else {
 		r.note("profile %s already exists", spec.name)
 	}
 
-	if err := server.UpdateProfile(spec.name, rendered, etag); err != nil {
-		return fmt.Errorf("updating profile %s: %w", spec.name, err)
+	// The update needs the ETag of the profile as it is now (a freshly created one has its own), read again on each attempt.
+	err = incusapi.RetryOnConflict(func() error {
+		_, etag, err := server.GetProfile(spec.name)
+		if err != nil {
+			return fmt.Errorf("reading profile %s: %w", spec.name, err)
+		}
+		if err := server.UpdateProfile(spec.name, rendered, etag); err != nil {
+			return fmt.Errorf("updating profile %s: %w", spec.name, err)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 	r.note("applied profile %s", spec.name)
 	return nil

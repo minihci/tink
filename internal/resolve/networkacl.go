@@ -260,27 +260,29 @@ func createNetworkACL(server incus.InstanceServer, r Resource, stack string) err
 // updateNetworkACL writes what the stack declares onto the live ACL: the description if it names one, the declared config keys merged into the live
 // ones (as for a network), and each declared rule list in place of the live one. A direction the stack does not declare is sent back as it is.
 func updateNetworkACL(server incus.InstanceServer, r Resource) error {
-	current, etag, err := server.GetNetworkACL(r.Name)
-	if err != nil {
-		return err
-	}
-	put := current.Writable()
-	if r.Description != "" {
-		put.Description = r.Description
-	}
-	if put.Config == nil {
-		put.Config = api.ConfigMap{}
-	}
-	for k, v := range r.Config {
-		put.Config[k] = v
-	}
-	if r.Ingress != nil {
-		put.Ingress = aclRules(r.Ingress)
-	}
-	if r.Egress != nil {
-		put.Egress = aclRules(r.Egress)
-	}
-	return server.UpdateNetworkACL(r.Name, put, etag)
+	return incusapi.RetryOnConflict(func() error {
+		current, etag, err := server.GetNetworkACL(r.Name)
+		if err != nil {
+			return err
+		}
+		put := current.Writable()
+		if r.Description != "" {
+			put.Description = r.Description
+		}
+		if put.Config == nil {
+			put.Config = api.ConfigMap{}
+		}
+		for k, v := range r.Config {
+			put.Config[k] = v
+		}
+		if r.Ingress != nil {
+			put.Ingress = aclRules(r.Ingress)
+		}
+		if r.Egress != nil {
+			put.Egress = aclRules(r.Egress)
+		}
+		return server.UpdateNetworkACL(r.Name, put, etag)
+	})
 }
 
 // aclRuleFields lists a rule's fields in the order Incus documents them and `incus network acl rule add` takes them.

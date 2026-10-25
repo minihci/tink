@@ -166,41 +166,45 @@ func ApplyConfig(server incus.InstanceServer, spec *Spec) error {
 		inst *api.Instance
 		etag string
 	}
-	got, err := incusapi.Bounded(spec.OpTimeout, "reading "+spec.Name, func() (read, error) {
-		inst, etag, err := server.GetInstance(spec.Name)
-		return read{inst, etag}, err
-	})
-	if err != nil {
-		return fmt.Errorf("reading %s after creation: %w", spec.Name, err)
-	}
-	inst, etag := got.inst, got.etag
-
-	put := inst.Writable()
-	if spec.Ephemeral { // only ever turned on here, like every other declared field: not declaring it changes nothing
-		put.Ephemeral = true
-	}
-	if put.Config == nil {
-		put.Config = map[string]string{}
-	}
-	for k, v := range spec.Config {
-		put.Config[k] = v
-	}
-	for _, k := range StaleOwnedKeys(put.Config, spec.Config, spec.OwnedConfigPrefixes) {
-		delete(put.Config, k)
-	}
-	if put.Devices == nil {
-		put.Devices = api.DevicesMap{}
-	}
-	for name, dev := range spec.Devices {
-		put.Devices[name] = dev
-	}
-
-	return incusapi.BoundedDo(spec.OpTimeout, "updating "+spec.Name+" config/devices", func() error {
-		op, err := server.UpdateInstance(spec.Name, put, etag)
+	// The instance is read again, and the change worked out again, if Incus refuses the write because it changed in between (a 412): a whole-instance
+	// PUT put back from the first read would undo whatever the other writer did. A timeout is not a 412 and ends the retries.
+	return incusapi.RetryOnConflict(func() error {
+		got, err := incusapi.Bounded(spec.OpTimeout, "reading "+spec.Name, func() (read, error) {
+			inst, etag, err := server.GetInstance(spec.Name)
+			return read{inst, etag}, err
+		})
 		if err != nil {
-			return fmt.Errorf("updating %s config/devices: %w", spec.Name, err)
+			return fmt.Errorf("reading %s after creation: %w", spec.Name, err)
 		}
-		return op.Wait()
+		inst, etag := got.inst, got.etag
+
+		put := inst.Writable()
+		if spec.Ephemeral { // only ever turned on here, like every other declared field: not declaring it changes nothing
+			put.Ephemeral = true
+		}
+		if put.Config == nil {
+			put.Config = map[string]string{}
+		}
+		for k, v := range spec.Config {
+			put.Config[k] = v
+		}
+		for _, k := range StaleOwnedKeys(put.Config, spec.Config, spec.OwnedConfigPrefixes) {
+			delete(put.Config, k)
+		}
+		if put.Devices == nil {
+			put.Devices = api.DevicesMap{}
+		}
+		for name, dev := range spec.Devices {
+			put.Devices[name] = dev
+		}
+
+		return incusapi.BoundedDo(spec.OpTimeout, "updating "+spec.Name+" config/devices", func() error {
+			op, err := server.UpdateInstance(spec.Name, put, etag)
+			if err != nil {
+				return fmt.Errorf("updating %s config/devices: %w", spec.Name, err)
+			}
+			return op.Wait()
+		})
 	})
 }
 

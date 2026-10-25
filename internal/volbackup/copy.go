@@ -12,6 +12,7 @@ import (
 	"github.com/lxc/incus/v7/shared/api"
 
 	"github.com/minihci/tink/internal/backupmeta"
+	"github.com/minihci/tink/internal/incusapi"
 )
 
 // Target is where copies of a volume go: a storage pool on THIS server (a second disk, or the
@@ -296,68 +297,75 @@ func tidyAfterCopy(dst incus.InstanceServer, v Volume, t Target, opts CopyOption
 // ensureMarkers makes sure the restore point carries its markers: Incus may not apply the config
 // given on a copy from a snapshot, and the markers are what lets pruning and restore trust the volume.
 func ensureMarkers(s incus.InstanceServer, pool, name string, want map[string]string, remove []string) error {
-	vol, etag, err := s.GetStoragePoolVolume(pool, "custom", name)
-	if err != nil {
-		return fmt.Errorf("reading the new restore point %s/%s: %w", pool, name, err)
-	}
-	put := vol.Writable()
-	if put.Config == nil {
-		put.Config = map[string]string{}
-	}
-	for k, val := range want {
-		put.Config[k] = val
-	}
-	for _, k := range remove {
-		delete(put.Config, k)
-	}
-	if err := s.UpdateStoragePoolVolume(pool, "custom", name, put, etag); err != nil {
-		return fmt.Errorf("marking the new restore point %s/%s: %w", pool, name, err)
-	}
-	return nil
+	return incusapi.RetryOnConflict(func() error {
+		vol, etag, err := s.GetStoragePoolVolume(pool, "custom", name)
+		if err != nil {
+			return fmt.Errorf("reading the new restore point %s/%s: %w", pool, name, err)
+		}
+		put := vol.Writable()
+		if put.Config == nil {
+			put.Config = map[string]string{}
+		}
+		for k, val := range want {
+			put.Config[k] = val
+		}
+		for _, k := range remove {
+			delete(put.Config, k)
+		}
+		if err := s.UpdateStoragePoolVolume(pool, "custom", name, put, etag); err != nil {
+			return fmt.Errorf("marking the new restore point %s/%s: %w", pool, name, err)
+		}
+		return nil
+	})
 }
 
 func stampCopy(s incus.InstanceServer, v Volume, target, restorePoint string, at time.Time) error {
-	vol, etag, err := s.GetStoragePoolVolume(v.pool(), "custom", v.Name)
-	if err != nil {
-		return fmt.Errorf("reading %s/%s to record the copy: %w", v.pool(), v.Name, err)
-	}
-	put := vol.Writable()
-	if put.Config == nil {
-		put.Config = map[string]string{}
-	}
-	put.Config[backupmeta.CopyStampAt(target)] = at.UTC().Format(time.RFC3339)
-	put.Config[backupmeta.CopyStampVolume(target)] = restorePoint
-	// a success ends any run of failures
-	delete(put.Config, backupmeta.CopyFailAt(target))
-	delete(put.Config, backupmeta.CopyFailCount(target))
-	if err := s.UpdateStoragePoolVolume(v.pool(), "custom", v.Name, put, etag); err != nil {
-		return fmt.Errorf("recording the copy on %s/%s: %w", v.pool(), v.Name, err)
-	}
-	return nil
+	return incusapi.RetryOnConflict(func() error {
+		vol, etag, err := s.GetStoragePoolVolume(v.pool(), "custom", v.Name)
+		if err != nil {
+			return fmt.Errorf("reading %s/%s to record the copy: %w", v.pool(), v.Name, err)
+		}
+		put := vol.Writable()
+		if put.Config == nil {
+			put.Config = map[string]string{}
+		}
+		put.Config[backupmeta.CopyStampAt(target)] = at.UTC().Format(time.RFC3339)
+		put.Config[backupmeta.CopyStampVolume(target)] = restorePoint
+		// a success ends any run of failures
+		delete(put.Config, backupmeta.CopyFailAt(target))
+		delete(put.Config, backupmeta.CopyFailCount(target))
+		if err := s.UpdateStoragePoolVolume(v.pool(), "custom", v.Name, put, etag); err != nil {
+			return fmt.Errorf("recording the copy on %s/%s: %w", v.pool(), v.Name, err)
+		}
+		return nil
+	})
 }
 
 // recordFailure notes on the source volume that the copy to target just failed: when, and how many attempts in
 // a row (one more than the run of failures already recorded, if any). No message is stored.
 func recordFailure(server incus.InstanceServer, v Volume, target string, at time.Time) error {
 	s := v.scoped(server)
-	vol, etag, err := s.GetStoragePoolVolume(v.pool(), "custom", v.Name)
-	if err != nil {
-		return fmt.Errorf("reading %s/%s: %w", v.pool(), v.Name, err)
-	}
-	n := 1
-	if prior, failing := backupmeta.FailureOf(vol.Config, target); failing {
-		n = prior.N + 1
-	}
-	put := vol.Writable()
-	if put.Config == nil {
-		put.Config = map[string]string{}
-	}
-	put.Config[backupmeta.CopyFailAt(target)] = at.UTC().Format(time.RFC3339)
-	put.Config[backupmeta.CopyFailCount(target)] = fmt.Sprintf("%d", n)
-	if err := s.UpdateStoragePoolVolume(v.pool(), "custom", v.Name, put, etag); err != nil {
-		return fmt.Errorf("recording the failure on %s/%s: %w", v.pool(), v.Name, err)
-	}
-	return nil
+	// the count is read and added to on every attempt: a retry after a 412 counts from what the other writer left
+	return incusapi.RetryOnConflict(func() error {
+		vol, etag, err := s.GetStoragePoolVolume(v.pool(), "custom", v.Name)
+		if err != nil {
+			return fmt.Errorf("reading %s/%s: %w", v.pool(), v.Name, err)
+		}
+		n := 1
+		if prior, failing := backupmeta.FailureOf(vol.Config, target); failing {
+			n = prior.N + 1
+		}
+		put := vol.Writable()
+		if put.Config == nil {
+			put.Config = map[string]string{}
+		}
+		put.Config[backupmeta.CopyFailAt(target)] = at.UTC().Format(time.RFC3339)
+		put.Config[backupmeta.CopyFailCount(target)] = fmt.Sprintf("%d", n)
+		if err := s.UpdateStoragePoolVolume(v.pool(), "custom", v.Name, put, etag); err != nil {
+			return fmt.Errorf("recording the failure on %s/%s: %w", v.pool(), v.Name, err)
+		}
+		return nil
+	})
 }
 
 func removeSnapshot(s incus.InstanceServer, v Volume, name string) error {
@@ -514,22 +522,24 @@ func scrubPolicy(s incus.InstanceServer, pool, name string) error {
 }
 
 func scrubConfig(s incus.InstanceServer, pool, name string, drop func(string) bool) error {
-	vol, etag, err := s.GetStoragePoolVolume(pool, "custom", name)
-	if err != nil {
-		return err
-	}
-	put := vol.Writable()
-	changed := false
-	for k := range put.Config {
-		if drop(k) {
-			delete(put.Config, k)
-			changed = true
+	return incusapi.RetryOnConflict(func() error {
+		vol, etag, err := s.GetStoragePoolVolume(pool, "custom", name)
+		if err != nil {
+			return err
 		}
-	}
-	if !changed {
-		return nil
-	}
-	return s.UpdateStoragePoolVolume(pool, "custom", name, put, etag)
+		put := vol.Writable()
+		changed := false
+		for k := range put.Config {
+			if drop(k) {
+				delete(put.Config, k)
+				changed = true
+			}
+		}
+		if !changed {
+			return nil
+		}
+		return s.UpdateStoragePoolVolume(pool, "custom", name, put, etag)
+	})
 }
 
 // LiveConfig returns the volume's live config, where tink keeps its stamps.

@@ -44,6 +44,8 @@ type ownFake struct {
 	imageWrites   []api.ImagePut
 	patches       []string // "PATCH path {body}" of each raw request
 	stateChanges  []string // every call that starts, stops, restarts or freezes
+
+	interfereProfile func(*api.Profile) // the next profile write is preceded by this other writer's change, and refused with a 412
 }
 
 func newOwnFake() *ownFake {
@@ -128,6 +130,11 @@ func (f *ownFake) record(what string, config map[string]string) {
 }
 
 func (f *ownFake) UpdateProfile(n string, put api.ProfilePut, _ string) error {
+	if other := f.interfereProfile; other != nil {
+		f.interfereProfile = nil
+		other(f.profiles[n])
+		return api.StatusErrorf(http.StatusPreconditionFailed, "ETag doesn't match")
+	}
 	f.record("profile/"+n, put.Config)
 	f.profiles[n].ProfilePut = put
 	return nil
@@ -587,6 +594,40 @@ func TestAdoptRestartsNothingEvenWhenTheInstanceSaysRestart(t *testing.T) {
 	}
 	if lines := res.Lines(); !strings.HasSuffix(lines[0], "restarted 0") || !strings.Contains(lines[0], "1 instance") {
 		t.Errorf("summary = %q", lines)
+	}
+}
+
+// A stamp refused because the object changed since it was read is written again from a new read, and keeps what the other writer put there.
+func TestAdoptRedoesAStampRefusedWithA412AndKeepsTheOtherWritersKey(t *testing.T) {
+	f := newOwnFake()
+	r := f.seed(KindProfile, unstamped)
+	f.interfereProfile = func(p *api.Profile) { p.Config = map[string]string{"user.other": "kept"} }
+
+	res, err := Adopt(t.Context(), f, adoptLevels(r), "lab", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := f.profiles["p"].Config
+	if got[ownership.Key] != "lab" || got["user.other"] != "kept" {
+		t.Errorf("config = %v, want the stamp and the other writer's key", got)
+	}
+	if len(res.Stamped) != 1 {
+		t.Errorf("stamped = %v", res.Stamped)
+	}
+}
+
+// If the other writer stamped it, the second read says so: there is nothing left to do, and that is not an error.
+func TestAdoptTreatsAnObjectStampedMeanwhileAsDone(t *testing.T) {
+	f := newOwnFake()
+	r := f.seed(KindProfile, unstamped)
+	f.interfereProfile = func(p *api.Profile) { p.Config = map[string]string{ownership.Key: "lab"} }
+
+	res, err := Adopt(t.Context(), f, adoptLevels(r), "lab", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Stamped) != 0 || len(f.updated) != 0 {
+		t.Errorf("stamped = %v, writes = %v: the object was already stamped when read again", res.Stamped, f.updated)
 	}
 }
 
