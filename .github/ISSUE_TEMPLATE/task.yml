@@ -1,0 +1,37 @@
+name: Task
+description: One step of a larger piece of work, linked under its parent issue
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This repository is public. Do not paste a real host name, domain, address or account; use example.org and the documentation address blocks (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24). For a security problem, use the private report link instead of an issue.
+
+        A task is one step of a parent issue: link it under the parent as a sub-issue after filing, and give it the parent's milestone and one `area:` label. What happens while it is worked on goes in comments, one per event (plan, finding, measurement, decision, correction, closing); see "Working in GitHub" in CLAUDE.md.
+  - type: input
+    id: parent
+    attributes:
+      label: Parent issue
+      description: The tracking issue this is a step of (#N), or "none" if it stands alone.
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What
+      description: The change or the question, in a few sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Tag each claim as [code] (read in this repository, with file and line), [docs], [lab] (seen on a real host, with the software version) or [proposed] (not built). Check a claim about a dependency in its source before filing.
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: Done when
+      description: Something a test or a command can answer.
+    validations:
+      required: true
