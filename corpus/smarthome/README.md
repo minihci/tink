@@ -89,4 +89,3 @@ A second `tink plan` of the rendered `home.yaml` and of the site says no changes
 - **Zigbee2MQTT's broker**: its page puts the broker (`mqtt://...`) beside it. The broker is in the `home` stack, on another bridge whose ACL admits only the ingress
   helper, so Zigbee2MQTT in `radios` could not reach it (not tested; it follows from the ACL). An app that talks to a broker goes in the broker's stack.
 - **Backup**: every volume says `none` ("a throwaway fixture"). The first herd's `vault` is the only one with a real policy.
-- **The failing check** (`ha` signed in, #223).
