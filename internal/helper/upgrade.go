@@ -8,9 +8,9 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
 
+	"github.com/minihci/tink/internal/dockerrun"
 	"github.com/minihci/tink/internal/incusapi"
 	"github.com/minihci/tink/internal/jobs"
-	"github.com/minihci/tink/internal/run"
 )
 
 // drainPath is the file that tells the helper to drain, on its data volume.
@@ -108,7 +108,7 @@ func (in *Installer) Upgrade(opts UpgradeOptions) error {
 	}
 	in.say("starting it")
 	replaced = in.now()
-	if err := run.EnsureRunning(scoped, target.Name); err != nil {
+	if err := dockerrun.EnsureRunning(scoped, target.Name); err != nil {
 		return err
 	}
 
@@ -227,7 +227,7 @@ func (in *Installer) recreate(scoped incus.InstanceServer, old *api.Instance, ta
 	for k, v := range old.Devices {
 		dev[k] = v
 	}
-	spec := &run.Spec{Name: target.Name, Image: image, Config: cfg, Devices: dev}
+	spec := &dockerrun.Spec{Name: target.Name, Image: image, Config: cfg, Devices: dev}
 
 	op, err := scoped.DeleteInstance(target.Name)
 	if err != nil {
@@ -244,7 +244,7 @@ func (in *Installer) recreate(scoped incus.InstanceServer, old *api.Instance, ta
 			spec.Config[MarkerKey+".image-fingerprint"] = fp
 		}
 	}
-	if err := run.ApplyConfig(scoped, spec); err != nil {
+	if err := dockerrun.ApplyConfig(scoped, spec); err != nil {
 		return fmt.Errorf("configuring the new helper instance: %w", err)
 	}
 	return nil

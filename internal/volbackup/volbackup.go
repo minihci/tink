@@ -30,8 +30,8 @@ import (
 	"github.com/lxc/incus/v7/shared/api"
 
 	"github.com/minihci/tink/internal/backupmeta"
+	"github.com/minihci/tink/internal/dockerrun"
 	"github.com/minihci/tink/internal/incusapi"
-	"github.com/minihci/tink/internal/run"
 )
 
 // Volume identifies a custom storage volume.
@@ -249,7 +249,7 @@ func Verify(server incus.InstanceServer, v Volume, opts VerifyOptions) (res Veri
 		// Registered BEFORE creating, so a half-created instance is still cleaned up.
 		cleanups = append(cleanups, func() error { return deleteInstance(site.server, instName, site.left()) })
 
-		spec := &run.Spec{
+		spec := &dockerrun.Spec{
 			Name:     instName,
 			Image:    opts.Check.Image,
 			Profiles: []string{checkProfile},
@@ -259,13 +259,13 @@ func Verify(server incus.InstanceServer, v Volume, opts VerifyOptions) (res Veri
 			// Only the root disk goes in the creation request: the data device names the scratch volume, which ApplyConfig attaches.
 			RootDiskAtCreate: true,
 		}
-		if err := run.Create(server, spec, site.project); err != nil {
+		if err := dockerrun.Create(server, spec, site.project); err != nil {
 			return res, err
 		}
-		if err := run.ApplyConfig(site.server, spec); err != nil {
+		if err := dockerrun.ApplyConfig(site.server, spec); err != nil {
 			return res, err
 		}
-		if err := run.EnsureRunning(site.server, instName); err != nil {
+		if err := dockerrun.EnsureRunning(site.server, instName); err != nil {
 			return res, err
 		}
 		code, out, err := incusapi.ExecInGuest(site.server, instName, opts.Check.Command)
@@ -305,7 +305,7 @@ func profileHasRootDisk(s incus.InstanceServer, name string) (bool, error) {
 	if err != nil || !found {
 		return false, err
 	}
-	return run.HasRootDisk(p.Devices), nil
+	return dockerrun.HasRootDisk(p.Devices), nil
 }
 
 // inProject says which project a message is about, when there is one named.

@@ -3,7 +3,7 @@
 // to -- instead of hand-composing `incus init`/`config set`/`config
 // device add` calls. See DESIGN.md for the flag-mapping table and its
 // deliberate non-goals.
-package run
+package dockerrun
 
 import (
 	"errors"

@@ -1,7 +1,7 @@
 // Package compose reads a compose file and writes a stack file, once (docs/import.md, the proposal is #179).
 //
 // It is the onramp for the compose files that popular self-hosted projects publish, the way `tink run` is the onramp for their docker run lines,
-// and it shares tink run's translation: every service becomes a run.Options, run.Build turns that into the config and devices, and what comes out is
+// and it shares tink run's translation: every service becomes a dockerrun.Options, dockerrun.Build turns that into the config and devices, and what comes out is
 // the same as `tink run` would make. The output is a stack the person keeps. Nothing reads the compose file again, so there is no second source of
 // truth.
 //
@@ -24,7 +24,7 @@ import (
 
 	yaml "go.yaml.in/yaml/v4"
 
-	"github.com/minihci/tink/internal/run"
+	"github.com/minihci/tink/internal/dockerrun"
 	"github.com/minihci/tink/internal/secrets"
 )
 
@@ -95,7 +95,7 @@ var serviceKeys = map[string]keyRule{
 	"hostname":       {kind: ignored},
 	"networks":       {kind: ignored},
 
-	"network_mode": {refused, run.HostNetworkAdvice},
+	"network_mode": {refused, dockerrun.HostNetworkAdvice},
 	"read_only":    {refused, "Incus can make an instance's root disk read-only (a root device of its own with readonly=true), but the one instance made so that was tried, the image of an app whose page asks for read_only, did not start (\"Failed to setup mount entries\", Incus 7.5.1); if the app needs it, add that device by hand with --incus-device and see whether it starts"},
 	"security_opt": {refused, "Incus confines a container with an AppArmor profile of its own and has no instance key for a choice of profile or for no-new-privileges; raw.apparmor and raw.lxc can carry one by hand, with --incus-config, if the app really needs it"},
 	"cap_drop":     {refused, "an unprivileged Incus container has a fixed set of capabilities and nothing narrows it, so the hardening the file asks for would silently not happen; delete the key if that is acceptable"},
@@ -314,7 +314,7 @@ func (im *importer) service(compose string, sv map[string]any) {
 	}
 	sv = val.(map[string]any)
 
-	o := run.Options{Name: name, Pool: im.opts.Pool}
+	o := dockerrun.Options{Name: name, Pool: im.opts.Pool}
 	if s, ok := sv["image"].(string); ok && s != "" {
 		o.Image = s
 	} else {
@@ -386,13 +386,13 @@ func (im *importer) service(compose string, sv map[string]any) {
 	}
 	im.reach = append(im.reach, serviceReach{service: compose, out: im.canSendOut(sv["networks"])})
 
-	spec, err := run.Build(o)
+	spec, err := dockerrun.Build(o)
 	if err != nil {
 		key, reason := translationRefusal(err)
 		im.refuse(compose, key, reason)
 		return
 	}
-	delete(spec.Config, run.KeyCommand)
+	delete(spec.Config, dockerrun.KeyCommand)
 	for _, n := range spec.Notes {
 		im.note(fmt.Sprintf("service %s: %s", compose, n))
 	}
@@ -756,7 +756,7 @@ func (im *importer) tmpfsDevices(service string, fromVolumes []tmpfsMount, sv ma
 			return nil, false
 		}
 		seen[m.path] = true
-		e, err := run.TmpfsIncusDevice(fmt.Sprintf("tmpfs%d", i), m.path, m.size)
+		e, err := dockerrun.TmpfsIncusDevice(fmt.Sprintf("tmpfs%d", i), m.path, m.size)
 		if err != nil {
 			im.refuse(service, "tmpfs", err.Error())
 			return nil, false
@@ -971,7 +971,7 @@ func flagLike(v string) bool {
 	return false
 }
 
-// buildFlag is how run.Build names what it refused: by the docker-run flag. The person wrote a compose key, so say that.
+// buildFlag is how dockerrun.Build names what it refused: by the docker-run flag. The person wrote a compose key, so say that.
 var buildFlag = regexp.MustCompile(`^--(user|publish|volume|env-file|env|device) `)
 
 var flagKey = map[string]string{"user": "user", "publish": "ports", "volume": "volumes", "env-file": "env_file", "env": "environment", "device": "devices"}

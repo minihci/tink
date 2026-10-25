@@ -10,7 +10,7 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
 
-	"github.com/minihci/tink/internal/run"
+	"github.com/minihci/tink/internal/dockerrun"
 )
 
 func TestParseStatusVolume(t *testing.T) {
@@ -199,7 +199,7 @@ func TestRemotesSaysWhyWhenTheStatusVolumeCannotBeReadInsteadOfNotReportedYet(t 
 	helperRunning(h)
 	h.instances["helper"].Config[StatusVolumeKey] = "fast/helper-status"
 	h.volErr["fast/helper-status"] = api.StatusErrorf(http.StatusForbidden, "not authorized")
-	in, _ := installer(h, new([]*run.Spec))
+	in, _ := installer(h, new([]*dockerrun.Spec))
 	_, _, _, err := in.Remotes("", "", t0)
 	if err == nil || !strings.Contains(err.Error(), "cannot read its status volume fast/helper-status") || strings.Contains(err.Error(), "has not reported") {
 		t.Errorf("err = %v", err)
@@ -227,7 +227,7 @@ func TestThePublisherLeavesTheMarkerOutWhenTheDocumentIsOnAVolume(t *testing.T) 
 
 func TestInstallMakesTheStatusVolumeAndPointsTheInstanceAtItBeforeTheInstanceExists(t *testing.T) {
 	h := newHost()
-	var specs []*run.Spec
+	var specs []*dockerrun.Spec
 	in, out := installer(h, &specs)
 	if err := in.Install(InstallOptions{Image: "x", Wait: -1}); err != nil {
 		t.Fatal(err)
@@ -265,7 +265,7 @@ func TestInstallMakesTheStatusVolumeAndPointsTheInstanceAtItBeforeTheInstanceExi
 
 func TestTheStatusVolumeFollowsThePoolAndTheName(t *testing.T) {
 	h := newHost()
-	var specs []*run.Spec
+	var specs []*dockerrun.Spec
 	in, _ := installer(h, &specs)
 	if err := in.Install(InstallOptions{Image: "x", Name: "h2", Pool: "fast", Project: "ops", Wait: -1}); err != nil {
 		t.Fatal(err)
@@ -283,7 +283,7 @@ func TestTheStatusVolumeFollowsThePoolAndTheName(t *testing.T) {
 
 func TestStatusOnInstanceInstallsTheOldShape(t *testing.T) {
 	h := newHost()
-	var specs []*run.Spec
+	var specs []*dockerrun.Spec
 	in, _ := installer(h, &specs)
 	if err := in.Install(InstallOptions{Image: "x", StatusOnInstance: true, Wait: -1}); err != nil {
 		t.Fatal(err)
@@ -302,7 +302,7 @@ func TestStatusOnInstanceInstallsTheOldShape(t *testing.T) {
 
 func TestInstallingAgainDoesNotMakeASecondStatusVolumeOrMigrateAnOldHelper(t *testing.T) {
 	h := newHost()
-	var specs []*run.Spec
+	var specs []*dockerrun.Spec
 	in, _ := installer(h, &specs)
 	if err := in.Install(InstallOptions{Image: "x", Wait: -1}); err != nil {
 		t.Fatal(err)
@@ -347,7 +347,7 @@ func TestInstallingAgainDoesNotMakeASecondStatusVolumeOrMigrateAnOldHelper(t *te
 func TestInstallSaysSoWhenItCannotMakeTheStatusVolume(t *testing.T) {
 	h := newHost()
 	h.volErr["default/helper-status"] = api.StatusErrorf(http.StatusForbidden, "not authorized")
-	var specs []*run.Spec
+	var specs []*dockerrun.Spec
 	in, _ := installer(h, &specs)
 	err := in.Install(InstallOptions{Image: "x", Wait: -1})
 	if err == nil || !strings.Contains(err.Error(), "status volume default/helper-status") {
@@ -369,7 +369,7 @@ func helperWithStatusVolume(h *fakeHost) {
 func TestRemovePurgeAlsoDeletesTheStatusVolumeFoundThroughThePointer(t *testing.T) {
 	h := newHost()
 	helperWithStatusVolume(h)
-	in, out := installer(h, new([]*run.Spec))
+	in, out := installer(h, new([]*dockerrun.Spec))
 	if err := in.Remove(RemoveOptions{Purge: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -384,7 +384,7 @@ func TestRemovePurgeAlsoDeletesTheStatusVolumeFoundThroughThePointer(t *testing.
 func TestRemoveWithoutPurgeKeepsTheStatusVolumeAndSaysSo(t *testing.T) {
 	h := newHost()
 	helperWithStatusVolume(h)
-	in, out := installer(h, new([]*run.Spec))
+	in, out := installer(h, new([]*dockerrun.Spec))
 	if err := in.Remove(RemoveOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -401,7 +401,7 @@ func TestRemovePurgeDoesNotDeleteAVolumeThePointerWasEditedToName(t *testing.T) 
 	helperRunning(h)
 	h.instances["helper"].Config[StatusVolumeKey] = "fast/precious-data"
 	h.volumes["fast/precious-data"] = true
-	in, out := installer(h, new([]*run.Spec))
+	in, out := installer(h, new([]*dockerrun.Spec))
 	if err := in.Remove(RemoveOptions{Purge: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -416,7 +416,7 @@ func TestRemovePurgeDoesNotDeleteAVolumeThePointerWasEditedToName(t *testing.T) 
 	h = newHost()
 	helperRunning(h)
 	h.instances["helper"].Config[StatusVolumeKey] = "garbage"
-	in, _ = installer(h, new([]*run.Spec))
+	in, _ = installer(h, new([]*dockerrun.Spec))
 	if err := in.Remove(RemoveOptions{Purge: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -426,7 +426,7 @@ func TestRemovePurgeOfAStatusVolumeThatIsAlreadyGoneIsNotAnError(t *testing.T) {
 	h := newHost()
 	helperRunning(h)
 	h.instances["helper"].Config[StatusVolumeKey] = "fast/helper-status" // not in h.volumes
-	in, _ := installer(h, new([]*run.Spec))
+	in, _ := installer(h, new([]*dockerrun.Spec))
 	if err := in.Remove(RemoveOptions{Purge: true}); err != nil {
 		t.Fatalf("%v", err)
 	}
@@ -446,10 +446,10 @@ func upgradeFixtureOnVolume(h *fakeHost) {
 func TestAnImageUpgradeOfAHelperOnAStatusVolumeKeepsThePointerTheEntrypointAndTheVolume(t *testing.T) {
 	h := newHost()
 	upgradeFixtureOnVolume(h)
-	var specs []*run.Spec
+	var specs []*dockerrun.Spec
 	in, out := installer(h, &specs)
 	base := in.Create
-	in.Create = func(s incus.InstanceServer, spec *run.Spec, project string) error {
+	in.Create = func(s incus.InstanceServer, spec *dockerrun.Spec, project string) error {
 		if err := base(s, spec, project); err != nil {
 			return err
 		}
@@ -486,7 +486,7 @@ func TestAnImageUpgradeOfAHelperOnItsOwnInstanceStillWorksAndGainsNoPointer(t *t
 	h := newHost()
 	upgradeFixture(h)
 	h.instances["helper"].Config["oci.entrypoint"] += " --status-instance helper --status-project tink-helper"
-	in, out := installer(h, new([]*run.Spec))
+	in, out := installer(h, new([]*dockerrun.Spec))
 	clocked(in, func(n int, now time.Time) {
 		if n == 1 {
 			publish(h, now, func(s *Status) { s.Draining = true })

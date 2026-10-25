@@ -22,11 +22,11 @@ import (
 	"github.com/minihci/tink/internal/backuprun"
 	"github.com/minihci/tink/internal/bootstrap"
 	"github.com/minihci/tink/internal/daemon"
+	"github.com/minihci/tink/internal/dockerrun"
 	"github.com/minihci/tink/internal/helper"
 	"github.com/minihci/tink/internal/incusapi"
 	"github.com/minihci/tink/internal/jobs"
 	"github.com/minihci/tink/internal/resolve"
-	"github.com/minihci/tink/internal/run"
 )
 
 func main() {
@@ -203,7 +203,7 @@ daemon, the crontab, or any instance.`,
 }
 
 func newRunCmd() *cobra.Command {
-	opts := run.DefaultOptions()
+	opts := dockerrun.DefaultOptions()
 
 	cmd := &cobra.Command{
 		Use:   "run [flags] IMAGE [CMD...]",
@@ -230,7 +230,7 @@ which Docker flags map to which key or device.`,
 			opts.Cmd = args[1:]
 
 			opts.Out = cmd.OutOrStdout() // lines are printed as they happen: a first image pull is a silent minute otherwise
-			_, err := run.Run(opts)
+			_, err := dockerrun.Run(opts)
 			return err
 		},
 	}
@@ -241,7 +241,7 @@ which Docker flags map to which key or device.`,
 
 // bindRunFlags declares tink run's flags on cmd, filling opts. It is its own function so that a test can parse a docker-run-shaped command line with the
 // real flag set (cmd/tink/corpus_doors_test.go) instead of a copy of it.
-func bindRunFlags(cmd *cobra.Command, opts *run.Options) {
+func bindRunFlags(cmd *cobra.Command, opts *dockerrun.Options) {
 	cmd.Flags().StringVar(&opts.Socket, "socket", opts.Socket, "Incus daemon unix socket path (default: Incus's own resolution)")
 	cmd.Flags().StringVar(&opts.Project, "project", "", "Incus project to create the instance in (default: the daemon's own default project)")
 	cmd.Flags().StringVar(&opts.Name, "name", "", "instance name (required)")

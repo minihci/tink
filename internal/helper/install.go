@@ -12,9 +12,9 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
 
+	"github.com/minihci/tink/internal/dockerrun"
 	"github.com/minihci/tink/internal/incusapi"
 	"github.com/minihci/tink/internal/jobs"
-	"github.com/minihci/tink/internal/run"
 )
 
 const (
@@ -101,8 +101,8 @@ func (o *InstallOptions) defaults() {
 type Installer struct {
 	Server incus.InstanceServer
 	Out    io.Writer
-	// Create makes the (stopped) instance from its image. Default: run.Create, which resolves the image like `tink run` does.
-	Create func(server incus.InstanceServer, spec *run.Spec, project string) error
+	// Create makes the (stopped) instance from its image. Default: dockerrun.Create, which resolves the image like `tink run` does.
+	Create func(server incus.InstanceServer, spec *dockerrun.Spec, project string) error
 	// ReadFile reads the binary to push. Default: os.ReadFile.
 	ReadFile func(path string) ([]byte, error)
 	Now      func() time.Time
@@ -117,11 +117,11 @@ func (in *Installer) say(format string, args ...any) {
 	}
 }
 
-func (in *Installer) create() func(incus.InstanceServer, *run.Spec, string) error {
+func (in *Installer) create() func(incus.InstanceServer, *dockerrun.Spec, string) error {
 	if in.Create != nil {
 		return in.Create
 	}
-	return run.Create
+	return dockerrun.Create
 }
 
 func (in *Installer) now() time.Time {
@@ -218,7 +218,7 @@ func (in *Installer) Install(opts InstallOptions) error {
 				spec.Config[MarkerKey+".image-fingerprint"] = fp
 			}
 		}
-		if err := run.ApplyConfig(scoped, spec); err != nil {
+		if err := dockerrun.ApplyConfig(scoped, spec); err != nil {
 			return err
 		}
 		if blob != nil {
@@ -233,7 +233,7 @@ func (in *Installer) Install(opts InstallOptions) error {
 		in.say("the helper instance %s/%s exists", opts.Project, opts.Name)
 	}
 	in.say("starting it")
-	if err := run.EnsureRunning(scoped, opts.Name); err != nil {
+	if err := dockerrun.EnsureRunning(scoped, opts.Name); err != nil {
 		return err
 	}
 
@@ -326,7 +326,7 @@ func (in *Installer) ensureProject(name string) error {
 }
 
 // spec is the helper instance: what it runs, what it mounts, how it reaches the host's API.
-func (in *Installer) spec(o InstallOptions, route apiRoute, network string) *run.Spec {
+func (in *Installer) spec(o InstallOptions, route apiRoute, network string) *dockerrun.Spec {
 	entry := []string{binaryPath, "daemon", "run", "--remote", RemoteName, "--jobs", dataMount + "/jobs"}
 	entry = append(entry, statusArgs(o)...)
 	if o.TZ != "" {
@@ -358,7 +358,7 @@ func (in *Installer) spec(o InstallOptions, route apiRoute, network string) *run
 		dev["eth0"] = map[string]string{"type": "nic", "network": network, "name": "eth0"}
 	}
 	// The helper is created with the project's `default` profile only; its root disk goes in the creation request, so it does not depend on that profile having one.
-	return &run.Spec{Name: o.Name, Image: o.Image, Config: cfg, Devices: dev, RootDiskAtCreate: true}
+	return &dockerrun.Spec{Name: o.Name, Image: o.Image, Config: cfg, Devices: dev, RootDiskAtCreate: true}
 }
 
 // enrol makes the host trust the helper's own certificate. The key pair is generated inside the instance, so the private key never

@@ -11,7 +11,7 @@ import (
 	"github.com/lxc/incus/v7/shared/cliconfig"
 	yaml "go.yaml.in/yaml/v4"
 
-	"github.com/minihci/tink/internal/run"
+	"github.com/minihci/tink/internal/dockerrun"
 )
 
 // What the image says, and an instance that has copied it (as Incus does at creation) plus a person's changes on top.
@@ -112,7 +112,7 @@ func kumaInstance() *api.Instance {
 				"volatile.base_image":     "bc73ff04",
 				"volatile.container.oci":  "true",
 				"volatile.uuid":           "x",
-				run.KeyCommand:            "tink run --name kuma-play -e 'DB_PASSWORD=***' louislam/uptime-kuma:2",
+				dockerrun.KeyCommand:      "tink run --name kuma-play -e 'DB_PASSWORD=***' louislam/uptime-kuma:2",
 			},
 			Devices: map[string]map[string]string{
 				"eth0":    {"type": "nic", "network": "incusbr0"},
@@ -144,7 +144,7 @@ func TestExportWritesWhatAPersonSetAndChecksItself(t *testing.T) {
 			t.Errorf("export lacks %q:\n%s", must, y)
 		}
 	}
-	for _, mustNot := range []string{"volatile.", "image.id", "hunter2", run.KeyCommand} {
+	for _, mustNot := range []string{"volatile.", "image.id", "hunter2", dockerrun.KeyCommand} {
 		if strings.Contains(y, mustNot) {
 			t.Errorf("export must not contain %q:\n%s", mustNot, y)
 		}

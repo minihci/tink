@@ -17,9 +17,9 @@ import (
 	"github.com/lxc/incus/v7/shared/archive"
 	yaml "go.yaml.in/yaml/v4"
 
+	"github.com/minihci/tink/internal/dockerrun"
 	"github.com/minihci/tink/internal/incusapi"
 	"github.com/minihci/tink/internal/ownership"
-	"github.com/minihci/tink/internal/run"
 )
 
 // createOne creates r. Every call that changes the server has a deadline (opbounds.go); where one kind takes several steps, each step has its own,
@@ -194,7 +194,7 @@ func createImage(server incus.InstanceServer, r Resource, env volumeEnv) error {
 // Each step has its own deadline (opbounds.go), and a step that is abandoned ends the creation there: the later steps are not run on top of work whose
 // state is unknown. Creating is the slow one (the server may fetch the image first); the rest are quick.
 func createInstance(server incus.InstanceServer, r Resource, env volumeEnv) error {
-	spec := &run.Spec{
+	spec := &dockerrun.Spec{
 		Name:     r.Name,
 		Image:    r.Image,
 		Config:   r.Config,
@@ -216,12 +216,12 @@ func createInstance(server incus.InstanceServer, r Resource, env volumeEnv) erro
 	}
 	pr := newPlacer(server, pl)
 	names, err := createInOrder(instanceSteps{
-		create: func() error { return run.Create(server, &creating, r.Project) },
-		config: func() error { return run.ApplyConfig(s, spec) },
+		create: func() error { return dockerrun.Create(server, &creating, r.Project) },
+		config: func() error { return dockerrun.ApplyConfig(s, spec) },
 		place: func(f Resource) error {
 			return incusapi.BoundedDo(env.limit(false), "placing file/"+f.Name+" before the first start", func() error { return pr.place(f) })
 		},
-		start: func() error { return run.EnsureRunningWithin(s, spec.Name, env.limit(false)) },
+		start: func() error { return dockerrun.EnsureRunningWithin(s, spec.Name, env.limit(false)) },
 	}, pl.files())
 	if out := pr.outcome(names); env.report != nil && (len(out.Placed) > 0 || len(out.Skipped) > 0) {
 		env.report(r.Name, out)
@@ -247,12 +247,12 @@ func createInstance(server incus.InstanceServer, r Resource, env volumeEnv) erro
 //
 // limit is the deadline of each call to the server (zero: none); a call abandoned at it ends the update there.
 func updateInstance(server incus.InstanceServer, r Resource, limit time.Duration) error {
-	spec := &run.Spec{Name: r.Name, Config: r.Config, Devices: r.Devices, Ephemeral: r.Ephemeral, OwnedConfigPrefixes: ownedConfigPrefixes, OpTimeout: limit}
-	if err := run.ApplyConfig(server, spec); err != nil {
+	spec := &dockerrun.Spec{Name: r.Name, Config: r.Config, Devices: r.Devices, Ephemeral: r.Ephemeral, OwnedConfigPrefixes: ownedConfigPrefixes, OpTimeout: limit}
+	if err := dockerrun.ApplyConfig(server, spec); err != nil {
 		return err
 	}
 	if r.Restart {
-		return run.EnsureRunningWithin(server, r.Name, limit)
+		return dockerrun.EnsureRunningWithin(server, r.Name, limit)
 	}
 	// A stopped instance is planned a start (planInstance); EnsureRunning starts what is not running.
 	inst, err := incusapi.Bounded(limit, "checking "+r.Name+"'s state", func() (*api.Instance, error) {
@@ -265,7 +265,7 @@ func updateInstance(server incus.InstanceServer, r Resource, limit time.Duration
 	if inst.Status != "Stopped" {
 		return nil
 	}
-	return run.EnsureRunningWithin(server, r.Name, limit)
+	return dockerrun.EnsureRunningWithin(server, r.Name, limit)
 }
 
 func updateOne(server incus.InstanceServer, r Resource, env volumeEnv) error {
@@ -373,7 +373,7 @@ func pushFile(server incus.InstanceServer, r Resource, limit time.Duration) erro
 	if !r.Restart {
 		return nil
 	}
-	return run.EnsureRunningWithin(scopedServer(server, r), r.Instance, limit)
+	return dockerrun.EnsureRunningWithin(scopedServer(server, r), r.Instance, limit)
 }
 
 // placeFile writes r.Content to r.Path inside r.Instance and does nothing more: no restart. It is what pushFile does first (through placeFileAt), and
