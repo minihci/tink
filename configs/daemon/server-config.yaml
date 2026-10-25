@@ -6,9 +6,10 @@
 # Don't repeat that sentinel's literal text anywhere else in this file —
 # render_server_config()'s sed matches it by exact substring, anywhere.
 #
-# Applied via `incus config edit`, which replaces the server's ENTIRE
-# config with whatever's piped into it (unlike `incus config set`, which
-# only touches the one key named). Safe here because this file is meant to
+# Applied by `tink deploy` the way `incus config edit` applies a document
+# piped into it: one UpdateServer call with no ETag, which resets every
+# key this file does not name (user.* keys stay), unlike `incus config set`,
+# which only touches the one key named. Safe here because this file is meant to
 # be the whole of this Incus host's server config — nothing else sets its
 # own keys alongside it. Applying this to a host that already has unrelated
 # server config set by other tooling would wipe it; check `incus config
@@ -16,7 +17,7 @@
 #
 # authorization.client.{oidc,tls,tls-restricted} need Incus 7.3+ (they
 # route which client protocols actually use the scriptlet below). On an
-# older Incus, `incus config edit` rejects the whole document over an
+# older Incus, the server rejects the whole document over an
 # unrecognized key — drop those three lines by hand on such a host.
 #
 # The scriptlet runs ONLY for a client class routed to it by an

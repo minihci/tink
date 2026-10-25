@@ -1,8 +1,8 @@
 package bootstrap
 
 import (
+	"context"
 	"fmt"
-	"os/exec"
 	"time"
 
 	incus "github.com/lxc/incus/v7/client"
@@ -67,29 +67,61 @@ func recreateInstance(r *runner, server incus.InstanceServer, name, image string
 	return err
 }
 
-// waitForDir polls `incus exec <instance> -- test -d <dir>` until it
+const (
+	waitForDirAttempts = 20
+	waitForDirInterval = time.Second
+	// dirProbeTimeout bounds one `test -d`: an instance whose init is not up yet can leave an exec waiting, and the loop is what retries.
+	dirProbeTimeout = 10 * time.Second
+)
+
+// waitForDir polls `test -d <dir>` in the instance (an exec through the API) until it
 // succeeds or 20 seconds pass, mirroring deploy.sh's own wait loop for a
 // freshly launched container's filesystem to actually be there. In
 // dry-run mode this just records the intent -- the instance was never
 // actually launched, so there's nothing to poll yet.
-func waitForDir(r *runner, instance, dir string) error {
+//
+// It is an exec and not a read through the instance file API on purpose: `test -d` succeeds only once the instance has a running init, which
+// is the readiness the loop has always meant, and a file read would also see the root filesystem of an instance that is not up yet.
+func waitForDir(r *runner, server incus.InstanceServer, instance, dir string) error {
 	if r.dryRun {
 		r.note("would wait for %s to appear in %s", dir, instance)
 		return nil
 	}
-	for i := 1; i <= 20; i++ {
-		if err := exec.Command("incus", "exec", instance, "--", "test", "-d", dir).Run(); err == nil {
-			r.note("%s appeared in %s", dir, instance)
-			return nil
-		}
-		if i == 20 {
-			return fmt.Errorf("%s never appeared in %s -- aborting", dir, instance)
-		}
-		time.Sleep(time.Second)
+	return pollForDir(r, instance, dir, waitForDirAttempts, waitForDirInterval, func() error { return dirExists(server, instance, dir) })
+}
+
+// dirExists runs `test -d dir` in the instance and returns nil when it exits 0. An error is "not yet" to the caller: the exec could not run (the
+// instance is not up, its init is not ready) or the directory is not there.
+func dirExists(server incus.InstanceServer, instance, dir string) error {
+	code, _, err := incusapi.ExecInGuestContext(context.Background(), server, instance, []string{"test", "-d", dir}, 1, 0, dirProbeTimeout)
+	if err != nil {
+		return err
+	}
+	if code != 0 {
+		return fmt.Errorf("test -d %s exited %d", dir, code)
 	}
 	return nil
 }
 
+// pollForDir calls probe up to attempts times, interval apart, and stops at the first nil.
+func pollForDir(r *runner, instance, dir string, attempts int, interval time.Duration, probe func() error) error {
+	var last error
+	for i := 1; i <= attempts; i++ {
+		if last = probe(); last == nil {
+			r.note("%s appeared in %s", dir, instance)
+			return nil
+		}
+		if i < attempts {
+			time.Sleep(interval)
+		}
+	}
+	return fmt.Errorf("%s never appeared in %s -- aborting: %w", dir, instance, last)
+}
+
+// filePush shells out to `incus file push` and stays an exception for now (CLAUDE.md lists it): the CLI keeps the source file's mode, which the
+// Authelia secrets rely on, and with --create-dirs makes the parent directories, and a CreateInstanceFile call would have to do both by hand.
+// Moving it onto the API is its own change, tested against a real instance.
+//
 // filePush retries on failure -- confirmed live that `test -d <dir>`
 // succeeding (waitForDir's readiness signal) does not guarantee a
 // freshly launched container is actually ready to receive a file push
@@ -187,7 +219,7 @@ func applyAuthelia(r *runner, opts Options) error {
 	if err := recreateInstance(r, server, "authelia", "docker-oci:authelia/authelia:latest", "default", "authelia"); err != nil {
 		return err
 	}
-	if err := waitForDir(r, "authelia", "/config"); err != nil {
+	if err := waitForDir(r, server, "authelia", "/config"); err != nil {
 		return err
 	}
 
@@ -225,7 +257,7 @@ func applyIngress(r *runner, opts Options) error {
 	if err := recreateInstance(r, server, "ingress", "docker-oci:caddy:2.11.4", "default", "ingress"); err != nil {
 		return err
 	}
-	if err := waitForDir(r, "ingress", "/etc/caddy"); err != nil {
+	if err := waitForDir(r, server, "ingress", "/etc/caddy"); err != nil {
 		return err
 	}
 

@@ -44,8 +44,8 @@ What `tink deploy` sets on the Incus server, and what that does and does not do.
   check, the certificate's project list. Routing that class to the scriptlet would give it the scriptlet's answer, which is `True` for every
   `tls` client: full access. That was measured on another server with a scriptlet that returned `True`
   ([volume-backup-design.md](../docs/volume-backup-design.md), step 3b), and measured again with this script on Incus 7.5.1 (2026-10-17, an unrestricted and a restricted-to-one-project client certificate over the HTTPS API): with `tls-restricted: tls` the restricted certificate listed only its project and got `403` for another; routed to this script it listed every project and fetched one outside its list. An earlier version of the
-  template did route it there; a host deployed with that version keeps it until the next `tink deploy`, which applies the template with
-  `incus config edit` and replaces the server's whole config (so it also loses any `incus config set` made by hand). A host that wants
+  template did route it there; a host deployed with that version keeps it until the next `tink deploy`, which applies the template as
+  `incus config edit` does (one `UpdateServer` call) and replaces the server's whole config (so it also loses any `incus config set` made by hand). A host that wants
   restricted certificates held to something narrower than their project list routes that class to a script of its own.
 - **The script is validated on Incus 7.5.1 only.** The shape of `details` moves between Incus versions: the script used to read
   `details.RequestDetails.Protocol`, which is not a field on 7.5.1 (it reads `details.Protocol`): with the old script an unrestricted certificate got `403 Authorization scriptlet execution failed ... Invalid field "RequestDetails"` on a direct fetch and empty lists on the list endpoints, and with this one it listed and fetched every project (measured 2026-10-17). A wrong field name is not caught by
