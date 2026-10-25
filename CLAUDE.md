@@ -108,3 +108,51 @@ several files to see are below.
   migration or compatibility code; fixing the few places that need it costs less than carrying lines that run once.
 - **Releases.** A `v*` tag builds the binaries (`release.yml`) and the helper image (`helper-image.yml`). The version is
   compiled in from the tag, and `tink helper install` with no flag picks the image published for the version it reports.
+
+## Working in GitHub
+
+Issues are the plan and the log; a PR is the change. Anything bigger than one change is planned in issues before the first PR.
+
+**Parent and sub-issues** (#254 with #255 to #258 is the model).
+- The parent's body is the stable part: what was looked at, what is already right, the gaps, a "Not gaps (decided)" list so they are not found
+  again, and "Done when". Change it only when the scope changes, and say why in a comment. It closes when its sub-issues do.
+- A sub-issue says what, the evidence, and a "Done when" that a test or a command can answer. Link it with
+  `gh api -X POST repos/minihci/tink/issues/PARENT/sub_issues -F sub_issue_id=ID` (ID is the issue's numeric `id`, not its number); order with
+  "blocked by".
+- A side thought goes into a `[parked]` proposal issue, not into the change in hand.
+- Show the owner the titles and bodies before filing: filing is public.
+
+**Check the premise first.** An issue claims something about the code or a dependency. Read the code (a dependency's source too) before changing
+anything, and record what was found with file and line. If the premise is wrong, say so and close or reshape the issue (#256: the Incus client
+already names a missing extension).
+
+**Comments are the log.** A later reader, or another machine, learns what happened from the issue. Post as it happens, one comment per event,
+dated and starting with its kind:
+- *Plan*: the approach, the files, the live check, what is out of scope. Before work; shown to the owner first.
+- *Finding*: what was expected, what was found, tagged [code], [docs], [lab] (with the software version) or [proposed], and what it changes.
+- *Measurement*: method, software version, a table, what was not measured. Raw output stays in the private notes; the comment cites a lab ID.
+- *Decision*: what was chosen, what was dropped and why, who decided.
+- *Correction*: an earlier comment or the issue was wrong. A new short comment, not an edit; shown to the owner first.
+- *Closing*: what changed (the PR), what was left on purpose, when to reopen. Close "completed" when the work was done, measuring included, and
+  "not planned" when it was decided not to be a gap.
+A PR description says what the change is and links the comments. It is not the only place a finding is written.
+
+**Pull requests.**
+- One branch from `main` per sub-issue; stack only when one needs the other, and then merge bottom-up with merge commits.
+- The title ends with the issue number. The body says `Closes #SUB` and `Part of #PARENT`, what changes, the tests, what was checked (the CI
+  commands), and, plainly, what was run live, what only on fakes, and what was not run.
+- The milestone and the `area:` label are the issue's. Docs go in the same PR.
+- Show the owner the description before opening. Never merge: merging waits for the owner, per PR.
+- After a merge: sync `main`, delete the branch, update #218.
+
+**Labels and milestones.** A milestone is an arc toward 1.0; each issue has one `area:` label (`area:core`, `area:daemon`, `area:service`), and
+`proposal`, `parked`, `removal` or `bug` where they apply. Move an issue out of a milestone before closing it. An issue found mid-work starts with
+"Found while: #N" and is listed on #218 under Open detours.
+
+**#218 (where we are)** is the status page: read it first, update it last, without asking.
+
+**Public text.** Every issue, comment, PR body and commit message is public: the rule under Conventions applies, and the check script in the
+private notes (`hooks/check-text.sh`, installed by `hooks/install.sh`) runs on each before it is posted.
+
+**Git identity.** If none is configured, set `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME` and `GIT_COMMITTER_EMAIL` for the commit to
+`Morgan` and `33681253+m16d@users.noreply.github.com`. Never `git config`, and never the account email (it would sit in public history).
