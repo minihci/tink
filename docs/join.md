@@ -214,7 +214,7 @@ Before the stack is planned (`internal/derive`, the fifth pass of `prepare`), wh
 
 1. ~~The mesh records as a planned change~~, built (`derive: mesh`, above), for a control plane whose records file the stack can reach. All five renderings are planned changes now.
 2. ~~`tink plan explain` (#129)~~, built: [plan-explain.md](plan-explain.md) prints the routes, rules and records of a site, line by line, without writing them. That is what `tink join --only ...` was for.
-3. **The daemon applies planned changes** instead of running `join apply dns --from-server`, under a credential narrow enough for it (Phase 5).
+3. **The daemon applies planned changes** instead of running `join apply dns --from-server`, under a credential narrow enough for it (Phase 5). The first part is built for the dns records: `tink daemon run --reconcile-dns` runs that apply whenever the server changes ([helper.md](helper.md#the-reconciler)), under the daemon's existing certificate. The other four renderings need a stamp for each derived file first (#273); the narrow credential is #252.
 4. **A removal page** in the style of `docs/removals/ingress-self-registration.md`, because the verb is deployed on the author's hosts.
 
 Until then `tink join` and `tink join apply dns` stay, and `--from-server` is the way to see what a stack that derives its own network produced. `tink join apply dns` and a `derive: dns` file do the same job; use one of them for a dns helper, not both.

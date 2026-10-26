@@ -65,10 +65,25 @@ type Status struct {
 	Queued   int  `json:"queued_jobs,omitempty"`
 	Draining bool `json:"draining,omitempty"`
 
+	// Reconciles say what the daemon's reconciler last found for each thing it keeps in step with the server, one entry per site. A person reads it to know
+	// whether the site's derived state is converged (`plan` says so in a line). Nil means the daemon does not reconcile, and an older one never wrote it.
+	Reconciles []Reconcile `json:"reconciles,omitempty"`
+
 	// Remotes are the Incus servers the helper can reach by name: its own host, and any added with `tink helper remote add`. A copy
 	// to a remote backup target is made through one of these, so a policy naming a remote that is not here fails on every attempt.
 	// Nil means the helper did not say (an older one, or its configuration could not be read); an empty list says it has none.
 	Remotes []Remote `json:"remotes"`
+}
+
+// Reconcile is what the reconciler last found for one thing it keeps in step with the server. State and Reason are short fixed words and never error
+// text. Since is when this state began, not when it was last checked: a reconcile that finds the same thing again changes nothing, so the status
+// document is not rewritten on every pass (a write costs an event and some Incus CPU).
+type Reconcile struct {
+	What   string    `json:"what"`           // what is kept: "dns"
+	Site   string    `json:"site,omitempty"` // "" is the unnamed site
+	State  string    `json:"state"`          // converged, blocked, skipped, failing
+	Reason string    `json:"reason,omitempty"`
+	Since  time.Time `json:"since,omitzero"`
 }
 
 // Remote is one entry of the helper's Incus client configuration. It holds no credential: those are on the helper's config volume.

@@ -293,6 +293,46 @@ remote backup target; the status volume) unless `--purge`, which removes them an
 volume through the pointer on the instance, and deletes it only if it is the `<name>-status` that install makes: a pointer someone edited to name another
 volume is not followed.
 
+## The reconciler
+
+**Status: built for the dns records (#281); unit-tested, and run live on a local Incus 7.5.1 server on 2026-10-26 (L-2026-10-26b).** It is off by default.
+
+```
+tink daemon run --jobs /var/lib/tink/jobs --reconcile-dns [--reconcile-site NAME ...] [--reconcile-resync 5m]
+```
+
+With `--reconcile-dns` the daemon keeps the dns helper's generated records (`/hosts`) equal to the publishes stamped on the server, **without a second apply**: it is
+`tink join apply dns --from-server` (see [join.md](join.md#applying-dns)) run whenever the server changes. A published name added, dropped or changed in an app's stack
+reaches the records about two seconds after that stack's `plan apply` (the wait is a debounce, so a burst of changes is one pass). `--reconcile-site` names the
+sites it keeps (repeat it; with none, the unnamed site).
+
+**How it wakes.** It subscribes to the Incus event stream and a pass runs after an `instance-created`, `-deleted`, `-renamed` or `-updated`, a `profile-updated` or
+`-deleted`, or a `network-updated` or `-deleted`: what a site's records are derived from. It does not wake on file or exec events, on starts and stops, or on
+volume updates, because its own reads and writes make some of them (an API file read emits two `instance-file-retrieved` events, measured in #272) and a pass
+must not wake the next. A pass that finds the file already right writes nothing, so it makes no event of its own.
+
+**It never relies on seeing every event.** Nothing is replayed after a reconnect, so each subscription is followed by a full pass, a dropped stream is subscribed
+again with a growing wait, and `--reconcile-resync` (default 5 minutes) is the longest it goes between passes whatever the events say. A hand edit to the generated file
+is not an event; the resync puts the file back (measured: within one resync).
+
+**What it will not do.** It follows the rules of `join apply dns`, so it **blocks** where the command would refuse, and says so: the join has errors, no name is
+published (an empty rendering is never applied), a publish stamp cannot be read, the zone file is missing or already holds a published name, or `/hosts` exists and
+tink did not write it. `--adopt` and `--allow-empty` are decisions for a person with the command; the daemon takes neither.
+
+**What it reports.** The status document carries one entry per site: `converged` (the file is right, whether or not this pass had to write it), `blocked` and why, `skipped`
+(the site has no dns helper) or `failing` (the server or the helper could not be read or written), and since when. The log says each rewrite and each change of state,
+not each pass. The reasons are fixed phrases; the detail is in the log.
+
+**The credential.** It uses the daemon's own certificate and asks for nothing more, but that certificate is unrestricted (see "Not confined" above), so a host should
+not turn this on before [the cut-over to narrow identities](https://github.com/minihci/tink/issues/252) unless it is a host where that is acceptable. The rows it would
+need are: read the instances, profiles and networks of the sites it keeps, and access files on the dns helper.
+
+**Measured live** (a local Incus 7.5.1, an Alpine dns helper and an app with two publishes): the first pass followed the first subscription; removing a publish from the
+app's stack and applying it rewrote `/hosts` to one record in about 2.1 seconds, and putting it back to two in the same time, each with no `join apply dns` and no apply of
+the platform; a record added by hand stood for the 5 seconds checked and was gone within the 25-second resync set for the test; the status document read
+`converged`. **Not run:** an Incus restart with the daemon connected (the reconnect is tested against a fake stream), more than one site, the proxy, sign-on, mesh and
+ACL files (they need [a stamp for each derived file](https://github.com/minihci/tink/issues/273)), and a production-like host.
+
 ## The status document
 
 A daemon started with `--status-volume NAME` (and `--status-pool`, default `default`, and `--status-project` if the volume is not in the connection's
@@ -327,6 +367,7 @@ was read, **keeping every other key as it was**; if the volume changed in betwee
 | `skipped` | volumes it will **not** copy, and why: a policy of a protocol it does not read, one that does not parse, a pool it cannot list, a volume it cannot read |
 | `failing` | copies that have failed since their last success: volume, target, how many in a row, since when |
 | `last_job` | the newest finished job: id, state, when |
+| `reconciles` | with `--reconcile-dns`: one entry per site kept, `what` (`dns`), `site`, `state` (`converged`, `blocked`, `skipped`, `failing`), a fixed `reason` when it is not converged, and `since`, when that state began (so a pass that finds the same thing writes nothing new) |
 | `remotes` | the Incus servers the helper can reach by name: `host`, and any added with `tink helper remote add` (name, address, project; no credential). Absent from an older helper, which is why a missing list is not read as "none" |
 
 It holds **no error text**. Errors from Incus and its drivers can echo credentials, so the reasons it gives for something Incus refused are fixed

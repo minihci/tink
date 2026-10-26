@@ -214,7 +214,7 @@ to be re-tested on a throwaway server at every Incus upgrade. Details:
 [`configs/README.md`](configs/README.md#host-authorization).
 
 `daemon run` runs the helper's work (the backup scheduler and the job executor) until stopped; the helper is an Incus instance that runs it
-([docs](docs/helper.md)). It no longer reconciles ingress routes.
+([docs](docs/helper.md)). It no longer reconciles ingress routes; with `--reconcile-dns` it keeps the dns helper's generated records in step with the published names, woken by Incus events ([docs](docs/helper.md#the-reconciler)).
 
 ## Building
 
