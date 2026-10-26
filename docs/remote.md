@@ -66,7 +66,7 @@ stack commonly uses, only where the client configuration lacks them:
 An image can also be written the way Docker writes it, and tink maps it onto these: `ghcr.io/org/app:1` is `ghcr:org/app:1`, `docker.io/org/app:1` is `docker-oci:org/app:1`. A name with **no** registry
 (`org/app:1`) is Docker Hub, with a warning that says how to be explicit; a registry no remote is configured for is an error that says how to add one ([docker-gap-analysis.md](docker-gap-analysis.md#6-the-registry-story)).
 
-A remote the client configuration defines under the same name **always wins** (a mirror, say). The server pulls the image itself, and the instance is created for the **server's** architecture.
+A remote the client configuration defines under the same name **always wins** (a mirror, say). `docker.io/...` always means the `docker-oci` remote, wherever the configuration points it, so a mirror serves both spellings. The server pulls the image itself, and the instance is created for the **server's** architecture.
 
 `plan` and `plan apply` also ask the registry whether an image has moved ([image-updates.md](image-updates.md)). tink does that itself, over HTTPS, from wherever it runs, and asks for the
 image of the **server's** architecture, not the machine's own: an arm64 laptop planning against an amd64 server gets the answer the server would, and nothing has to be installed on
