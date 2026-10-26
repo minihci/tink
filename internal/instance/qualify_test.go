@@ -1,6 +1,8 @@
 package instance
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -72,5 +74,27 @@ func TestAnUnknownRegistryHostIsAnErrorThatSaysHowToAddIt(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q should mention %q", err, want)
 		}
+	}
+}
+
+// A client configuration may define docker-oci itself (a mirror, say) and that always wins over the built-in. The reference written Docker's way,
+// docker.io/..., must then mean the same thing as the bare one does: Docker Hub through the remote the person chose.
+func TestADockerHubReferenceUsesTheDockerRemoteEvenWhenTheClientConfigPointsItAtAMirror(t *testing.T) {
+	dir := t.TempDir()
+	conf := "remotes:\n  docker-oci:\n    protocol: oci\n    public: true\n    addr: https://mirror.example.org\n"
+	if err := os.WriteFile(filepath.Join(dir, "config.yml"), []byte(conf), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("INCUS_CONF", dir)
+
+	none := &readFake{aliasErr: errNotFound, imageErr: errNotFound}
+	q, err := qualify(t, none, "docker.io/library/redis:7")
+	if err != nil || q.Image != "docker-oci:library/redis:7" || q.Warning != "" {
+		t.Errorf("docker.io: %+v %v, want docker-oci:library/redis:7 and no warning", q, err)
+	}
+	// the bare reference already goes through the same remote
+	q, err = qualify(t, none, "library/redis:7")
+	if err != nil || q.Image != "docker-oci:library/redis:7" {
+		t.Errorf("bare: %+v %v", q, err)
 	}
 }

@@ -55,6 +55,10 @@ func Qualify(scoped incus.InstanceServer, image string) (ImageQualification, err
 				return ImageQualification{Image: name + ":" + rest, Note: fmt.Sprintf("%q is the registry %s: using the remote %s", image, host, name)}, nil
 			}
 		}
+		if _, known := conf.Remotes[dockerRemote]; known && host == "docker.io" {
+			// docker.io is what docker-oci means, wherever the client configuration points it (a mirror, say): the same answer the bare name gets.
+			return ImageQualification{Image: dockerRemote + ":" + rest, Note: fmt.Sprintf("%q is the registry %s: using the remote %s", image, host, dockerRemote)}, nil
+		}
 		return same, fmt.Errorf("image %q is on the registry %s, and no OCI remote is configured for it: add one (for example `incus remote add NAME https://%s --protocol=oci`) and write the image as NAME:%s", image, host, host, rest)
 	}
 	if _, known := conf.Remotes[dockerRemote]; !known {
