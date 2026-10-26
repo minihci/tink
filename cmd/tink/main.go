@@ -481,7 +481,7 @@ func newDaemonCmd() *cobra.Command {
 	}
 
 	daemonCmd.AddCommand(newDaemonRunCmd())
-	daemonCmd.AddCommand(newDaemonEnqueueCmd(), newDaemonJobsCmd(), newDaemonCancelCmd())
+	daemonCmd.AddCommand(newDaemonEnqueueCmd(), newDaemonJobsCmd(), newDaemonCancelCmd(), newDaemonAuthzCmd())
 	return daemonCmd
 }
 
