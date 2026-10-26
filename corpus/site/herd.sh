@@ -241,9 +241,9 @@ test() {
 		url="https://$name.home.example.org/"
 		echo "$name"
 		[ "$(dig +short +time=3 +tries=1 @"$DNS_IP" "$name.home.example.org")" = "$INGRESS_IP" ] && ok "the name answers" || bad "the name answers"
-		out=$(curl -sk -m 15 $R -o /dev/null -w '%{http_code} %{redirect_url}' "$url")
+		out=$(curl -sk -m 15 $R -o /dev/null -w '%{http_code} %{redirect_url}' "$url" || true)
 		case "$out" in "302 https://auth.home.example.org"*) ok "no session: sent to sign-on" ;; *) bad "no session: sent to sign-on ($out)" ;; esac
-		out=$(curl -sk -m 20 $R -b "$J" -o /dev/null -w '%{http_code} %{redirect_url}' "$url")
+		out=$(curl -sk -m 20 $R -b "$J" -o /dev/null -w '%{http_code} %{redirect_url}' "$url" || true)
 		case "$out" in
 		"200 "* | "30"[1237]" "*)
 			case "$out" in *auth.home.example.org*) bad "signed in: sent to sign-on again ($out)" ;; *) ok "signed in: the app answers (${out%% *})" ;; esac ;;
