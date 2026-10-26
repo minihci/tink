@@ -30,6 +30,8 @@ type RunOptions struct {
 	RestartBackoff time.Duration
 	// Status, if set, publishes the status document about this daemon (see StatusOptions).
 	Status *StatusOptions
+	// Reconciler, if set, keeps derived state in step with the server, woken by its events (see Reconciler). It is off by default.
+	Reconciler *Reconciler
 }
 
 // Run starts the daemon's workers and runs them until ctx is cancelled (SIGTERM/SIGINT, wired up by the caller) -- a
@@ -59,6 +61,16 @@ func Run(ctx context.Context, out io.Writer, opts RunOptions) error {
 		fmt.Fprintf(out, "tink daemon: backup scheduler every %s, job executor on %s, schedules in %s\n", orInterval(h.SchedulerInterval), h.Store.Dir, h.now().Location())
 		start("executor", func(ctx context.Context) error { return h.Executor().Run(ctx) })
 		start("scheduler", func(ctx context.Context) error { return h.runScheduler(ctx) })
+	}
+	if rc := opts.Reconciler; rc != nil {
+		if rc.Live == nil {
+			rc.Live = live
+		}
+		if rc.Logf == nil {
+			rc.Logf = func(format string, args ...any) { fmt.Fprintf(out, "tink daemon: "+format+"\n", args...) }
+		}
+		fmt.Fprintf(out, "tink daemon: reconciler on the Incus event stream, resync every %s\n", rc.resync())
+		start("reconciler", func(ctx context.Context) error { return rc.Run(ctx) })
 	}
 	if opts.Status != nil {
 		started := time.Now()

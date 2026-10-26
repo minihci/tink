@@ -22,6 +22,31 @@ type Live struct {
 	known   bool // the scheduler has completed a pass, so skipped and failing are facts and not "not looked yet"
 	skipped []helper.Skip
 	failing []helper.Failing
+	// reconciles are what the reconciler last found, by what it keeps and the site.
+	reconciles []helper.Reconcile
+}
+
+// setReconcile records what the reconciler found. An entry that finds the same state and reason keeps the Since it had, so the status document does not
+// change (and is not rewritten) when a pass finds what the last one did.
+func (l *Live) setReconcile(r helper.Reconcile) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for i, old := range l.reconciles {
+		if old.What == r.What && old.Site == r.Site {
+			if old.State == r.State && old.Reason == r.Reason {
+				return
+			}
+			l.reconciles[i] = r
+			return
+		}
+	}
+	l.reconciles = append(l.reconciles, r)
+}
+
+func (l *Live) reconcilesSnapshot() []helper.Reconcile {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]helper.Reconcile(nil), l.reconciles...)
 }
 
 func (l *Live) setBackup(skipped []helper.Skip, failing []helper.Failing) {
@@ -128,6 +153,7 @@ func buildStatus(o StatusOptions, live *Live, started, now time.Time) helper.Sta
 		Started:     started.UTC(),
 		Skipped:     skipped,
 		Failing:     failing,
+		Reconciles:  live.reconcilesSnapshot(),
 	}
 	zone := o.Zone
 	if zone == nil {

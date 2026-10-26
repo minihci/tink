@@ -256,9 +256,9 @@ for ONE site, the one --site names (see "tink join --help" for the default): the
 				return fmt.Errorf("connecting to incus: %w", err)
 			}
 			if fromServer {
-				return runJoinApplyFromServer(cmd.OutOrStdout(), cmd.ErrOrStderr(), server, incusFiles{server}, args[0], site, o)
+				return runJoinApplyFromServer(cmd.OutOrStdout(), cmd.ErrOrStderr(), server, join.IncusFiles{Server: server}, args[0], site, o)
 			}
-			return runJoinApply(cmd.OutOrStdout(), cmd.ErrOrStderr(), incusFiles{server}, args[0], args[1:], siteFlag{site, cmd.Flags().Changed("site")}, o)
+			return runJoinApply(cmd.OutOrStdout(), cmd.ErrOrStderr(), join.IncusFiles{Server: server}, args[0], args[1:], siteFlag{site, cmd.Flags().Changed("site")}, o)
 		},
 	}
 	cmd.Flags().BoolVar(&fromServer, "from-server", false, "join from the instances, profiles, networks and publish stamps on the server instead of from FILEs")
@@ -339,35 +339,4 @@ func applyJoin(out, errw io.Writer, files join.Files, stacks []join.Stack, o joi
 		fmt.Fprintln(out, "rewritten, and read back")
 	}
 	return nil
-}
-
-// maxJoinFile bounds what is read from an instance: a hosts file or a zone file is small, and anything larger is not what the join expects.
-const maxJoinFile = 1 << 20
-
-// incusFiles is the join's file API on a real server: the instance file API of whichever project the file is in.
-type incusFiles struct{ server incus.InstanceServer }
-
-func (f incusFiles) Read(project, instance, path string) (string, bool, error) {
-	rc, _, found, err := incusapi.LookupInstanceFile(f.server.UseProject(project), instance, path)
-	if err != nil || !found {
-		return "", false, err
-	}
-	defer rc.Close()
-	b, err := io.ReadAll(io.LimitReader(rc, maxJoinFile+1))
-	if err != nil {
-		return "", false, err
-	}
-	if len(b) > maxJoinFile {
-		return "", false, fmt.Errorf("%s is larger than %d bytes, which is not a file the join expects", path, maxJoinFile)
-	}
-	return string(b), true, nil
-}
-
-func (f incusFiles) Write(project, instance, path, content string) error {
-	return f.server.UseProject(project).CreateInstanceFile(instance, path, incus.InstanceFileArgs{
-		Content:   strings.NewReader(content),
-		Type:      "file",
-		WriteMode: "overwrite",
-		Mode:      0o644,
-	})
 }

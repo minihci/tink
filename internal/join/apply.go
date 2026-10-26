@@ -53,21 +53,31 @@ type ApplyReport struct {
 	Added, Removed          []string // record lines the write adds to, and takes from, the file
 }
 
+// Refusal is an apply that was declined on purpose, before anything was written: the join has errors, there is nothing to apply, or what is on the helper is not
+// what the applier may replace. It is told apart from a failure (a read or a write that did not work) so that a caller that runs the apply unattended can say
+// "blocked" and "failing" as two different things.
+type Refusal struct{ err error }
+
+func (r *Refusal) Error() string { return r.err.Error() }
+func (r *Refusal) Unwrap() error { return r.err }
+
+func refuse(format string, args ...any) error { return &Refusal{fmt.Errorf(format, args...)} }
+
 // ApplyDNS makes the dns helper's generated record file equal to the rendering. It applies nothing when the join has errors, refuses to replace the records
 // with none unless asked, refuses a label that is already a static record in the zone file, and checks by reading the file back that the write took.
 func ApplyDNS(f Files, res Result, opts ApplyOptions) (ApplyReport, error) {
 	rep := ApplyReport{Project: res.DNSProject, Instance: res.DNSInstance, Path: DNSRecordsPath}
 	if n := res.Errors(); n > 0 {
-		return rep, fmt.Errorf("the join has %d error(s): nothing was applied", n)
+		return rep, refuse("the join has %d error(s): nothing was applied", n)
 	}
 	if res.DNSInstance == "" {
-		return rep, fmt.Errorf("%s: nothing to apply to", res.NoDNSHelper())
+		return rep, refuse("%s: nothing to apply to", res.NoDNSHelper())
 	}
 	if len(res.Published) == 0 && !opts.AllowEmpty {
-		return rep, fmt.Errorf("no published name was found, so applying would replace every generated record with none; with files that usually means the wrong files were given, and from the server that nothing is stamped on it yet (--allow-empty says it is meant)")
+		return rep, refuse("no published name was found, so applying would replace every generated record with none; with files that usually means the wrong files were given, and from the server that nothing is stamped on it yet (--allow-empty says it is meant)")
 	}
 	if res.Zone == "" {
-		return rep, fmt.Errorf("the dns helper states no zone (%s), so the zone file cannot be checked for names it already holds", zoneKey)
+		return rep, refuse("the dns helper states no zone (%s), so the zone file cannot be checked for names it already holds", zoneKey)
 	}
 
 	// Refuse a label the platform already owns.
@@ -77,7 +87,7 @@ func ApplyDNS(f Files, res Result, opts ApplyOptions) (ApplyReport, error) {
 		return rep, fmt.Errorf("reading %s on %s: %w", zonePath, res.DNSInstance, err)
 	}
 	if !found {
-		return rep, fmt.Errorf("%s does not exist on %s: the dns helper is not laid out the way the join expects (docs/join.md), so it cannot check the published names against the platform's own", zonePath, res.DNSInstance)
+		return rep, refuse("%s does not exist on %s: the dns helper is not laid out the way the join expects (docs/join.md), so it cannot check the published names against the platform's own", zonePath, res.DNSInstance)
 	}
 	owners := ZoneOwners(zone, res.Zone)
 	var clash []string
@@ -87,7 +97,7 @@ func ApplyDNS(f Files, res Result, opts ApplyOptions) (ApplyReport, error) {
 		}
 	}
 	if len(clash) > 0 {
-		return rep, fmt.Errorf("%s already holds a record for %s, and a generated record would answer first and take the name over: rename the publish", zonePath, strings.Join(clash, ", "))
+		return rep, refuse("%s already holds a record for %s, and a generated record would answer first and take the name over: rename the publish", zonePath, strings.Join(clash, ", "))
 	}
 
 	desired := res.DNSFile()
@@ -96,7 +106,7 @@ func ApplyDNS(f Files, res Result, opts ApplyOptions) (ApplyReport, error) {
 		return rep, fmt.Errorf("reading %s on %s: %w", DNSRecordsPath, res.DNSInstance, err)
 	}
 	if exists && !strings.HasPrefix(current, generatedNote) && !opts.Adopt {
-		return rep, fmt.Errorf("%s on %s was not written by tink (it does not begin with the note the join writes), and it holds %d record(s) that applying would remove: move them to the zone file %s if they are the platform's own, then give --adopt once", DNSRecordsPath, res.DNSInstance, len(records(current)), zonePath)
+		return rep, refuse("%s on %s was not written by tink (it does not begin with the note the join writes), and it holds %d record(s) that applying would remove: move them to the zone file %s if they are the platform's own, then give --adopt once", DNSRecordsPath, res.DNSInstance, len(records(current)), zonePath)
 	}
 	rep.Created = !exists
 	rep.Changed = !exists || current != desired

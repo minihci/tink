@@ -491,6 +491,9 @@ func newDaemonRunCmd() *cobra.Command {
 	var jobsDir, timezone string
 	var statusInstance, statusVolume, statusPool, statusProject string
 	var statusHeartbeat time.Duration
+	var reconcileDNS bool
+	var reconcileSites []string
+	var reconcileResync time.Duration
 
 	cmd := &cobra.Command{
 		Use:   "run",
@@ -559,6 +562,9 @@ its own host.`,
 					Redactor:          redactor,
 				}
 			}
+			if reconcileDNS {
+				ro.Reconciler = dnsReconciler(socket, reconcileSites, reconcileResync)
+			}
 			return daemon.Run(ctx, cmd.OutOrStdout(), ro)
 		},
 	}
@@ -567,6 +573,9 @@ its own host.`,
 	cmd.Flags().StringVar(&jobsDir, "jobs", "", "directory the backup scheduler queues jobs in and the executor runs them from (required)")
 	cmd.Flags().StringVar(&timezone, "timezone", "", "time zone schedules are evaluated in, e.g. America/Denver (default: this machine's)")
 	cmd.Flags().DurationVar(&schedulerInterval, "scheduler-interval", time.Minute, "how often the scheduler looks for due copies")
+	cmd.Flags().BoolVar(&reconcileDNS, "reconcile-dns", false, "also keep the dns helper's generated records in step with the published names, woken by Incus events (off by default; see docs/helper.md)")
+	cmd.Flags().StringSliceVar(&reconcileSites, "reconcile-site", nil, "the site --reconcile-dns keeps; repeat for more (default: the unnamed site)")
+	cmd.Flags().DurationVar(&reconcileResync, "reconcile-resync", 5*time.Minute, "the longest --reconcile-dns goes between full passes, whatever the events say")
 	cmd.Flags().StringVar(&statusVolume, "status-volume", "", "publish a status document on this custom volume's config (user.tink.helper.status), so `tink helper status` and `plan` can see this daemon; the helper's instance points at the volume (user.tink.helper.status-volume), and the helper holds no right to edit an instance")
 	cmd.Flags().StringVar(&statusPool, "status-pool", "default", "the storage pool of --status-volume")
 	cmd.Flags().StringVar(&statusInstance, "status-instance", "", "publish a status document on this instance's own config instead (user.tink.helper.status): the way helpers installed before the status volume do; not with --status-volume")
