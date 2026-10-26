@@ -20,6 +20,7 @@ type serverFake struct {
 	instances []api.Instance
 	profiles  []api.Profile
 	networks  []api.Network
+	acls      []api.NetworkACL
 	err       map[string]error // by method name
 }
 
@@ -30,6 +31,9 @@ func (f *serverFake) GetProfilesAllProjects() ([]api.Profile, error) {
 	return f.profiles, f.err["profiles"]
 }
 func (f *serverFake) GetNetworks() ([]api.Network, error) { return f.networks, f.err["networks"] }
+func (f *serverFake) GetNetworkACLsAllProjects() ([]api.NetworkACL, error) {
+	return f.acls, f.err["acls"]
+}
 
 // serverOf puts stacks on a fake server the way `tink plan apply` would: each stack is planned (resolve.Levels) so its publishes are stamped onto its
 // instances, and then every instance, profile and managed network is stored as Incus holds it. An unmanaged bridge is on the server too, as on a real one.
@@ -377,5 +381,43 @@ func TestOverlayDropsThePublishesOfAnInstanceItDeclares(t *testing.T) {
 	}
 	if len(names) != 1 || names[0] != "kept" {
 		t.Errorf("publishes = %v, want only the one for the instance the overlay does not declare", names)
+	}
+}
+
+// A client that may not edit a network is not shown its config, and the join reads which ACL is attached from the ACLs' used-by lists instead.
+func TestANetworkWhoseConfigIsHiddenGetsItsAclFromTheAclsUsedByList(t *testing.T) {
+	f := serverOf(t, load(t))
+	want := fromServer(t, f)
+	if len(want.Findings) != 0 {
+		t.Fatalf("findings with the config visible: %v", want.Findings)
+	}
+	var hidden []string
+	for i := range f.networks {
+		if f.networks[i].Managed {
+			for _, a := range strings.Split(f.networks[i].Config["security.acls"], ",") {
+				if a != "" {
+					acl := api.NetworkACL{UsedBy: []string{"/1.0/networks/" + f.networks[i].Name + "?project=default", "/1.0/instances/some"}}
+					acl.Name = a
+					f.acls = append(f.acls, acl)
+				}
+			}
+			f.networks[i].Config = map[string]string{} // what a client without can_edit is shown
+			hidden = append(hidden, f.networks[i].Name)
+		}
+	}
+	if len(hidden) == 0 || len(f.acls) == 0 {
+		t.Fatalf("the fixture has no managed network with an ACL (%v, %v)", hidden, f.acls)
+	}
+	got := fromServer(t, f)
+	if !reflect.DeepEqual(got.Findings, want.Findings) || !reflect.DeepEqual(got.Published, want.Published) || got.DNS != want.DNS {
+		t.Errorf("hidden config changed the join:\n got %+v\nwant %+v", got.Published, want.Published)
+	}
+}
+
+func TestANetworkWhoseConfigIsVisibleIsNotAskedAboutAcls(t *testing.T) {
+	f := serverOf(t, load(t))
+	f.err = map[string]error{"acls": errors.New("must not be called")}
+	if _, err := FromServer(f, ""); err != nil {
+		t.Fatalf("the ACLs were listed although every network's config was readable: %v", err)
 	}
 }
