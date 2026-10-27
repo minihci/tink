@@ -150,6 +150,8 @@ type Resource struct {
 	Network  string
 	Timezone string
 	Remotes  []string
+	// Authz is what the stack asks of the daemon's certificate: AuthzNarrow, or empty for nothing asked (helperauthz.go).
+	Authz string
 
 	// Site (stack-only) is the site the stack belongs to: the group of stacks whose helpers and publishes the join reads together. Empty is the unnamed
 	// site. See site.go.

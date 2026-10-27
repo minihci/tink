@@ -176,3 +176,52 @@ func TestCopiesAreWhatTheServerIsAskedForAndRemoteTargetsCreateNothingHere(t *te
 		t.Errorf("explicit project and pool: %+v", got[1])
 	}
 }
+
+func TestAHelperDeclaredInAStackIsNarrowedForWhatItIsOnTheServer(t *testing.T) {
+	found := helper.Found{Project: "tink-helper", Name: "helper", StatusVolume: "fast/helper-status",
+		Config: map[string]string{"oci.entrypoint": "/usr/bin/tink daemon run --remote host --reconcile-dns"}}
+	o, err := (HelperAuthz{}).optionsFor(&authzServer{}, found)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !o.Reconcile || o.Status == nil || *o.Status != (authz.Volume{Project: "tink-helper", Pool: "fast", Name: "helper-status"}) {
+		t.Errorf("options = %+v, status %+v", o, o.Status)
+	}
+	// a daemon that does not reconcile, and one that has no status volume: the rules are the narrower for it
+	found.Config["oci.entrypoint"] = "/usr/bin/tink daemon run --remote host"
+	found.StatusVolume = ""
+	if o, _ = (HelperAuthz{}).optionsFor(&authzServer{}, found); o.Reconcile || o.Status != nil {
+		t.Errorf("options = %+v", o)
+	}
+	// a flag that only looks like it is not the flag
+	found.Config["oci.entrypoint"] = "/usr/bin/tink daemon run --reconcile-dns-extra"
+	if o, _ = (HelperAuthz{}).optionsFor(&authzServer{}, found); o.Reconcile {
+		t.Error("--reconcile-dns-extra is not --reconcile-dns")
+	}
+	found.StatusVolume = "no-slash"
+	if _, err := (HelperAuthz{}).optionsFor(&authzServer{}, found); err == nil {
+		t.Error("a status volume that is not POOL/VOLUME must be an error, not a guess")
+	}
+}
+
+func TestNarrowedMeansTinksScriptIsRoutedWhetherOrNotItIsCurrent(t *testing.T) {
+	s := &authzServer{certs: []api.Certificate{daemonCert()}, cfg: map[string]string{}}
+	p, _ := PlanAuthz(opts(s))
+	if p.Narrowed() {
+		t.Error("an empty server is not narrowed")
+	}
+	if _, err := ApplyAuthz(opts(s)); err != nil {
+		t.Fatal(err)
+	}
+	if p, _ = PlanAuthz(opts(s)); !p.Narrowed() || !p.UpToDate {
+		t.Errorf("after apply: %+v", p)
+	}
+	s.cfg[AuthzScriptletKey] = authz.Marker + "\n# an older script\n"
+	if p, _ = PlanAuthz(opts(s)); !p.Narrowed() || p.UpToDate {
+		t.Errorf("an older script of tink's is narrowed and out of date: narrowed=%v up to date=%v", p.Narrowed(), p.UpToDate)
+	}
+	delete(s.cfg, AuthzRouteKey)
+	if p, _ = PlanAuthz(opts(s)); p.Narrowed() {
+		t.Error("a script nothing routes to narrows nobody")
+	}
+}

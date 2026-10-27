@@ -30,7 +30,7 @@ func createOne(server incus.InstanceServer, r Resource, env volumeEnv) error {
 	}
 	switch r.Kind {
 	case KindHelper:
-		return bound(true, func() error { return createHelper(server, r) })
+		return bound(true, func() error { return createHelper(server, r, env.helperAuthz) })
 	case KindProject:
 		return bound(false, func() error {
 			return server.CreateProject(api.ProjectsPost{
@@ -272,6 +272,9 @@ func updateOne(server incus.InstanceServer, r Resource, env volumeEnv) error {
 	s := scopedServer(server, r)
 	// An instance and a file take several steps, each with its own deadline; the rest are one change, bounded as a whole.
 	switch r.Kind {
+	case KindHelper:
+		// the narrowing is a server-wide write, so it takes the unscoped server
+		return incusapi.BoundedDo(env.limit(false), fmt.Sprintf("updating %s/%s", r.Kind, r.Name), func() error { return narrowHelper(server, r, env.helperAuthz) })
 	case KindInstance:
 		return updateInstance(s, r, env.limit(false))
 	case KindFile:

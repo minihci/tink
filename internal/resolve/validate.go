@@ -45,6 +45,7 @@ var fieldOwners = map[string][]Kind{
 	"EgressMode":      {KindStack},
 	"Timezone":        {KindHelper},
 	"Remotes":         {KindHelper},
+	"Authz":           {KindHelper},
 	"Allow":           {KindPublish},
 	"Path":            {KindFile},
 	"Content":         {KindFile},

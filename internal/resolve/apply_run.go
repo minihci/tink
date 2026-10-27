@@ -181,7 +181,7 @@ func applyOne(server incus.InstanceServer, r Resource, opts PlanOptions, note fu
 	case ActionCreate:
 		var first firstStartOutcome
 		env := volumeEnv{ctx: opts.ctx, targets: opts.targets, stack: opts.stack, firstStart: opts.firstStart, profiles: opts.profiles, opTimeout: opts.opTimeout,
-			report: func(_ string, o firstStartOutcome) { first = o }}
+			helperAuthz: opts.helperAuthz, report: func(_ string, o firstStartOutcome) { first = o }}
 		if err := createOne(server, r, env); err != nil {
 			return outConverged, err
 		}
@@ -196,7 +196,7 @@ func applyOne(server incus.InstanceServer, r Resource, opts PlanOptions, note fu
 		}
 		return outChanged, nil
 	case ActionUpdate:
-		if err := updateOne(server, r, volumeEnv{targets: opts.targets, stack: opts.stack, opTimeout: opts.opTimeout}); err != nil {
+		if err := updateOne(server, r, volumeEnv{targets: opts.targets, stack: opts.stack, opTimeout: opts.opTimeout, helperAuthz: opts.helperAuthz}); err != nil {
 			return outConverged, err
 		}
 		if r.Kind == KindInstance && r.Restart {

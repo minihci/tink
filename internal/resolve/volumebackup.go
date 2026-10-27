@@ -73,6 +73,8 @@ type volumeEnv struct {
 	report     func(instance string, o firstStartOutcome)
 	// opTimeout, when set, replaces the deadlines on the calls that change the server (opbounds.go). A field so a test can use a short one.
 	opTimeout time.Duration
+	// helperAuthz is what a helper that says authz: narrow is narrowed with (see PlanOptions.WithHelperAuthz).
+	helperAuthz HelperAuthz
 }
 
 func (e volumeEnv) writes() int {

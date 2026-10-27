@@ -15,7 +15,7 @@ func TestPlanHelperNotesAProxyDeviceAndSaysNothingAboutNone(t *testing.T) {
 		"root": {"type": "disk", "path": "/", "pool": "default"},
 		"api":  {"type": "proxy", "bind": "container", "listen": "tcp:127.0.0.1:8443", "connect": "tcp:127.0.0.1:8443"},
 	}
-	p, err := planHelper(&helperKindServer{instances: []api.Instance{withProxy}}, helperRes(nil), helperNow)
+	p, err := planHelper(&helperKindServer{instances: []api.Instance{withProxy}}, helperRes(nil), helperNow, PlanOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +32,7 @@ func TestPlanHelperNotesAProxyDeviceAndSaysNothingAboutNone(t *testing.T) {
 		"root": {"type": "disk", "path": "/", "pool": "default"},
 		"eth0": {"type": "nic", "network": "tink0", "name": "eth0"},
 	}
-	p, err = planHelper(&helperKindServer{instances: []api.Instance{overNetwork}}, helperRes(nil), helperNow)
+	p, err = planHelper(&helperKindServer{instances: []api.Instance{overNetwork}}, helperRes(nil), helperNow, PlanOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

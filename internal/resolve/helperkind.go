@@ -24,6 +24,7 @@ import (
 //	pool: default                # the pool for its root disk and volumes (optional)
 //	image: ghcr:minihci/tink-helper:v0.1.4   # the OCI image it is installed from (optional: the image published for this tink)
 //	remotes: [host, vps]         # the Incus servers it must be able to reach, for `plan` to check (optional)
+//	authz: narrow                # narrow the daemon's certificate to what it does (optional; helperauthz.go)
 //
 // What this does, and deliberately no more:
 //
@@ -34,6 +35,8 @@ import (
 //     and enrols the helper with a certificate of its own). That is the point of declaring it: a platform stack brings up its own controller.
 //   - It does not install over an instance of the same name that is not a helper: that is BLOCKED.
 //   - It never deletes a helper. Like every kind here, removal is `tink helper remove`.
+//
+// The certificate it enrols is another matter: plan says whether it is narrowed, and `authz: narrow` asks for it (helperauthz.go).
 //
 // Not here: a version policy (an `on_version_change: report | upgrade`, like `on_image_change`), adding remotes (they need a token from the other server,
 // which is the user's to give), and the ingress half.
@@ -67,6 +70,9 @@ func validateHelper(r Resource) error {
 			return fmt.Errorf("resource %q: timezone %q is not a time zone this system knows (for example America/Denver): %v", r.Name, r.Timezone, err)
 		}
 	}
+	if err := validateAuthz(r); err != nil {
+		return err
+	}
 	seen := map[string]bool{}
 	for _, name := range r.Remotes {
 		if strings.TrimSpace(name) == "" || strings.TrimSpace(name) != name {
@@ -81,7 +87,7 @@ func validateHelper(r Resource) error {
 }
 
 // planHelper reads the server: it finds helpers in every project (the marker is on the instance), so it takes the server unscoped.
-func planHelper(server incus.InstanceServer, r Resource, now time.Time) (PlannedResource, error) {
+func planHelper(server incus.InstanceServer, r Resource, now time.Time, opts PlanOptions) (PlannedResource, error) {
 	project, name := helperTarget(r)
 	label := project + "/" + name
 	all, err := helper.Find(server)
@@ -114,7 +120,7 @@ func planHelper(server incus.InstanceServer, r Resource, now time.Time) (Planned
 				p.Warnings = append(p.Warnings, fmt.Sprintf("the helper will not be able to reach remote %q until `tink helper remote add %s ...` (it needs a token or fingerprint from that server)", remote, remote))
 			}
 		}
-		return p, nil
+		return planAuthz(server, r, nil, p, opts), nil
 	}
 
 	rep := helper.Evaluate(*found, now)
@@ -141,13 +147,23 @@ func planHelper(server incus.InstanceServer, r Resource, now time.Time) (Planned
 			}
 		}
 	}
-	return p, nil
+	return planAuthz(server, r, found, p, opts), nil
 }
 
-// createHelper installs the helper, the way `tink helper install` does. It takes the unscoped server: it creates the project too.
-func createHelper(server incus.InstanceServer, r Resource) error {
+// createHelper installs the helper, the way `tink helper install` does, and narrows its certificate when the stack says authz: narrow. It takes the
+// unscoped server: it creates the project too.
+func createHelper(server incus.InstanceServer, r Resource, az HelperAuthz) error {
 	project, name := helperTarget(r)
-	return installHelper(server, helper.InstallOptions{
+	if err := installHelper(server, helper.InstallOptions{
 		Project: project, Name: name, Pool: r.Pool, Network: r.Network, Image: r.Image, TZ: r.Timezone,
-	})
+	}); err != nil {
+		return err
+	}
+	if r.Authz != AuthzNarrow {
+		return nil
+	}
+	if err := narrowHelper(server, r, az); err != nil {
+		return fmt.Errorf("the helper %s/%s is installed, and its certificate is not narrowed: %w", project, name, err)
+	}
+	return nil
 }

@@ -46,11 +46,13 @@ network: incusbr0             # the network its NIC joins (optional)
 pool: default                 # the pool for its root disk and volumes (optional)
 image: ghcr:minihci/tink-helper:v0.1.4    # the OCI image it is installed from (optional: the image published for this tink)
 remotes: [host, vps]          # the Incus servers it must be able to reach, for plan to check (optional)
+authz: narrow                 # narrow the daemon's certificate to what it does (optional; see below)
 ```
 
 - **A helper that is there is adopted, and nothing about it is changed.** `plan` says how it is (`healthy`, `degraded`, `down`, with the reasons), which tink version it runs, and warns when a remote the stack says it needs is not among the remotes it reports (naming `tink helper remote add`). It never upgrades, restarts or re-enrols it: an upgrade drains the helper first, and a declaration is not the place to start one by surprise (`tink helper upgrade`).
 - **When there is none, `apply` installs it,** exactly as `tink helper install` does: it mints a single-use trust token with the certificate of whoever runs the apply, and the helper enrols with a certificate of its own. So a platform stack brings up its own controller. Remotes other than the host's cannot be added this way (they need a token or fingerprint from the other server, which is for its owner to give), and `plan` warns about each.
 - **It is BLOCKED if an instance of that name exists in that project and is not a helper** (it lacks the marker), instead of failing half way through an install.
+- **`authz: narrow` narrows the daemon's certificate** ([Narrowing the daemon's certificate](#narrowing-the-daemons-certificate)). It is the one change a declaration makes to a helper that is there, and `plan` says it first.
 - **Not here:** a version policy (an `on_version_change: report | upgrade`, like `on_image_change`), and removal (a stack never deletes: `tink helper remove`).
 
 ## Installing it
@@ -335,7 +337,7 @@ ACL files (they need [a stamp for each derived file](https://github.com/minihci/
 
 ## Narrowing the daemon's certificate
 
-**Status: built (#252); unit-tested, and run live on a local Incus 7.5.1 server on 2026-10-26 (L-2026-10-26c).** Nothing narrows a certificate until you run `apply`.
+**Status: built (#252); unit-tested, and run live on a local Incus 7.5.1 server on 2026-10-26 (L-2026-10-26c). Declaring it in a stack (`authz: narrow`, #284) is unit-tested against fakes and was run live on the same server (L-2026-10-26d).** Nothing narrows a certificate until you run `apply`, or a stack that says `authz: narrow` is applied.
 
 The daemon's certificate is trusted without restriction, and an unrestricted certificate can do anything on the server, including what reaches the host as root (an edit right on an instance covers its devices). `tink daemon authz` narrows it to what the daemon does, without touching anyone else:
 
@@ -357,6 +359,21 @@ It generates an authorization scriptlet (`internal/authz`) and routes the class 
 The volumes it copies and the dns helpers are read from the server when the script is generated, so a volume added later is not covered until `plan` or `apply` runs again.
 
 **What it will not do.** It replaces a scriptlet only when it starts with tink's marker line, and refuses, saying why, when `authorization.scriptlet` holds anything else (for example the one `tink deploy` splices in) or when `authorization.client.tls` is set to something other than the scriptlet. It refuses a restricted certificate: Incus judges those by `authorization.client.tls-restricted`, a different class that this does not route. It never runs for the local Unix socket, which is the way back: **`incus config unset authorization.client.tls` on the host undoes it**, and `tink daemon authz remove` does the same and deletes the script.
+
+**Declaring it in a stack.** `authz: narrow` on the stack's `kind: helper` asks for the same thing, with the daemon's choices read from the helper on the server: the status volume its instance points at, and `--reconcile-dns` when its `oci.entrypoint` has it. `plan` then says, for every helper it adopts, declared or not, how the certificate stands:
+
+| `plan` says | when | what `plan apply` does |
+|---|---|---|
+| `the daemon's certificate is unrestricted` | nothing narrows it, and the stack does not ask | nothing |
+| `narrow the daemon's certificate: install an authorization scriptlet ... (N rules)` | the stack asks, and it is unrestricted | installs the script and the route |
+| `the daemon's certificate is narrowed (N rules)` | the stack asks, and the script is exactly today's | nothing: a second plan says no changes |
+| `rewrite the authorization scriptlet ... (N rules)` | the stack asks, and what the daemon touches (a volume, a dns helper, a flag) has changed since the script was written | rewrites it |
+| `narrowed and the stack does not say so`, with a warning when the rules no longer match what the daemon touches | the stack does not ask | nothing: removing the field removes nothing (a stack never deletes), and `tink daemon authz remove` is the way back |
+| BLOCKED, with the reason | a scriptlet tink did not generate, a route someone chose, a restricted or missing certificate, or two helpers in the stack asking | nothing |
+
+A helper that is not installed yet plans `then narrow its certificate`, and `apply` does it right after the install; if the install worked and the narrowing did not, the error says both. The authorizer is one scriptlet and one route for the whole server and the daemon's certificate is found by one name in the trust store, so keep the field on one helper per server: two in one stack are BLOCKED, and a second stack that asks for another helper on the same server is not detected (a script that names a different certificate looks the same as the same helper enrolled again with a new one, and is rewritten).
+
+**Declared, measured** (L-2026-10-26d, a local Incus 7.5.1, a helper installed from a development build with `--binary`): `plan` before said the certificate was unrestricted; with `authz: narrow` it said it would narrow it (6 rules), `plan apply` did, and a second plan said no changes. The helper, restarted under the narrowed certificate, published its status again. Adding `--reconcile-dns` to its entrypoint made `plan` say the rules were out of date, with or without the field; `plan apply` rewrote them (6 rules to 12) and a second plan said no changes. `tink daemon authz remove` took it back, and `plan` then said unrestricted. **Not run live:** the install-then-narrow of a helper that is not there yet (a development build has no helper image for `plan apply` to install from), and the BLOCKED states, which are tested on fakes.
 
 **What was measured** (a local Incus 7.5.1): with the script installed, the daemon, run as that certificate, scheduled and made two copies with restore points, published its status, and reconciled the dns records after a stack change. It was **refused** editing, executing in or stopping an instance, pushing a file to an instance that is not a dns helper, editing a network, a project or the server's config, creating a certificate, and editing a volume it does not copy. It could still list every project, read a file on the dns helper through the API, and list the network ACLs. A second unrestricted client edited an instance, ran a command and edited a network as before, the local socket was unaffected, and after `remove` the daemon's certificate could edit an instance again.
 
