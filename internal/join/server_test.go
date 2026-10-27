@@ -49,7 +49,7 @@ func serverOf(t *testing.T, stacks []Stack) *serverFake {
 			for _, r := range level {
 				switch r.Kind {
 				case resolve.KindInstance:
-					f.instances = append(f.instances, api.Instance{Name: r.Name, Project: projectOf(r), Type: "container",
+					f.instances = append(f.instances, api.Instance{Name: r.Name, Project: projectOf(r), Type: "container", Status: "Running",
 						InstancePut: api.InstancePut{Config: r.Config, Devices: r.Devices, Profiles: r.Profiles}})
 				case resolve.KindProfile:
 					f.profiles = append(f.profiles, api.Profile{Name: r.Name, Project: projectOf(r), ProfilePut: api.ProfilePut{Config: r.Config, Devices: r.Devices}})

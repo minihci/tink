@@ -43,6 +43,16 @@ func hasPublishStamp(cfg map[string]string) bool {
 	return false
 }
 
+// hasDeriveStamp says whether an instance's config carries the stamp of a derived file: it is kept for a site, so it is not in every view.
+func hasDeriveStamp(cfg map[string]string) bool {
+	for k := range cfg {
+		if strings.HasPrefix(k, resolve.DeriveStampPrefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // ForSite cuts the stacks down to one site: the helpers and the published instances of that site, with their publishes, and everything that is not part
 // of any site. Stacks that name no site are the unnamed site, "". The stacks it is given are not changed.
 //

@@ -51,7 +51,7 @@ func validateStackSite(r Resource) error {
 }
 
 // applyStackSite gives the instances that a stack with a site puts in it their stamp: every instance that states a role, and every instance a
-// `kind: publish` of the stack names. It changes the caller's resources in place, by giving each such instance a COPY of its config map that carries the
+// `kind: publish` of the stack names, and every instance a `kind: file` that says derive: is pushed to. It changes the caller's resources in place, by giving each such instance a COPY of its config map that carries the
 // key, and is safe to run twice. It runs after applyStackProject, so a publish and its instance have met in one project.
 //
 // A stack with no site gets nothing: it is in the unnamed site, which has no stamp.
@@ -69,7 +69,7 @@ func applyStackSite(resources []Resource) {
 	}
 	published := map[loc]bool{}
 	for _, r := range resources {
-		if r.Kind == KindPublish {
+		if r.Kind == KindPublish || (r.Kind == KindFile && r.Derive != "") { // a derived file is kept for the site its instance is in (derivestamp.go)
 			published[loc{at(r.Project), r.Instance}] = true
 		}
 	}

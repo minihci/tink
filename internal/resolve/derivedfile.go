@@ -141,35 +141,55 @@ func derivedLines(content string) []string {
 	return out
 }
 
-// guardDerived applies the two refusals that protect a derived file to a file that exists and would be replaced. It is the dns applier's rules
+// DerivedCheck is what the guards of a derived file are judged on, as plain values: `plan` fills it from the file's resource and what it read, and the
+// daemon from a stamp and what it read, so the two cannot disagree about when a file is not theirs to replace.
+type DerivedCheck struct {
+	// Render is the value of `derive:`; Path and Instance say where the file is, for the message.
+	Render, Path, Instance string
+	// Live is what the file holds now and Desired what it would hold. Zone is the site's zone, for the mesh view.
+	Live, Desired, Zone string
+	// Adopt and AllowEmpty are the operator's decisions (adopt_existing, allow_empty). The daemon passes neither, ever.
+	Adopt, AllowEmpty bool
+}
+
+// CheckDerived applies the two refusals that protect a derived file to a file that exists and would be replaced. It is the dns applier's rules
 // (docs/join.md), made the plan's, for every derived file:
 //
 //   - A file that has lines in it and no DeriveBegin line was not written by tink. Replacing it would lose whatever those lines say (records written
-//     by hand, routes), so it is BLOCKED until adopt_existing says to take it over, once.
+//     by hand, routes), so it is refused until adopt_existing says to take it over, once.
 //   - A rendering with nothing in it does not empty a region that has lines in it. The site publishing no name at all usually means the wrong
 //     server, or stacks that have not been applied yet, and an empty file would take every name down; allow_empty says it is meant.
 //
-// A file that does not exist, and one that already holds the content, are not guarded. live is what the plan read.
+// It returns the reason the file is not to be replaced, or a note to print when it is replaced under adopt_existing. Both empty means go ahead.
+func CheckDerived(c DerivedCheck) (refusal, note string) {
+	if c.Render == DeriveMesh {
+		return checkRecords(c)
+	}
+	liveLines := derivedLines(c.Live)
+	switch {
+	case !hasDerivedMarkers(c.Live) && len(liveLines) > 0:
+		if c.Adopt {
+			return "", fmt.Sprintf("adopt_existing: replaces the %d line(s) that %s on %s holds and tink did not write; remove adopt_existing once it is applied", len(liveLines), c.Path, c.Instance)
+		}
+		return fmt.Sprintf("%s on %s was not written by tink (it has no %q line) and holds %d line(s) that applying would remove: move any you want to keep out of it, or set adopt_existing: true once to take it over", c.Path, c.Instance, DeriveBegin, len(liveLines)), ""
+	case len(derivedLines(c.Desired)) == 0 && len(liveLines) > 0 && !c.AllowEmpty:
+		return fmt.Sprintf("nothing is published, so applying would empty the %d line(s) tink wrote to %s on %s; that usually means the wrong server, or stacks that have not been applied yet (allow_empty: true says it is meant)", len(liveLines), c.Path, c.Instance), ""
+	}
+	return "", ""
+}
+
+// guardDerived is CheckDerived for a file that `plan` has found would be replaced: a refusal makes the plan BLOCKED. live is what the plan read.
 func guardDerived(f Resource, p PlannedResource, live string) PlannedResource {
 	if f.Derive == "" || p.Action != ActionUpdate {
 		return p
 	}
-	if f.Derive == DeriveMesh {
-		return guardRecords(f, p, live)
+	refusal, note := CheckDerived(DerivedCheck{Render: f.Derive, Path: f.Path, Instance: f.Instance, Live: live, Desired: f.Content, Zone: f.DerivedZone,
+		Adopt: f.AdoptExisting, AllowEmpty: f.AllowEmpty})
+	if refusal != "" {
+		return PlannedResource{Resource: f, Action: ActionBlocked, Blocked: []string{refusal}}
 	}
-	blocked := func(format string, args ...any) PlannedResource {
-		return PlannedResource{Resource: f, Action: ActionBlocked, Blocked: []string{fmt.Sprintf(format, args...)}}
-	}
-	liveLines := derivedLines(live)
-	switch {
-	case !hasDerivedMarkers(live) && len(liveLines) > 0:
-		if f.AdoptExisting {
-			p.Notes = append(p.Notes, fmt.Sprintf("adopt_existing: replaces the %d line(s) that %s on %s holds and tink did not write; remove adopt_existing once it is applied", len(liveLines), f.Path, f.Instance))
-			return p
-		}
-		return blocked("%s on %s was not written by tink (it has no %q line) and holds %d line(s) that applying would remove: move any you want to keep out of it, or set adopt_existing: true once to take it over", f.Path, f.Instance, DeriveBegin, len(liveLines))
-	case len(derivedLines(f.Content)) == 0 && len(liveLines) > 0 && !f.AllowEmpty:
-		return blocked("nothing is published, so applying would empty the %d line(s) tink wrote to %s on %s; that usually means the wrong server, or stacks that have not been applied yet (allow_empty: true says it is meant)", len(liveLines), f.Path, f.Instance)
+	if note != "" {
+		p.Notes = append(p.Notes, note)
 	}
 	return p
 }
@@ -196,45 +216,40 @@ func DerivedRegion(content string) string {
 
 // A whole-file rendering (derive: mesh) has no marker to say that tink wrote the file, so the guard looks at what is in it. The file is a JSON array of
 // records {name, type, value}; a record whose name is outside the zone the site publishes in is not one tink wrote, and replacing the file would lose it.
-// A file that is not that shape is not a records file at all. Either is BLOCKED until adopt_existing takes the file over, once. And as for the other
+// A file that is not that shape is not a records file at all. Either is refused until adopt_existing takes the file over, once. And as for the other
 // derived files, a rendering with no record does not empty a file that has records until allow_empty says that is meant. A record inside the zone that
 // the rendering lacks is a name that was unpublished, which is what the file is for.
-func guardRecords(f Resource, p PlannedResource, live string) PlannedResource {
-	blocked := func(format string, args ...any) PlannedResource {
-		return PlannedResource{Resource: f, Action: ActionBlocked, Blocked: []string{fmt.Sprintf(format, args...)}}
-	}
-	if strings.TrimSpace(live) == "" {
-		return p
+func checkRecords(c DerivedCheck) (refusal, note string) {
+	if strings.TrimSpace(c.Live) == "" {
+		return "", ""
 	}
 	var records []struct{ Name, Type, Value string }
-	if err := json.Unmarshal([]byte(live), &records); err != nil {
-		if f.AdoptExisting {
-			p.Notes = append(p.Notes, fmt.Sprintf("adopt_existing: replaces %s on %s, which is not a JSON array of records; remove adopt_existing once it is applied", f.Path, f.Instance))
-			return p
+	if err := json.Unmarshal([]byte(c.Live), &records); err != nil {
+		if c.Adopt {
+			return "", fmt.Sprintf("adopt_existing: replaces %s on %s, which is not a JSON array of records; remove adopt_existing once it is applied", c.Path, c.Instance)
 		}
-		return blocked("%s on %s is not a JSON array of records ({name, type, value}), so it is not the file this was written for: set adopt_existing: true once to replace it", f.Path, f.Instance)
+		return fmt.Sprintf("%s on %s is not a JSON array of records ({name, type, value}), so it is not the file this was written for: set adopt_existing: true once to replace it", c.Path, c.Instance), ""
 	}
 	var foreign []string
 	for _, r := range records {
-		if f.DerivedZone != "" && !strings.HasSuffix(strings.ToLower(r.Name), "."+strings.ToLower(f.DerivedZone)) {
+		if c.Zone != "" && !strings.HasSuffix(strings.ToLower(r.Name), "."+strings.ToLower(c.Zone)) {
 			foreign = append(foreign, r.Name)
 		}
 	}
 	if len(foreign) > 0 {
-		if f.AdoptExisting {
-			p.Notes = append(p.Notes, fmt.Sprintf("adopt_existing: replaces %d record(s) of %s on %s outside %s; remove adopt_existing once it is applied", len(foreign), f.Path, f.Instance, f.DerivedZone))
-			return p
+		if c.Adopt {
+			return "", fmt.Sprintf("adopt_existing: replaces %d record(s) of %s on %s outside %s; remove adopt_existing once it is applied", len(foreign), c.Path, c.Instance, c.Zone)
 		}
 		shown := foreign
 		if len(shown) > 3 {
 			shown = append(append([]string{}, shown[:3]...), "...")
 		}
-		return blocked("%s on %s holds %d record(s) outside the zone %s that tink did not write (%s), and applying would remove them: set adopt_existing: true once to take the file over", f.Path, f.Instance, len(foreign), f.DerivedZone, strings.Join(shown, ", "))
+		return fmt.Sprintf("%s on %s holds %d record(s) outside the zone %s that tink did not write (%s), and applying would remove them: set adopt_existing: true once to take the file over", c.Path, c.Instance, len(foreign), c.Zone, strings.Join(shown, ", ")), ""
 	}
 	var desired []struct{ Name, Type, Value string }
-	_ = json.Unmarshal([]byte(f.Content), &desired)
-	if len(desired) == 0 && len(records) > 0 && !f.AllowEmpty {
-		return blocked("nothing is published, so applying would empty the %d record(s) in %s on %s; that usually means the wrong server, or stacks that have not been applied yet (allow_empty: true says it is meant)", len(records), f.Path, f.Instance)
+	_ = json.Unmarshal([]byte(c.Desired), &desired)
+	if len(desired) == 0 && len(records) > 0 && !c.AllowEmpty {
+		return fmt.Sprintf("nothing is published, so applying would empty the %d record(s) in %s on %s; that usually means the wrong server, or stacks that have not been applied yet (allow_empty: true says it is meant)", len(records), c.Path, c.Instance), ""
 	}
-	return p
+	return "", ""
 }

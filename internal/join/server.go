@@ -130,7 +130,7 @@ func readServer(server incus.InstanceServer, platformOnly bool, site string) ([]
 		if platformOnly && strings.TrimSpace(in.Config[roleKey]) == "" {
 			continue
 		}
-		if !memberOf(in.Config, hasPublishStamp(in.Config), site) {
+		if !memberOf(in.Config, hasPublishStamp(in.Config) || hasDeriveStamp(in.Config), site) {
 			l := elsewhere[strings.TrimSpace(in.Config[resolve.SiteKey])]
 			if strings.TrimSpace(in.Config[roleKey]) != "" {
 				l.Helpers++
