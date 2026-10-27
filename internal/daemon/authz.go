@@ -34,6 +34,8 @@ type AuthzOptions struct {
 	Status *authz.Volume
 	// Reconcile is whether the daemon reconciles the dns records (--reconcile-dns).
 	Reconcile bool
+	// Derived is whether it keeps the stamped derived files (--reconcile-derived).
+	Derived bool
 
 	// scope reads the server for what the daemon copies and where the dns helpers are; nil is the real read. A test seam.
 	scope func(incus.InstanceServer, AuthzOptions) (authz.Scope, []string, error)
@@ -147,7 +149,8 @@ var _ resolve.HelperAuthz = HelperAuthz{}
 // optionsFor says what the daemon h touches. Its status volume is the one its instance points at, in its own project; it reconciles the dns records when
 // the entrypoint it was installed with, or has since been given, says --reconcile-dns.
 func (HelperAuthz) optionsFor(server incus.InstanceServer, h helper.Found) (AuthzOptions, error) {
-	o := AuthzOptions{Server: server, Reconcile: slices.Contains(strings.Fields(h.Config["oci.entrypoint"]), "--reconcile-dns")}
+	entry := strings.Fields(h.Config["oci.entrypoint"])
+	o := AuthzOptions{Server: server, Reconcile: slices.Contains(entry, "--reconcile-dns"), Derived: slices.Contains(entry, "--reconcile-derived")}
 	if h.StatusVolume != "" {
 		pool, name, err := helper.ParseStatusVolume(h.StatusVolume)
 		if err != nil {
@@ -209,7 +212,7 @@ func RemoveAuthz(server incus.InstanceServer) (bool, error) {
 // scopeFromServer reads what the daemon touches: the volumes that carry a copy policy and the pools their restore points land in, and the dns helpers.
 // A policy that cannot be read is not covered; it is said in the notes, because a copy that is refused later is a failure nobody asked for.
 func scopeFromServer(server incus.InstanceServer, o AuthzOptions) (authz.Scope, []string, error) {
-	sc := authz.Scope{Status: o.Status, Reconcile: o.Reconcile}
+	sc := authz.Scope{Status: o.Status, Reconcile: o.Reconcile, Derived: o.Derived}
 	var notes []string
 
 	items, problems, err := backuprun.Discover(backuprun.ServerEngine{Server: server})
@@ -222,22 +225,12 @@ func scopeFromServer(server incus.InstanceServer, o AuthzOptions) (authz.Scope, 
 	}
 	sort.Strings(notes)
 
-	if o.Reconcile {
+	if o.Reconcile || o.Derived {
 		insts, err := server.GetInstancesAllProjects(api.InstanceTypeAny)
 		if err != nil {
-			return sc, nil, fmt.Errorf("listing the instances for the dns helpers: %w", err)
+			return sc, nil, fmt.Errorf("listing the instances for the dns helpers and the derived files: %w", err)
 		}
-		for _, in := range insts {
-			if strings.TrimSpace(in.Config[resolve.RoleKey]) == "dns" {
-				sc.DNS = append(sc.DNS, authz.Instance{Project: in.Project, Name: in.Name})
-			}
-		}
-		sort.Slice(sc.DNS, func(i, j int) bool {
-			if sc.DNS[i].Project != sc.DNS[j].Project {
-				return sc.DNS[i].Project < sc.DNS[j].Project
-			}
-			return sc.DNS[i].Name < sc.DNS[j].Name
-		})
+		sc, notes = instanceScope(sc, notes, insts, o)
 	}
 	return sc, notes, nil
 }
@@ -266,4 +259,60 @@ func copiesOf(items []backuprun.Item) []authz.Copy {
 		out = append(out, authz.Copy{Source: authz.Volume{Project: project, Pool: pool, Name: it.Volume.Name}, TargetPools: targets})
 	}
 	return out
+}
+
+// derivedStampsOf decodes the derived-file stamps in an instance's config: the files it holds, whether any says restart, and the keys that could not be read.
+func derivedStampsOf(project, name string, cfg map[string]string) (files []resolve.DerivedFile, restart bool, bad []string) {
+	for k, v := range cfg {
+		if !strings.HasPrefix(k, resolve.DeriveStampPrefix) {
+			continue
+		}
+		f, err := resolve.DecodeDeriveStamp(project, name, k, v)
+		if err != nil {
+			bad = append(bad, k)
+			continue
+		}
+		files = append(files, f)
+		restart = restart || f.Restart
+	}
+	sort.Strings(bad)
+	return files, restart, bad
+}
+
+func sortInstances(in []authz.Instance) {
+	sort.Slice(in, func(i, j int) bool {
+		if in[i].Project != in[j].Project {
+			return in[i].Project < in[j].Project
+		}
+		return in[i].Name < in[j].Name
+	})
+}
+
+// instanceScope adds to sc the instances the daemon writes files on and restarts: the dns helpers for --reconcile-dns, and for --reconcile-derived every
+// instance that carries the stamp of a derived file (and, of those, the ones whose stamp says restart). A stamp that cannot be read does not cover its
+// instance, and is said in the notes.
+func instanceScope(sc authz.Scope, notes []string, insts []api.Instance, o AuthzOptions) (authz.Scope, []string) {
+	for _, in := range insts {
+		at := authz.Instance{Project: in.Project, Name: in.Name}
+		if o.Reconcile && strings.TrimSpace(in.Config[resolve.RoleKey]) == "dns" {
+			sc.DNS = append(sc.DNS, at)
+		}
+		if o.Derived {
+			files, restart, bad := derivedStampsOf(in.Project, in.Name, in.Config)
+			if len(files) > 0 {
+				sc.Files = append(sc.Files, at)
+			}
+			if restart {
+				sc.Restart = append(sc.Restart, at)
+			}
+			for _, key := range bad {
+				notes = append(notes, fmt.Sprintf("%s/%s: the stamp %s cannot be read, so it does not cover that instance", in.Project, in.Name, key))
+			}
+		}
+	}
+	sortInstances(sc.DNS)
+	sortInstances(sc.Files)
+	sortInstances(sc.Restart)
+	sort.Strings(notes)
+	return sc, notes
 }

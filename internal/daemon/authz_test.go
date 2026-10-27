@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/minihci/tink/internal/authz"
 	"github.com/minihci/tink/internal/backuprun"
 	"github.com/minihci/tink/internal/helper"
+	"github.com/minihci/tink/internal/resolve"
 	"github.com/minihci/tink/internal/volbackup"
 )
 
@@ -223,5 +225,50 @@ func TestNarrowedMeansTinksScriptIsRoutedWhetherOrNotItIsCurrent(t *testing.T) {
 	delete(s.cfg, AuthzRouteKey)
 	if p, _ = PlanAuthz(opts(s)); p.Narrowed() {
 		t.Error("a script nothing routes to narrows nobody")
+	}
+}
+
+func stampedInstance(project, name string, stamps map[string]string) api.Instance {
+	in := api.Instance{Name: name, Project: project}
+	in.Config = map[string]string{}
+	for k, v := range stamps {
+		in.Config[k] = v
+	}
+	return in
+}
+
+func TestTheDerivedScopeIsTheInstancesThatCarryAStampAndTheOnesThatRestart(t *testing.T) {
+	insts := []api.Instance{
+		stampedInstance("site", "sso", map[string]string{"user.tink.derive.sso": `{"path":"/app/c.yml","render":"sso","restart":true}`}),
+		stampedInstance("site", "dns", map[string]string{"user.tink.derive.hosts": `{"path":"/hosts","render":"dns","restart":false}`, resolve.RoleKey: "dns"}),
+		stampedInstance("site", "plain", map[string]string{"user.tink.offer.web.port": "80"}),
+		stampedInstance("site", "broken", map[string]string{"user.tink.derive.x": `{"path":"relative","render":"caddy","restart":true}`}),
+	}
+	sc, notes := instanceScope(authz.Scope{Derived: true}, nil, insts, AuthzOptions{Derived: true})
+	if want := []authz.Instance{{Project: "site", Name: "dns"}, {Project: "site", Name: "sso"}}; !reflect.DeepEqual(sc.Files, want) {
+		t.Errorf("files = %v, want %v: an instance with no stamp, or with one that cannot be read, is not covered", sc.Files, want)
+	}
+	if want := []authz.Instance{{Project: "site", Name: "sso"}}; !reflect.DeepEqual(sc.Restart, want) {
+		t.Errorf("restart = %v, want only the one whose stamp says so", sc.Restart)
+	}
+	if len(sc.DNS) != 0 {
+		t.Errorf("--reconcile-derived alone names the dns helper: %v", sc.DNS)
+	}
+	if len(notes) != 1 || !strings.Contains(notes[0], "site/broken") || !strings.Contains(notes[0], "user.tink.derive.x") {
+		t.Errorf("notes = %v, want one that names the stamp that cannot be read", notes)
+	}
+
+	// --reconcile-dns alone names the dns helper and no stamped file
+	sc, _ = instanceScope(authz.Scope{Reconcile: true}, nil, insts, AuthzOptions{Reconcile: true})
+	if len(sc.DNS) != 1 || len(sc.Files) != 0 || len(sc.Restart) != 0 {
+		t.Errorf("--reconcile-dns scope = %+v", sc)
+	}
+}
+
+func TestAHelperThatRunsWithTheDerivedFlagIsNarrowedForIt(t *testing.T) {
+	found := helper.Found{Project: "tink-helper", Name: "helper", Config: map[string]string{"oci.entrypoint": "/usr/bin/tink daemon run --reconcile-derived --jobs /data"}}
+	o, err := (HelperAuthz{}).optionsFor(&authzServer{}, found)
+	if err != nil || !o.Derived || o.Reconcile {
+		t.Errorf("options = %+v, %v", o, err)
 	}
 }
