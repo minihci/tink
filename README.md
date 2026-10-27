@@ -217,6 +217,21 @@ to be re-tested on a throwaway server at every Incus upgrade. Details:
 `daemon run` runs the helper's work (the backup scheduler and the job executor) until stopped; the helper is an Incus instance that runs it
 ([docs](docs/helper.md)). It no longer reconciles ingress routes; with `--reconcile-dns` it keeps the dns helper's generated records in step with the published names, woken by Incus events ([docs](docs/helper.md#the-reconciler)).
 
+## Which Incus
+
+tink talks to Incus through its own Go client (`github.com/lxc/incus/v7`, pinned in `go.mod`). It has been run against Incus 7.4 and 7.5.1 and
+against nothing older, so no minimum version is known to work.
+
+tink does not check API extensions itself. The client does, call by call: a server without the extension a call needs answers with
+`The server is missing the required "X" API extension` (a plan puts the resource's kind and name in front of it). Two things follow:
+
+- `tink plan` reads every resource, so it finds a missing extension of any read before anything is applied.
+- `tink plan apply` goes level by level and plans each resource when its turn comes. An extension that only a later step needs (rebuilding an
+  instance needs `instances_rebuild`) is found when that step is reached, after the earlier levels were applied.
+
+A check up front, listing every missing extension with the kind that needs it, was considered and not built (#256): no server older than 7.4 has been
+tried, so there is nothing yet to show that one lacks an extension. It is worth building when one is.
+
 ## Building
 
 ```
