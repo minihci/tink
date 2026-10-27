@@ -34,6 +34,7 @@ comment for the working bash it's replacing.
 | `tink export` | run live against the lab host: an instance made with `tink run`, and the real Mosquitto, each came back as a stack that plans as no changes ([docs](docs/export.md)) | (new - writing down by hand what a `tink run` or `incus` session had built) |
 | `tink import` | a spike (#179): unit-tested against the compose files of 17 popular projects (14 of 18 import, 4 are refused with a reason; `privileged`, `devices` and tmpfs follow `tink run`, and two tests keep the two doors from drifting, #205), and five imported stacks were applied on a local Incus 7.5.1 server and answered ([docs](docs/import.md)) | (new - translating a project's compose file into a stack by hand) |
 | `tink daemon run` | the backup scheduler and job executor, run by the helper on the lab host ([docs](docs/daemon-jobs.md)) | (new) |
+| `tink daemon authz` | narrows the daemon's certificate to what it does, with a generated authorization scriptlet for it alone ([docs](docs/helper.md#narrowing-the-daemons-certificate)) | run live on a local Incus 7.5.1 (L-2026-10-26c); not on a production-like host |
 | `tink backup run` / `restore` / `verify` / `forget` | verified live on the lab host: pool targets (a TrueNAS-backed pool included) and an Incus remote over a tunnel ([docs](docs/volume-backup.md)) | (new) |
 | `tink secret` | verified live on the Immich stack on the lab host ([docs](docs/secrets.md)) | (new) |
 | `tink remote` / `--remote NAME` | verified live from a laptop against the lab host ([docs](docs/remote.md)) | (new) |

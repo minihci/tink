@@ -105,6 +105,9 @@ func readServer(server incus.InstanceServer, platformOnly bool, site string) ([]
 	if err != nil {
 		return nil, fmt.Errorf("listing the networks: %w", err)
 	}
+	if err := fillHiddenNetworkACLs(server, nets); err != nil {
+		return nil, err
+	}
 
 	sort.Slice(insts, func(i, j int) bool {
 		if insts[i].Project != insts[j].Project {
@@ -230,4 +233,47 @@ func copyDevices(m map[string]map[string]string) map[string]map[string]string {
 		out[n] = copyStrings(d)
 	}
 	return out
+}
+
+// fillHiddenNetworkACLs gives a managed network its security.acls when the caller was not allowed to read the network's config.
+//
+// Incus shows a network's config only to a client that may EDIT the network ("only allow admins to see network config as sensitive info can be stored
+// there"; measured on 7.5.1 with the daemon's narrowed certificate, #252). The join reads one thing from it, which ACLs are attached, and the daemon should not
+// be given the right to edit networks to see that: a network's config reaches the host (raw.dnsmasq, routes). The ACLs themselves are readable, and each one
+// lists the networks that use it, so the attachment is read from there. A managed network always has config (the bridge's address is stored), so an empty one
+// means it was hidden; a network whose config was readable is left as it is.
+func fillHiddenNetworkACLs(server incus.InstanceServer, nets []api.Network) error {
+	hidden := false
+	for _, n := range nets {
+		if n.Managed && len(n.Config) == 0 {
+			hidden = true
+			break
+		}
+	}
+	if !hidden {
+		return nil
+	}
+	acls, err := server.GetNetworkACLsAllProjects()
+	if err != nil {
+		return fmt.Errorf("listing the network ACLs to find which networks they are attached to: %w", err)
+	}
+	attached := map[string][]string{}
+	for _, a := range acls {
+		for _, u := range a.UsedBy {
+			name, ok := strings.CutPrefix(u, "/1.0/networks/")
+			if !ok {
+				continue
+			}
+			name, _, _ = strings.Cut(name, "?")
+			attached[name] = append(attached[name], a.Name)
+		}
+	}
+	for i := range nets {
+		if nets[i].Managed && len(nets[i].Config) == 0 {
+			names := attached[nets[i].Name]
+			sort.Strings(names)
+			nets[i].Config = map[string]string{"security.acls": strings.Join(names, ",")}
+		}
+	}
+	return nil
 }

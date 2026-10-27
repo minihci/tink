@@ -89,7 +89,7 @@ The host verifies nothing secret until the helper has verified the host, by the 
   lifecycle event for a PATCH carries no requestor at all, so those writes (one on change and one per heartbeat) are not attributed. They are
   bookkeeping on the helper's own instance; the operations that move data are attributed. With the status volume the write is a volume update, the
   same call as a copy stamp, and it is attributed the same way: on Incus 7.5.1 a restart of the helper produced one `storage-volume-updated` lifecycle event on the status volume with requestor protocol `tls` and username the helper certificate's fingerprint, from `127.0.0.1` through a proxy device and from the container's own address over the network **[lab, 2026-10-17]**.
-- **Not confined.** The certificate is unrestricted: it has the reach of root on the host. A restricted certificate is a boundary against the host only inside a project that is also `restricted=true` (an authorization lab
+- **Not confined, unless you narrow it** ([Narrowing the daemon's certificate](#narrowing-the-daemons-certificate)). By default the certificate is unrestricted: it has the reach of root on the host. A restricted certificate is a boundary against the host only inside a project that is also `restricted=true` (an authorization lab
   measured this); on its own it is not, and nothing here claims one.
 
 **When it is "down", and how fast you hear it.** `tink helper status` also checks the host's trust store (if it may read it): a helper whose
@@ -332,6 +332,37 @@ app's stack and applying it rewrote `/hosts` to one record in about 2.1 seconds,
 the platform; a record added by hand stood for the 5 seconds checked and was gone within the 25-second resync set for the test; the status document read
 `converged`. **Not run:** an Incus restart with the daemon connected (the reconnect is tested against a fake stream), more than one site, the proxy, sign-on, mesh and
 ACL files (they need [a stamp for each derived file](https://github.com/minihci/tink/issues/273)), and a production-like host.
+
+## Narrowing the daemon's certificate
+
+**Status: built (#252); unit-tested, and run live on a local Incus 7.5.1 server on 2026-10-26 (L-2026-10-26c).** Nothing narrows a certificate until you run `apply`.
+
+The daemon's certificate is trusted without restriction, and an unrestricted certificate can do anything on the server, including what reaches the host as root (an edit right on an instance covers its devices). `tink daemon authz` narrows it to what the daemon does, without touching anyone else:
+
+```
+tink daemon authz plan  [--reconcile-dns] [--status-volume POOL/VOLUME --status-project PROJECT] [--rules] [--script]
+tink daemon authz apply [same flags]
+tink daemon authz remove
+```
+
+It generates an authorization scriptlet (`internal/authz`) and routes the class of unrestricted TLS clients to it (`authorization.client.tls: scriptlet`). The script gives the daemon's certificate, found by its name in the trust store (`--identity`, default `tink-helper`, the name `tink helper install` gives it) and identified by its fingerprint, exactly its rules, and judges **every other client as Incus judges it without the script** (an unrestricted TLS client and an OIDC client are allowed, anything else is not). The certificate itself is not enrolled again: it is narrow from the moment the scriptlet and the route are installed, in one write. Give `plan` and `apply` the flags the daemon runs with; they decide the rules.
+
+**The rules** are the pairs the daemon was asked for, recorded on Incus 7.5.1 (the daemon as a TLS client against a scriptlet that logged every request: a scheduler, a copy with its restore point, the status write, and the reconciler), and no others:
+
+| Reads, everywhere | the server, projects, pools, volumes, images; with `--reconcile-dns` also instances, profiles, networks and network ACLs, and the events of every project |
+|---|---|
+| Writes | the config of its status volume; for each volume that carries a copy policy, its config and snapshots, and the restore points it creates on a target pool of this server (`VOLUME-bk-*`); with `--reconcile-dns`, files on the dns helpers |
+| Never | an instance's config, devices or state, exec, creating instances, networks, projects, certificates, the server's config, privileged events, and any volume it does not copy |
+
+The volumes it copies and the dns helpers are read from the server when the script is generated, so a volume added later is not covered until `plan` or `apply` runs again.
+
+**What it will not do.** It replaces a scriptlet only when it starts with tink's marker line, and refuses, saying why, when `authorization.scriptlet` holds anything else (for example the one `tink deploy` splices in) or when `authorization.client.tls` is set to something other than the scriptlet. It refuses a restricted certificate: Incus judges those by `authorization.client.tls-restricted`, a different class that this does not route. It never runs for the local Unix socket, which is the way back: **`incus config unset authorization.client.tls` on the host undoes it**, and `tink daemon authz remove` does the same and deletes the script.
+
+**What was measured** (a local Incus 7.5.1): with the script installed, the daemon, run as that certificate, scheduled and made two copies with restore points, published its status, and reconciled the dns records after a stack change. It was **refused** editing, executing in or stopping an instance, pushing a file to an instance that is not a dns helper, editing a network, a project or the server's config, creating a certificate, and editing a volume it does not copy. It could still list every project, read a file on the dns helper through the API, and list the network ACLs. A second unrestricted client edited an instance, ran a command and edited a network as before, the local socket was unaffected, and after `remove` the daemon's certificate could edit an instance again.
+
+**A finding that changed the join.** Incus shows a managed network's config only to a client that may *edit* that network, and the daemon must not be given that: a network's config reaches the host (`raw.dnsmasq`, routes). The join reads one thing from it, which ACL is attached. When a network's config is hidden, the join now reads the attachment from the ACLs' used-by lists, so the reconciler works without the right to edit networks.
+
+**Not run:** a production-like host; an Incus restart with the narrowed daemon connected; pruning of old restore points and expiry of snapshots under the narrowed certificate; a copy to a remote target (its rights are the remote server's); a check that repeats these requests on another Incus version (the shape of the scriptlet's `details` has changed between versions with no changelog entry, so a new version is tried with `plan` and a real request before it is trusted); and the helper installed by `tink helper install`, which is the same certificate but has not been narrowed here.
 
 ## The status document
 

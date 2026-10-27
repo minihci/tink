@@ -135,6 +135,8 @@ With `--from-server` the files are not read at all (and giving both is an error:
 
 The same `Build` and the same renderers then run, so for stacks that have been applied the output is the same as the file-based join's (a test builds a server from the fixture stacks, applies the stamps the way `plan` does, and compares each section with the hand-written golden files). The finding texts are the file-based ones: "which no file given declares" then means "which the server does not hold".
 
+**A network whose config the caller may not read.** Incus shows a managed network's config only to a client that may edit the network. For one that may not (the daemon, once its certificate is narrowed: [helper.md](helper.md#narrowing-the-daemons-certificate)) the join reads which ACL is attached from the ACLs' used-by lists instead, which is the one thing it reads from the config.
+
 **A stamp that cannot be read is an error that names its instance, and nothing is rendered.** The value must be one JSON object with exactly the fields `allow` and `offer`, each once, nothing after it, and the publish it describes must pass the same rules a `kind: publish` document is held to at load time (a DNS label for the name, a plain group name, no quote or control character, and so on). Anything else is reported as
 
 ```
