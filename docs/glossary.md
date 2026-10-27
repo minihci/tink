@@ -72,14 +72,14 @@ These come from a design discussion; there is no design note yet, and the names 
 | offer | an app says it can be reached. **Built** for web apps as `user.tink.offer.<offer>.port` and `.proto` on the instance (see the table above); an offer grants nothing |
 | grant | the site says who may reach an offer: `allow: [family]`. For a web offer a grant is a `kind: publish` document (built as a declaration); `kind: access`, one instance using another's offer, is not built. This is what is reviewed. It is also Tailscale's and Headscale's word for the same idea (who may reach what), which is deliberate: Headscale recommends grants over the older ACLs |
 | relay | an optional component of the control plane that carries encrypted packets when two peers cannot connect directly. Off by default; the public relays are used |
-| `<name>` | **the word for the feature is undecided**: `overlay` (engine-neutral), `mesh` or `vpn`. See the first collision below |
+| `<name>` | **the word for the feature is `mesh`**, decided 2026-10-26 ([#249](https://github.com/minihci/tink/issues/249), point 5). It is also the audience word decided for `via`, and the value of `derive: mesh`. See the first collision below |
 
 ## Collisions
 
 | Word | The clash | What to do |
 |---|---|---|
 | ingress | tink: the reverse proxy. Incus network ACLs also have `ingress` and `egress` rules (a direction of traffic, from the NIC's point of view) | `kind: network-acl` uses Incus's meaning only, and says so ([network-acl.md](network-acl.md)); `ingress` on its own means the proxy everywhere else |
-| overlay | in Incus and Docker an *overlay network* is OVN or VXLAN networking. tink says it does not manage OVN | decide before the kind is built; `mesh` and `vpn` do not clash |
+| overlay | in Incus and Docker an *overlay network* is OVN or VXLAN networking. tink says it does not manage OVN | decided 2026-10-26: the feature is the *mesh* and tink does not call it an overlay; `mesh` does not clash |
 | helper | ordinary English, and other tools use it for other things (Docker's credential helpers, Helm's helper templates) | always say *\<role\> helper*: *ingress helper*, *daemon helper*. The bare "the helper" is ambiguous |
 | project | Compose's project is tink's stack; Incus's project is Incus's | use *stack* for the tink unit (already the case) and never *project* for it |
 | profile | Compose profiles are optional service groups; Incus profiles are reusable config | tink follows Incus; mention Compose's meaning where Compose users arrive |
