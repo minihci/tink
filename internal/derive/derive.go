@@ -149,9 +149,18 @@ func DerivedFiles(server incus.InstanceServer, resources []resolve.Resource) ([]
 	for _, p := range res.Published {
 		labels = append(labels, p.Label)
 	}
+	declared := map[[2]string]bool{}
+	for _, r := range resources {
+		if r.Kind == resolve.KindInstance {
+			declared[[2]string{stampProject(r.Project), r.Name}] = true
+		}
+	}
 	var notices []string
 	for _, i := range files {
 		r := &resources[i]
+		if !declared[[2]string{stampProject(r.Project), r.Instance}] {
+			notices = append(notices, fmt.Sprintf("file/%s: its instance %s is not declared in this stack, so the daemon has nowhere to record that it keeps this file (`plan apply` still writes it): declare the instance here to have it kept", r.Name, r.Instance))
+		}
 		var rendering string
 		switch r.Derive {
 		case resolve.DeriveCaddy:
@@ -252,4 +261,12 @@ func checkDNS(server incus.InstanceServer, resources []resolve.Resource, f resol
 // errNoServer is what a pass says when it needs the server and none is connected (tink plan explain with no server to reach).
 func errNoServer(what string) error {
 	return fmt.Errorf("%s is worked out from the server (the platform's helpers and the stacks' publishes), and none is connected", what)
+}
+
+// stampProject is the project an instance is looked for in: its own, else Incus's default (the rule resolve's stamps use).
+func stampProject(project string) string {
+	if project == "" {
+		return "default"
+	}
+	return project
 }

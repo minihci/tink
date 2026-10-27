@@ -31,9 +31,10 @@ import (
 // removal and removed on apply (instance.StaleOwnedKeys). Only that prefix, and only on instances the stack declares: any other key, tink's or not, is untouched.
 const PublishStampPrefix = "user.tink.publish."
 
-// ownedConfigPrefixes are what tink owns on a stack's instances: the family of publish stamps (above) and the one key of the site stamp (SiteKey, site.go).
-// The first ends in a dot and owns everything under it; the second does not, and owns only itself (instance.StaleOwnedKeys).
-var ownedConfigPrefixes = []string{PublishStampPrefix, SiteKey}
+// ownedConfigPrefixes are what tink owns on a stack's instances: the family of publish stamps (above), the family of derived-file stamps (derivestamp.go) and the
+// one key of the site stamp (SiteKey, site.go). The first two end in a dot and own everything under them; the last does not, and owns only itself
+// (instance.StaleOwnedKeys).
+var ownedConfigPrefixes = []string{PublishStampPrefix, DeriveStampPrefix, SiteKey}
 
 // publishStamp is the stamped value. Its fields are in key order, which is the order the JSON is written in.
 type publishStamp struct {
@@ -152,6 +153,9 @@ func validateOwnedConfig(r Resource) error {
 	if strings.HasPrefix(keys[0], SiteKey) {
 		return fmt.Errorf("resource %q: config %s is the site stamp, which tink owns: it writes it from `site:` on the stack's kind: stack document (on the instances that state a role or are published) and removes it where the stack no longer derives it, so declare the site and not the key", r.Name, keys[0])
 	}
+	if strings.HasPrefix(keys[0], DeriveStampPrefix) {
+		return fmt.Errorf("resource %q: config %s is under %s, which tink owns: it writes those keys from the kind: file documents of the stack that say derive: and removes the ones no file derives, so declare the file and not the key", r.Name, keys[0], DeriveStampPrefix)
+	}
 	return fmt.Errorf("resource %q: config %s is under %s, which tink owns: it writes those keys from the kind: publish documents of the stack and removes the ones no publish derives, so declare the publish and not the key", r.Name, keys[0], PublishStampPrefix)
 }
 
@@ -163,12 +167,7 @@ func validateOwnedConfig(r Resource) error {
 // plan error and not a load error: `tink join FILE...` reads publishes and instances across stacks and is not held to this.
 func derivePublishStamps(resources []Resource) error {
 	type loc struct{ project, name string }
-	at := func(project string) string {
-		if project == "" {
-			return "default"
-		}
-		return project
-	}
+	at := stampProject
 	instances := map[loc]int{}
 	otherProjects := map[string][]string{} // instance name -> the projects it is declared in, for the message
 	for i, r := range resources {
@@ -202,6 +201,21 @@ func derivePublishStamps(resources []Resource) error {
 		}
 		stamps[i][PublishStampKey(p.Name)] = v
 	}
+	addStamps(resources, stamps, order)
+	return nil
+}
+
+// stampProject is the project a stamp's instance is looked for in: the resource's own, else Incus's default.
+func stampProject(project string) string {
+	if project == "" {
+		return "default"
+	}
+	return project
+}
+
+// addStamps gives each instance in order (an index into resources) a COPY of its config that carries its stamps. The copy is what keeps the caller's maps, which
+// may be shared with other resources, from being written to.
+func addStamps(resources []Resource, stamps map[int]map[string]string, order []int) {
 	for _, i := range order {
 		cfg := make(map[string]string, len(resources[i].Config)+len(stamps[i]))
 		for k, v := range resources[i].Config {
@@ -212,7 +226,6 @@ func derivePublishStamps(resources []Resource) error {
 		}
 		resources[i].Config = cfg
 	}
-	return nil
 }
 
 // staleOwnedChanges are the plan lines for the owned keys that are live on an instance and that the stack no longer derives: one removal per key, sorted.

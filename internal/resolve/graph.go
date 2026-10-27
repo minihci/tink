@@ -26,6 +26,10 @@ func Levels(resources []Resource) ([][]Resource, error) {
 	if err := derivePublishStamps(resources); err != nil {
 		return nil, err
 	}
+	// A file that says derive: is stamped onto its instance in the same way (derivestamp.go).
+	if err := deriveFileStamps(resources); err != nil {
+		return nil, err
+	}
 	// The stack's name is metadata, not something to plan: it is skipped below, in place, because the passes after this
 	// one update the caller's resources (project inheritance, image aliases) and callers rely on that.
 	all := make(map[string]*Resource, len(resources))
