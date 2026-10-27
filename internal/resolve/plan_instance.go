@@ -62,6 +62,9 @@ type PlanOptions struct {
 	listenerNotes map[string][]string
 	// opTimeout, when set, replaces the deadlines on every call to the server (opbounds.go). Unexported: a test seam, not a setting.
 	opTimeout time.Duration
+	// helperAuthz is the narrowing of the daemon's certificate (WithHelperAuthz), and narrowers the labels of the helpers of the full stack that ask for it.
+	helperAuthz HelperAuthz
+	narrowers   []string
 }
 
 // ForResources returns the options carrying the backup targets of the full
@@ -75,6 +78,7 @@ func (o PlanOptions) ForResources(resources []Resource) PlanOptions {
 	o.projectNotes = mixedProjectNotes(resources)
 	o.firstStart = firstStartFiles(resources)
 	o.listenerNotes = proxyListenerNotes(resources, o.profiles)
+	o.narrowers = authzNarrowers(resources)
 	return o
 }
 
@@ -89,6 +93,7 @@ func (o PlanOptions) withTargets(resources []Resource) PlanOptions {
 			o.profiles = declaredProfiles(resources)
 		}
 		o.listenerNotes = proxyListenerNotes(resources, o.profiles)
+		o.narrowers = authzNarrowers(resources)
 	}
 	if o.profiles == nil {
 		o.profiles = declaredProfiles(resources)

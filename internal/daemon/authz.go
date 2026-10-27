@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -130,6 +131,54 @@ func ApplyAuthz(o AuthzOptions) (AuthzPlan, error) {
 		return p, err
 	}
 	return p, nil
+}
+
+// Narrowed says the server routes unrestricted TLS clients through a script tink generated, whether or not it is the one PlanAuthz would write now.
+func (p AuthzPlan) Narrowed() bool {
+	return authz.IsOurs(p.CurrentScriptlet) && p.CurrentRoute == authzRoute
+}
+
+// HelperAuthz is the narrowing as a stack declares it (`authz: narrow` on a helper, resolve.HelperAuthz): the same plan and apply as `tink daemon authz`, with
+// the daemon's choices read from the helper on the server instead of given as flags.
+type HelperAuthz struct{}
+
+var _ resolve.HelperAuthz = HelperAuthz{}
+
+// optionsFor says what the daemon h touches. Its status volume is the one its instance points at, in its own project; it reconciles the dns records when
+// the entrypoint it was installed with, or has since been given, says --reconcile-dns.
+func (HelperAuthz) optionsFor(server incus.InstanceServer, h helper.Found) (AuthzOptions, error) {
+	o := AuthzOptions{Server: server, Reconcile: slices.Contains(strings.Fields(h.Config["oci.entrypoint"]), "--reconcile-dns")}
+	if h.StatusVolume != "" {
+		pool, name, err := helper.ParseStatusVolume(h.StatusVolume)
+		if err != nil {
+			return o, fmt.Errorf("the helper's status volume: %w", err)
+		}
+		o.Status = &authz.Volume{Project: h.Project, Pool: pool, Name: name}
+	}
+	return o, nil
+}
+
+// PlanAuthz reads the server and says how the certificate of h stands.
+func (a HelperAuthz) PlanAuthz(server incus.InstanceServer, h helper.Found) (resolve.AuthzState, error) {
+	o, err := a.optionsFor(server, h)
+	if err != nil {
+		return resolve.AuthzState{}, err
+	}
+	p, err := PlanAuthz(o)
+	if err != nil {
+		return resolve.AuthzState{}, err
+	}
+	return resolve.AuthzState{Narrowed: p.Narrowed(), UpToDate: p.UpToDate, Rules: len(p.Rules), Refusal: p.Refusal}, nil
+}
+
+// ApplyAuthz installs the script and the route for the certificate of h.
+func (a HelperAuthz) ApplyAuthz(server incus.InstanceServer, h helper.Found) error {
+	o, err := a.optionsFor(server, h)
+	if err != nil {
+		return err
+	}
+	_, err = ApplyAuthz(o)
+	return err
 }
 
 // RemoveAuthz takes the narrow identity away: the route and the script, in one write. It only removes a script tink generated; a route to a script that is

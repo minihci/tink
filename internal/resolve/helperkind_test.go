@@ -88,7 +88,7 @@ func helperRes(mod func(*Resource)) Resource {
 func joined(ss []string) string { return strings.Join(ss, " | ") }
 
 func TestPlanHelperInstallsWhenThereIsNone(t *testing.T) {
-	p, err := planHelper(&helperKindServer{}, helperRes(nil), helperNow)
+	p, err := planHelper(&helperKindServer{}, helperRes(nil), helperNow, PlanOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestPlanHelperInstallsWhenThereIsNone(t *testing.T) {
 	if strings.Contains(joined(p.Warnings), "timezone") {
 		t.Errorf("a timezone was given: %q", joined(p.Warnings))
 	}
-	p, _ = planHelper(&helperKindServer{}, helperRes(func(r *Resource) { r.Timezone = "" }), helperNow)
+	p, _ = planHelper(&helperKindServer{}, helperRes(func(r *Resource) { r.Timezone = "" }), helperNow, PlanOptions{})
 	if !strings.Contains(joined(p.Warnings), "no timezone") {
 		t.Errorf("no timezone should be said: %q", joined(p.Warnings))
 	}
@@ -109,7 +109,7 @@ func TestPlanHelperInstallsWhenThereIsNone(t *testing.T) {
 
 func TestPlanHelperAdoptsAHealthyOneAndChangesNothing(t *testing.T) {
 	srv := &helperKindServer{instances: []api.Instance{helperInstance(t, "tink-helper", "helper", "Running", goodStatus())}}
-	p, err := planHelper(srv, helperRes(nil), helperNow)
+	p, err := planHelper(srv, helperRes(nil), helperNow, PlanOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,21 +124,21 @@ func TestPlanHelperAdoptsAHealthyOneAndChangesNothing(t *testing.T) {
 
 func TestPlanHelperWarnsWhenItIsNotWellButStillChangesNothing(t *testing.T) {
 	stopped := &helperKindServer{instances: []api.Instance{helperInstance(t, "tink-helper", "helper", "Stopped", goodStatus())}}
-	p, _ := planHelper(stopped, helperRes(nil), helperNow)
+	p, _ := planHelper(stopped, helperRes(nil), helperNow, PlanOptions{})
 	if p.Action != ActionNone || !strings.Contains(joined(p.Warnings), "the daemon helper is down") {
 		t.Errorf("stopped: %+v", p)
 	}
 	silent := goodStatus()
 	silent.Tick = helperNow.Add(-3 * time.Hour)
 	srv := &helperKindServer{instances: []api.Instance{helperInstance(t, "tink-helper", "helper", "Running", silent)}}
-	p, _ = planHelper(srv, helperRes(nil), helperNow)
+	p, _ = planHelper(srv, helperRes(nil), helperNow, PlanOptions{})
 	if p.Action != ActionNone || !strings.Contains(joined(p.Warnings), "stale") {
 		t.Errorf("silent: %+v", p)
 	}
 	failing := goodStatus()
 	failing.Failing = []helper.Failing{{Volume: "identity-data", Target: "offsite", Count: 3, Since: helperNow.Add(-time.Hour)}}
 	srv = &helperKindServer{instances: []api.Instance{helperInstance(t, "tink-helper", "helper", "Running", failing)}}
-	p, _ = planHelper(srv, helperRes(nil), helperNow)
+	p, _ = planHelper(srv, helperRes(nil), helperNow, PlanOptions{})
 	if p.Action != ActionNone || !strings.Contains(joined(p.Warnings), "degraded") {
 		t.Errorf("failing a copy: %+v", p)
 	}
@@ -155,7 +155,7 @@ func TestPlanHelperReadsAStatusVolumeTheInstancePointsAt(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv := &helperKindServer{instances: []api.Instance{inst}, volumes: map[string]map[string]string{"tink-helper/default/helper-status": {helper.StatusKey: doc}}}
-	p, err := planHelper(srv, helperRes(nil), helperNow)
+	p, err := planHelper(srv, helperRes(nil), helperNow, PlanOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ func TestPlanHelperReadsAStatusVolumeTheInstancePointsAt(t *testing.T) {
 
 	// not readable: degraded, with the reason, and nothing about "no status yet"; the listing itself does not fail
 	srv.volErr = map[string]error{"tink-helper/default/helper-status": api.StatusErrorf(http.StatusForbidden, "not authorized")}
-	p, err = planHelper(srv, helperRes(nil), helperNow)
+	p, err = planHelper(srv, helperRes(nil), helperNow, PlanOptions{})
 	if err != nil {
 		t.Fatalf("an unreadable status volume must not make the plan fail: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestPlanHelperChecksTheRemotesTheStackSays(t *testing.T) {
 	noVPS := goodStatus()
 	noVPS.Remotes = []helper.Remote{{Name: "host"}}
 	srv := &helperKindServer{instances: []api.Instance{helperInstance(t, "tink-helper", "helper", "Running", noVPS)}}
-	p, _ := planHelper(srv, helperRes(nil), helperNow)
+	p, _ := planHelper(srv, helperRes(nil), helperNow, PlanOptions{})
 	if !strings.Contains(joined(p.Warnings), `needs remote "vps"`) || !strings.Contains(joined(p.Warnings), "tink helper remote add vps") || strings.Contains(joined(p.Warnings), `remote "host"`) {
 		t.Errorf("warnings = %q", joined(p.Warnings))
 	}
@@ -190,14 +190,14 @@ func TestPlanHelperChecksTheRemotesTheStackSays(t *testing.T) {
 	older := goodStatus()
 	older.Remotes = nil
 	srv = &helperKindServer{instances: []api.Instance{helperInstance(t, "tink-helper", "helper", "Running", older)}}
-	if p, _ = planHelper(srv, helperRes(nil), helperNow); len(p.Warnings) != 0 {
+	if p, _ = planHelper(srv, helperRes(nil), helperNow, PlanOptions{}); len(p.Warnings) != 0 {
 		t.Errorf("a helper that did not say is not checked: %q", joined(p.Warnings))
 	}
 }
 
 func TestPlanHelperIsBlockedByAnInstanceOfThatNameThatIsNotAHelper(t *testing.T) {
 	srv := &helperKindServer{instances: []api.Instance{{Name: "helper", Project: "tink-helper", Status: "Running"}}}
-	p, err := planHelper(srv, helperRes(nil), helperNow)
+	p, err := planHelper(srv, helperRes(nil), helperNow, PlanOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +206,7 @@ func TestPlanHelperIsBlockedByAnInstanceOfThatNameThatIsNotAHelper(t *testing.T)
 	}
 	// the same name in another project is no obstacle
 	srv = &helperKindServer{instances: []api.Instance{{Name: "helper", Project: "elsewhere"}}}
-	if p, _ = planHelper(srv, helperRes(nil), helperNow); p.Action != ActionCreate {
+	if p, _ = planHelper(srv, helperRes(nil), helperNow, PlanOptions{}); p.Action != ActionCreate {
 		t.Errorf("another project: %+v", p)
 	}
 }
@@ -214,7 +214,7 @@ func TestPlanHelperIsBlockedByAnInstanceOfThatNameThatIsNotAHelper(t *testing.T)
 func TestPlanHelperDefaultsTheProjectAndLooksOnlyThere(t *testing.T) {
 	other := helperInstance(t, "somewhere-else", "helper", "Running", goodStatus())
 	srv := &helperKindServer{instances: []api.Instance{other}}
-	p, _ := planHelper(srv, helperRes(func(r *Resource) { r.Project = "" }), helperNow)
+	p, _ := planHelper(srv, helperRes(func(r *Resource) { r.Project = "" }), helperNow, PlanOptions{})
 	if p.Action != ActionCreate || !strings.Contains(joined(p.Changes), helper.DefaultProject+"/helper") {
 		t.Errorf("a helper in another project is not this one: %+v", p)
 	}
@@ -226,14 +226,14 @@ func TestCreateHelperPassesWhatTheStackSaysToTheInstaller(t *testing.T) {
 	installHelper = func(_ incus.InstanceServer, o helper.InstallOptions) error { got = o; return nil }
 	defer func() { installHelper = old }()
 	r := helperRes(func(r *Resource) { r.Pool, r.Network, r.Image = "fast", "incusbr0", "ghcr:minihci/tink-helper:v0.1.4" })
-	if err := createHelper(&helperKindServer{}, r); err != nil {
+	if err := createHelper(&helperKindServer{}, r, nil); err != nil {
 		t.Fatal(err)
 	}
 	want := helper.InstallOptions{Project: "tink-helper", Name: "helper", Pool: "fast", Network: "incusbr0", Image: "ghcr:minihci/tink-helper:v0.1.4", TZ: "America/Denver"}
 	if got != want {
 		t.Errorf("options = %+v, want %+v", got, want)
 	}
-	if err := createHelper(&helperKindServer{}, helperRes(func(r *Resource) { r.Project = "" })); err != nil || got.Project != helper.DefaultProject {
+	if err := createHelper(&helperKindServer{}, helperRes(func(r *Resource) { r.Project = "" }), nil); err != nil || got.Project != helper.DefaultProject {
 		t.Errorf("default project: %v %q", err, got.Project)
 	}
 }

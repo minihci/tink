@@ -149,7 +149,7 @@ func planKindBody(server incus.InstanceServer, r Resource, opts PlanOptions) (Pl
 	switch r.Kind {
 	case KindHelper:
 		// the helper is found in every project, so it is read with the unscoped server
-		return planHelper(server, r, time.Now())
+		return planHelper(server, r, time.Now(), opts)
 	case KindProject:
 		p, err := planProject(s, r)
 		return withOtherExtras(s, r, venv, opts, p, err)

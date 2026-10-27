@@ -329,7 +329,7 @@ not counted. See docs/plan-extras.md.`, resolve.DefaultFile),
 			// backup targets from an earlier level, so hand the options the whole stack.
 			ctx, stop := interruptContext(cmd.Context())
 			defer stop()
-			opts := helperPolicyOptions(server, resolve.NewPlanOptions(flags.offline).WithExtras().ForResources(resources)).WithContext(ctx)
+			opts := helperPolicyOptions(server, resolve.NewPlanOptions(flags.offline).WithExtras().ForResources(resources)).WithHelperAuthz(daemon.HelperAuthz{}).WithContext(ctx)
 			withExtras := 0
 			defer func() { noteExtras(cmd.OutOrStdout(), withExtras) }()
 			// whose the declared objects are is not a plan line of any resource (ownership.go): one line after the levels, whatever they said
@@ -407,7 +407,7 @@ restarted, whatever its restart: says. See docs/ownership.md.`, resolve.DefaultF
 			}
 			server, resources := stack.Server, stack.Resources
 			// what the helper can read is asked once, before anything is written: a policy it would skip is refused, not applied
-			opts := helperPolicyOptions(server, resolve.NewPlanOptions(flags.offline))
+			opts := helperPolicyOptions(server, resolve.NewPlanOptions(flags.offline)).WithHelperAuthz(daemon.HelperAuthz{})
 			ctx, stop := interruptContext(cmd.Context())
 			defer stop()
 			// Stamping what exists comes first and is a pass of its own: a stamp is no part of converging, so it can neither restart an instance
