@@ -180,3 +180,18 @@ func TestAStackNamedTwiceHasNoSite(t *testing.T) {
 		t.Errorf("StackSite = %q", got)
 	}
 }
+
+func TestAnInstanceThatAStackKeepsADerivedFileOnIsInTheStacksSiteToo(t *testing.T) {
+	rs := append(siteStack("herd"),
+		Resource{Kind: KindInstance, Name: "proxy", Project: "tink"}, // no role, no publish: only a derived file is pushed to it
+		Resource{Kind: KindFile, Name: "routes", Project: "tink", Instance: "proxy", Path: "/etc/caddy/apps.caddy", Derive: DeriveCaddy},
+		Resource{Kind: KindFile, Name: "note", Project: "tink", Instance: "plain", Path: "/note"}, // a file that derives nothing claims nothing
+	)
+	applyStackSite(rs)
+	if got := instanceOf(t, rs, "proxy").Config[SiteKey]; got != "herd" {
+		t.Errorf("proxy: %s = %q, want herd: it is kept for a site, so it is in no other", SiteKey, got)
+	}
+	if got := instanceOf(t, rs, "plain").Config[SiteKey]; got != "" {
+		t.Errorf("plain: %s = %q, a plain file does not put an instance in a site", SiteKey, got)
+	}
+}
