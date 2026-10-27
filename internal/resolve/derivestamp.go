@@ -158,3 +158,81 @@ func deriveFileStamps(resources []Resource) error {
 	addStamps(resources, stamps, order)
 	return nil
 }
+
+// A network ACL that derives its ingress rules (`derive_ingress: true`, networkacl.go) is stamped too, on the ACL itself:
+//
+//	user.tink.derive.ingress: {"render":"acl"}
+//
+// The ACL is the object, so there is no file name to end the key with: it ends with the direction that is derived. The value names the join's rendering, as a
+// file's does. It is a marker and not a copy of the rules: what the rules are made from (the apps, their publish stamps, the ingress helper's addresses) is on
+// the server already, and whoever keeps the ACL converged works the rules out from there. It carries no guard and no stack name (the ownership stamp has that).
+//
+// It is derived into the ACL's desired config by deriveACLStamps, owned like the others (a stamp the stack no longer derives is a planned removal, on an ACL the
+// stack declares, and nothing else under any other prefix is touched), and refused in the config of an ACL.
+const (
+	// DeriveACL is the join's name for the rendering of an ACL's rules.
+	DeriveACL = "acl"
+	// ACLDeriveDirection is the one direction an ACL derives today.
+	ACLDeriveDirection = "ingress"
+)
+
+// ACLDeriveStampKey is the config key an ACL that derives its rules in this direction is stamped under.
+func ACLDeriveStampKey(direction string) string { return DeriveStampPrefix + direction }
+
+// EncodeACLDeriveStamp is the value stamped on an ACL that derives its ingress rules: {"render":"acl"}.
+func EncodeACLDeriveStamp() string { return `{"render":"` + DeriveACL + `"}` }
+
+// DerivedACL is what a stamp says about an ACL.
+type DerivedACL struct {
+	// Name is the ACL, Direction the list of rules that is derived, Render the join's rendering of it.
+	Name, Direction, Render string
+}
+
+// DecodeACLDeriveStamp reads the stamp on the ACL called acl back. key is the whole config key. It is STRICT, like the others: the key must be the stamp of the
+// ingress direction, and the value exactly one object with the one key render, holding "acl". Anything else is an error that says what.
+func DecodeACLDeriveStamp(acl, key, value string) (DerivedACL, error) {
+	direction, ok := strings.CutPrefix(key, DeriveStampPrefix)
+	if !ok {
+		return DerivedACL{}, fmt.Errorf("%s is not a derived stamp (a stamp is %s<name>)", key, DeriveStampPrefix)
+	}
+	if direction != ACLDeriveDirection {
+		return DerivedACL{}, fmt.Errorf("%s: %q is not a direction an ACL derives (known: %s)", key, direction, ACLDeriveDirection)
+	}
+	raw, err := strictObject(value)
+	if err != nil {
+		return DerivedACL{}, fmt.Errorf("%s: %w", key, err)
+	}
+	for k := range raw {
+		if k != "render" {
+			return DerivedACL{}, fmt.Errorf("%s: %q is not a field of an ACL's stamp (known: render)", key, k)
+		}
+	}
+	if _, ok := raw["render"]; !ok {
+		return DerivedACL{}, fmt.Errorf("%s: the stamp has no %q", key, "render")
+	}
+	d := DerivedACL{Name: acl, Direction: direction}
+	if err := json.Unmarshal(raw["render"], &d.Render); err != nil {
+		return DerivedACL{}, fmt.Errorf("%s: render is not a string: %w", key, err)
+	}
+	if d.Render != DeriveACL {
+		return DerivedACL{}, fmt.Errorf("%s: render %q is not %q", key, d.Render, DeriveACL)
+	}
+	return d, nil
+}
+
+// deriveACLStamps adds the stamp to the desired config of every network ACL that says derive_ingress. Like the other passes it changes the caller's resources in
+// place, by giving the ACL a COPY of its config, and is safe to run twice.
+func deriveACLStamps(resources []Resource) {
+	for i := range resources {
+		r := &resources[i]
+		if r.Kind != KindNetworkACL || !r.DeriveIngress {
+			continue
+		}
+		cfg := make(map[string]string, len(r.Config)+1)
+		for k, v := range r.Config {
+			cfg[k] = v
+		}
+		cfg[ACLDeriveStampKey(ACLDeriveDirection)] = EncodeACLDeriveStamp()
+		r.Config = cfg
+	}
+}

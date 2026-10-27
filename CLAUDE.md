@@ -46,8 +46,8 @@ several files to see are below.
 - **The resolver (`internal/resolve`) is the core.** A stack is YAML documents of kinds project, profile, storage-volume,
   instance, file, exec, and two that are not resources to converge: `stack` (a name only) and `publish` (a declaration that
   `tink join` reads; `publish.go`). Both are kept out of the graph, which is why a publish may share a name with its instance. `Levels` stamps each publish onto
-  its instance (same stack and project) as `user.tink.publish.<name>` (`publishstamp.go`): derived into the instance's desired config, so the ordinary plan converges it. So is each `kind: file` with `derive:` as `user.tink.derive.<file name>` on its instance (`derivestamp.go`, no
-  guard in it: the daemon never adopts and never empties). Those prefixes, and `user.tink.site`, are what tink OWNS: a live key under one that the stack no longer derives is a planned removal (`run.StaleOwnedKeys`), and nothing else is ever removed. `helper` (`helperkind.go`)
+  its instance (same stack and project) as `user.tink.publish.<name>` (`publishstamp.go`): derived into the instance's desired config, so the ordinary plan converges it. So is each `kind: file` with `derive:` as `user.tink.derive.<file name>` on its instance, and each network ACL with `derive_ingress` as `user.tink.derive.ingress` on the ACL (`derivestamp.go`, no
+  guard in either: the daemon never adopts and never empties). Those prefixes, and `user.tink.site`, are what tink OWNS: a live key under one that the stack no longer derives is a planned removal (`run.StaleOwnedKeys`), and nothing else is ever removed. `helper` (`helperkind.go`)
   declares the daemon helper: adopted and only reported on when present, installed (through `internal/helper`) when absent, never upgraded or removed. `graph.go` computes dependency levels (resources within a level
   apply concurrently; ties are broken by kind then name so a plan reads the same on every run). Dependencies come from
   name-matching (an instance's project, profiles and volume-backed devices) plus explicit `DependsOn`; deliberately not a

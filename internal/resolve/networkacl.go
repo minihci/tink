@@ -12,6 +12,7 @@ import (
 	"github.com/lxc/incus/v7/shared/api"
 
 	"github.com/minihci/tink/internal/incusapi"
+	"github.com/minihci/tink/internal/instance"
 	"github.com/minihci/tink/internal/ownership"
 )
 
@@ -218,6 +219,10 @@ func aclReferenceWarnings(server incus.InstanceServer, r Resource, declared map[
 	return out
 }
 
+// aclOwnedConfigPrefixes are what tink owns in an ACL's config: the stamps of what it derives (derivestamp.go). The ownership stamp is not here: it is never
+// removed, and is its own dimension of a plan (ownership.go).
+var aclOwnedConfigPrefixes = []string{DeriveStampPrefix}
+
 func planNetworkACL(server incus.InstanceServer, r Resource) (PlannedResource, error) {
 	current, _, found, err := incusapi.LookupNetworkACL(server, r.Name)
 	if err != nil {
@@ -232,6 +237,7 @@ func planNetworkACL(server incus.InstanceServer, r Resource) (PlannedResource, e
 		changes = append(changes, fmt.Sprintf("description: %q -> %q", current.Description, r.Description))
 	}
 	changes = append(changes, diffConfig(current.Config, r.Config, nil)...)
+	changes = append(changes, staleOwnedChangesUnder(aclOwnedConfigPrefixes, current.Config, r.Config)...)
 	if r.Ingress != nil {
 		changes = append(changes, diffACLRules("ingress", aclRules(current.Ingress), aclRules(r.Ingress))...)
 	}
@@ -274,6 +280,9 @@ func updateNetworkACL(server incus.InstanceServer, r Resource) error {
 		}
 		for k, v := range r.Config {
 			put.Config[k] = v
+		}
+		for _, k := range instance.StaleOwnedKeys(current.Config, r.Config, aclOwnedConfigPrefixes) {
+			delete(put.Config, k)
 		}
 		if r.Ingress != nil {
 			put.Ingress = aclRules(r.Ingress)

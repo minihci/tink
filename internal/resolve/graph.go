@@ -30,6 +30,8 @@ func Levels(resources []Resource) ([][]Resource, error) {
 	if err := deriveFileStamps(resources); err != nil {
 		return nil, err
 	}
+	// and so is a network ACL that derives its ingress rules, on the ACL itself.
+	deriveACLStamps(resources)
 	// The stack's name is metadata, not something to plan: it is skipped below, in place, because the passes after this
 	// one update the caller's resources (project inheritance, image aliases) and callers rely on that.
 	all := make(map[string]*Resource, len(resources))
