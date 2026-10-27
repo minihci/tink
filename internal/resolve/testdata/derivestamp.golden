@@ -1,0 +1,4 @@
+user.tink.derive.dns-hosts={"path":"/hosts","render":"dns","restart":false}
+user.tink.derive.ingress-routes={"path":"/etc/caddy/apps.caddy","render":"caddy","restart":true}
+user.tink.derive.mesh-records={"path":"/etc/headscale/extra_records.json","render":"mesh","restart":false}
+user.tink.derive.sso-configuration={"path":"/config/configuration.yml","render":"sso","restart":true}

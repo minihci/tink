@@ -291,6 +291,11 @@ func exportInstance(server, scoped incus.InstanceServer, env *imageEnv, inst *ap
 			continue
 		case strings.HasPrefix(k, PublishStampPrefix):
 			continue // written as a kind: publish document (exportPublishes): a stack that declared the key itself would be refused
+		case strings.HasPrefix(k, DeriveStampPrefix):
+			// NOT written as a kind: file. Its content is the person's (the stack would replace it whole with whatever export wrote), and reading it would put a
+			// helper's configuration into a stack text. The stack declares the file itself; until then plan says it would remove the stamp.
+			note("%s is the stamp of a derived file: the file is not written (its content is yours, and may hold secrets), so declare a kind: file with derive: for it, or applying this stack removes the stamp", k)
+			continue
 		case derived[k]:
 			dropped = append(dropped, k)
 			continue

@@ -301,3 +301,32 @@ func TestDerivedMeshNeedsAMeshHelper(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+// A derived file on an instance the stack does not declare cannot be stamped, so the daemon cannot keep it; plan says so and still derives the file.
+func TestADerivedFileOnAnInstanceTheStackDoesNotDeclareSaysTheDaemonCannotKeepIt(t *testing.T) {
+	srv := serverWith(t, "../join/testdata/platform.yaml", "../join/testdata/canary.yaml")
+	rs := site(t)
+	var only []resolve.Resource
+	for _, r := range rs {
+		if r.Kind == resolve.KindInstance && r.Name == "ingress" {
+			continue // the ingress helper is on the server, but this stack does not declare it
+		}
+		only = append(only, r)
+	}
+	notices, err := DerivedFiles(srv, only)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var said []string
+	for _, n := range notices {
+		if strings.Contains(n, "daemon has nowhere to record") {
+			said = append(said, n)
+		}
+	}
+	if len(said) != 1 || !strings.HasPrefix(said[0], "file/ingress-routes: its instance ingress is not declared in this stack") {
+		t.Errorf("notices = %v", notices)
+	}
+	if !strings.Contains(file(only, "ingress-routes").Content, "@whoami host whoami.home.example.org") {
+		t.Error("the file is derived all the same")
+	}
+}

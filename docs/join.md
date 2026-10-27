@@ -55,7 +55,7 @@ user.tink.publish.whoami-admin:  {"allow":["admins"],"offer":"web"}
 
 #### The owned prefix, and the one place tink removes a key
 
-Everywhere else tink never removes a config key it is no longer told about: a key dropped from the YAML stays on the instance and `plan` reports it as "not in the stack" (see [plan-extras.md](plan-extras.md)). A stamp is different, because one that stays after its publish is deleted keeps the name **rendered**: still routed, still let in. So `user.tink.publish.` is **owned by tink**, and for it alone:
+Everywhere else tink never removes a config key it is no longer told about: a key dropped from the YAML stays on the instance and `plan` reports it as "not in the stack" (see [plan-extras.md](plan-extras.md)). A stamp is different, because one that stays after its publish is deleted keeps the name **rendered**: still routed, still let in. So `user.tink.publish.` is **owned by tink**, and for it alone (the stamps of derived files, `user.tink.derive.`, [below](#the-stamp-of-a-derived-file), are owned in the same way):
 
 - when `plan` or `plan apply` handles an instance **that the stack declares**, every live key under `user.tink.publish.` that the stack no longer derives is a planned change, `config.user.tink.publish.<name>: "{...}" -> (unset)`, and `plan apply` removes it in the same update that sets the others (also on an instance rebuilt onto a new image);
 - **no other key is touched**: not another `user.tink.*` key (`user.tink.role`, `user.tink.helper.status`, `user.tink.publisher`), not a foreign `user.*` key, not an Incus key. The rule is a prefix match with the trailing dot, so `user.tink.publish` and `user.tink.publisher` are not under it;
@@ -202,6 +202,23 @@ Before the stack is planned (`internal/derive`, the fifth pass of `prepare`), wh
 - **The view is the whole site.** A file at the site's door shows every name the site publishes, and those are declared in many stacks. So the plan reads the server (every instance with its stored config, and every publish as the stamps say it) and lays the stack being planned over it, the stack winning, as it does for an ACL. The file follows the stacks that have been *applied*: a stack applied after the site changes the file at the next `plan apply` of the site, and not before. Something has to apply the site again when a stack changes (a person today, the daemon later).
 - **It is as strict as the join.** A stamp that cannot be read, or anything the join reports as an error (an app on DHCP, no ingress helper, no sign-on helper), stops the plan of the site and says what: a route missing looks exactly like a route that was never wanted.
 - **A file that does not ask is left alone**, and the server is not read.
+
+#### The stamp of a derived file
+
+**Status: built (#273); unit-tested against fakes, and run live on a local Incus 7.5.1 on 2026-10-26 (L-2026-10-26e and L-2026-10-26f): a proxy instance and a derived file were applied, the stamp was on the instance, a second plan said no changes, dropping `derive:` removed the stamp and nothing else, and `tink export` named it in a note; then the platform site of the herd corpus (the dns helper, the sign-on helper and the proxy) was applied and each of its three derived files was stamped on its instance with its own `restart`, a second plan said no changes, and `tink join --from-server` still read the server. Not run live: a derived file whose instance the stack does not declare (fakes only), `derive: mesh` (the stamp is the same code), and anything reading the stamp.** Nothing reads it yet: the daemon will (#274).
+
+A file that says `derive:` is also **stamped onto its instance**, the way a publish is, so that whatever keeps the site converged later can read what to keep from the server and does not need the stack files:
+
+```
+user.tink.derive.ingress-routes: {"path":"/etc/caddy/apps.caddy","render":"caddy","restart":true}
+```
+
+The key ends in the file document's name. The value is compact JSON with its keys sorted, decoded strictly (exactly those three keys, a path that is absolute, a `render` that is one of the four), and holds no content: what lies between the markers is the rendering and what lies outside is yours. The prefix is owned like the publishes': a stamp the stack no longer derives is a planned removal (dropping `derive:` from the file removes it, and nothing else), and a stack that declares the key itself is refused.
+
+- **It carries no guard.** `adopt_existing` is never the daemon's, and `allow_empty` is not a standing property of a declaration: whoever keeps a file converged on its own refuses to take over a file tink did not write and refuses to empty one that has records. A stack that wants either runs `plan apply`.
+- **The instance must be declared in the same stack and project.** A file on an instance the stack does not declare has nothing to carry the stamp. It is not an error (it worked before, and still does under `plan apply`), and `plan` says so: `file/NAME: its instance X is not declared in this stack, so the daemon has nowhere to record that it keeps this file`.
+- **`tink export` does not write the file.** Its content is yours and may hold secrets, and a `kind: file` written from the stamp would replace the whole file with a stub when applied. Export names the stamp in a note instead, and a stack written without the file would remove the stamp.
+- A network ACL that derives its rules is not stamped yet (#273, second part).
 - **The dns records are `derive: dns`**, with the rules `tink join apply dns` has, now the plan's. The file must be on the dns helper. A published name that is already a record in the zone file (`/db.<zone>`, from the stack's own `kind: file` for it, else the server's) is an error, because the generated records answer first and would take the name over. A zone file found nowhere is an error too, not a guess.
 - **Two refusals protect every derived file**, shown by `plan` as BLOCKED with the reason:
   - A file that exists, has lines in it and carries no `# BEGIN tink derive` line was not written by tink, and applying would lose them. `adopt_existing: true` on the file takes it over, once; remove the line after it is applied.
@@ -216,7 +233,7 @@ Before the stack is planned (`internal/derive`, the fifth pass of `prepare`), wh
 
 1. ~~The mesh records as a planned change~~, built (`derive: mesh`, above), for a control plane whose records file the stack can reach. All five renderings are planned changes now.
 2. ~~`tink plan explain` (#129)~~, built: [plan-explain.md](plan-explain.md) prints the routes, rules and records of a site, line by line, without writing them. That is what `tink join --only ...` was for.
-3. **The daemon applies planned changes** instead of running `join apply dns --from-server`, under a credential narrow enough for it (Phase 5). The first part is built for the dns records: `tink daemon run --reconcile-dns` runs that apply whenever the server changes ([helper.md](helper.md#the-reconciler)), under the daemon's existing certificate. The other four renderings need a stamp for each derived file first (#273); the narrow credential is #252.
+3. **The daemon applies planned changes** instead of running `join apply dns --from-server`, under a credential narrow enough for it (Phase 5). The first part is built for the dns records: `tink daemon run --reconcile-dns` runs that apply whenever the server changes ([helper.md](helper.md#the-reconciler)), under the daemon's existing certificate. The other four renderings need a stamp for each derived file first (built for the files, [above](#the-stamp-of-a-derived-file); the ACL is next, #273); the narrow credential is #252.
 4. **A removal page** in the style of `docs/removals/ingress-self-registration.md`, because the verb is deployed on the author's hosts.
 
 Until then `tink join` and `tink join apply dns` stay, and `--from-server` is the way to see what a stack that derives its own network produced. `tink join apply dns` and a `derive: dns` file do the same job; use one of them for a dns helper, not both.
