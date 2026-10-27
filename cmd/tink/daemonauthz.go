@@ -38,7 +38,7 @@ volumes and dns helpers that appear later: run plan or apply again when they do.
 
 type authzFlags struct {
 	socket, identity, statusVolume, statusProject string
-	reconcile                                     bool
+	reconcile, derived                            bool
 }
 
 func (f *authzFlags) bind(cmd *cobra.Command) {
@@ -46,6 +46,7 @@ func (f *authzFlags) bind(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.identity, "identity", "", "the daemon's certificate, by its name in the trust store (default: the one `tink helper install` enrols)")
 	cmd.Flags().StringVar(&f.statusVolume, "status-volume", "", "the POOL/VOLUME the daemon publishes its status on (as for tink daemon run)")
 	cmd.Flags().StringVar(&f.statusProject, "status-project", "", "the project of --status-volume (default: the connection's own)")
+	cmd.Flags().BoolVar(&f.derived, "reconcile-derived", false, "the daemon runs with --reconcile-derived: it also reads the instances, profiles and networks, watches events, writes files on the instances that carry a derived file's stamp, and restarts those whose stamp says restart")
 	cmd.Flags().BoolVar(&f.reconcile, "reconcile-dns", false, "the daemon runs with --reconcile-dns: it also reads the instances, profiles and networks, watches events, and writes files on the dns helpers")
 }
 
@@ -54,7 +55,7 @@ func (f *authzFlags) options(socket string) (daemon.AuthzOptions, error) {
 	if err != nil {
 		return daemon.AuthzOptions{}, fmt.Errorf("connecting to incus: %w", err)
 	}
-	o := daemon.AuthzOptions{Server: server, Identity: f.identity, Reconcile: f.reconcile}
+	o := daemon.AuthzOptions{Server: server, Identity: f.identity, Reconcile: f.reconcile, Derived: f.derived}
 	if f.statusVolume != "" {
 		pool, name, ok := strings.Cut(f.statusVolume, "/")
 		if !ok || pool == "" || name == "" {

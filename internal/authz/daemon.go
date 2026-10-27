@@ -30,6 +30,13 @@ type Scope struct {
 	// writes files on.
 	Reconcile bool
 	DNS       []Instance
+
+	// Derived says the daemon keeps the stamped derived files (--reconcile-derived): it reads and watches what the dns reconciler does, and writes files on
+	// Files, the instances that carry the stamp of a derived file. Restart are those among them whose stamp says restart: the daemon may restart them (the
+	// entitlement is can_update_state, which is not a right to edit the instance or to run anything in it).
+	Derived bool
+	Files   []Instance
+	Restart []Instance
 }
 
 // DaemonRules are the rules for the daemon's certificate: the pairs it was asked for on Incus 7.5.1 (a daemon, a scheduler, a copy, the status write and the
@@ -37,8 +44,8 @@ type Scope struct {
 //
 // There is no right to create, edit, delete or run anything in an instance, to change a network or a project, or to touch certificates or the server's
 // config. An edit right on an instance covers its devices, and a device can be a way into the host, which is why the status document moved to a volume. What
-// it can write is: the config of one status volume, the volumes it copies (their config and their snapshots), the restore points it creates, and files in the
-// dns helper.
+// it can write is: the config of one status volume, the volumes it copies (their config and their snapshots), the restore points it creates, files in the
+// dns helper, and with --reconcile-derived files on the instances that carry a derived file's stamp, and a restart of those whose stamp says so.
 func DaemonRules(s Scope) []Rule {
 	var rules []Rule
 	view := func(prefix string) {
@@ -78,7 +85,7 @@ func DaemonRules(s Scope) []Rule {
 		}
 	}
 
-	if s.Reconcile {
+	if s.Reconcile || s.Derived {
 		view("instance:")
 		view("profile:")
 		view("network:")
@@ -87,8 +94,18 @@ func DaemonRules(s Scope) []Rule {
 			Rule{Object: "project:", Entitlement: "can_view_events", Prefix: true},
 			Rule{Object: "project:", Entitlement: "can_view_operations", Prefix: true},
 		)
-		for _, in := range s.DNS {
+		if s.Reconcile {
+			for _, in := range s.DNS {
+				rules = append(rules, Rule{Object: fmt.Sprintf("instance:%s/%s", in.Project, in.Name), Entitlement: "can_access_files"})
+			}
+		}
+	}
+	if s.Derived {
+		for _, in := range s.Files {
 			rules = append(rules, Rule{Object: fmt.Sprintf("instance:%s/%s", in.Project, in.Name), Entitlement: "can_access_files"})
+		}
+		for _, in := range s.Restart {
+			rules = append(rules, Rule{Object: fmt.Sprintf("instance:%s/%s", in.Project, in.Name), Entitlement: "can_update_state"})
 		}
 	}
 	return rules

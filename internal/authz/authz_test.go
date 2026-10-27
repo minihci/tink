@@ -263,3 +263,71 @@ func TestOnlyAScriptletWithTheMarkerIsOurs(t *testing.T) {
 		}
 	}
 }
+
+// derivedScript is the daemon that keeps the stamped derived files: no dns reconciler, files on the instances that carry a stamp, and a restart of the ones
+// whose stamp says so.
+func derivedScript(t *testing.T) string {
+	t.Helper()
+	sc := scope()
+	sc.Reconcile, sc.DNS = false, nil
+	sc.Derived = true
+	sc.Files = []Instance{{"site", "dns"}, {"site", "ingress"}, {"site", "sso"}}
+	sc.Restart = []Instance{{"site", "ingress"}, {"site", "sso"}}
+	s, err := Generate([]Identity{{Name: "the daemon", Fingerprint: daemonFP, Rules: DaemonRules(sc)}}, Incus75)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func TestTheDaemonThatKeepsDerivedFilesWritesThemOnStampedInstancesAndRestartsOnlyThoseThatSayso(t *testing.T) {
+	s := derivedScript(t)
+	for _, c := range [][2]string{
+		{"instance:site/dns", "can_access_files"},
+		{"instance:site/ingress", "can_access_files"},
+		{"instance:site/sso", "can_access_files"},
+		{"instance:site/ingress", "can_update_state"},
+		{"instance:site/sso", "can_update_state"},
+		{"instance:site/dns", "can_view"}, // it reads every instance to render the join
+		{"project:site", "can_view_events"},
+	} {
+		if !decide(t, s, daemonFP, "tls", c[0], c[1]) {
+			t.Errorf("the daemon is refused %s on %s", c[1], c[0])
+		}
+	}
+	for _, c := range [][2]string{
+		{"instance:site/dns", "can_update_state"},   // its stamp does not say restart
+		{"instance:site/other", "can_access_files"}, // no stamp
+		{"instance:site/other", "can_update_state"},
+		{"instance:site/ingress", "can_edit"}, // an edit reaches the devices, which reach the host
+		{"instance:site/ingress", "can_exec"},
+		{"instance:site/ingress", "can_delete"},
+		{"instance:site/sso", "can_connect_sftp"},
+		{"project:site", "can_create_instances"},
+		{"network_acl:default/site-in", "can_edit"},
+	} {
+		if decide(t, s, daemonFP, "tls", c[0], c[1]) {
+			t.Errorf("the daemon is allowed %s on %s", c[1], c[0])
+		}
+	}
+}
+
+func TestTheDerivedRowsAreAskedForByTheirOwnFlagAndNotByTheDnsReconciler(t *testing.T) {
+	sc := scope() // --reconcile-dns only
+	sc.Files = []Instance{{"site", "ingress"}}
+	sc.Restart = []Instance{{"site", "ingress"}}
+	s, err := Generate([]Identity{{Name: "d", Fingerprint: daemonFP, Rules: DaemonRules(sc)}}, Incus75)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range [][2]string{{"instance:site/ingress", "can_access_files"}, {"instance:site/ingress", "can_update_state"}} {
+		if decide(t, s, daemonFP, "tls", c[0], c[1]) {
+			t.Errorf("allowed %s on %s without --reconcile-derived", c[1], c[0])
+		}
+	}
+	// and the other way round: the derived daemon has no right on the dns helper that only --reconcile-dns grants
+	d := derivedScript(t)
+	if decide(t, d, daemonFP, "tls", "instance:lab-recon-p/dns", "can_access_files") {
+		t.Error("--reconcile-derived grants the dns helper that --reconcile-dns names")
+	}
+}

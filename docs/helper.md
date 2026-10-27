@@ -342,7 +342,7 @@ ACL files (they need [a stamp for each derived file](https://github.com/minihci/
 The daemon's certificate is trusted without restriction, and an unrestricted certificate can do anything on the server, including what reaches the host as root (an edit right on an instance covers its devices). `tink daemon authz` narrows it to what the daemon does, without touching anyone else:
 
 ```
-tink daemon authz plan  [--reconcile-dns] [--status-volume POOL/VOLUME --status-project PROJECT] [--rules] [--script]
+tink daemon authz plan  [--reconcile-dns] [--reconcile-derived] [--status-volume POOL/VOLUME --status-project PROJECT] [--rules] [--script]
 tink daemon authz apply [same flags]
 tink daemon authz remove
 ```
@@ -353,8 +353,8 @@ It generates an authorization scriptlet (`internal/authz`) and routes the class 
 
 | Reads, everywhere | the server, projects, pools, volumes, images; with `--reconcile-dns` also instances, profiles, networks and network ACLs, and the events of every project |
 |---|---|
-| Writes | the config of its status volume; for each volume that carries a copy policy, its config and snapshots, and the restore points it creates on a target pool of this server (`VOLUME-bk-*`); with `--reconcile-dns`, files on the dns helpers |
-| Never | an instance's config, devices or state, exec, creating instances, networks, projects, certificates, the server's config, privileged events, and any volume it does not copy |
+| Writes | the config of its status volume; for each volume that carries a copy policy, its config and snapshots, and the restore points it creates on a target pool of this server (`VOLUME-bk-*`); with `--reconcile-dns`, files on the dns helpers; with `--reconcile-derived`, files on the instances that carry a derived file's stamp, and a restart of those whose stamp says so |
+| Never | an instance's config or devices, exec, a state change of any instance whose stamp does not say restart, creating instances, networks, projects, certificates, the server's config, privileged events, and any volume it does not copy |
 
 The volumes it copies and the dns helpers are read from the server when the script is generated, so a volume added later is not covered until `plan` or `apply` runs again.
 
@@ -380,6 +380,23 @@ A helper that is not installed yet plans `then narrow its certificate`, and `app
 **A finding that changed the join.** Incus shows a managed network's config only to a client that may *edit* that network, and the daemon must not be given that: a network's config reaches the host (`raw.dnsmasq`, routes). The join reads one thing from it, which ACL is attached. When a network's config is hidden, the join now reads the attachment from the ACLs' used-by lists, so the reconciler works without the right to edit networks.
 
 **Not run:** a production-like host; an Incus restart with the narrowed daemon connected; pruning of old restore points and expiry of snapshots under the narrowed certificate; a copy to a remote target (its rights are the remote server's); a check that repeats these requests on another Incus version (the shape of the scriptlet's `details` has changed between versions with no changelog entry, so a new version is tried with `plan` and a real request before it is trusted); and the helper installed by `tink helper install`, which is the same certificate but has not been narrowed here.
+
+### Keeping every stamped derived file
+
+**Status: built (#274); unit-tested against fakes, and run live on a local Incus 7.5.1 on 2026-10-27 (L-2026-10-27b), as the narrowed certificate.** It is off by default.
+
+```
+tink daemon run --jobs /var/lib/tink/jobs --reconcile-derived [--reconcile-site NAME ...] [--reconcile-resync 5m]
+```
+
+`--reconcile-derived` keeps **every derived file the server holds a stamp for** ([join.md](join.md#the-stamp-of-a-derived-file)): the proxy's routes, the sign-on helper's rules, the dns records and the mesh view. It is the same reconciler, woken the same way, and it does for each file what `plan apply` does for a `kind: file` with `derive:`, from the stamps and without the stack files ([join.md](join.md#keeping-derived-files-converged-from-the-stamps)). It cannot run with `--reconcile-dns`, which keeps the dns helper's records too: use `--reconcile-derived` for a site that stamps its files, `--reconcile-dns` for a site whose dns helper has none.
+
+- **A hand edit inside a region is put back,** within the resync or the next event; a line outside the markers is the person's and is kept. It writes only a file that differs, with a read-back, and restarts the instance only when the stamp says `restart` and the content changed.
+- **It follows `plan`'s refusals.** A join error, or a publish stamp that cannot be read, blocks every file and writes nothing. It never adopts a file tink did not write and never empties a region that has lines (`allow_empty`, `adopt_existing` are for `plan apply`), it does not place markers or create a region file, and it keeps files on running instances only.
+- **It reports one entry per file** (`derived/NAME`, and `derived` for a whole site): `converged`, `blocked` and why, `skipped` (no stamped file, or the instance is not running) or `failing`, with fixed reasons. A stopped instance is kept at the next resync after it starts: starts are not events it wakes on.
+- **The rows it needs** are in [Narrowing the daemon's certificate](#narrowing-the-daemons-certificate): read the instances, profiles, networks and ACLs; access files on each instance that carries a stamp; and restart (`can_update_state`) the ones whose stamp says `restart`. It has no right to edit an instance, to run anything in one, or to touch a network. `tink daemon authz plan --reconcile-derived` shows them, and `authz: narrow` reads the flag from the helper's entrypoint and reports the rules out of date when a derived file is added.
+
+**Measured live** (a local Incus 7.5.1, the herd corpus's platform site of a dns helper, a sign-on helper and a proxy, one published app, and the daemon run as a certificate of its own narrowed with `tink daemon authz apply --reconcile-derived`): the app was applied after the platform, so the proxy's routes file lacked its name; the daemon's first pass for the site wrote the dns records, the routes and the sign-on rules from their stamps with no second apply, and restarted the proxy and the sign-on helper, the two whose stamps say `restart`. A hand edit inside the routes region was put back within one 20-second resync and a line added outside the markers was kept. With the ingress helper's role removed the join had an error: all three files were `blocked` ("the join has errors"), a hand edit stood untouched, the status document carried `blocked` and that reason and no file content, and when the role came back the file was put right. The certificate was refused editing an instance's config or devices, running a command, stopping an instance whose stamp does not say restart, reading a file on an instance with no stamp, and editing a network, an ACL, the server's config or creating a project; it was allowed to view instances, read a file on a stamped instance, and restart one whose stamp says so. **Not run:** the mesh view; an Incus restart with the daemon connected; more than one site at once; a stopped instance; a host other than a laptop.
 
 ## The status document
 
