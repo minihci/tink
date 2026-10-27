@@ -1,8 +1,8 @@
 # Corpus: how popular self-hosted projects describe their install
 
-Thirty-four projects' own install instructions, copied as published, one directory each (`NAME/upstream.md`). This is the
+Thirty-five projects' own install instructions, copied as published, one directory each (`NAME/upstream.md`). This is the
 input to tink, before any tink stack exists for it: the docker run line or compose file a person finds in the project's
-README or docs. Retrieved from the URL on each page: the first 21 on 2026-10-21, and the thirteen Home Assistant companions at the end of the table on 2026-10-23.
+README or docs. Retrieved from the URL on each page: the first 21 on 2026-10-21, and the thirteen Home Assistant companions on 2026-10-23, and Linkwarden at the end of the table on 2026-10-27.
 
 **Why it exists.** tink's job is to take that kind of description and turn it into a running, wired-up service on an Incus
 host. Progress is measured here: how many of these apps tink can bring up from a stack, and what each one that fails needs
@@ -47,6 +47,7 @@ licences and are quoted as test inputs. Where a page contained a template placeh
 | [Whisper](whisper/upstream.md) | one container, run | the Wyoming speech-to-text server: a TCP port, a data volume that holds the downloaded models, arguments after the image |
 | [openWakeWord](openwakeword/upstream.md) | one container, run | the Wyoming wake-word server: one TCP port, an optional directory of custom models |
 | [MariaDB](mariadb/upstream.md) | one container, run + compose | the recorder database: a root password in the environment, an optional data directory, a compose example with Adminer |
+| [Linkwarden](linkwarden/upstream.md) | three containers, compose + env file | a bookmark manager: app + PostgreSQL + a search engine, the app told its own URL, `${VAR}` in the compose file, three secrets in the env file |
 
 Not chosen on purpose: anything that only ships as a VM or an appliance image, and anything needing a Kubernetes chart.
 

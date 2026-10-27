@@ -6,17 +6,17 @@ with `?` is shown only as an option or a variant. Restart policy is left out bec
 
 ## By shape, most common first
 
-Counts are of 34 apps. "Optional" counts the `?` tags.
+Counts are of 35 apps. "Optional" counts the `?` tags.
 
 | Shape | Apps | Optional | Meaning | Apps with it |
 |---|---|---|---|---|
-| `web-ui` | 27 | 2 | an HTTP(S) interface a person browses to (what a proxy, a name and sign-on would front) | vaultwarden, uptime-kuma, audiobookshelf, actual-budget, navidrome, grafana, n8n, syncthing, home-assistant, jellyfin, pihole, adguard-home, sonarr, qbittorrent, portainer, forgejo, wordpress, paperless-ngx, nextcloud, immich, matterjs-server, esphome, zigbee2mqtt, frigate, node-red, music-assistant, zwave-js-ui, piper?, mariadb? |
-| `tcp-port` | 27 | 2 | a published TCP port | vaultwarden, uptime-kuma, audiobookshelf, actual-budget, navidrome, grafana, n8n, mosquitto, jellyfin, pihole, adguard-home, sonarr, qbittorrent, portainer, forgejo, wordpress, paperless-ngx, nextcloud, immich, zigbee2mqtt, frigate, node-red, zwave-js-ui, piper, whisper, openwakeword, mariadb, esphome?, music-assistant? |
-| `host-dir` | 26 | 2 | a bind mount of a host directory | vaultwarden, uptime-kuma, audiobookshelf, actual-budget, navidrome, mosquitto, syncthing, home-assistant, jellyfin, pihole, adguard-home, sonarr, qbittorrent, forgejo, paperless-ngx, immich, matterjs-server, python-matter-server, esphome, zigbee2mqtt, frigate, music-assistant, openthread-border-router, piper, whisper, mariadb, zwave-js-ui?, openwakeword? |
-| `env-config` | 22 | 3 | settings in environment variables | vaultwarden, grafana, syncthing, home-assistant, jellyfin, pihole, sonarr, qbittorrent, forgejo, wordpress, paperless-ngx, nextcloud, matterjs-server, esphome, zigbee2mqtt, frigate, node-red, music-assistant, zwave-js-ui, openthread-border-router, whisper, mariadb, actual-budget?, navidrome?, piper? |
-| `registry-named` | 15 |  | the image names a registry other than Docker Hub's default | audiobookshelf, actual-budget, n8n, home-assistant, sonarr, qbittorrent, forgejo, paperless-ngx, immich, matterjs-server, python-matter-server, esphome, zigbee2mqtt, frigate, music-assistant |
+| `web-ui` | 28 | 2 | an HTTP(S) interface a person browses to (what a proxy, a name and sign-on would front) | vaultwarden, uptime-kuma, audiobookshelf, actual-budget, navidrome, grafana, n8n, syncthing, home-assistant, jellyfin, pihole, adguard-home, sonarr, qbittorrent, portainer, forgejo, wordpress, paperless-ngx, nextcloud, immich, matterjs-server, esphome, zigbee2mqtt, frigate, node-red, music-assistant, zwave-js-ui, linkwarden, piper?, mariadb? |
+| `tcp-port` | 28 | 2 | a published TCP port | vaultwarden, uptime-kuma, audiobookshelf, actual-budget, navidrome, grafana, n8n, mosquitto, jellyfin, pihole, adguard-home, sonarr, qbittorrent, portainer, forgejo, wordpress, paperless-ngx, nextcloud, immich, zigbee2mqtt, frigate, node-red, zwave-js-ui, piper, whisper, openwakeword, mariadb, linkwarden, esphome?, music-assistant? |
+| `host-dir` | 27 | 2 | a bind mount of a host directory | vaultwarden, uptime-kuma, audiobookshelf, actual-budget, navidrome, mosquitto, syncthing, home-assistant, jellyfin, pihole, adguard-home, sonarr, qbittorrent, forgejo, paperless-ngx, immich, matterjs-server, python-matter-server, esphome, zigbee2mqtt, frigate, music-assistant, openthread-border-router, piper, whisper, mariadb, linkwarden, zwave-js-ui?, openwakeword? |
+| `env-config` | 23 | 3 | settings in environment variables | vaultwarden, grafana, syncthing, home-assistant, jellyfin, pihole, sonarr, qbittorrent, forgejo, wordpress, paperless-ngx, nextcloud, matterjs-server, esphome, zigbee2mqtt, frigate, node-red, music-assistant, zwave-js-ui, openthread-border-router, whisper, mariadb, linkwarden, actual-budget?, navidrome?, piper? |
+| `registry-named` | 16 |  | the image names a registry other than Docker Hub's default | audiobookshelf, actual-budget, n8n, home-assistant, sonarr, qbittorrent, forgejo, paperless-ngx, immich, matterjs-server, python-matter-server, esphome, zigbee2mqtt, frigate, music-assistant, linkwarden |
 | `named-volume` | 10 | 1 | a named volume for state | uptime-kuma, grafana, n8n, portainer, wordpress, paperless-ngx, nextcloud, immich, node-red, zwave-js-ui, mariadb? |
-| `secret` | 9 | 1 | a password or key in the environment | pihole, wordpress, paperless-ngx, nextcloud, immich, esphome, frigate, zwave-js-ui, mariadb, forgejo? |
+| `secret` | 10 | 1 | a password or key in the environment | pihole, wordpress, paperless-ngx, nextcloud, immich, esphome, frigate, zwave-js-ui, mariadb, linkwarden, forgejo? |
 | `ro-mount` | 8 |  | a read-only mount | navidrome, home-assistant, jellyfin, forgejo, esphome, zigbee2mqtt, frigate, music-assistant |
 | `host-network` | 7 | 2 | host networking | syncthing, home-assistant, matterjs-server, python-matter-server, esphome, music-assistant, openthread-border-router, jellyfin?, adguard-home? |
 | `uid-gid` | 7 | 1 | runs as, or maps files to, a specific user (user:, PUID, USER_UID) | navidrome, syncthing, jellyfin, sonarr, qbittorrent, forgejo, matterjs-server, zigbee2mqtt? |
@@ -24,15 +24,15 @@ Counts are of 34 apps. "Optional" counts the `?` tags.
 | `healthcheck` | 6 | 1 | a healthcheck | actual-budget, syncthing, immich, piper, whisper, mariadb, zwave-js-ui? |
 | `media-lib` | 5 |  | a library of existing files (music, video, books) mounted in | audiobookshelf, navidrome, jellyfin, sonarr, music-assistant |
 | `udp-port` | 5 |  | a published UDP port | jellyfin, pihole, adguard-home, qbittorrent, frigate |
-| `sibling` | 4 | 5 | other containers of its own (database, cache, broker) | wordpress, paperless-ngx, nextcloud, immich, forgejo?, zigbee2mqtt?, frigate?, node-red?, mariadb? |
-| `compose-vars` | 4 |  | ${VAR} substitution from a .env file | immich, matterjs-server, python-matter-server, music-assistant |
+| `sibling` | 5 | 5 | other containers of its own (database, cache, broker) | wordpress, paperless-ngx, nextcloud, immich, linkwarden, forgejo?, zigbee2mqtt?, frigate?, node-red?, mariadb? |
+| `compose-vars` | 5 |  | ${VAR} substitution from a .env file | immich, matterjs-server, python-matter-server, music-assistant, linkwarden |
 | `discover-mdns` | 4 |  | finds devices by multicast DNS on the LAN, so it needs the LAN's multicast (the pages say host networking) | matterjs-server, python-matter-server, esphome, music-assistant |
 | `host-file` | 4 |  | a single host file mounted in (/etc/localtime) | forgejo, immich, esphome, frigate |
-| `env-file` | 4 |  | an env file next to the compose file | paperless-ngx, nextcloud, immich, openthread-border-router |
+| `env-file` | 5 |  | an env file next to the compose file | paperless-ngx, nextcloud, immich, openthread-border-router, linkwarden |
 | `device` | 3 | 6 | a hardware device (GPU, serial, a USB radio) | zigbee2mqtt, zwave-js-ui, openthread-border-router, home-assistant?, immich?, esphome?, frigate?, piper?, whisper? |
 | `host-socket` | 3 | 2 | a host socket or runtime directory mounted in (docker.sock, D-Bus, udev) | home-assistant, portainer, zigbee2mqtt, matterjs-server?, python-matter-server? |
-| `depends-on` | 3 | 1 | start ordering between them | paperless-ngx, nextcloud, immich, forgejo? |
-| `public-url` | 3 |  | the app is told its own outside address or domain | vaultwarden, grafana, jellyfin |
+| `depends-on` | 4 | 1 | start ordering between them | paperless-ngx, nextcloud, immich, linkwarden, forgejo? |
+| `public-url` | 4 |  | the app is told its own outside address or domain | vaultwarden, grafana, jellyfin, linkwarden |
 | `shared-data` | 3 |  | the same data used by more than one container or app | sonarr, qbittorrent, nextcloud |
 | `cap-add` | 2 | 3 | extra Linux capabilities | pihole, openthread-border-router, matterjs-server?, frigate?, music-assistant? |
 | `privileged` | 2 | 1 | privileged | home-assistant, esphome, frigate? |
@@ -90,6 +90,7 @@ Counts are of 34 apps. "Optional" counts the `?` tags.
 | whisper | `tcp-port` `host-dir` `ephemeral` `healthcheck` `env-config` `device?` |
 | openwakeword | `tcp-port` `host-dir?` `ephemeral` |
 | mariadb | `tcp-port` `env-config` `secret` `host-dir` `healthcheck` `named-volume?` `sibling?` `web-ui?` `ephemeral?` `cmd-override?` |
+| linkwarden | `web-ui` `tcp-port` `host-dir` `public-url` `env-config` `env-file` `secret` `sibling` `depends-on` `compose-vars` `registry-named` |
 
 ## Shapes the integrations ask for
 

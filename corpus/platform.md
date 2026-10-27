@@ -13,21 +13,21 @@ The one fact here that was run: Incus refuses a second instance with the same DN
 
 ## Proxy, sign-on and backup tags, most common first
 
-Counts are of 34 apps; the third column counts the `?` tags.
+Counts are of 35 apps; the third column counts the `?` tags.
 
 | Tag | Apps | Unsure or optional | Meaning | Apps with it |
 |---|---|---|---|---|
 | `embedded-db` | 24 | 1 | state is a file database (sqlite, leveldb) inside a volume | vaultwarden, uptime-kuma, audiobookshelf, actual-budget, navidrome, grafana, n8n, mosquitto, syncthing, home-assistant, jellyfin, pihole, adguard-home, sonarr, portainer, forgejo, matterjs-server, python-matter-server, esphome, zigbee2mqtt, frigate, node-red, music-assistant, zwave-js-ui, openthread-border-router? |
-| `app-clients` | 17 |  | non-browser clients (mobile apps, sync, git, API) that cannot follow a sign-on redirect | vaultwarden, audiobookshelf, actual-budget, navidrome, home-assistant, jellyfin, sonarr, qbittorrent, forgejo, paperless-ngx, nextcloud, immich, matterjs-server, python-matter-server, frigate, music-assistant, zwave-js-ui |
+| `app-clients` | 18 |  | non-browser clients (mobile apps, sync, git, API) that cannot follow a sign-on redirect | vaultwarden, audiobookshelf, actual-budget, navidrome, home-assistant, jellyfin, sonarr, qbittorrent, forgejo, paperless-ngx, nextcloud, immich, matterjs-server, python-matter-server, frigate, music-assistant, zwave-js-ui, linkwarden |
 | `admin-ui` | 15 | 3 | an administration interface that should sit behind sign-on and not be public by default | uptime-kuma, grafana, n8n, syncthing, pihole, adguard-home, sonarr, qbittorrent, portainer, esphome, zigbee2mqtt, frigate, node-red, music-assistant, zwave-js-ui, matterjs-server?, piper?, mariadb? |
 | `stream-port` | 13 | 1 | listens on ports that are not HTTP (ssh, mqtt, dns, sync), so no proxy route carries them | mosquitto, syncthing, jellyfin, pihole, adguard-home, qbittorrent, forgejo, frigate, music-assistant, piper, whisper, openwakeword, mariadb, home-assistant? |
-| `oidc` | 4 | 6 | can sign users in through OIDC itself | grafana, forgejo, paperless-ngx, immich, vaultwarden?, audiobookshelf?, actual-budget?, jellyfin?, portainer?, nextcloud? |
-| `db-server` | 4 | 1 | a database server in its own container | wordpress, paperless-ngx, nextcloud, immich, forgejo? |
-| `big-upload` | 3 | 2 | takes large uploads (body size and timeouts) | paperless-ngx, nextcloud, immich, forgejo?, wordpress? |
+| `oidc` | 5 | 6 | can sign users in through OIDC itself | grafana, forgejo, paperless-ngx, immich, linkwarden, vaultwarden?, audiobookshelf?, actual-budget?, jellyfin?, portainer?, nextcloud? |
+| `db-server` | 5 | 1 | a database server in its own container | wordpress, paperless-ngx, nextcloud, immich, linkwarden, forgejo? |
+| `big-upload` | 3 | 3 | takes large uploads (body size and timeouts) | paperless-ngx, nextcloud, immich, forgejo?, wordpress?, linkwarden? |
 | `websocket` | 3 | 17 | needs WebSocket upgrade through the proxy | matterjs-server, python-matter-server, zwave-js-ui, vaultwarden?, uptime-kuma?, audiobookshelf?, grafana?, n8n?, home-assistant?, jellyfin?, sonarr?, portainer?, paperless-ngx?, nextcloud?, immich?, esphome?, zigbee2mqtt?, frigate?, node-red?, music-assistant? |
-| `public-paths` | 2 | 3 | part of the app is meant to be reached without signing on (a public site, webhooks, a status page) | n8n, wordpress, uptime-kuma?, forgejo?, node-red? |
+| `public-paths` | 2 | 4 | part of the app is meant to be reached without signing on (a public site, webhooks, a status page) | n8n, wordpress, uptime-kuma?, forgejo?, node-red?, linkwarden? |
 | `is-dns` | 2 |  | is itself a DNS server, which overlaps with the site's DNS | pihole, adguard-home |
-| `trust-proxy` | 1 | 4 | must be told the proxy's address, or it refuses or misreports the client and the scheme | nextcloud, home-assistant?, forgejo?, wordpress?, paperless-ngx? |
+| `trust-proxy` | 1 | 5 | must be told the proxy's address, or it refuses or misreports the client and the scheme | nextcloud, home-assistant?, forgejo?, wordpress?, paperless-ngx?, linkwarden? |
 | `https-upstream` | 2 | 1 | its web port speaks TLS (the proxy must connect over TLS) | portainer, frigate, pihole? |
 
 ## By app
@@ -68,6 +68,7 @@ Counts are of 34 apps; the third column counts the `?` tags.
 | whisper | `stream-port` | n/a (Wyoming protocol, not HTTP) |
 | openwakeword | `stream-port` | n/a (Wyoming protocol, not HTTP) |
 | mariadb | `stream-port` `admin-ui?` | n/a (not HTTP); the page's compose example adds Adminer on 8080 |
+| linkwarden | `big-upload?` `public-paths?` `trust-proxy?` `app-clients` `oidc` `db-server` | NEXTAUTH_URL (page) |
 
 ## Backup: what each volume is
 
@@ -135,6 +136,9 @@ whether a crash-consistent snapshot is enough for those is an open question, not
 | whisper | `/data` | rebuild | downloaded models (page: "Models are downloaded to `/data`") |
 | openwakeword | `/custom` | external | wake-word models the person downloaded and mounts in; optional |
 | mariadb | `/var/lib/mysql` | keep | the databases; a consistent copy matters |
+| linkwarden | `/var/lib/postgresql/data` | keep | the database: bookmarks, collections, users and the single sign-on links; a consistent copy matters |
+| linkwarden | `/data/data` | keep | the archived pages (screenshots, PDFs, readable copies) and uploaded files; a page that has changed or gone cannot be archived again, so it is not rebuildable; large over time |
+| linkwarden | `/meili_data` | rebuild | the search index, made from the links in the database (general knowledge, not tested: reindexing is assumed to be possible) |
 
-58 volumes in all: keep 35, rebuild 10, external 7, scratch 6.
-30 of the 34 apps have at least one `keep` volume. Mosquitto has none, because its config comes from the stack, and Piper, Whisper and openWakeWord have none, because what they store can be downloaded again.
+61 volumes in all: keep 37, rebuild 11, external 7, scratch 6.
+31 of the 35 apps have at least one `keep` volume. Mosquitto has none, because its config comes from the stack, and Piper, Whisper and openWakeWord have none, because what they store can be downloaded again.
