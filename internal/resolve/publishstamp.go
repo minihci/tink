@@ -135,6 +135,14 @@ func strictObject(s string) (map[string]json.RawMessage, error) {
 // validateOwnedConfig rejects an instance that declares a key under a prefix tink owns. Such a key would be overwritten by the derived stamp or removed as
 // stale, so declaring it could only mislead.
 func validateOwnedConfig(r Resource) error {
+	if r.Kind == KindNetworkACL {
+		for k := range r.Config {
+			if strings.HasPrefix(k, DeriveStampPrefix) {
+				return fmt.Errorf("resource %q: config %s is under %s, which tink owns: it writes that key from derive_ingress: true and removes it when the stack no longer derives the rules, so declare derive_ingress and not the key", r.Name, k, DeriveStampPrefix)
+			}
+		}
+		return nil
+	}
 	if r.Kind != KindInstance {
 		return nil
 	}
@@ -230,8 +238,13 @@ func addStamps(resources []Resource, stamps map[int]map[string]string, order []i
 
 // staleOwnedChanges are the plan lines for the owned keys that are live on an instance and that the stack no longer derives: one removal per key, sorted.
 func staleOwnedChanges(live, desired map[string]string) []string {
+	return staleOwnedChangesUnder(ownedConfigPrefixes, live, desired)
+}
+
+// staleOwnedChangesUnder is staleOwnedChanges for the keys under the given prefixes only: a network ACL owns the derived stamps and nothing else.
+func staleOwnedChangesUnder(prefixes []string, live, desired map[string]string) []string {
 	var changes []string
-	for _, k := range instance.StaleOwnedKeys(live, desired, ownedConfigPrefixes) {
+	for _, k := range instance.StaleOwnedKeys(live, desired, prefixes) {
 		if secrets.SensitiveKey(k) { // a stamp holds group names only, but a key under the prefix is whatever is on the instance: print no value tink would not print elsewhere
 			changes = append(changes, fmt.Sprintf("config.%s: %s -> (unset)", k, secrets.HiddenValue))
 			continue
