@@ -166,8 +166,8 @@ it makes there:
      rather than importing it, since `bootstrap`'s version is tied to its
      own `*runner`/dry-run type.
   `--dry-run` computes and prints the full action plan without touching
-  the daemon, matching `tink deploy`'s and `tink ingress reconcile`'s
-  existing convention — this repo has one dry-run idiom, not a new one
+  the daemon, matching `tink deploy`'s existing
+  convention — this repo has one dry-run idiom, not a new one
   per capability.
 
 ## CLI shape

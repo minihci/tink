@@ -229,7 +229,7 @@ The key ends in the file document's name. The value is compact JSON with its key
 
 #### Keeping derived files converged from the stamps
 
-**Status: the library is built (#274, first part); unit-tested against fakes, not run live, and not run by the daemon yet** (the daemon, its rights and its flag are the second part).
+**Status: built (#274, in two parts: the library, then the daemon); unit-tested against fakes, and the daemon's `--reconcile-derived` run live as the narrowed certificate on a local Incus 7.5.1 on 2026-10-27 (L-2026-10-27b)** ([helper.md](helper.md#keeping-every-stamped-derived-file)).
 
 `join.ReconcileDerived` does for the stamped files of one site what `plan apply` does for a `kind: file` with `derive:`, from the server and without the stack files. It reads the stamps (`join.DerivedFromServer`), builds the join from the server, renders each file, reads the live file, fills the region of **the live file** (every line outside the markers is kept), and writes only a file that differs, with a read-back. The instance is restarted only when the stamp says `restart` and the content changed.
 

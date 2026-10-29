@@ -34,7 +34,7 @@ It exists so that a new design can be tested against the old ones. For any propo
 
 **The pattern.** The pieces tink has share one shape: something declared, something that acts on it, and checks that say when it is wrong. A **role** is a job more than one technology can do (ingress, identity, single sign-on, dns, mesh); an **engine** is the technology that does it today. tink's code talks to the role, and an engine sits behind it. A **helper** is a container Incus keeps running for one role, one container per role. Helpers split: the role helpers **serve** (they handle users' traffic, are stock engines, and hold no Incus credential), and the daemon helper **tends** them (tink itself, the only one with a certificate). Its rule is that **derived state heals and declared state reports**.
 
-**Evidence.** Written: [what-tink-is.md](what-tink-is.md#one-pattern-a-capability) (the capability table, roles and engines, helpers), [helper.md](helper.md#what-the-helper-is-for) ("what the helper is for"). Built: the daemon helper (`internal/helper`, `internal/daemon`, `internal/jobs`), `kind: helper`, role and leg stamps read by `join`, the backup scheduler and the ingress reconcile. Not built: the role helpers as a shipped stack.
+**Evidence.** Written: [what-tink-is.md](what-tink-is.md#one-pattern-a-capability) (the capability table, roles and engines, helpers), [helper.md](helper.md#what-the-helper-is-for) ("what the helper is for"). Built: the daemon helper (`internal/helper`, `internal/daemon`, `internal/jobs`), `kind: helper`, role and leg stamps read by `join`, the backup scheduler and the derived-file heal (`--reconcile-derived`). Not built: the role helpers as a shipped stack.
 
 **Known gap.** A role's contract (the stamps it carries, the files and ports it exposes, the snippets it must define) is in comments and Go constants, not data (the accounting in #131).
 
@@ -46,7 +46,7 @@ It exists so that a new design can be tested against the old ones. For any propo
 
 **Evidence.** Built: `internal/join` (`join.go`, `offers.go`, `render.go`, `apply.go`), hand-written golden files in `internal/join/testdata/golden`, `kind: publish` and its stamps (`internal/resolve/publish.go`, `publishstamp.go`), `tink join --from-server` (`internal/join/server.go`), `tink join apply dns`. Written: [join.md](join.md), the design in #130. Run live **[lab]**: the stamps and the join against a real Incus 7.5.1 server on 2026-10-17, all five renderings matching the golden files.
 
-**Known gap.** Only the dns records can be applied; the routes and sign-on rules are still hand-written inside the engines' config files, and `tink ingress reconcile` is a second, older mechanism for routes.
+**Known gap.** `tink join` itself only prints (and `join apply dns` writes the dns records). The routes, sign-on rules and mesh records are written by a `kind: file` with `derive:` under `plan apply`, and kept by the daemon (`--reconcile-derived`); the join is meant to go once nothing it prints is only printed ([join.md](join.md#what-is-left-before-tink-join-can-go)).
 
 **The question to ask.** Is this a fact about the app or a decision about who may use it? Is the rendering a pure function, and what does the applier refuse?
 

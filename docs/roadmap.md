@@ -1,6 +1,6 @@
 # Roadmap and architecture
 
-**Status: a proposal for discussion, 2026-10-19.** It follows [capability-review.md](capability-review.md), which holds the evidence: a rubric, a scorecard per capability, and the code checks behind the claims here. Sizes are lines of non-test Go as of this date. Claims are marked **[code]** (read in this repository) or **[proposed]**. Nothing in it is built.
+**Status: a proposal for discussion, 2026-10-19.** It follows [capability-review.md](capability-review.md), which holds the evidence: a rubric, a scorecard per capability, and the code checks behind the claims here. Sizes are lines of non-test Go as of this date. Claims are marked **[code]** (read in this repository) or **[proposed]**. Phases 0 to 2 below are done and Phase 3's test is met (#218); the rest is still a proposal.
 
 ## What tink is
 

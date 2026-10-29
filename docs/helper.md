@@ -16,9 +16,9 @@ certificate and its job history. **Not yet tried:** a host reboot or an Incus re
 
 | Drift | What the helper does | Built? |
 |---|---|---|
-| a backup copy is overdue (time) | **heals**: makes the copy. It does not check restores: **the daemon never runs `tink backup verify`**, a person does, and `plan` warns when one is overdue | yes: this is all it does for the platform today **[live]** |
-| a published name's dns record, route, sign-on rule or ACL rule is wrong (derived state) | **heals**: renders from the declarations and rewrites the file | the dns records, by hand (`tink join apply dns`, [join.md](join.md#applying-dns)); not yet on a timer |
-| an instance's config, image or volume was changed by hand (declared state) | **reports**, and a human decides; healing it automatically is an opt-in per resource later, like `on_image_change` | not built |
+| a backup copy is overdue (time) | **heals**: makes the copy. It does not check restores: **the daemon never runs `tink backup verify`**, a person does, and `plan` warns when one is overdue | yes **[live]** |
+| a published name's dns record, route, sign-on rule or ACL rule is wrong (derived state) | **heals**: renders from the declarations and rewrites the file | yes, off by default: `tink daemon run --reconcile-dns` for the dns records and `--reconcile-derived` for every stamped derived file ([the reconciler](#the-reconciler), [derived files](#keeping-every-stamped-derived-file)); `tink join apply dns` does the same by hand |
+| an instance's config, image or volume was changed by hand (declared state) | **reports**, and a human decides; healing it automatically would be an opt-in per resource, like `on_image_change` (#278) | not built |
 | the helper itself stops, or a copy keeps failing | says so in its status document, which `tink helper status` judges | yes; nothing yet *delivers* the message (open decision 6) |
 
 **The rule that falls out: derived state heals, declared state reports.** A file that says "do not edit" (the generated `/hosts`, generated routes, rules) is the helper's to keep right. Something a person wrote in a stack is theirs to change, so a difference there is told, not undone. This is the same shape as `on_image_change: report | ignore | rebuild`, which already is a per-resource choice between telling and healing.
@@ -325,9 +325,9 @@ tink did not write it. `--adopt` and `--allow-empty` are decisions for a person 
 (the site has no dns helper) or `failing` (the server or the helper could not be read or written), and since when. The log says each rewrite and each change of state,
 not each pass. The reasons are fixed phrases; the detail is in the log.
 
-**The credential.** It uses the daemon's own certificate and asks for nothing more, but that certificate is unrestricted (see "Not confined" above), so a host should
-not turn this on before [the cut-over to narrow identities](https://github.com/minihci/tink/issues/252) unless it is a host where that is acceptable. The rows it would
-need are: read the instances, profiles and networks of the sites it keeps, and access files on the dns helper.
+**The credential.** It uses the daemon's own certificate and asks for nothing more. That certificate is unrestricted unless you narrow it (see "Not confined" above), so
+narrow it before turning this on ([Narrowing the daemon's certificate](#narrowing-the-daemons-certificate)) unless the host is one where that is acceptable. The rows it
+needs are: read the instances, profiles and networks of the sites it keeps, and access files on the dns helper.
 
 **Measured live** (a local Incus 7.5.1, an Alpine dns helper and an app with two publishes): the first pass followed the first subscription; removing a publish from the
 app's stack and applying it rewrote `/hosts` to one record in about 2.1 seconds, and putting it back to two in the same time, each with no `join apply dns` and no apply of
@@ -452,7 +452,7 @@ stopped, which is the case that matters. That would also be true of the instance
 edit right on the helper's **own instance**, and an edit right on an instance also covers its devices. A measured lab showed that is a route to root: the
 helper could give itself a `proxy` device to the Incus unix socket and drive Incus as root through it **[lab; the authorization lab in the author's platform
 repository, `authz-lab/`]**. A volume has no devices, so an edit right on it reaches nothing else. The point of the move is that the credential the helper runs
-under need hold **no edit right on any instance**. Nothing here restricts the certificate yet (it is unrestricted, see "Not confined" above): this takes away
+under need hold **no edit right on any instance**. Moving the status does not itself restrict the certificate (see [Narrowing the daemon's certificate](#narrowing-the-daemons-certificate)): it takes away
 the one reason a restricted one would have had to be given an instance right.
 
 **A status volume that cannot be read** is not "healthy" and not "no status yet". The helper is listed all the same, and judged **degraded** with the reason

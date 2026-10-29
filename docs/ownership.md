@@ -55,7 +55,7 @@ A running **virtual machine** can be stamped live, but Incus marks it as needing
 
 - `validate` (the load of any stack file) refuses `user.tink.stack` in `config:` of every kind that has one, and in an image's `properties:`, naming `--adopt` as the way to take an object that was made earlier.
 - `tink export` never writes it, for the project, the volumes or the instance it exports, so an exported stack can be applied under any name; its self-check still reads "no changes".
-- `plan --extras` does not list it among what a stack leaves undeclared.
+- `plan`'s `not in the stack` line does not list it among what a stack leaves undeclared.
 - The network disruption guard does not count it, as it does not count ACL keys: a stamp alone never blocks a bridge that instances use.
 
 ## Where the code is
