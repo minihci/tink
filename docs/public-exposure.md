@@ -13,7 +13,7 @@ An instance device `{type: proxy, nat: "true", listen: "tcp:<public-ip>:443", co
 | Behaviour | Seen |
 |---|---|
 | The rule Incus writes | `ip daddr <public-ip> tcp dport 443 dnat to <instance-ip>:443`, in `prerouting` and in `output`, one chain per device. Scoped by destination address, and the `output` chain also serves the host talking to its own address. The legacy redirect, `tcp dport 443` with no address, is what broke outbound HTTPS from every container on that host. |
-| The client address the container sees | The real one (`73.52.160.19` in the test). The default userspace proxy (no `nat`) shows `127.0.0.1`. Caddy's `remote_ip` guards need the real address, so ingress needs `nat`. |
+| The client address the container sees | The real one (`198.51.100.7` in the test). The default userspace proxy (no `nat`) shows `127.0.0.1`. Caddy's `remote_ip` guards need the real address, so ingress needs `nat`. |
 | A wildcard `listen` (`0.0.0.0`) with `nat` | Accepted; the rule matches `fib daddr type local`, so only traffic addressed to the host's own addresses, not forwarded traffic. Not greedy. |
 | A port range in `listen`, one `connect` port | Accepted. |
 | `connect` that is not an IP address (a name, with `nat`) | Refused by Incus when the device is added: `Not an IP address "localhost"`. |
