@@ -8,7 +8,7 @@ Read the whole page before changing anything. Ask the owner before acting on a s
 
 ## What moved
 
-Three sub-issues of #304 land in one release, so a server crosses all of them at once: the time vocabulary (#305), the key classes (#306) and the underscore keys (#307, [a place for it is below](#the-underscore-keys-307-not-yet-written)). The glossary has the rules ([Time words](../glossary.md#time-words), [Key classes](../glossary.md#key-classes)).
+Three sub-issues of #304 land in one release, so a server crosses all of them at once: the time vocabulary (#305), the key classes (#306) and the underscore keys (#307, [below](#the-underscore-keys-307)). The glossary has the rules ([Time words](../glossary.md#time-words), [Key classes](../glossary.md#key-classes)).
 
 ### Key classes (#306)
 
@@ -58,9 +58,82 @@ Already decided and written by the time vocabulary change; they are here because
 
 The status document is protocol 2 and the jobs directory protocol 2. A document with no write time is now **degraded**, whoever wrote it.
 
-### The underscore keys (#307) (not yet written)
+### The underscore keys (#307)
 
-*This section is reserved for the sub-issue that renames the underscore keys. It adds its old and new names here, and the steps that find and fix them, and it does not change the rest of the page.*
+tink now spells every key it defines in a JSON document with hyphens, never an underscore ([JSON keys](../glossary.md#json-keys)). These are the ones that changed:
+
+| Document | Old key | New key |
+|---|---|---|
+| the helper's status document (`user.tink.outcome.helper.status`, and the `status` member of `tink helper status --json`) | `job_proto` | `job-proto` |
+| | `policy_proto` | `policy-proto` |
+| | `last_job` | `last-job` |
+| | `running_jobs` | `running-jobs` |
+| | `queued_jobs` | `queued-jobs` |
+| `tink helper status --json` (one object per helper) | `instance_state` | `instance-state` |
+| | `exit_code` | `exit-code` |
+| | `status_volume` | `status-volume` |
+| a backup run's summary (`summary` in a job's `status.json`) | `other_servers` | `other-servers` |
+| | `restore_point` | `restore-point` |
+| a backup-run job's arguments (`args` in its `request.json`) | `dry_run` | `dry-run` |
+
+(The status document's `heartbeat_seconds` is in the time table above.) **Left as they are**, because another tool owns the spelling: `access_token` in a container registry's token response, and `display_name` in the Headscale API; and Incus's own words (`created_at`, `expires_at`). The underscore keys of the stack language (`depends_on`, `on_image_change`, ...) are YAML that a person writes, and are not part of this change.
+
+**What this does to a server.** Nothing on the Incus server is renamed by hand for these: the only stored document with such keys is the helper's status document, and the upgrade in step 3 replaces it. Three things follow:
+
+- **A script that reads `tink helper status --json` by an old name gets no value, and no error.** `jq '.[0].exit_code'` prints `null`. A cron job, a monitor or a Home Assistant sensor that treats a missing value as zero, or as "nothing to report", goes on saying the helper is well while it is not. This is the one that matters; fix it before the script is put back.
+- **The status document the old helper left is read as degraded**, as step 3 says (it has no write time under the new name), and the upgrade in step 3 replaces it. Do not edit the old document into the new shape.
+- **Jobs from the old tink.** A queued request is protocol 1 and fails with "unsupported protocol" (its schedule retries it, so a `dry_run` request is simply gone). The `summary` in the `status.json` of a job that already finished keeps the old names; nothing reads it, and the job directory drops it by its retention (the newest 50 finished jobs, and any from the last 14 days). Leave those files alone.
+
+#### Find the readers
+
+Do this after the new tink is installed and before step 6's last item puts a host cron entry or unit back. The readers are text on the host, not objects on the server. Search the places a script or a unit would live, and the instances that run a monitor, for the old names:
+
+```sh
+OLD='instance_state|exit_code|status_volume|last_job|job_proto|policy_proto|running_jobs|queued_jobs|other_servers|restore_point|dry_run'
+# the host: files that mention tink and an old name (add your own script, unit and config directories)
+grep -rlE 'tink' /etc/cron.d /etc/cron.daily /etc/cron.hourly /etc/systemd/system /usr/local/bin ~ 2>/dev/null | xargs -r grep -nE "$OLD"
+crontab -l 2>/dev/null | grep -nE "$OLD"
+# an instance that polls the helper (a Home Assistant config, a monitoring agent): name it, then look
+incus exec MONITOR --project PROJECT -- grep -rnE "$OLD" /config /etc 2>/dev/null
+```
+
+`exit_code` is an ordinary word in other tools, so read every hit: only the ones that read the output of `tink helper status --json`, a status document or a job file are to be changed. A hit in a file you did not expect is a reason to ask the owner, not to edit it.
+
+#### Fix them
+
+For each reader, take a copy, change the key, and run the reader once by hand. A key written in quotes is a plain replacement; a key written after a dot has to take brackets (a hyphen is not a name in `jq` or in a Home Assistant template):
+
+| Reader | Old | New |
+|---|---|---|
+| `jq` | `.[0].exit_code` | `.[0]["exit-code"]` |
+| `jq` | `.[0].status.last_job.state` | `.[0].status["last-job"].state` |
+| a Home Assistant template | `value_json[0].exit_code` | `value_json[0]['exit-code']` |
+| Python, JavaScript, a quoted key in any language | `"exit_code"` | `"exit-code"` |
+
+For the quoted form in a file you have looked at and decided to change, a loop does it (it touches only `"key"` and `'key'`, and `FILE.orig` keeps the old text):
+
+```sh
+FILE=/usr/local/bin/helper-check
+cp -p "$FILE" "$FILE.orig"
+for k in instance_state exit_code status_volume last_job job_proto policy_proto running_jobs queued_jobs other_servers restore_point dry_run; do
+  new=$(echo "$k" | tr _ -)
+  sed -i "s/\"$k\"/\"$new\"/g; s/'$k'/'$new'/g" "$FILE"
+done
+diff "$FILE.orig" "$FILE"
+```
+
+Read the `diff`: it is the whole change. The dotted forms in the table are not touched by it; do those by hand.
+
+#### Check
+
+- The find above prints nothing that reads tink's output.
+- After step 3, the helper's output has no underscore key. Neither command should print anything (the second after the helper's first heartbeat, which can take up to its `heartbeat`):
+
+  ```sh
+  tink helper status --json | grep -E '"[a-z]+_[a-z_]+":'
+  incus storage volume get POOL VOLUME user.tink.outcome.helper.status --project PROJECT | grep -E '"[a-z]+_[a-z_]+":'
+  ```
+- Run each fixed reader once by hand and compare what it prints with `tink helper status` (a healthy helper gives `exit-code` 0, `instance-state` `Running`). Then, for a monitor, make it see a failure on purpose (for example stop the helper's instance for a minute, outside the hours copies run) and check that it reports one, because a reader that silently gets `null` looks the same as a working one until then.
 
 ## What happens if nothing is done
 
