@@ -46,8 +46,8 @@ several files to see are below.
 - **The resolver (`internal/resolve`) is the core.** A stack is YAML documents of kinds project, profile, storage-volume,
   instance, file, exec, and two that are not resources to converge: `stack` (a name only) and `publish` (a declaration that
   `tink join` reads; `publish.go`). Both are kept out of the graph, which is why a publish may share a name with its instance. `Levels` stamps each publish onto
-  its instance (same stack and project) as `user.tink.publish.<name>` (`publishstamp.go`): derived into the instance's desired config, so the ordinary plan converges it. So is each `kind: file` with `derive:` as `user.tink.derive.<file name>` on its instance, and each network ACL with `derive_ingress` as `user.tink.derive.ingress` on the ACL (`derivestamp.go`, no
-  guard in either: the daemon never adopts and never empties). Those prefixes, and `user.tink.site`, are what tink OWNS: a live key under one that the stack no longer derives is a planned removal (`run.StaleOwnedKeys`), and nothing else is ever removed. `helper` (`helperkind.go`)
+  its instance (same stack and project) as `user.tink.intent.publish.<name>` (`publishstamp.go`): derived into the instance's desired config, so the ordinary plan converges it. So is each `kind: file` with `derive:` as `user.tink.intent.derive.<file name>` on its instance, and each network ACL with `derive_ingress` as `user.tink.intent.derive.ingress` on the ACL (`derivestamp.go`, no
+  guard in either: the daemon never adopts and never empties). The whole `user.tink.intent.` prefix is what tink OWNS (the class of a key is its prefix, `ownership.ClassOf`): a live key under it that the stack no longer derives is a planned removal (`instance.StaleOwnedKeys`; the owner stamp and the two named for the resource stamp and the applied record are never derived, so never taken back), and nothing else is ever removed. `helper` (`helperkind.go`)
   declares the daemon helper: adopted and only reported on when present, installed (through `internal/helper`) when absent, never upgraded or removed. `graph.go` computes dependency levels (resources within a level
   apply concurrently; ties are broken by kind then name so a plan reads the same on every run). Dependencies come from
   name-matching (an instance's project, profiles and volume-backed devices) plus explicit `DependsOn`; deliberately not a
@@ -58,7 +58,7 @@ several files to see are below.
   nothing is printed (a partial rendering looks like a complete one). `tink join apply dns` (`internal/join/apply.go`) is the one thing
   that writes: the dns helper's generated `/hosts`, through an injected `Files` interface, with refusals instead of guesses (errors,
   zero publishes, a clash with the zone file, a file tink did not write, a failed read) and a read-back. `apply dns --from-server` is what the daemon helper will run. `join.ReconcileDerived` (`derived.go`) keeps the stamped derived files the same way, from the stamps and with `plan`'s guards (`resolve.CheckDerived`). Its golden outputs in `internal/join/testdata/golden` are written
-  by hand, not generated. It reads **one site** at a time: `site: NAME` on `kind: stack` is stamped as `user.tink.site` on the stack's role helpers and published instances (`resolve/site.go`, an owned key like the publish stamps), `join.FromServer`/`PlatformFromServer` take the site and leave other sites' instances unread, `join.ForSite` cuts files the same way, and the derive passes use the planned stack's site. No site is the unnamed site, which is how a server behaved before sites. See `docs/join.md#sites`.
+  by hand, not generated. It reads **one site** at a time: `site: NAME` on `kind: stack` is stamped as `user.tink.intent.site` on the stack's role helpers and published instances (`resolve/site.go`, an owned key like the publish stamps), `join.FromServer`/`PlatformFromServer` take the site and leave other sites' instances unread, `join.ForSite` cuts files the same way, and the derive passes use the planned stack's site. No site is the unnamed site, which is how a server behaved before sites. See `docs/join.md#sites`.
 - **Plan also judges drift and policy**, not just existence: image drift by fingerprint (`volatile.base_image`, not `image.id`,
   see `imagedrift.go`) driven by an instance's `on_image_change`, and each storage volume's declared backup policy
   (`policy.go`, `volumebackup.go`).
@@ -68,7 +68,7 @@ several files to see are below.
   interface `backupmeta` registers in its `init` (the declaration types live in `backupext` too), to write the policy onto the
   volume at `plan apply`. `resolve/imports_test.go` fails if the converger imports a package that is not on its list; do not add a
   capability to it. See `docs/volume-backup.md`.
-- **Ownership is one stamp, and it is not part of a diff.** `user.tink.stack` (`internal/ownership`) is written in the creation request of every kind tink
+- **Ownership is one stamp, and it is not part of a diff.** `user.tink.intent.stack` (`internal/ownership`) is written in the creation request of every kind tink
   creates for a named stack (project, profile, storage volume, instance, network, network ACL, image properties), and never by an ordinary apply on an object that
   exists. It is its own dimension of a plan (`PlannedResource.Ownership`, read from the live object by `observed` and classified in `planKind`), so it is never a
   change line, an action or an exit status; `plan` ends with one line for declared objects that exist with no stamp. `plan apply --adopt` (or `ownership:
@@ -77,8 +77,8 @@ several files to see are below.
   `docs/ownership.md`.
 - **The helper is an Incus instance, not a service.** `tink helper install` creates an instance running `tink daemon run`.
   `internal/jobs` is its work queue, a directory where `READY` is written last so a half-pushed job is never read. The helper
-  publishes a status document as a config key (`user.tink.helper.status`) on a custom volume that its instance points at
-  (`user.tink.helper.status-volume`, `POOL/VOLUME`; a volume has no devices, so the helper needs no edit right on any instance), read back by
+  publishes a status document as a config key (`user.tink.outcome.helper.status`) on a custom volume that its instance points at
+  (`user.tink.outcome.helper.status-volume`, `POOL/VOLUME`; a volume has no devices, so the helper needs no edit right on any instance), read back by
   `internal/helper` (helpers installed before that keep it on their instance). See
   `docs/helper.md` and `docs/daemon-jobs.md`.
 - **Secrets never reach a place that prints them.** `${secret:NAME}` is accepted only in an instance's `environment.*` values
@@ -90,8 +90,11 @@ several files to see are below.
 
 ## Conventions
 
-- **Metadata keys.** Everything tink reads or writes on an object's config lives under `user.tink.*`.
-  `cmd/tink/keynamespace_test.go` scans non-test Go source for string literals starting `"user.` outside that namespace.
+- **Metadata keys.** Everything tink reads or writes on an object's config lives under `user.tink.*`, and every such key is a fact (a person
+  writes it: `role`, `leg.*`, `offer.*`, `dns.zone`, the list in `internal/ownership`), intent (tink wrote it from the declaration, under
+  `user.tink.intent.`) or an outcome (whatever ran wrote it, under `user.tink.outcome.`); see the glossary's "Key classes". A new key picks its class by
+  its name. `cmd/tink/keynamespace_test.go` scans non-test Go source for string literals starting `"user.` outside the namespace, and for
+  `"user.tink.` literals that have no class.
 - **Docs travel with code.** Update the docs a change touches in the same PR, and flip "not yet run / not yet built" claims in
   the README and `docs/` when they stop being true. Package doc comments carry much of the design rationale; read them before
   changing a package.

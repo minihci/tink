@@ -21,7 +21,7 @@ tink daemon cancel <ID> --jobs /var/lib/tink/jobs
 ## Where the daemon gets its work
 
 From the volumes themselves. `tink plan apply` writes each storage volume's copy policy (its `backup:` block's `copies` and `verify`, with the
-`kind: backup-target` each copy names resolved into it) to one volume config key, `user.tink.backup.policy`, and the scheduler lists volumes
+`kind: backup-target` each copy names resolved into it) to one volume config key, `user.tink.intent.backup.policy`, and the scheduler lists volumes
 to find it. There is no stack stored anywhere for the daemon, so nothing can fall behind the repository without `tink plan` saying so: a volume
 whose policy differs from the YAML shows as an update. See [volume-backup.md](volume-backup.md#where-the-policy-lives).
 

@@ -25,9 +25,11 @@ An Incus instance carries about twenty-five config keys for every one a person s
 | `environment.HOME=/root`, `environment.TERM=xterm` | left out: set by Incus at creation |
 | `ephemeral` | `ephemeral: true` |
 | the instance's own `devices`, `profiles`, every other `config` key | kept (`root` comes from the profile and is not the instance's) |
-| `user.tink.stack` (the ownership stamp, on the project, a volume or the instance) | never written, for any kind: it says which stack made the object, which a stack does not declare, and `validate` refuses it in `config:` ([ownership.md](ownership.md)) |
-| `user.tink.run.command` | not config: written as a `# created by:` comment |
-| `user.tink.publish.<name>` (a stamp of a `kind: publish`) | not config: written as a `kind: publish` document (`name`, `instance`, `offer`, `allow`) after the instances, because `plan` derives the stamps back from it and removes any it does not derive. A stamp that cannot be read is left out with a note, and the export then does not verify |
+| `user.tink.intent.stack` (the ownership stamp, on the project, a volume or the instance) | never written, for any kind: it says which stack made the object, which a stack does not declare, and `validate` refuses it in `config:` ([ownership.md](ownership.md)) |
+| `user.tink.outcome.run.command` | not config: written as a `# created by:` comment |
+| every other key under `user.tink.intent.` or `user.tink.outcome.` (an exec's `trigger-hash`, the helper's marker, status and pointer keys, a volume's copy and verification stamps) | never written, for any kind: they record what tink derived or what ran on this server, which no stack declares ([glossary](glossary.md#key-classes)) |
+| the facts (`user.tink.role`, `user.tink.leg.<nic>`, `user.tink.offer.<name>.*`, `user.tink.dns.zone`) | kept: a person set them |
+| `user.tink.intent.publish.<name>` (a stamp of a `kind: publish`) | not config: written as a `kind: publish` document (`name`, `instance`, `offer`, `allow`) after the instances, because `plan` derives the stamps back from it and removes any it does not derive. A stamp that cannot be read is left out with a note, and the export then does not verify |
 | a custom volume an instance's disk device attaches | a `kind: storage-volume`, in the same project and pool |
 | a volume's other config (`initial.uid`, `size`...) | the volume's `config:` ([resolver-architecture.md](resolver-architecture.md#update-2026-10-09-a-volumes-own-settings)); tink's own keys and `volatile.*` stay out |
 | a volume's `snapshots.schedule` / `snapshots.expiry` | a `backup: {snapshots: ...}` block |
@@ -79,7 +81,7 @@ about a decision it left to you.
 
 ## `tink run` leaves a trace
 
-An instance made by `tink run` records the command it was given in `user.tink.run.command` (environment values that look like secrets are
+An instance made by `tink run` records the command it was given in `user.tink.outcome.run.command` (environment values that look like secrets are
 masked). Incus otherwise keeps nothing that says how an instance came to be. `export` shows it as a `# created by:` comment, so the file
 carries the command it was distilled from. Plan and apply never read or diff it.
 

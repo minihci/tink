@@ -61,8 +61,8 @@ What is on the instance, sorted by who wrote it:
 | the image's own ENV | `environment.*` that equal the image's ENV (seen on mosquitto, not on kuma) | no |
 
 - **O10. Nothing records that tink made it.** No `user.tink.*` key, no description, no label. After the fact
-  Incus cannot tell a `tink run` instance from a hand-made one. (Volumes get `user.tink.backup.policy` only
-  when a stack declares one.) **S:** `tink run` could stamp `user.tink.run.command` (the original flags, or
+  Incus cannot tell a `tink run` instance from a hand-made one. (Volumes get `user.tink.intent.backup.policy` only
+  when a stack declares one.) **S:** `tink run` could stamp `user.tink.outcome.run.command` (the original flags, or
   better, the resolved Tink YAML) and a `description`. That is also the cheapest possible "export": read
   back what you wrote. Costs one config key; and by the Incus lifecycle-event measurement in the author's private notes
   (a config PATCH ~20 ms), the price is nothing.
@@ -117,7 +117,7 @@ Results:
   it to `volatile.base_image`. An exporter could do the same: resolve the candidate reference, confirm it equals
   the instance's fingerprint, then append `@sha256:<manifest digest>`. If it does not match, say
   "image.id says X but the instance was built from something else" instead of exporting a wrong answer.
-- **O19. Volumes with a copy policy** (Immich) keep it in `user.tink.backup.policy`, a raw config key. A naive
+- **O19. Volumes with a copy policy** (Immich) keep it in `user.tink.intent.backup.policy`, a raw config key. A naive
   export would write that key as `config:`; the right export reads it back through `backupmeta` into the
   `backup:` block. (Not prototyped.)
 
@@ -159,7 +159,7 @@ level 2:
 
 ## Round two: the suggestions built, the experiment repeated (branch `run-export-from-exploration`)
 
-Built: the no-NIC guard, a `user.tink.run.command` stamp, `tink export` (docs/export.md), `docker-oci:` fallback, progress and volume lines,
+Built: the no-NIC guard, a `user.tink.outcome.run.command` stamp, `tink export` (docs/export.md), `docker-oci:` fallback, progress and volume lines,
 a project-missing hint, and three plan-output fixes. Then the experiment again from scratch on the lab host, starting with the *naive* README attempt.
 
 | # | Round one | Round two |
@@ -169,7 +169,7 @@ a project-missing hint, and three plan-output fixes. Then the experiment again f
 | O5 | RUNNING, no IP, dead proxy | refused before anything is created, naming `--network`; verified nothing was left behind |
 | O7 | silent about the volume | `creating volume default/kuma-data` (and `reusing volume` on a second run) |
 | O8 | 72 silent seconds | `creating kuma-play from ... (a first pull of the image can take a minute)` printed first |
-| O10 | no trace of how it was made | `user.tink.run.command` stored; password masked as `'KUMA_ADMIN_PASSWORD=***'` |
+| O10 | no trace of how it was made | `user.tink.outcome.run.command` stored; password masked as `'KUMA_ADMIN_PASSWORD=***'` |
 | O12, O16-O18 | prototype only | `tink export`: image checked against `volatile.base_image`, then pinned; image-derived env and `oci.*` dropped; no false secret on `GPG_KEYS` |
 | O20 | drift sentence twice | once |
 | O21 | Go `map[...]` | `device.proxy0.listen: "tcp:0.0.0.0:3101" -> "tcp:0.0.0.0:3201"` |

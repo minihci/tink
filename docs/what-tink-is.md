@@ -15,7 +15,7 @@ tink is declarative. You describe a site in YAML, `plan` shows what would change
 
 What tink must remember it writes on the objects themselves, under `user.tink.*`, so the state stays with the thing it describes **[docs]**.
 
-**Where the loop is incomplete today.** It creates and updates, but it never deletes: a thing the stack no longer declares is reported as an extra and left alone. The one exception is the prefix tink owns, `user.tink.publish.` ([join.md](join.md#the-owned-prefix-and-the-one-place-tink-removes-a-key)). That was a safe first rule and it hardened into a stronger one than it should be; an ownership stamp on everything tink creates would make an explicit, scoped removal safe. The first step, the stamp itself, is built (phase 1 of #133, #127; [ownership.md](ownership.md)): every object tink creates for a named stack carries `user.tink.stack`, and `plan apply --adopt` stamps what exists. Reporting orphans and removing them are not built.
+**Where the loop is incomplete today.** It creates and updates, but it never deletes: a thing the stack no longer declares is reported as an extra and left alone. The one exception is the prefix tink owns, `user.tink.intent.publish.` ([join.md](join.md#the-owned-prefix-and-the-one-place-tink-removes-a-key)). That was a safe first rule and it hardened into a stronger one than it should be; an ownership stamp on everything tink creates would make an explicit, scoped removal safe. The first step, the stamp itself, is built (phase 1 of #133, #127; [ownership.md](ownership.md)): every object tink creates for a named stack carries `user.tink.intent.stack`, and `plan apply --adopt` stamps what exists. Reporting orphans and removing them are not built.
 
 ## One pattern: a capability
 
@@ -67,7 +67,7 @@ Why split them, in order of weight at this scale:
 2. **`plan` can join them.** An offer with no grant is unreachable (the safe default); a grant with no offer is a mistake worth a warning.
 3. **The audience is not widened by the app.**
 
-What is built is the first step, for web apps: `user.tink.offer.<offer>.port|proto|listen` on an instance is an offer, `kind: publish` is the grant (a name and the groups that may open it), and `tink join` joins them to the helpers' own facts and prints the dns records, mesh records, proxy routes, sign-on rules and ACL rules. `tink join apply dns` writes the dns records. `plan` stamps each publish onto its instance as `user.tink.publish.<name>`, and `tink join --from-server` reads the declarations back. See [join.md](join.md).
+What is built is the first step, for web apps: `user.tink.offer.<offer>.port|proto|listen` on an instance is an offer, `kind: publish` is the grant (a name and the groups that may open it), and `tink join` joins them to the helpers' own facts and prints the dns records, mesh records, proxy routes, sign-on rules and ACL rules. `tink join apply dns` writes the dns records. `plan` stamps each publish onto its instance as `user.tink.intent.publish.<name>`, and `tink join --from-server` reads the declarations back. See [join.md](join.md).
 
 Not built, and proposed in #130: the join as a stage of `plan` instead of a command, offers and grants beyond web (an `access` document, typed subjects), the per-role engine interface, and the rendering of the other four outputs. The self-registration that was the first, ingress-only offer was removed ([removals/ingress-self-registration.md](removals/ingress-self-registration.md)).
 

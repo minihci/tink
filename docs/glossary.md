@@ -10,7 +10,7 @@ tink fills gaps; it does not replace what it builds on. It gives a home or self-
 
 1. **An Incus object or key keeps Incus's exact word and spelling.** The `config:` and `devices:` blocks from `incus ... edit` paste in unchanged, and Incus's reference documents tink's `config:` and `devices:` too.
 2. **A concept Incus lacks gets tink's own word, checked first** against Incus's vocabulary and against what Compose and Kubernetes users already mean by it (see [collisions](#collisions)).
-3. **Everything tink writes on an Incus object goes under `user.tink.*`**, so it cannot collide with Incus's own keys.
+3. **Everything tink writes on an Incus object goes under `user.tink.*`**, so it cannot collide with Incus's own keys, and under `user.tink.intent.` or `user.tink.outcome.` ([key classes](#key-classes)).
 4. **A field may differ from Incus's shape only where it mirrors the command people type.** `image:` as one string and `vm: true` pass that test; the mapping is documented where it is used.
 
 ## Words taken from Incus
@@ -43,7 +43,7 @@ tink fills gaps; it does not replace what it builds on. It gives a home or self-
 | engine | the technology that does a role's job today (Caddy, LLDAP, Authelia, Headscale) | design word |
 | helper | a container Incus keeps running for tink that provides one role's capability. Always named by its role: *ingress helper*, *dns helper*. Incus starts it at boot, so tink writes no init scripts. One container per role ([helpers](what-tink-is.md#helpers)) | partly: only the daemon helper exists |
 | daemon helper | the helper whose engine is tink itself: it runs `tink daemon run` (backup scheduler, job executor, optional ingress reconcile). Its certificate has the reach of root on the host. `tink helper ...` and [helper.md](helper.md) call it "the helper" | yes |
-| site | the group of stacks that share a platform: the stack that declares the helpers and the app stacks whose publishes they show. A stack names its site with `site:` on its `kind: stack`; tink stamps `user.tink.site` on the instances of the stack that state a role or are published, and the join and the derive passes read one site at a time. No `site:` is the unnamed site, where everything is on a server that never says it ([join.md](join.md#sites)) | yes |
+| site | the group of stacks that share a platform: the stack that declares the helpers and the app stacks whose publishes they show. A stack names its site with `site:` on its `kind: stack`; tink stamps `user.tink.intent.site` on the instances of the stack that state a role or are published, and the join and the derive passes read one site at a time. No `site:` is the unnamed site, where everything is on a server that never says it ([join.md](join.md#sites)) | yes |
 | platform stack | a stack that declares a site's helpers, each from its upstream image pinned by digest. One per site (a server holds one site unless its stacks say `site:`). Proposed as a shipped recipe (a load-time expander), with `tink plan explain` as the eject; until then you write and own it | no (proposed) |
 | ingress | the reverse proxy in front of apps, and the routes tink renders for it from `user.tink.ingress.*` on the apps (the Kubernetes sense of the word) | yes |
 | backup target, copy, restore point | where copies go, a copy made there, a verified copy you can restore from | yes |
@@ -52,11 +52,11 @@ tink fills gaps; it does not replace what it builds on. It gives a home or self-
 | `kind: file` | a file placed in an instance | yes |
 | `kind: incus` | the escape hatch: arguments for the local `incus` command | yes |
 | stamp | a `user.tink.*` key tink writes on an object to remember something (which stack made an object, when a copy was made) | yes |
-| owner | the stack named in an object's `user.tink.stack` stamp, written when tink creates the object (a stack with no `kind: stack` name has none). A record of who made it, not a lock ([ownership.md](ownership.md)) | yes |
+| owner | the stack named in an object's `user.tink.intent.stack` stamp, written when tink creates the object (a stack with no `kind: stack` name has none). A record of who made it, not a lock ([ownership.md](ownership.md)) | yes |
 | adopt | stamp a declared object that exists and has no stamp with the stack's name, with `tink plan apply --adopt` or `ownership: adopt-on-apply`. It writes that one key and restarts nothing. (`kind: helper` also says "adopt", for "accept and leave alone"; this one writes.) | yes |
 | `on_image_change` | the policy for when a pinned image's digest moves: update, or report | yes |
 | offer | what an instance provides, stated as keys on it: `user.tink.offer.<offer>.port` and `.proto`. A fact about the app; it says nothing about who may use it | yes (read by `tink join`; web offers) |
-| `kind: publish` | a declaration: a name in the site's zone (the document's `name:`, plus the dns helper's zone) shows one offer of an instance to named groups. tink converges nothing for it and `plan` leaves it out of the graph, but stamps it onto its instance as `user.tink.publish.<name>` so the server holds it; `tink join` reads it, from files or `--from-server` ([join.md](join.md)) | yes (a declaration) |
+| `kind: publish` | a declaration: a name in the site's zone (the document's `name:`, plus the dns helper's zone) shows one offer of an instance to named groups. tink converges nothing for it and `plan` leaves it out of the graph, but stamps it onto its instance as `user.tink.intent.publish.<name>` so the server holds it; `tink join` reads it, from files or `--from-server` ([join.md](join.md)) | yes (a declaration) |
 | `kind: helper` | the daemon helper declared in a stack: adopted when present (plan reports its health and flags a missing remote, changes nothing), installed when absent ([helper.md](helper.md#declaring-it-in-a-stack)) | yes |
 | join | the step that looks across the offers, the publishes and the helpers' own facts and derives what each helper needs to match: dns records, mesh records, proxy routes, sign-on rules, ACL rules. `tink join` prints them, and `tink join apply dns` writes the dns records | yes (print-only; dns can be applied) |
 | leg | why an instance has a NIC where it does: `user.tink.leg.<nic>` is `serves` (LAN clients reach it here), `mesh` (mesh clients reach it here), `public` (the internet reaches it here, through the host's address) or `discovery` (it is not a way in for users); several may be given, separated by commas | yes (read by `tink join`) |
@@ -78,6 +78,26 @@ One meaning for each word, so a reader of a stamp, a status document or a job fi
 A bare `at`, `time` or `tick` is not a key, and not the last part of one, outside an event record; `cmd/tink/timenaming_test.go` fails if one appears in a time-typed JSON field or a stamp key.
 
 **Every stored or exchanged instant is RFC 3339, in UTC, to whole seconds** (`2026-11-01T09:30:00Z`), produced and read by one package (`internal/instant`), whose JSON type `instant.Time` writes the same way and leaves out a zero value. Human output never prints a raw timestamp in prose: it shows local time with the zone's name (`2026-11-01 10:30 CET`) or a relative age (`7m ago`).
+
+## Key classes
+
+Every key under `user.tink.` is one of three kinds, and the kind is the prefix, so nothing needs a table. `ownership.ClassOf` (`internal/ownership`, which imports nothing of tink's) answers it, and every consumer asks it.
+
+| Class | Prefix | Written by | Examples |
+|---|---|---|---|
+| fact | none: the short list below | a person, in `config:` | `user.tink.role`, `user.tink.leg.<nic>`, `user.tink.offer.<name>.*`, `user.tink.dns.zone` |
+| intent | `user.tink.intent.` | tink, from the declaration, by `plan apply` | `intent.stack` (the owner), `intent.site`, `intent.publish.<name>`, `intent.derive.<file>`, `intent.backup.policy`; named and not yet written: `intent.resource`, `intent.applied` |
+| outcome | `user.tink.outcome.` | whatever ran an operation | `outcome.backup.copy.<target>.copied-at`, `outcome.backup.verified-at`, `outcome.exec.<id>.trigger-hash`, `outcome.helper` (the marker), `outcome.helper.status`, `outcome.run.command` |
+
+What each consumer does with the class:
+
+- **Extras** (`plan`'s "not in the stack" line) are the same for every kind: an undeclared fact is reported, so a role set by hand is noticed; intent and outcomes never are.
+- **`tink export`** keeps facts and drops intent and outcomes (a publish and the site are still written back as their document and field).
+- **Validation** refuses an intent or outcome key in `config:` or `properties:` of every kind.
+- **tink's own volume copies** (a restore point, a restored volume, a verification's scratch volume) drop the outcomes, the copy policy and the applied record, and keep the owner and resource stamps, so a copy reads as a copy.
+- **Removal:** tink owns the whole `user.tink.intent.` prefix on an instance and a network ACL: an intent key the stack no longer derives is a planned removal. The owner, resource and applied keys are never derived into a config and never taken back. Nothing outside the prefix is ever removed.
+
+`cmd/tink/keynamespace_test.go` fails if tink's source writes a `user.tink.*` literal that is none of the three, so a new key cannot be added without choosing its class. The old names, and how to fix a host that has them, are on [the removal page](removals/stamp-and-key-names.md).
 
 ## Proposed: remote access (not built)
 
