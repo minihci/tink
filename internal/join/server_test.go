@@ -10,6 +10,7 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
 
+	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/resolve"
 )
 
@@ -174,8 +175,8 @@ func TestAStampThatCannotBeReadIsAnErrorNamingTheInstanceAndNothingIsJoined(t *t
 				t.Fatalf("problems = %+v", se.Problems)
 			}
 			fs := se.Findings()
-			if len(fs) != 1 || fs[0].Severity != Error || fs[0].Subject != "instance/whoami" ||
-				!strings.Contains(fs[0].Message, "(project canary)") || !strings.Contains(fs[0].Message, c.key) || !strings.Contains(fs[0].Message, c.want) {
+			if len(fs) != 1 || fs[0].Severity != finding.Error || fs[0].Subject != "instance/whoami" ||
+				!strings.Contains(fs[0].Detail, "(project canary)") || !strings.Contains(fs[0].Detail, c.key) || !strings.Contains(fs[0].Detail, c.want) {
 				t.Errorf("finding = %+v, want an error naming instance/whoami, the project, the key and %q", fs, c.want)
 			}
 			if msg := se.Error(); !strings.Contains(msg, "1 publish stamp(s)") || !strings.Contains(msg, "instance/whoami") {
@@ -216,7 +217,7 @@ func TestTwoInstancesStampingOneNameIsTheJoinsOwnDuplicateError(t *testing.T) {
 		}
 	}
 	res := fromServer(t, f)
-	if !strings.Contains(messages(res, Error), `the name "whoami" is also published by`) {
+	if !strings.Contains(messages(res, finding.Error), `the name "whoami" is also published by`) {
 		t.Errorf("findings: %v", res.Findings)
 	}
 	if res.DNS != "" {
@@ -241,7 +242,7 @@ func TestFromServerSeesAnOfferNicThatComesFromAProfileAndAnUnmanagedBridgeAsTheJ
 	}
 	// a NIC bridged to br0, which is on the server but is not a network Incus manages: no ACL can restrict it
 	f.whoami(t).Devices = map[string]map[string]string{"eth0": {"type": "nic", "nictype": "bridged", "parent": "br0", "ipv4.address": "192.0.2.50"}}
-	if res := fromServer(t, f); !strings.Contains(messages(res, Error), "is not on a managed network") {
+	if res := fromServer(t, f); !strings.Contains(messages(res, finding.Error), "is not on a managed network") {
 		t.Errorf("findings: %v", res.Findings)
 	}
 }
@@ -253,7 +254,7 @@ func TestAnAppsNetworkWithNoAclIsStillAnErrorFromTheServer(t *testing.T) {
 			f.networks[i].Config = map[string]string{"ipv4.address": "198.51.100.1/24"}
 		}
 	}
-	if res := fromServer(t, f); !strings.Contains(messages(res, Error), "has no ACL attached (security.acls)") {
+	if res := fromServer(t, f); !strings.Contains(messages(res, finding.Error), "has no ACL attached (security.acls)") {
 		t.Errorf("findings: %v", res.Findings)
 	}
 }
@@ -270,7 +271,7 @@ func TestAServerWithNoStampsHasNothingToRender(t *testing.T) {
 		f.instances[i].Config = cfg
 	}
 	res := fromServer(t, f)
-	if res.Errors() != 0 || len(res.Published) != 0 || res.DNS != "" || !strings.Contains(messages(res, Warning), "no publish is declared") {
+	if res.Errors() != 0 || len(res.Published) != 0 || res.DNS != "" || !strings.Contains(messages(res, finding.Warning), "no publish is declared") {
 		t.Errorf("findings %v, published %v", res.Findings, res.Published)
 	}
 }
@@ -324,7 +325,7 @@ func TestAnUnmanagedBridgeIsNotANetworkTheJoinCanFindAnAclOn(t *testing.T) {
 	f := serverOf(t, load(t))
 	f.whoami(t).Devices = map[string]map[string]string{"eth0": {"type": "nic", "network": "br0", "ipv4.address": "192.0.2.50"}}
 	res := fromServer(t, f)
-	if res.Errors() != 0 || !strings.Contains(messages(res, Warning), "network br0 is not declared") {
+	if res.Errors() != 0 || !strings.Contains(messages(res, finding.Warning), "network br0 is not declared") {
 		t.Errorf("findings: %v", res.Findings)
 	}
 }

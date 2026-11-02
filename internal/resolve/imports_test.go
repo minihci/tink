@@ -25,6 +25,7 @@ var allowedInternalImports = map[string]string{
 	"secrets":   "ring 0: ${secret:NAME} expansion and redaction",
 	"instance":  "ring 1: the instance engine (create, apply config, start, qualify) that applying an instance IS; it imports only ring 0. The docker-run half, internal/dockerrun, is deliberately not on this list (#216)",
 	"ownership": "ring 0: the stamp key and its classification (user.tink.intent.stack), importing nothing of tink's",
+	"finding":   "ring 0: the one shape for \"something was noticed\" (severity, reason, subject, detail), importing nothing of tink's",
 	"backupext": "the seam for backup: the declaration types and the Backup interface, importing nothing of tink's",
 	"helper":    "KNOWN EXCEPTION, not yet moved: kind: helper (helperkind.go) installs and evaluates the helper; it needs a kind extension point first (issue #128, 'what remains')",
 }

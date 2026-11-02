@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/minihci/tink/internal/finding"
 )
 
 // A kind: file with `derive:` is a file around a region that tink writes (docs/join.md, "Derived files"; the proposal is #130). The file is the
@@ -160,8 +162,9 @@ type DerivedCheck struct {
 //   - A rendering with nothing in it does not empty a region that has lines in it. The site publishing no name at all usually means the wrong
 //     server, or stacks that have not been applied yet, and an empty file would take every name down; allow_empty says it is meant.
 //
-// It returns the reason the file is not to be replaced, or a note to print when it is replaced under adopt_existing. Both empty means go ahead.
-func CheckDerived(c DerivedCheck) (refusal, note string) {
+// It returns what it found: one error when the file is not to be replaced, or one note to print when it is replaced under adopt_existing. None means go
+// ahead.
+func CheckDerived(c DerivedCheck) []finding.Finding {
 	if c.Render == DeriveMesh {
 		return checkRecords(c)
 	}
@@ -169,28 +172,35 @@ func CheckDerived(c DerivedCheck) (refusal, note string) {
 	switch {
 	case !hasDerivedMarkers(c.Live) && len(liveLines) > 0:
 		if c.Adopt {
-			return "", fmt.Sprintf("adopt_existing: replaces the %d line(s) that %s on %s holds and tink did not write; remove adopt_existing once it is applied", len(liveLines), c.Path, c.Instance)
+			return []finding.Finding{finding.Notef(reasonDerivedAdopted, "", "adopt_existing: replaces the %d line(s) that %s on %s holds and tink did not write; remove adopt_existing once it is applied", len(liveLines), c.Path, c.Instance)}
 		}
-		return fmt.Sprintf("%s on %s was not written by tink (it has no %q line) and holds %d line(s) that applying would remove: move any you want to keep out of it, or set adopt_existing: true once to take it over", c.Path, c.Instance, DeriveBegin, len(liveLines)), ""
+		return []finding.Finding{finding.Errorf(reasonDerivedNotTinks, "", "%s on %s was not written by tink (it has no %q line) and holds %d line(s) that applying would remove: move any you want to keep out of it, or set adopt_existing: true once to take it over", c.Path, c.Instance, DeriveBegin, len(liveLines))}
 	case len(derivedLines(c.Desired)) == 0 && len(liveLines) > 0 && !c.AllowEmpty:
-		return fmt.Sprintf("nothing is published, so applying would empty the %d line(s) tink wrote to %s on %s; that usually means the wrong server, or stacks that have not been applied yet (allow_empty: true says it is meant)", len(liveLines), c.Path, c.Instance), ""
+		return []finding.Finding{finding.Errorf(reasonDerivedEmpty, "", "nothing is published, so applying would empty the %d line(s) tink wrote to %s on %s; that usually means the wrong server, or stacks that have not been applied yet (allow_empty: true says it is meant)", len(liveLines), c.Path, c.Instance)}
 	}
-	return "", ""
+	return nil
 }
+
+// The reasons CheckDerived gives, fixed phrases: they name the kind of refusal and carry no path, name or count.
+const (
+	reasonDerivedAdopted  = "adopt_existing replaces a file tink did not write"
+	reasonDerivedNotTinks = "the file was not written by tink"
+	reasonDerivedEmpty    = "nothing is published"
+	reasonDerivedNotJSON  = "the file is not a JSON array of records"
+	reasonDerivedForeign  = "the file holds records outside the zone"
+)
 
 // guardDerived is CheckDerived for a file that `plan` has found would be replaced: a refusal makes the plan BLOCKED. live is what the plan read.
 func guardDerived(f Resource, p PlannedResource, live string) PlannedResource {
 	if f.Derive == "" || p.Action != ActionUpdate {
 		return p
 	}
-	refusal, note := CheckDerived(DerivedCheck{Render: f.Derive, Path: f.Path, Instance: f.Instance, Live: live, Desired: f.Content, Zone: f.DerivedZone,
+	fs := CheckDerived(DerivedCheck{Render: f.Derive, Path: f.Path, Instance: f.Instance, Live: live, Desired: f.Content, Zone: f.DerivedZone,
 		Adopt: f.AdoptExisting, AllowEmpty: f.AllowEmpty})
-	if refusal != "" {
-		return PlannedResource{Resource: f, Action: ActionBlocked, Blocked: []string{refusal}}
+	if finding.HasErrors(fs) {
+		return PlannedResource{Resource: f, Action: ActionBlocked, Blocked: detailsOf(fs, finding.Error)}
 	}
-	if note != "" {
-		p.Notes = append(p.Notes, note)
-	}
+	p.Notes = append(p.Notes, detailsOf(fs, finding.Note)...)
 	return p
 }
 
@@ -219,16 +229,16 @@ func DerivedRegion(content string) string {
 // A file that is not that shape is not a records file at all. Either is refused until adopt_existing takes the file over, once. And as for the other
 // derived files, a rendering with no record does not empty a file that has records until allow_empty says that is meant. A record inside the zone that
 // the rendering lacks is a name that was unpublished, which is what the file is for.
-func checkRecords(c DerivedCheck) (refusal, note string) {
+func checkRecords(c DerivedCheck) []finding.Finding {
 	if strings.TrimSpace(c.Live) == "" {
-		return "", ""
+		return nil
 	}
 	var records []struct{ Name, Type, Value string }
 	if err := json.Unmarshal([]byte(c.Live), &records); err != nil {
 		if c.Adopt {
-			return "", fmt.Sprintf("adopt_existing: replaces %s on %s, which is not a JSON array of records; remove adopt_existing once it is applied", c.Path, c.Instance)
+			return []finding.Finding{finding.Notef(reasonDerivedAdopted, "", "adopt_existing: replaces %s on %s, which is not a JSON array of records; remove adopt_existing once it is applied", c.Path, c.Instance)}
 		}
-		return fmt.Sprintf("%s on %s is not a JSON array of records ({name, type, value}), so it is not the file this was written for: set adopt_existing: true once to replace it", c.Path, c.Instance), ""
+		return []finding.Finding{finding.Errorf(reasonDerivedNotJSON, "", "%s on %s is not a JSON array of records ({name, type, value}), so it is not the file this was written for: set adopt_existing: true once to replace it", c.Path, c.Instance)}
 	}
 	var foreign []string
 	for _, r := range records {
@@ -238,18 +248,29 @@ func checkRecords(c DerivedCheck) (refusal, note string) {
 	}
 	if len(foreign) > 0 {
 		if c.Adopt {
-			return "", fmt.Sprintf("adopt_existing: replaces %d record(s) of %s on %s outside %s; remove adopt_existing once it is applied", len(foreign), c.Path, c.Instance, c.Zone)
+			return []finding.Finding{finding.Notef(reasonDerivedAdopted, "", "adopt_existing: replaces %d record(s) of %s on %s outside %s; remove adopt_existing once it is applied", len(foreign), c.Path, c.Instance, c.Zone)}
 		}
 		shown := foreign
 		if len(shown) > 3 {
 			shown = append(append([]string{}, shown[:3]...), "...")
 		}
-		return fmt.Sprintf("%s on %s holds %d record(s) outside the zone %s that tink did not write (%s), and applying would remove them: set adopt_existing: true once to take the file over", c.Path, c.Instance, len(foreign), c.Zone, strings.Join(shown, ", ")), ""
+		return []finding.Finding{finding.Errorf(reasonDerivedForeign, "", "%s on %s holds %d record(s) outside the zone %s that tink did not write (%s), and applying would remove them: set adopt_existing: true once to take the file over", c.Path, c.Instance, len(foreign), c.Zone, strings.Join(shown, ", "))}
 	}
 	var desired []struct{ Name, Type, Value string }
 	_ = json.Unmarshal([]byte(c.Desired), &desired)
 	if len(desired) == 0 && len(records) > 0 && !c.AllowEmpty {
-		return fmt.Sprintf("nothing is published, so applying would empty the %d record(s) in %s on %s; that usually means the wrong server, or stacks that have not been applied yet (allow_empty: true says it is meant)", len(records), c.Path, c.Instance), ""
+		return []finding.Finding{finding.Errorf(reasonDerivedEmpty, "", "nothing is published, so applying would empty the %d record(s) in %s on %s; that usually means the wrong server, or stacks that have not been applied yet (allow_empty: true says it is meant)", len(records), c.Path, c.Instance)}
 	}
-	return "", ""
+	return nil
+}
+
+// detailsOf is the detail of each finding in fs that has severity sev, in order: what a plan still keeps its blockers and notes as.
+func detailsOf(fs []finding.Finding, sev finding.Severity) []string {
+	var out []string
+	for _, f := range fs {
+		if f.Severity == sev {
+			out = append(out, f.Detail)
+		}
+	}
+	return out
 }

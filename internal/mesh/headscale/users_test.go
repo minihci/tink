@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/minihci/tink/internal/finding"
 )
 
 // labUsers is what `headscale users list -o json` printed on the lab Headscale: email and display_name are left out when empty.
@@ -116,7 +118,7 @@ func TestProject_KeepsTheEmittedMembersForChecks(t *testing.T) {
 func TestCrossCheck_AMemberWithNoHeadscaleUserIsAWarning(t *testing.T) {
 	res := projected(t, "family", "admins")
 	got := CrossCheck(res, []User{{Name: "alice"}})
-	if len(got) != 1 || got[0].Severity != Warning || !strings.Contains(got[0].Message, `group "family": "bob@" matches no Headscale user`) {
+	if len(got) != 1 || got[0].Severity != finding.Warning || !strings.Contains(got[0].Detail, `group "family": "bob@" matches no Headscale user`) {
 		t.Fatalf("findings = %v", got)
 	}
 }
@@ -141,7 +143,7 @@ func TestCrossCheck_AnEmailFormatMemberMatchesByEmail(t *testing.T) {
 func TestCrossCheck_NoUsersAtAllIsOneWarningNotOnePerMember(t *testing.T) {
 	res := projected(t, "family", "admins")
 	got := CrossCheck(res, nil)
-	if len(got) != 1 || !strings.Contains(got[0].Message, "no users yet") {
+	if len(got) != 1 || !strings.Contains(got[0].Detail, "no users yet") {
 		t.Fatalf("findings = %v", got)
 	}
 }
