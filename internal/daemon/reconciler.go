@@ -8,6 +8,7 @@ import (
 	"github.com/lxc/incus/v7/shared/api"
 
 	"github.com/minihci/tink/internal/helper"
+	"github.com/minihci/tink/internal/instant"
 )
 
 // A Reconciler keeps derived state in step with the stamps on the server. It is level-triggered: a pass reads the server, works out what should be true,
@@ -176,7 +177,7 @@ func (r *Reconciler) watch(ctx context.Context, poke func()) {
 func (r *Reconciler) pass(ctx context.Context, last map[string]string) {
 	for _, res := range r.Reconcile(ctx) {
 		if r.Live != nil {
-			r.Live.setReconcile(helper.Reconcile{What: res.What, Site: res.Site, State: res.State, Reason: res.Reason, Since: r.now().UTC()})
+			r.Live.setReconcile(helper.Reconcile{What: res.What, Site: res.Site, State: res.State, Reason: res.Reason, Since: instant.At(r.now())})
 		}
 		key := res.What + "/" + res.Site
 		state := res.State + ": " + res.Reason

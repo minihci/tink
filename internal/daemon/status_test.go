@@ -28,9 +28,9 @@ func TestATickTellsTheStatusDocumentWhatItCouldNotDoAndWhatIsFailing(t *testing.
 	r.eng.poolErrs = map[string]error{"nas": errors.New("TrueNAS refused: api key tk-SECRET-123 is not valid")}
 	r.eng.liveErr["docs"] = errors.New("incus said: token tk-SECRET-456 expired")
 	r.eng.live["lib"] = map[string]string{
-		backupmeta.CopyStampAt("nas"):   now0.Add(-3 * time.Hour).UTC().Format(time.RFC3339),
-		backupmeta.CopyFailAt("nas"):    now0.Add(-time.Minute).UTC().Format(time.RFC3339),
-		backupmeta.CopyFailCount("nas"): "3",
+		backupmeta.CopiedAt("nas"): now0.Add(-3 * time.Hour).UTC().Format(time.RFC3339),
+		backupmeta.FailedAt("nas"): now0.Add(-time.Minute).UTC().Format(time.RFC3339),
+		backupmeta.Failures("nas"): "3",
 	}
 
 	var st SchedulerState
@@ -61,7 +61,7 @@ func TestATickWithNothingWrongLeavesTheDocumentClean(t *testing.T) {
 	r := newRig(t)
 	r.h.Live = &Live{}
 	r.volume(t, "lib")
-	r.eng.live["lib"] = map[string]string{backupmeta.CopyStampAt("nas"): now0.Add(-5 * time.Minute).UTC().Format(time.RFC3339)}
+	r.eng.live["lib"] = map[string]string{backupmeta.CopiedAt("nas"): now0.Add(-5 * time.Minute).UTC().Format(time.RFC3339)}
 	r.h.Tick(&SchedulerState{})
 	if skipped, failing := r.h.Live.snapshot(); len(skipped) != 0 || len(failing) != 0 {
 		t.Errorf("%+v %+v", skipped, failing)
@@ -92,10 +92,10 @@ func TestBuildStatusSaysWhatTheHelperIsAndWhatItLastDid(t *testing.T) {
 	if st.Version != "v1.2.3" || st.TZ != "UTC" || st.JobProto != jobs.Proto || st.PolicyProto != backupmeta.PolicyProto {
 		t.Errorf("who it is, and what it speaks (so an apply can tell whether it reads a policy): %+v", st)
 	}
-	if !st.Started.Equal(now0.Add(-time.Hour)) {
-		t.Errorf("started: %v", st.Started)
+	if !st.StartedAt.Equal(now0.Add(-time.Hour)) {
+		t.Errorf("started: %v", st.StartedAt)
 	}
-	if st.LastJob == nil || st.LastJob.ID != id || st.LastJob.State != "failed" || st.LastJob.Finished.IsZero() {
+	if st.LastJob == nil || st.LastJob.ID != id || st.LastJob.State != "failed" || st.LastJob.FinishedAt.IsZero() {
 		t.Errorf("last job: %+v", st.LastJob)
 	}
 	if strings.Contains(st.LastJob.ID, "full") {
@@ -203,9 +203,9 @@ func TestRunStartsTheStatusWorkerBesideTheOthersAndTheHelperFeedsIt(t *testing.T
 	r := newRig(t)
 	r.volume(t, "lib")
 	r.eng.live["lib"] = map[string]string{
-		backupmeta.CopyStampAt("nas"):   now0.Add(-3 * time.Hour).UTC().Format(time.RFC3339),
-		backupmeta.CopyFailAt("nas"):    now0.Add(-time.Minute).UTC().Format(time.RFC3339),
-		backupmeta.CopyFailCount("nas"): "2",
+		backupmeta.CopiedAt("nas"): now0.Add(-3 * time.Hour).UTC().Format(time.RFC3339),
+		backupmeta.FailedAt("nas"): now0.Add(-time.Minute).UTC().Format(time.RFC3339),
+		backupmeta.Failures("nas"): "2",
 	}
 	r.h.Now = nil
 	r.h.SchedulerInterval = 10 * time.Millisecond
@@ -291,7 +291,7 @@ func TestNothingIsPublishedUntilTheSchedulerHasLooked(t *testing.T) {
 func TestTheSchedulerLooksAgainSoonAfterAPassThatCouldNotLookAndWaitsAfterOneThatCould(t *testing.T) {
 	r := newRig(t)
 	r.volume(t, "lib")
-	r.eng.live["lib"] = map[string]string{backupmeta.CopyStampAt("nas"): now0.Add(-5 * time.Minute).UTC().Format(time.RFC3339)}
+	r.eng.live["lib"] = map[string]string{backupmeta.CopiedAt("nas"): now0.Add(-5 * time.Minute).UTC().Format(time.RFC3339)}
 	var mu sync.Mutex
 	connects := 0
 	r.h.Connect = func() (backuprun.Engine, error) {
@@ -335,7 +335,7 @@ func TestADrainQueuesNothingAndTheStatusDocumentSaysSo(t *testing.T) {
 	r := newRig(t)
 	r.h.Live = &Live{}
 	r.volume(t, "lib")
-	r.eng.live["lib"] = map[string]string{backupmeta.CopyStampAt("nas"): now0.Add(-3 * time.Hour).UTC().Format(time.RFC3339)} // due
+	r.eng.live["lib"] = map[string]string{backupmeta.CopiedAt("nas"): now0.Add(-3 * time.Hour).UTC().Format(time.RFC3339)} // due
 	if err := os.MkdirAll(r.h.Store.Dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -377,5 +377,15 @@ func TestBuildStatusReportsTheRemotesItCanReachOnlyWhenItCouldRead(t *testing.T)
 	}
 	if st := buildStatus(StatusOptions{}, live, now0, now0); st.Remotes != nil {
 		t.Errorf("%+v", st.Remotes)
+	}
+}
+
+// The status document says when a run of failures began (since) apart from when the latest attempt failed (failed-at): they are two
+// instants, and the first does not move while the second does.
+func TestFailingCarriesTheOnsetAndTheLastAttemptApart(t *testing.T) {
+	onset, last := time.Date(2026, 10, 7, 9, 0, 0, 0, time.UTC), time.Date(2026, 10, 7, 9, 40, 0, 0, time.UTC)
+	got := failingFrom([]backuprun.FailingCopy{{Volume: "lib", Target: "nas", Count: 5, Since: onset, FailedAt: last}})
+	if len(got) != 1 || !got[0].Since.Equal(onset) || !got[0].FailedAt.Equal(last) || got[0].Count != 5 {
+		t.Errorf("failing = %+v", got)
 	}
 }

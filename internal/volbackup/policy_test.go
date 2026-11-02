@@ -44,7 +44,7 @@ func TestARestoredVolumeDoesNotCarryThePolicyFromARestorePoint(t *testing.T) {
 	owner := backupmeta.CopyOf("", "default", "lib")
 	at := time.Date(2026, 10, 1, 4, 0, 0, 0, time.UTC).Format(time.RFC3339)
 	remote.add("default", "lib-bk-20261001-040000", map[string]string{
-		backupmeta.MarkerCopyOf: owner, backupmeta.MarkerCopyAt: at, backupmeta.MarkerCopyTarget: "vps", backupmeta.PolicyKey: somePolicy})
+		backupmeta.MarkerCopyOf: owner, backupmeta.MarkerCopiedAt: at, backupmeta.MarkerCopyTarget: "vps", backupmeta.PolicyKey: somePolicy})
 	local.inherit = true
 
 	if _, err := Restore(local, Volume{Name: "lib"}, RestoreOptions{From: &Target{Name: "vps", Remote: "vps"}, As: "lib-recovered"}); err != nil {

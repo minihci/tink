@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/lxc/incus/v7/shared/api"
+
+	"github.com/minihci/tink/internal/instant"
 )
 
 func runningHelper(h *fakeHost, config map[string]string) {
@@ -20,7 +22,7 @@ func runningHelper(h *fakeHost, config map[string]string) {
 
 func statusText(t *testing.T, mut func(*Status)) string {
 	t.Helper()
-	s := Status{Proto: StatusProto, Version: "v1", JobProto: 1, PolicyProto: 1, Tick: time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC), HeartbeatSeconds: 600}
+	s := Status{Proto: StatusProto, Version: "v1", JobProto: 1, PolicyProto: 1, WrittenAt: instant.At(time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)), Heartbeat: instant.Duration(10 * time.Minute)}
 	if mut != nil {
 		mut(&s)
 	}

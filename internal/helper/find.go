@@ -127,8 +127,8 @@ func Evaluate(f Found, now time.Time) Report {
 
 	if f.State != "Running" {
 		down("the instance is %s", strings.ToLower(f.State))
-		if r.Status != nil && !st.Tick.IsZero() {
-			r.Reasons[len(r.Reasons)-1] += fmt.Sprintf(" (last heard from %s ago)", age(now.Sub(st.Tick)))
+		if r.Status != nil && !st.WrittenAt.IsZero() {
+			r.Reasons[len(r.Reasons)-1] += fmt.Sprintf(" (last heard from %s ago)", age(now.Sub(st.WrittenAt.Time)))
 		}
 		return r
 	}
@@ -139,8 +139,16 @@ func Evaluate(f Found, now time.Time) Report {
 		return r
 	}
 
-	if hb := time.Duration(st.HeartbeatSeconds) * time.Second; hb > 0 && !st.Tick.IsZero() {
-		if silent := now.Sub(st.Tick); silent > hb*staleNumerator/staleDenominator {
+	// A document that does not say when it was written, or how often it is written, cannot be shown fresh. It must not read as healthy:
+	// that would hide a helper that has stopped, whether the document came from another version, was edited by hand, or is damaged.
+	// There is no version logic here: the rule is about what the document says, not about who wrote it.
+	switch hb := st.Heartbeat.D(); {
+	case st.WrittenAt.IsZero():
+		degrade("its status document has no write time (%s), so it cannot be shown to be fresh", WrittenAtField)
+	case hb <= 0:
+		degrade("its status document has no heartbeat (%s), so it cannot be told from a helper that has stopped", HeartbeatField)
+	default:
+		if silent := now.Sub(st.WrittenAt.Time); silent > hb*staleNumerator/staleDenominator {
 			down("stale: last heard from %s ago, and it publishes at least every %s", age(silent), age(hb))
 			return r
 		}

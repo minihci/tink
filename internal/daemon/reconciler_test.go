@@ -70,6 +70,7 @@ type harness struct {
 	r      *Reconciler
 	s      *stream
 	passes atomic.Int32
+	ticks  atomic.Int64
 	log    *logs
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -92,6 +93,11 @@ func start(t *testing.T) *harness {
 		Backoff:  5 * time.Millisecond,
 		Live:     &Live{},
 		Logf:     h.log.logf,
+		// every reading of the clock is two seconds later than the last: an instant is kept to whole seconds, so a real clock would
+		// make two passes a few milliseconds apart read as the same moment
+		Now: func() time.Time {
+			return time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC).Add(time.Duration(h.ticks.Add(1)) * 2 * time.Second)
+		},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	h.cancel = cancel
@@ -192,7 +198,8 @@ func TestTheResyncIsTheBackstopWhenNoEventComes(t *testing.T) {
 
 func TestWhatThePassFoundIsInTheStatusAndKeepsItsSinceUntilItChanges(t *testing.T) {
 	h := start(t)
-	eventually(t, "the first pass", func() bool { return h.passes.Load() == 1 })
+	// the pass counts itself before it records what it found, so wait for the record and not for the count
+	eventually(t, "the first pass recorded", func() bool { return len(h.r.Live.reconcilesSnapshot()) == 1 })
 	first := h.r.Live.reconcilesSnapshot()
 	if len(first) != 1 || first[0].What != "dns" || first[0].State != "converged" || first[0].Since.IsZero() {
 		t.Fatalf("status = %+v", first)
@@ -201,15 +208,15 @@ func TestWhatThePassFoundIsInTheStatusAndKeepsItsSinceUntilItChanges(t *testing.
 	time.Sleep(20 * time.Millisecond)
 	h.s.emit("instance-updated")
 	eventually(t, "a second pass", func() bool { return h.passes.Load() == 2 })
-	if again := h.r.Live.reconcilesSnapshot(); !again[0].Since.Equal(first[0].Since) {
+	if again := h.r.Live.reconcilesSnapshot(); !again[0].Since.Equal(first[0].Since.Time) {
 		t.Errorf("a pass that found the same thing moved Since: %v -> %v", first[0].Since, again[0].Since)
 	}
 
 	h.result.Store([]ReconcileResult{{What: "dns", State: "blocked", Reason: "the apply was refused", Detail: []string{"detail line"}}})
 	h.s.emit("instance-updated")
-	eventually(t, "a third pass", func() bool { return h.passes.Load() == 3 })
+	eventually(t, "a third pass recorded", func() bool { return h.r.Live.reconcilesSnapshot()[0].State == "blocked" })
 	got := h.r.Live.reconcilesSnapshot()
-	if got[0].State != "blocked" || got[0].Reason != "the apply was refused" || !got[0].Since.After(first[0].Since) {
+	if got[0].State != "blocked" || got[0].Reason != "the apply was refused" || !got[0].Since.After(first[0].Since.Time) {
 		t.Errorf("status after a change = %+v", got)
 	}
 	eventually(t, "the change in the log, with its detail", func() bool {

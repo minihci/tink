@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/minihci/tink/internal/instant"
 )
 
 var t0 = time.Date(2026, 10, 7, 10, 0, 0, 0, time.UTC)
@@ -45,7 +47,7 @@ func TestEnqueueWritesREADYLastAndTheJobIsQueued(t *testing.T) {
 	}
 	var req Request
 	b, _ := os.ReadFile(filepath.Join(s.Dir, id, "request.json"))
-	if err := json.Unmarshal(b, &req); err != nil || req.Proto != Proto || req.Created.IsZero() || req.Kind != "backup-run" {
+	if err := json.Unmarshal(b, &req); err != nil || req.Proto != Proto || req.CreatedAt.IsZero() || req.Kind != "backup-run" {
 		t.Errorf("request.json: %v %+v", err, req)
 	}
 }
@@ -111,8 +113,8 @@ func TestADirectoryWithoutREADYIsNotAJob(t *testing.T) {
 
 func TestListIsOldestFirstAndIgnoresStrangers(t *testing.T) {
 	s := Store{Dir: t.TempDir()}
-	b, _ := s.Enqueue(Request{Kind: "k", Created: t0.Add(2 * time.Hour)}, t0)
-	a, _ := s.Enqueue(Request{Kind: "k", Created: t0.Add(time.Hour)}, t0)
+	b, _ := s.Enqueue(Request{Kind: "k", CreatedAt: instant.At(t0.Add(2 * time.Hour))}, t0)
+	a, _ := s.Enqueue(Request{Kind: "k", CreatedAt: instant.At(t0.Add(time.Hour))}, t0)
 	os.MkdirAll(filepath.Join(s.Dir, ".hidden"), 0o700)
 	os.WriteFile(filepath.Join(s.Dir, "a-file"), nil, 0o600)
 	list, err := s.List()

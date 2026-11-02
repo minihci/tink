@@ -26,45 +26,58 @@ const (
 	copyStampPrefix = "user.tink.backup.copy."
 )
 
-// CopyStampAt is the config key holding when the last copy to target succeeded (RFC 3339, UTC).
-func CopyStampAt(target string) string { return copyStampPrefix + target + ".at" }
+// CopiedAt is the config key holding when the last copy to target succeeded (an instant, see internal/instant).
+func CopiedAt(target string) string { return copyStampPrefix + target + ".copied-at" }
 
 // CopyStampVolume is the config key naming the newest restore point on target.
 func CopyStampVolume(target string) string { return copyStampPrefix + target + ".volume" }
 
-// CopyFailAt and CopyFailCount are the config keys recording that the copy to target is failing: when the last
-// attempt failed (RFC 3339, UTC) and how many attempts in a row have. A success removes both. They hold no
-// message on purpose: errors from Incus and its drivers can echo credentials (a TrueNAS API key has appeared in
-// one), and a volume's config is the wrong place to keep that. The reason goes in the run's own output.
-func CopyFailAt(target string) string    { return copyStampPrefix + target + ".fail.at" }
-func CopyFailCount(target string) string { return copyStampPrefix + target + ".fail.n" }
+// FailedAt, FailingSince and Failures are the config keys recording that the copy to target is failing: when the last attempt failed
+// (an instant that moves with every attempt), when the run of failures began (set by the first failure and kept through the retries), and
+// how many attempts in a row have failed. A success removes all three. They hold no message on purpose: errors from Incus and its drivers
+// can echo credentials (a TrueNAS API key has appeared in one), and a volume's config is the wrong place to keep that. The reason goes in
+// the run's own output.
+func FailedAt(target string) string     { return copyStampPrefix + target + ".failed-at" }
+func FailingSince(target string) string { return copyStampPrefix + target + ".failing-since" }
+func Failures(target string) string     { return copyStampPrefix + target + ".failures" }
+
+// FailureStamps are the keys a success removes: everything that says the copy to target is failing.
+func FailureStamps(target string) []string {
+	return []string{FailedAt(target), FailingSince(target), Failures(target)}
+}
 
 // FirstRetryDelay is how long to wait after the first failure; each further consecutive failure doubles it,
 // up to the copy's own interval (retrying more often than the schedule would is the thing to avoid).
 const FirstRetryDelay = 5 * time.Minute
 
-// CopyFailure is a failing copy: the last attempt's time and the consecutive failures so far.
+// CopyFailure is a failing copy: when the last attempt failed, when the run of failures began, and the consecutive failures so far.
 type CopyFailure struct {
-	At time.Time
-	N  int
+	FailedAt time.Time
+	Since    time.Time
+	N        int
 }
 
 // FailureOf reads the failure state of the copy to target from the volume's live config. It is false when the
 // copy is not failing: no stamp, an unreadable one, or one older than the last success (a stale stamp a success
-// should have cleared, never believed over a newer success).
+// should have cleared, never believed over a newer success). A failure whose onset stamp is missing or unreadable
+// began, as far as is known, at its last attempt.
 func FailureOf(current map[string]string, target string) (CopyFailure, bool) {
-	at, err := instant.Parse(current[CopyFailAt(target)])
+	at, err := instant.Parse(current[FailedAt(target)])
 	if err != nil {
 		return CopyFailure{}, false
 	}
 	var n int
-	if _, err := fmt.Sscanf(current[CopyFailCount(target)], "%d", &n); err != nil || n < 1 {
+	if _, err := fmt.Sscanf(current[Failures(target)], "%d", &n); err != nil || n < 1 {
 		n = 1
 	}
-	if last, err := instant.Parse(current[CopyStampAt(target)]); err == nil && !at.After(last) {
+	if last, err := instant.Parse(current[CopiedAt(target)]); err == nil && !at.After(last) {
 		return CopyFailure{}, false
 	}
-	return CopyFailure{At: at, N: n}, true
+	since, err := instant.Parse(current[FailingSince(target)])
+	if err != nil || since.After(at) {
+		since = at
+	}
+	return CopyFailure{FailedAt: at, Since: since, N: n}, true
 }
 
 // RetryAfter is when a failing copy may be tried again: FirstRetryDelay doubled for every failure after the
@@ -78,7 +91,7 @@ func RetryAfter(f CopyFailure, interval time.Duration) time.Time {
 	if interval > 0 && delay > interval {
 		delay = interval
 	}
-	return f.At.Add(delay)
+	return f.FailedAt.Add(delay)
 }
 
 // Markers `tink backup run` puts on each restore-point volume it creates on a target. Pruning and
@@ -86,7 +99,7 @@ func RetryAfter(f CopyFailure, interval time.Duration) time.Time {
 // not make is never deleted and never mistaken for a backup.
 const (
 	MarkerCopyOf     = "user.tink.backup.copy-of"     // "<project>/<pool>/<volume>"
-	MarkerCopyAt     = "user.tink.backup.copy-at"     // RFC 3339, UTC
+	MarkerCopiedAt   = "user.tink.backup.copied-at"   // an instant: when the copy was started
 	MarkerCopyTarget = "user.tink.backup.copy-target" // the backup-target's name
 	MarkerCopySnap   = "user.tink.backup.copy-snapshot"
 	// MarkerCopyServer names the Incus server the SOURCE volume lives on (its server_name, the host name by default).
@@ -101,8 +114,8 @@ const (
 // the host lost power): without it such a volume carries no mark at all and nothing may touch it. The finished copy
 // swaps these for the restore point's markers.
 const (
-	MarkerPartialOf = "user.tink.backup.copy-partial-of" // "<project>/<pool>/<volume>", as MarkerCopyOf
-	MarkerPartialAt = "user.tink.backup.copy-partial-at" // RFC 3339, UTC: when the copy was started
+	MarkerPartialOf        = "user.tink.backup.copy-partial-of"         // "<project>/<pool>/<volume>", as MarkerCopyOf
+	MarkerPartialStartedAt = "user.tink.backup.copy-partial-started-at" // an instant: when the copy was started
 )
 
 // CopyOf is the value of MarkerCopyOf for a volume.
@@ -141,7 +154,7 @@ const StackKey = ownership.Key
 // `plan` can see it without tink keeping a state file of its own. Written only when a verification passes: a failed one must not
 // look fresh.
 const (
-	StampVerifiedAt       = "user.tink.backup.verified-at"       // RFC 3339, UTC
+	StampVerifiedAt       = "user.tink.backup.verified-at"       // an instant
 	StampVerifiedSnapshot = "user.tink.backup.verified-snapshot" // which snapshot was restored
 	StampVerifiedWith     = "user.tink.backup.verified-with"     // "check" or "restore"
 	StampVerifiedFrom     = "user.tink.backup.verified-from"     // "local" (a snapshot on the volume's pool) or a backup-target's name

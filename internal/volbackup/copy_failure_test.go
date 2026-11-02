@@ -2,6 +2,7 @@ package volbackup
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -31,12 +32,16 @@ func TestFailedCopiesAreCountedAndASuccessClearsThem(t *testing.T) {
 		if err == nil {
 			t.Fatalf("attempt %d: the copy was meant to fail", i+1)
 		}
-		if got := cfg()[backupmeta.CopyFailCount("vps")]; got != want {
+		if got := cfg()[backupmeta.Failures("vps")]; got != want {
 			t.Errorf("after %d failures the count is %q, want %q", i+1, got, want)
 		}
-	}
-	if got := cfg()[backupmeta.CopyFailAt("vps")]; got != "2026-10-07T10:20:00Z" {
-		t.Errorf("the failure time is the LAST attempt's: %q", got)
+		// failed-at moves with every attempt; failing-since is set by the first and kept through the retries
+		if got, want := cfg()[backupmeta.FailedAt("vps")], fmt.Sprintf("2026-10-07T10:%02d:00Z", i*10); got != want {
+			t.Errorf("after %d failures failed-at is %q, want the attempt's own %q", i+1, got, want)
+		}
+		if got := cfg()[backupmeta.FailingSince("vps")]; got != "2026-10-07T10:00:00Z" {
+			t.Errorf("after %d failures failing-since is %q, want the first failure's 2026-10-07T10:00:00Z", i+1, got)
+		}
 	}
 	// nothing about WHY is stored on the volume: the error text can contain credentials
 	for k, v := range cfg() {
@@ -44,7 +49,7 @@ func TestFailedCopiesAreCountedAndASuccessClearsThem(t *testing.T) {
 			t.Errorf("the failure reason leaked into the volume's config: %s=%s", k, v)
 		}
 	}
-	if cfg()[backupmeta.CopyStampAt("vps")] != "" {
+	if cfg()[backupmeta.CopiedAt("vps")] != "" {
 		t.Error("a failure must never stamp the copy as done")
 	}
 
@@ -52,20 +57,22 @@ func TestFailedCopiesAreCountedAndASuccessClearsThem(t *testing.T) {
 	if _, err := Copy(local, Volume{Name: "lib"}, remoteTarget(), CopyOptions{Now: at(11, 0)}); err != nil {
 		t.Fatal(err)
 	}
-	if _, has := cfg()[backupmeta.CopyFailAt("vps")]; has {
-		t.Error("a success must remove the failure time")
+	for _, k := range backupmeta.FailureStamps("vps") {
+		if _, has := cfg()[k]; has {
+			t.Errorf("a success must remove %s", k)
+		}
 	}
-	if _, has := cfg()[backupmeta.CopyFailCount("vps")]; has {
-		t.Error("a success must remove the failure count")
-	}
-	if cfg()[backupmeta.CopyStampAt("vps")] == "" {
+	if cfg()[backupmeta.CopiedAt("vps")] == "" {
 		t.Error("the success must stamp the copy")
 	}
 	// and a failure after that starts again from one
 	remote.failCopy = errors.New("again")
 	_, _ = Copy(local, Volume{Name: "lib"}, remoteTarget(), CopyOptions{Now: at(12, 0)})
-	if got := cfg()[backupmeta.CopyFailCount("vps")]; got != "1" {
+	if got := cfg()[backupmeta.Failures("vps")]; got != "1" {
 		t.Errorf("a new run of failures starts at 1, got %q", got)
+	}
+	if got := cfg()[backupmeta.FailingSince("vps")]; got != "2026-10-07T12:00:00Z" {
+		t.Errorf("a new run of failures has a new onset, got failing-since %q", got)
 	}
 }
 
@@ -80,7 +87,7 @@ func TestCountsAreTrackedPerTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := local.vols["default/lib"].Config
-	if cfg[backupmeta.CopyFailCount("vps")] != "1" || cfg[backupmeta.CopyFailAt("nas")] != "" {
+	if cfg[backupmeta.Failures("vps")] != "1" || cfg[backupmeta.FailedAt("nas")] != "" {
 		t.Errorf("one target's failure and another's success must not touch each other: %v", cfg)
 	}
 }
@@ -92,7 +99,7 @@ func TestAnUnreachableRemoteCountsAsAFailure(t *testing.T) {
 	if _, err := Copy(local, Volume{Name: "lib"}, remoteTarget(), CopyOptions{Now: at(10, 0)}); err == nil {
 		t.Fatal("expected an error")
 	}
-	if got := local.vols["default/lib"].Config[backupmeta.CopyFailCount("vps")]; got != "1" {
+	if got := local.vols["default/lib"].Config[backupmeta.Failures("vps")]; got != "1" {
 		t.Errorf("failing before the first snapshot is still a failed copy, count = %q", got)
 	}
 }
@@ -117,8 +124,8 @@ func TestAPruneFailureIsNotAFailedCopy(t *testing.T) {
 	remote := newFake("vps", "default")
 	useRemote(t, "vps", remote)
 	old := time.Date(2026, 1, 1, 4, 0, 0, 0, time.UTC).Format(time.RFC3339)
-	remote.add("default", "lib-bk-20260101-040000", map[string]string{backupmeta.MarkerCopyOf: backupmeta.CopyOf("", "default", "lib"), backupmeta.MarkerCopyAt: old})
-	remote.add("default", "lib-bk-20260102-040000", map[string]string{backupmeta.MarkerCopyOf: backupmeta.CopyOf("", "default", "lib"), backupmeta.MarkerCopyAt: time.Date(2026, 1, 2, 4, 0, 0, 0, time.UTC).Format(time.RFC3339)})
+	remote.add("default", "lib-bk-20260101-040000", map[string]string{backupmeta.MarkerCopyOf: backupmeta.CopyOf("", "default", "lib"), backupmeta.MarkerCopiedAt: old})
+	remote.add("default", "lib-bk-20260102-040000", map[string]string{backupmeta.MarkerCopyOf: backupmeta.CopyOf("", "default", "lib"), backupmeta.MarkerCopiedAt: time.Date(2026, 1, 2, 4, 0, 0, 0, time.UTC).Format(time.RFC3339)})
 	remote.failDelete = true
 
 	_, err := Copy(local, Volume{Name: "lib"}, remoteTarget(), CopyOptions{Retain: "1d", Now: at(10, 0)})
@@ -126,10 +133,10 @@ func TestAPruneFailureIsNotAFailedCopy(t *testing.T) {
 		t.Fatalf("the error must say the copy succeeded and pruning failed: %v", err)
 	}
 	cfg := local.vols["default/lib"].Config
-	if cfg[backupmeta.CopyStampAt("vps")] == "" {
+	if cfg[backupmeta.CopiedAt("vps")] == "" {
 		t.Error("the copy succeeded, so it must be stamped")
 	}
-	if _, has := cfg[backupmeta.CopyFailAt("vps")]; has {
+	if _, has := cfg[backupmeta.FailedAt("vps")]; has {
 		t.Error("a prune failure must not be recorded as a failed copy")
 	}
 }
@@ -146,16 +153,20 @@ func TestRecordFailureOnlyCountsAFailureNewerThanTheLastSuccess(t *testing.T) {
 	local := newFake("homelab", "default")
 	// a stale failure (older than the last success) must not inflate the count
 	local.add("default", "lib", map[string]string{
-		backupmeta.CopyStampAt("nas"):   "2026-10-07T09:00:00Z",
-		backupmeta.CopyFailAt("nas"):    "2026-10-07T08:00:00Z",
-		backupmeta.CopyFailCount("nas"): "9",
+		backupmeta.CopiedAt("nas"): "2026-10-07T09:00:00Z",
+		backupmeta.FailedAt("nas"): "2026-10-07T08:00:00Z",
+		backupmeta.Failures("nas"): "9",
 	})
 	var srv incus.InstanceServer = local
 	if err := recordFailure(srv, Volume{Name: "lib"}, "nas", time.Date(2026, 10, 7, 10, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatal(err)
 	}
-	if got := local.vols["default/lib"].Config[backupmeta.CopyFailCount("nas")]; got != "1" {
+	cfg := local.vols["default/lib"].Config
+	if got := cfg[backupmeta.Failures("nas")]; got != "1" {
 		t.Errorf("a stale failure must not count: got %q, want 1", got)
+	}
+	if got := cfg[backupmeta.FailingSince("nas")]; got != "2026-10-07T10:00:00Z" {
+		t.Errorf("a stale failure must not give the new run its onset: got %q", got)
 	}
 }
 
@@ -164,16 +175,16 @@ func TestRecordFailureOnlyCountsAFailureNewerThanTheLastSuccess(t *testing.T) {
 func TestRecordFailureCountsFromWhatAnotherWriterLeft(t *testing.T) {
 	local := newFake("homelab", "default")
 	local.add("default", "lib", map[string]string{
-		backupmeta.CopyFailAt("nas"):    "2026-10-07T08:00:00Z",
-		backupmeta.CopyFailCount("nas"): "1",
+		backupmeta.FailedAt("nas"): "2026-10-07T08:00:00Z",
+		backupmeta.Failures("nas"): "1",
 	})
 	local.interfere = map[string]func(*api.StorageVolume){"default/lib": func(v *api.StorageVolume) {
-		v.Config[backupmeta.CopyFailCount("nas")] = "4"
+		v.Config[backupmeta.Failures("nas")] = "4"
 	}}
 	if err := recordFailure(local, Volume{Name: "lib"}, "nas", time.Date(2026, 10, 7, 10, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatal(err)
 	}
-	if got := local.vols["default/lib"].Config[backupmeta.CopyFailCount("nas")]; got != "5" {
+	if got := local.vols["default/lib"].Config[backupmeta.Failures("nas")]; got != "5" {
 		t.Errorf("count = %q, want 5: one more than the other writer's 4, not than the 1 first read", got)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/minihci/tink/internal/backuprun"
 	"github.com/minihci/tink/internal/daemon"
 	"github.com/minihci/tink/internal/helper"
+	"github.com/minihci/tink/internal/instant"
 	"github.com/minihci/tink/internal/jobs"
 	"github.com/minihci/tink/internal/volbackup"
 )
@@ -96,9 +98,9 @@ func TestAHelperThatCannotTakeItRunsHereAndSaysWhy(t *testing.T) {
 		want string
 	}{
 		"stopped":     {helperInstance("p", "helper", "Stopped", goodStatus(nil)), "stopped"},
-		"stale":       {helperInstance("p", "helper", "Running", goodStatus(func(s *helper.Status) { s.Tick = helperNow.Add(-2 * time.Hour) })), "stale"},
+		"stale":       {helperInstance("p", "helper", "Running", goodStatus(func(s *helper.Status) { s.WrittenAt = instant.At(helperNow.Add(-2 * time.Hour)) })), "stale"},
 		"no document": {helperInstance("p", "helper", "Running", nil), "status document"},
-		"protocol":    {helperInstance("p", "helper", "Running", goodStatus(func(s *helper.Status) { s.JobProto = 2 })), "job protocol 2"},
+		"protocol":    {helperInstance("p", "helper", "Running", goodStatus(func(s *helper.Status) { s.JobProto = jobs.Proto + 1 })), fmt.Sprintf("job protocol %d", jobs.Proto+1)},
 		"draining":    {helperInstance("p", "helper", "Running", goodStatus(func(s *helper.Status) { s.Draining = true })), "draining"},
 	} {
 		srv := serverWith(t, []api.Instance{tc.inst}, policyOf(t, nasCopy()))

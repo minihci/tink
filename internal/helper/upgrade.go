@@ -142,7 +142,7 @@ func (in *Installer) drain(scoped incus.InstanceServer, target Found, opts Upgra
 	for {
 		st, err := in.statusOf(target)
 		switch {
-		case err == nil && st != nil && st.Draining && !st.Tick.Before(begun):
+		case err == nil && st != nil && st.Draining && !st.WrittenAt.Before(begun):
 			if st.Running == 0 {
 				in.say("drained: nothing is running (%d queued job(s) wait for after the upgrade)", st.Queued)
 				return nil

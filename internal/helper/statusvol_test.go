@@ -3,6 +3,7 @@ package helper
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
 	"github.com/minihci/tink/internal/instance"
+	"github.com/minihci/tink/internal/jobs"
 )
 
 func TestParseStatusVolume(t *testing.T) {
@@ -239,7 +241,7 @@ func TestInstallMakesTheStatusVolumeAndPointsTheInstanceAtItBeforeTheInstanceExi
 		t.Errorf("a filesystem volume with no config of its own, and so no backup policy: %+v", post)
 	}
 	s := specs[0]
-	if s.Config[StatusVolumeKey] != "default/helper-status" || s.Config[MarkerKey] != "1" {
+	if s.Config[StatusVolumeKey] != "default/helper-status" || s.Config[MarkerKey] != strconv.Itoa(jobs.Proto) {
 		t.Errorf("the pointer sits beside the marker: %v", s.Config)
 	}
 	entry := s.Config["oci.entrypoint"]

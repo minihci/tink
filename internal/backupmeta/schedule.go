@@ -91,9 +91,9 @@ func CopyWarnings(name string, b *VolumeBackup, current map[string]string, now t
 		fail, failing := FailureOf(current, c.Target)
 		failingNote := ""
 		if failing {
-			failingNote = fmt.Sprintf("%d attempt(s) in a row have failed, the last %s ago", fail.N, humanAge(now.Sub(fail.At)))
+			failingNote = fmt.Sprintf("%d attempt(s) in a row have failed, the last %s ago", fail.N, humanAge(now.Sub(fail.FailedAt)))
 		}
-		stamp := current[CopyStampAt(c.Target)]
+		stamp := current[CopiedAt(c.Target)]
 		if stamp == "" {
 			if failing {
 				out = append(out, fmt.Sprintf("the copy to %s has never succeeded: %s -- `tink backup run %s` shows why", c.Target, failingNote, name))
@@ -104,7 +104,7 @@ func CopyWarnings(name string, b *VolumeBackup, current map[string]string, now t
 		}
 		last, err := instant.Parse(stamp)
 		if err != nil {
-			out = append(out, fmt.Sprintf("%s=%q is not a timestamp tink wrote -- `tink backup run %s` replaces it", CopyStampAt(c.Target), stamp, name))
+			out = append(out, fmt.Sprintf("%s=%q is not a timestamp tink wrote -- `tink backup run %s` replaces it", CopiedAt(c.Target), stamp, name))
 			continue
 		}
 		if failing {
@@ -149,7 +149,7 @@ type CopyDecision struct {
 // last attempts failed, the backoff after them must have elapsed.
 func CopyDue(schedule string, current map[string]string, target string, now time.Time) (CopyDecision, error) {
 	d := CopyDecision{Due: true}
-	if stamp := current[CopyStampAt(target)]; stamp != "" {
+	if stamp := current[CopiedAt(target)]; stamp != "" {
 		if last, err := instant.Parse(stamp); err == nil { // a stamp we cannot read is as good as none
 			due, err := NextRun(schedule, last.In(now.Location()))
 			if err != nil {
@@ -161,7 +161,7 @@ func CopyDue(schedule string, current map[string]string, target string, now time
 		}
 	}
 	if fail, failing := FailureOf(current, target); failing {
-		interval, err := scheduleInterval(schedule, fail.At.In(now.Location()))
+		interval, err := scheduleInterval(schedule, fail.FailedAt.In(now.Location()))
 		if err != nil {
 			return CopyDecision{}, err
 		}

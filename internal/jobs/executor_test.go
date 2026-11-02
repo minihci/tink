@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/minihci/tink/internal/instant"
 	"github.com/minihci/tink/internal/secrets"
 )
 
@@ -24,7 +25,7 @@ func newExec(t *testing.T, h map[string]Handler) (*Executor, Store) {
 
 func enqueue(t *testing.T, s Store, kind string, created time.Time) string {
 	t.Helper()
-	id, err := s.Enqueue(Request{Kind: kind, Origin: OriginSchedule, Created: created}, created)
+	id, err := s.Enqueue(Request{Kind: kind, Origin: OriginSchedule, CreatedAt: instant.At(created)}, created)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +63,7 @@ func TestJobsRunOldestFirstAndRecordTheirSummaryAndLog(t *testing.T) {
 	if err := json.Unmarshal(st.Summary, &sum); err != nil || sum["copies"] != 2 {
 		t.Errorf("summary: %s %v", st.Summary, err)
 	}
-	if st.State != Succeeded || st.Started.IsZero() || st.Finished.IsZero() || st.Kind != "k" {
+	if st.State != Succeeded || st.StartedAt.IsZero() || st.FinishedAt.IsZero() || st.Kind != "k" {
 		t.Errorf("status: %+v", st)
 	}
 	if log, _ := s.Log(early); log != "working on "+early+"\n" {
@@ -85,7 +86,7 @@ func TestABadJobNeverStopsTheOthers(t *testing.T) {
 	os.WriteFile(filepath.Join(s.Dir, malformed, "request.json"), []byte("{ this is not json"), 0o600)
 	tooNew := enqueue(t, s, "good", t0.Add(2*time.Minute))
 	rb, _ := os.ReadFile(filepath.Join(s.Dir, tooNew, "request.json"))
-	os.WriteFile(filepath.Join(s.Dir, tooNew, "request.json"), []byte(strings.Replace(string(rb), `"proto": 1`, `"proto": 99`, 1)), 0o600)
+	os.WriteFile(filepath.Join(s.Dir, tooNew, "request.json"), []byte(strings.Replace(string(rb), fmt.Sprintf(`"proto": %d`, Proto), `"proto": 99`, 1)), 0o600)
 	unknown := enqueue(t, s, "no-such-kind", t0.Add(3*time.Minute))
 	panics := enqueue(t, s, "boom", t0.Add(4*time.Minute))
 	failing := enqueue(t, s, "fails", t0.Add(5*time.Minute))
@@ -102,7 +103,7 @@ func TestABadJobNeverStopsTheOthers(t *testing.T) {
 		failing:   "target is full",
 	} {
 		st := status(t, s, id)
-		if st.State != Failed || !strings.Contains(st.Error, want) || st.Finished.IsZero() {
+		if st.State != Failed || !strings.Contains(st.Error, want) || st.FinishedAt.IsZero() {
 			t.Errorf("%s: %+v, want a failure containing %q", id, st, want)
 		}
 	}
@@ -115,14 +116,14 @@ func TestRecoverMarksInterruptedJobsFailedAndLeavesQueuedOnesToRun(t *testing.T)
 	ran := 0
 	e, s := newExec(t, map[string]Handler{"k": func(ctx context.Context, j Job, log io.Writer) (any, error) { ran++; return nil, nil }})
 	crashed := enqueue(t, s, "k", t0)
-	if err := s.writeStatus(Status{ID: crashed, Kind: "k", State: Running, Started: t0}); err != nil {
+	if err := s.writeStatus(Status{ID: crashed, Kind: "k", State: Running, StartedAt: instant.At(t0)}); err != nil {
 		t.Fatal(err)
 	}
 	waiting := enqueue(t, s, "k", t0.Add(time.Minute))
 	if err := e.Recover(); err != nil {
 		t.Fatal(err)
 	}
-	if st := status(t, s, crashed); st.State != Failed || !strings.Contains(st.Error, "interrupted") || st.Finished.IsZero() {
+	if st := status(t, s, crashed); st.State != Failed || !strings.Contains(st.Error, "interrupted") || st.FinishedAt.IsZero() {
 		t.Errorf("a job left running by a dead process failed: %+v", st)
 	}
 	if st := status(t, s, waiting); st.State != Queued {
@@ -229,7 +230,7 @@ func TestRetentionKeepsTheNewestAndTheRecent(t *testing.T) {
 	e.Now = func() time.Time { return now }
 	mk := func(age time.Duration, state State) string {
 		id := enqueue(t, s, "k", now.Add(-age))
-		if err := s.writeStatus(Status{ID: id, Kind: "k", State: state, Created: now.Add(-age), Finished: now.Add(-age)}); err != nil {
+		if err := s.writeStatus(Status{ID: id, Kind: "k", State: state, CreatedAt: instant.At(now.Add(-age)), FinishedAt: instant.At(now.Add(-age))}); err != nil {
 			t.Fatal(err)
 		}
 		return id
@@ -270,7 +271,7 @@ func TestRetentionKeepsTheNewestNEvenWhenAllAreOld(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		age := time.Duration(30+i) * 24 * time.Hour
 		id := enqueue(t, s, "k", t0.Add(-age))
-		s.writeStatus(Status{ID: id, State: Succeeded, Created: t0.Add(-age), Finished: t0.Add(-age)})
+		s.writeStatus(Status{ID: id, State: Succeeded, CreatedAt: instant.At(t0.Add(-age)), FinishedAt: instant.At(t0.Add(-age))})
 		ids = append(ids, id)
 	}
 	e.Prune()
@@ -387,7 +388,7 @@ func TestARequestThatCarriesAStackIsRefusedNotRunAsSomethingElse(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "bundle"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	req := `{"proto":1,"kind":"k","origin":"trigger","created":"2026-01-01T00:00:00Z","entries":["tink.yaml"]}`
+	req := fmt.Sprintf(`{"proto":%d,"kind":"k","origin":"trigger","created-at":"2026-01-01T00:00:00Z","entries":["tink.yaml"]}`, Proto)
 	if err := os.WriteFile(filepath.Join(dir, "request.json"), []byte(req), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -461,5 +462,41 @@ func TestCountsSeparateRunningFromQueued(t *testing.T) {
 	}
 	if s.Draining() {
 		t.Error("not draining without the file")
+	}
+}
+
+// The documents on disk name their instants the glossary way, as RFC 3339 UTC to the whole second, and a reader of the old names gets nothing.
+func TestTheJobDocumentsNameTheirInstantsTheGlossaryWay(t *testing.T) {
+	e, s := newExec(t, map[string]Handler{"k": func(ctx context.Context, j Job, log io.Writer) (any, error) { return nil, nil }})
+	id := enqueue(t, s, "k", t0.Add(123*time.Millisecond))
+	if _, err := e.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Beat(Heartbeat{WrittenAt: instant.At(t0.Add(987 * time.Millisecond)), PID: 1}); err != nil {
+		t.Fatal(err)
+	}
+	read := func(rel string) string {
+		b, err := os.ReadFile(filepath.Join(s.Dir, rel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	for file, want := range map[string][]string{
+		id + "/request.json": {`"created-at":"2026-10-07T10:00:00Z"`},
+		id + "/status.json":  {`"created-at":"2026-10-07T10:00:00Z"`, `"started-at":"2026-10-07T10:00:00Z"`, `"finished-at":"2026-10-07T10:00:00Z"`},
+		"heartbeat":          {`"written-at":"2026-10-07T10:00:00Z"`},
+	} {
+		text := read(file)
+		for _, w := range want {
+			if !strings.Contains(strings.ReplaceAll(text, " ", ""), w) {
+				t.Errorf("%s lacks %s: %s", file, w, text)
+			}
+		}
+		for _, old := range []string{`"created"`, `"started"`, `"finished"`, `"time"`} {
+			if strings.Contains(text, old) {
+				t.Errorf("%s still says %s: %s", file, old, text)
+			}
+		}
 	}
 }

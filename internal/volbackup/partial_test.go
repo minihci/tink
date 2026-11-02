@@ -13,8 +13,8 @@ var sweepNow = remoteNow // 2026-10-07 04:00 UTC
 
 func partialCfg(volume, server string, started time.Time) map[string]string {
 	c := map[string]string{
-		backupmeta.MarkerPartialOf: backupmeta.CopyOf("", "default", volume),
-		backupmeta.MarkerPartialAt: started.UTC().Format(time.RFC3339),
+		backupmeta.MarkerPartialOf:        backupmeta.CopyOf("", "default", volume),
+		backupmeta.MarkerPartialStartedAt: started.UTC().Format(time.RFC3339),
 	}
 	if server != "" {
 		c[backupmeta.MarkerCopyServer] = server
@@ -50,7 +50,7 @@ func TestACopyIsMarkedInProgressUntilItCompletes(t *testing.T) {
 			mid = v.Config
 		}
 	}
-	if mid[backupmeta.MarkerPartialOf] != backupmeta.CopyOf("", "default", "lib") || mid[backupmeta.MarkerPartialAt] == "" {
+	if mid[backupmeta.MarkerPartialOf] != backupmeta.CopyOf("", "default", "lib") || mid[backupmeta.MarkerPartialStartedAt] == "" {
 		t.Errorf("a copy under way must carry the in-progress mark: %v", mid)
 	}
 	if _, isPoint := mid[backupmeta.MarkerCopyOf]; isPoint {
@@ -70,7 +70,7 @@ func TestACopyIsMarkedInProgressUntilItCompletes(t *testing.T) {
 	if _, left := final[backupmeta.MarkerPartialOf]; left {
 		t.Error("the in-progress mark must be gone once the copy is finished")
 	}
-	if _, left := final[backupmeta.MarkerPartialAt]; left {
+	if _, left := final[backupmeta.MarkerPartialStartedAt]; left {
 		t.Error("the in-progress time must be gone once the copy is finished")
 	}
 	if pts, _ := ListRestorePoints(local, Volume{Name: "lib"}, remoteTarget()); len(pts) != 1 {
@@ -95,12 +95,12 @@ func TestSweepRemovesOnlyAbandonedCopiesOfThisVolumeFromThisServer(t *testing.T)
 		"other-bk-abandoned":  partialCfg("other", "homelab", old), // another volume's
 		"lib-bk-unmarked":     {},                                  // looks like ours, has no mark: never touched
 		"lib-bk-no-time":      {backupmeta.MarkerPartialOf: backupmeta.CopyOf("", "default", "lib"), backupmeta.MarkerCopyServer: "homelab"},
-		"lib-bk-bad-time":     {backupmeta.MarkerPartialOf: backupmeta.CopyOf("", "default", "lib"), backupmeta.MarkerPartialAt: "last tuesday", backupmeta.MarkerCopyServer: "homelab"},
+		"lib-bk-bad-time":     {backupmeta.MarkerPartialOf: backupmeta.CopyOf("", "default", "lib"), backupmeta.MarkerPartialStartedAt: "last tuesday", backupmeta.MarkerCopyServer: "homelab"},
 	}
 	// a RESTORE POINT that somehow still carries an in-progress mark: a finished copy is never swept
 	both := partialCfg("lib", "homelab", old)
 	both[backupmeta.MarkerCopyOf] = backupmeta.CopyOf("", "default", "lib")
-	both[backupmeta.MarkerCopyAt] = old.Format(time.RFC3339)
+	both[backupmeta.MarkerCopiedAt] = old.Format(time.RFC3339)
 	keeps["lib-bk-finished-but-marked"] = both
 	for name, cfg := range keeps {
 		remote.add("default", name, cfg)
@@ -154,10 +154,10 @@ func TestASweepFailureIsNotAFailedCopy(t *testing.T) {
 		t.Fatalf("the error must say the copy succeeded and what failed: %v", err)
 	}
 	cfg := local.vols["default/lib"].Config
-	if cfg[backupmeta.CopyStampAt("vps")] == "" {
+	if cfg[backupmeta.CopiedAt("vps")] == "" {
 		t.Error("the copy succeeded, so it is stamped")
 	}
-	if _, has := cfg[backupmeta.CopyFailAt("vps")]; has {
+	if _, has := cfg[backupmeta.FailedAt("vps")]; has {
 		t.Error("a sweep failure must not put the copy into backoff")
 	}
 }

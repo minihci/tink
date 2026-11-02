@@ -166,7 +166,7 @@ func copyTo(server incus.InstanceServer, v Volume, t Target, opts CopyOptions) (
 	}
 	// PolicyKey describes the volume this was copied FROM; a restore point must not carry it, or a scheduler that lists
 	// volumes would copy the copy.
-	if err := ensureMarkers(dst, t.pool(), res.Volume, markers, []string{backupmeta.MarkerPartialOf, backupmeta.MarkerPartialAt, backupmeta.PolicyKey}); err != nil {
+	if err := ensureMarkers(dst, t.pool(), res.Volume, markers, []string{backupmeta.MarkerPartialOf, backupmeta.MarkerPartialStartedAt, backupmeta.PolicyKey}); err != nil {
 		return res, err
 	}
 
@@ -196,7 +196,7 @@ func planCopy(dst incus.InstanceServer, v Volume, t Target, opts CopyOptions, re
 	res.Planned = []string{
 		fmt.Sprintf("snapshot %s/%s@%s", v.pool(), v.Name, res.Snapshot),
 		fmt.Sprintf("copy it to %s/%s", t.where(), res.Volume),
-		fmt.Sprintf("remove the temporary snapshot, and stamp %s", backupmeta.CopyStampAt(t.Name)),
+		fmt.Sprintf("remove the temporary snapshot, and stamp %s", backupmeta.CopiedAt(t.Name)),
 	}
 	if opts.Retain != "" {
 		pruned, others, perr := prune(dst, v, t, opts.Retain, start, "", true, me)
@@ -236,14 +236,14 @@ func takeSnapshot(s incus.InstanceServer, v Volume, name string, expires time.Ti
 // as the newest backup, and yet tink can recognise it later and remove it (sweepPartials).
 func copyMarkers(copyOf string, start time.Time, t Target, snapshot, me string) (inProgress, markers map[string]string) {
 	inProgress = map[string]string{
-		backupmeta.MarkerPartialOf:  copyOf,
-		backupmeta.MarkerPartialAt:  instant.Format(start),
-		backupmeta.MarkerCopyTarget: t.Name,
-		backupmeta.MarkerCopyServer: me,
+		backupmeta.MarkerPartialOf:        copyOf,
+		backupmeta.MarkerPartialStartedAt: instant.Format(start),
+		backupmeta.MarkerCopyTarget:       t.Name,
+		backupmeta.MarkerCopyServer:       me,
 	}
 	markers = map[string]string{
 		backupmeta.MarkerCopyOf:     copyOf,
-		backupmeta.MarkerCopyAt:     instant.Format(start),
+		backupmeta.MarkerCopiedAt:   instant.Format(start),
 		backupmeta.MarkerCopyTarget: t.Name,
 		backupmeta.MarkerCopySnap:   snapshot,
 		backupmeta.MarkerCopyServer: me,
@@ -330,11 +330,12 @@ func stampCopy(s incus.InstanceServer, v Volume, target, restorePoint string, at
 		if put.Config == nil {
 			put.Config = map[string]string{}
 		}
-		put.Config[backupmeta.CopyStampAt(target)] = instant.Format(at)
+		put.Config[backupmeta.CopiedAt(target)] = instant.Format(at)
 		put.Config[backupmeta.CopyStampVolume(target)] = restorePoint
-		// a success ends any run of failures
-		delete(put.Config, backupmeta.CopyFailAt(target))
-		delete(put.Config, backupmeta.CopyFailCount(target))
+		// a success ends any run of failures: the last attempt, the onset and the count all go
+		for _, k := range backupmeta.FailureStamps(target) {
+			delete(put.Config, k)
+		}
 		if err := s.UpdateStoragePoolVolume(v.pool(), "custom", v.Name, put, etag); err != nil {
 			return fmt.Errorf("recording the copy on %s/%s: %w", v.pool(), v.Name, err)
 		}
@@ -342,8 +343,9 @@ func stampCopy(s incus.InstanceServer, v Volume, target, restorePoint string, at
 	})
 }
 
-// recordFailure notes on the source volume that the copy to target just failed: when, and how many attempts in
-// a row (one more than the run of failures already recorded, if any). No message is stored.
+// recordFailure notes on the source volume that the copy to target just failed: when (failed-at, which moves with every attempt), how many
+// attempts in a row (one more than the run of failures already recorded, if any), and when the run began (failing-since, set by the first
+// failure and kept by each retry). No message is stored.
 func recordFailure(server incus.InstanceServer, v Volume, target string, at time.Time) error {
 	s := v.scoped(server)
 	// the count is read and added to on every attempt: a retry after a 412 counts from what the other writer left
@@ -352,16 +354,17 @@ func recordFailure(server incus.InstanceServer, v Volume, target string, at time
 		if err != nil {
 			return fmt.Errorf("reading %s/%s: %w", v.pool(), v.Name, err)
 		}
-		n := 1
+		n, since := 1, at
 		if prior, failing := backupmeta.FailureOf(vol.Config, target); failing {
-			n = prior.N + 1
+			n, since = prior.N+1, prior.Since
 		}
 		put := vol.Writable()
 		if put.Config == nil {
 			put.Config = map[string]string{}
 		}
-		put.Config[backupmeta.CopyFailAt(target)] = instant.Format(at)
-		put.Config[backupmeta.CopyFailCount(target)] = fmt.Sprintf("%d", n)
+		put.Config[backupmeta.FailedAt(target)] = instant.Format(at)
+		put.Config[backupmeta.FailingSince(target)] = instant.Format(since)
+		put.Config[backupmeta.Failures(target)] = fmt.Sprintf("%d", n)
 		if err := s.UpdateStoragePoolVolume(v.pool(), "custom", v.Name, put, etag); err != nil {
 			return fmt.Errorf("recording the failure on %s/%s: %w", v.pool(), v.Name, err)
 		}
@@ -403,7 +406,7 @@ func restorePointsOf(vols []api.StorageVolume, copyOf string) []RestorePoint {
 		if vol.Type != "custom" || vol.Config[backupmeta.MarkerCopyOf] != copyOf {
 			continue
 		}
-		at, err := instant.Parse(vol.Config[backupmeta.MarkerCopyAt])
+		at, err := instant.Parse(vol.Config[backupmeta.MarkerCopiedAt])
 		if err != nil {
 			continue // a marker we cannot read: leave the volume alone rather than guess its age
 		}
@@ -583,7 +586,7 @@ func sweepPartials(dst incus.InstanceServer, v Volume, t Target, now time.Time, 
 		if srv := vol.Config[backupmeta.MarkerCopyServer]; srv != "" && srv != me {
 			continue
 		}
-		started, err := instant.Parse(vol.Config[backupmeta.MarkerPartialAt])
+		started, err := instant.Parse(vol.Config[backupmeta.MarkerPartialStartedAt])
 		if err != nil || now.Sub(started) < PartialGrace {
 			continue
 		}

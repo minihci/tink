@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,8 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
 	"github.com/minihci/tink/internal/instance"
+	"github.com/minihci/tink/internal/instant"
+	"github.com/minihci/tink/internal/jobs"
 )
 
 var notFound = api.StatusErrorf(http.StatusNotFound, "not found")
@@ -299,7 +302,7 @@ func TestInstallCreatesTheHelperAndEnrolsItWithTheTokenOnStandardInput(t *testin
 	}
 
 	// what the instance is
-	for k, want := range map[string]string{"boot.autostart": "true", "boot.autorestart": "true", "environment.HOME": "/root", "environment.TZ": "America/Denver", MarkerKey: "1", MarkerKey + ".pool": "default"} {
+	for k, want := range map[string]string{"boot.autostart": "true", "boot.autorestart": "true", "environment.HOME": "/root", "environment.TZ": "America/Denver", MarkerKey: strconv.Itoa(jobs.Proto), MarkerKey + ".pool": "default"} {
 		if got := s.Config[k]; got != want {
 			t.Errorf("config %s = %q, want %q", k, got, want)
 		}
@@ -518,12 +521,12 @@ func TestInstallWaitsForTheFirstStatusAndSaysWhatItSaw(t *testing.T) {
 				sleeps++
 				clock = clock.Add(d)
 				if sleeps == 1 { // a document from BEFORE the enrolment: a helper that was revoked and enrolled again still has one
-					st := Status{Proto: 1, Tick: clock.Add(-time.Hour), HeartbeatSeconds: 7200}
+					st := Status{Proto: 1, WrittenAt: instant.At(clock.Add(-time.Hour)), Heartbeat: instant.Duration(2 * time.Hour)}
 					text, _ := Encode(st)
 					setStatus(h, text)
 				}
 				if sleeps == 3 { // the helper's first status document since the enrolment arrives
-					st := Status{Proto: 1, Tick: clock, HeartbeatSeconds: 600}
+					st := Status{Proto: 1, WrittenAt: instant.At(clock), Heartbeat: instant.Duration(10 * time.Minute)}
 					text, _ := Encode(st)
 					setStatus(h, text)
 				}
@@ -565,7 +568,7 @@ func setStatus(h *fakeHost, text string) {
 }
 
 func helperRunning(h *fakeHost) {
-	h.instances["helper"] = &api.Instance{Name: "helper", Project: "tink-helper", Status: "Running", InstancePut: api.InstancePut{Config: map[string]string{MarkerKey: "1", MarkerKey + ".pool": "fast"}}}
+	h.instances["helper"] = &api.Instance{Name: "helper", Project: "tink-helper", Status: "Running", InstancePut: api.InstancePut{Config: map[string]string{MarkerKey: strconv.Itoa(jobs.Proto), MarkerKey + ".pool": "fast"}}}
 	h.projects["tink-helper"] = true
 	h.volumes["fast/tink-helper-config"], h.volumes["fast/tink-helper-data"] = true, true
 	h.certs = []api.Certificate{cert(TrustName, 7), cert("someone-else", 9)}
@@ -845,7 +848,7 @@ func upgradeFixture(h *fakeHost) {
 }
 
 func publish(h *fakeHost, at time.Time, mut func(*Status)) {
-	st := Status{Proto: 1, Tick: at, HeartbeatSeconds: 600}
+	st := Status{Proto: 1, WrittenAt: instant.At(at), Heartbeat: instant.Duration(10 * time.Minute)}
 	if mut != nil {
 		mut(&st)
 	}

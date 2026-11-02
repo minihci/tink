@@ -163,7 +163,7 @@ func (in *Installer) Remotes(project, name string, now time.Time) (list []Remote
 	if st.Remotes == nil {
 		return nil, 0, target.Label(), fmt.Errorf("the helper %s does not report its remotes (it is older than this tink: `tink helper upgrade`)", target.Label())
 	}
-	return st.Remotes, now.Sub(st.Tick), target.Label(), nil
+	return st.Remotes, now.Sub(st.WrittenAt.Time), target.Label(), nil
 }
 
 // runningHelper finds the helper, and refuses one that is not running: the remote is added by running tink inside it.

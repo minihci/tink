@@ -11,7 +11,7 @@ import (
 )
 
 func point(name, server, at string) map[string]string {
-	c := map[string]string{backupmeta.MarkerCopyOf: backupmeta.CopyOf("", "default", "lib"), backupmeta.MarkerCopyAt: at}
+	c := map[string]string{backupmeta.MarkerCopyOf: backupmeta.CopyOf("", "default", "lib"), backupmeta.MarkerCopiedAt: at}
 	if server != "" {
 		c[backupmeta.MarkerCopyServer] = server
 	}
@@ -164,7 +164,7 @@ func TestTheSameCopyDoesNotRunTwiceAtOnce(t *testing.T) {
 	if !errors.Is(err, ErrBusy) {
 		t.Fatalf("a second copy of the same volume to the same target must be refused as busy: %v", err)
 	}
-	if got := local.vols["default/lib"].Config[backupmeta.CopyFailCount("vps")]; got != "" {
+	if got := local.vols["default/lib"].Config[backupmeta.Failures("vps")]; got != "" {
 		t.Errorf("being busy is not a failed copy, but the failure count is %q", got)
 	}
 	// a different target is not blocked by it: the guard is per (volume, target)

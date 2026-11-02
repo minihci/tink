@@ -80,7 +80,7 @@ func TestADryRunSaysWhatItWouldPruneAndSweepAndChangesNothing(t *testing.T) {
 	local, v, tg, opts := poolCopy()
 	of := backupmeta.CopyOf("", "default", "lib")
 	point := func(at string) map[string]string {
-		return map[string]string{backupmeta.MarkerCopyOf: of, backupmeta.MarkerCopyAt: at, backupmeta.MarkerCopyTarget: "nas", backupmeta.MarkerCopyServer: "homelab"}
+		return map[string]string{backupmeta.MarkerCopyOf: of, backupmeta.MarkerCopiedAt: at, backupmeta.MarkerCopyTarget: "nas", backupmeta.MarkerCopyServer: "homelab"}
 	}
 	local.add("nas", "lib-bk-20260801-040000", point("2026-08-01T04:00:00Z")) // expired under 30d, and not the newest
 	local.add("nas", "lib-bk-20261006-040000", point("2026-10-06T04:00:00Z")) // the newest: never pruned
@@ -159,7 +159,7 @@ func TestATemporarySnapshotThatCannotBeRemovedIsReportedAfterAGoodCopy(t *testin
 	if res.Volume != wantRestorePoint || local.vols["nas/"+wantRestorePoint].Config[backupmeta.MarkerCopyOf] == "" {
 		t.Errorf("the restore point was made and marked: %q %v", res.Volume, local.vols["nas/"+wantRestorePoint])
 	}
-	if local.vols["default/lib"].Config[backupmeta.CopyStampAt("nas")] == "" {
+	if local.vols["default/lib"].Config[backupmeta.CopiedAt("nas")] == "" {
 		t.Error("the source was stamped: the copy happened")
 	}
 }
@@ -242,7 +242,7 @@ func TestAFinishedRestorePointCarriesExactlyItsMarkers(t *testing.T) {
 	got := local.vols["nas/"+res.Volume].Config
 	want := map[string]string{
 		backupmeta.MarkerCopyOf:     backupmeta.CopyOf("", "default", "lib"),
-		backupmeta.MarkerCopyAt:     remoteNow.UTC().Format(time.RFC3339),
+		backupmeta.MarkerCopiedAt:   remoteNow.UTC().Format(time.RFC3339),
 		backupmeta.MarkerCopyTarget: "nas",
 		backupmeta.MarkerCopySnap:   wantSnapshot,
 		backupmeta.MarkerCopyServer: "homelab",
@@ -252,7 +252,7 @@ func TestAFinishedRestorePointCarriesExactlyItsMarkers(t *testing.T) {
 			t.Errorf("%s = %q, want %q", k, got[k], w)
 		}
 	}
-	for _, gone := range []string{backupmeta.MarkerPartialOf, backupmeta.MarkerPartialAt, backupmeta.PolicyKey} {
+	for _, gone := range []string{backupmeta.MarkerPartialOf, backupmeta.MarkerPartialStartedAt, backupmeta.PolicyKey} {
 		if _, still := got[gone]; still {
 			t.Errorf("a finished restore point must not carry %s: %v", gone, got)
 		}

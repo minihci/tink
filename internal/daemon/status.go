@@ -13,6 +13,7 @@ import (
 	"github.com/minihci/tink/internal/backupmeta"
 	"github.com/minihci/tink/internal/backuprun"
 	"github.com/minihci/tink/internal/helper"
+	"github.com/minihci/tink/internal/instant"
 	"github.com/minihci/tink/internal/jobs"
 )
 
@@ -98,7 +99,7 @@ func skipsFrom(discover, assess map[string]error) []helper.Skip {
 func failingFrom(in []backuprun.FailingCopy) []helper.Failing {
 	out := make([]helper.Failing, len(in))
 	for i, f := range in {
-		out[i] = helper.Failing{Volume: f.Volume, Target: f.Target, Count: f.Count, Since: f.Since.UTC()}
+		out[i] = helper.Failing{Volume: f.Volume, Target: f.Target, Count: f.Count, Since: instant.At(f.Since), FailedAt: instant.At(f.FailedAt)}
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Volume != out[j].Volume {
@@ -150,7 +151,7 @@ func buildStatus(o StatusOptions, live *Live, started, now time.Time) helper.Sta
 		Version:     o.Version,
 		JobProto:    jobs.Proto,
 		PolicyProto: backupmeta.PolicyProto,
-		Started:     started.UTC(),
+		StartedAt:   instant.At(started),
 		Skipped:     skipped,
 		Failing:     failing,
 		Reconciles:  live.reconcilesSnapshot(),
@@ -197,7 +198,7 @@ func lastJob(store jobs.Store) *helper.LastJob {
 	}
 	for i := len(list) - 1; i >= 0; i-- {
 		if list[i].State.Finished() {
-			return &helper.LastJob{ID: list[i].ID, State: string(list[i].State), Finished: list[i].Finished.UTC()}
+			return &helper.LastJob{ID: list[i].ID, State: string(list[i].State), FinishedAt: list[i].FinishedAt}
 		}
 	}
 	return nil

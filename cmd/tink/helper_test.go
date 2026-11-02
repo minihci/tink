@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,8 @@ import (
 
 	"github.com/minihci/tink/internal/backupmeta"
 	"github.com/minihci/tink/internal/helper"
+	"github.com/minihci/tink/internal/instant"
+	"github.com/minihci/tink/internal/jobs"
 	"github.com/minihci/tink/internal/resolve"
 )
 
@@ -34,7 +37,7 @@ func (s instancesServer) GetInstancesAllProjects(api.InstanceType) ([]api.Instan
 }
 
 func helperInstance(project, name, state string, st *helper.Status) api.Instance {
-	cfg := map[string]string{helper.MarkerKey: "1"}
+	cfg := map[string]string{helper.MarkerKey: strconv.Itoa(jobs.Proto)}
 	if st != nil {
 		text, _ := helper.Encode(*st)
 		cfg[helper.StatusKey] = text
@@ -43,8 +46,8 @@ func helperInstance(project, name, state string, st *helper.Status) api.Instance
 }
 
 func goodStatus(mut func(*helper.Status)) *helper.Status {
-	s := &helper.Status{Proto: 1, Version: "v1", JobProto: 1, PolicyProto: 1, TZ: "UTC", Started: helperNow.Add(-3 * time.Hour),
-		Tick: helperNow.Add(-2 * time.Minute), HeartbeatSeconds: 600}
+	s := &helper.Status{Proto: helper.StatusProto, Version: "v1", JobProto: jobs.Proto, PolicyProto: 1, TZ: "UTC", StartedAt: instant.At(helperNow.Add(-3 * time.Hour)),
+		WrittenAt: instant.At(helperNow.Add(-2 * time.Minute)), Heartbeat: instant.Duration(10 * time.Minute)}
 	if mut != nil {
 		mut(s)
 	}
@@ -72,7 +75,7 @@ func exitCode(t *testing.T, err error) int {
 
 func TestStatusCheckSpeaksInExitCodesAMonitorCanUse(t *testing.T) {
 	skipped := goodStatus(func(s *helper.Status) { s.Skipped = []helper.Skip{{Volume: "lib", Reason: "policy of protocol 2"}} })
-	stale := goodStatus(func(s *helper.Status) { s.Tick = helperNow.Add(-40 * time.Minute) })
+	stale := goodStatus(func(s *helper.Status) { s.WrittenAt = instant.At(helperNow.Add(-40 * time.Minute)) })
 	for _, tc := range []struct {
 		name string
 		inst api.Instance
@@ -145,8 +148,8 @@ func TestStatusFiltersAndTheWorstHelperDecidesTheCode(t *testing.T) {
 
 func TestStatusWithoutCheckPrintsDetailsAndExitsZero(t *testing.T) {
 	st := goodStatus(func(s *helper.Status) {
-		s.Failing = []helper.Failing{{Volume: "lib", Target: "nas", Count: 3, Since: helperNow.Add(-time.Hour)}}
-		s.LastJob = &helper.LastJob{ID: "20261007T110000Z-abc", State: "failed", Finished: helperNow.Add(-5 * time.Minute)}
+		s.Failing = []helper.Failing{{Volume: "lib", Target: "nas", Count: 3, Since: instant.At(helperNow.Add(-time.Hour)), FailedAt: instant.At(helperNow.Add(-time.Minute))}}
+		s.LastJob = &helper.LastJob{ID: "20261007T110000Z-abc", State: "failed", FinishedAt: instant.At(helperNow.Add(-5 * time.Minute))}
 		s.Remotes = []helper.Remote{{Name: "host"}, {Name: "nas2"}}
 	})
 	out, err := statusRun(t, instancesServer{all: []api.Instance{helperInstance("tink-helper", "helper", "Running", st)}}, "", "", false, false)
@@ -155,7 +158,7 @@ func TestStatusWithoutCheckPrintsDetailsAndExitsZero(t *testing.T) {
 	}
 	for _, want := range []string{
 		"helper tink-helper/helper: degraded", "1 copy(ies) failing", "version:     v1", "copy policies up to protocol 1",
-		"last heard:  2m ago (it writes at least every 10m)", "skipped:     none", "lib -> nas, 3 in a row",
+		"last heard:  2m ago (it writes at least every 10m)", "skipped:     none", "lib -> nas, 3 in a row since 2026-10-07 11:00 UTC, the last 1m ago",
 		"20261007T110000Z-abc failed, 5m ago", "remotes:     host; nas2",
 	} {
 		if !strings.Contains(out, want) {
