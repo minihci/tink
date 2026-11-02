@@ -99,6 +99,14 @@ What each consumer does with the class:
 
 `cmd/tink/keynamespace_test.go` fails if tink's source writes a `user.tink.*` literal that is none of the three, so a new key cannot be added without choosing its class. The old names, and how to fix a host that has them, are on [the removal page](removals/stamp-and-key-names.md).
 
+## JSON keys
+
+A key that tink defines in a JSON document it writes or prints (the status document, the `--json` output of `tink helper status`, a job's request and status, a backup run's summary) is lower case, and **a hyphen joins the words of one key**: `written-at`, `last-job`, `exit-code`. It is never an underscore, so one document does not mix two spellings and a reader never has to remember which key uses which. In `jq` a hyphenated key is read with brackets (`.["last-job"]`).
+
+A key that belongs to **another tool's format** is mirrored exactly, as Incus's words are: `access_token` in a container registry's token response (`internal/imageconfig`) and `display_name` in the Headscale API (`internal/mesh/headscale`) keep their underscores, because tink reads a document it did not write. `cmd/tink/timenaming_test.go` fails if a struct field of tink's own source has a JSON key with an underscore, and lists those two by name, each with the format it comes from; a third has to be added to that list on purpose.
+
+The keys of the stack language (YAML a person writes: `depends_on`, `on_image_change`, ...) are not covered by this rule. They are #280's.
+
 ## Proposed: remote access (not built)
 
 These come from a design discussion; there is no design note yet, and the names are open.
