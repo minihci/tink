@@ -201,7 +201,7 @@ func TestAStatusDocumentSaysWhetherItReportedRemotes(t *testing.T) {
 		t.Errorf("a helper that did not say is not one that has none: %#v", unsaid.Remotes)
 	}
 	// a document an older helper wrote has no such key at all
-	old, err := Parse(`{"proto":1,"tick":"2026-10-07T12:00:00Z"}`)
+	old, err := Parse(`{"proto":2,"written-at":"2026-10-07T12:00:00Z"}`)
 	if err != nil || old.Remotes != nil {
 		t.Errorf("%#v %v", old.Remotes, err)
 	}
