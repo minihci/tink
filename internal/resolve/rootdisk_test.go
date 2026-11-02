@@ -138,7 +138,7 @@ func TestRootDiskWarnings(t *testing.T) {
 				t.Fatalf("got %d warnings %q, want %d", len(got), got, len(c.wants))
 			}
 			for i, want := range c.wants {
-				if !strings.Contains(got[i], want) {
+				if !strings.Contains(got[i].Detail, want) {
 					t.Errorf("warning %d = %q, want it to contain %q", i, got[i], want)
 				}
 			}
@@ -176,7 +176,7 @@ func TestRootDiskWarnings_NamesTheInstanceAndTheFix(t *testing.T) {
 		"under profiles:",                                    //
 		"docs/resolver-architecture.md",                      // where it is explained
 	} {
-		if !strings.Contains(got[0], want) {
+		if !strings.Contains(got[0].Detail, want) {
 			t.Errorf("warning = %q, want it to contain %q", got[0], want)
 		}
 	}
@@ -209,11 +209,11 @@ func TestPlanOne_NoRootDiskWarnsAndPlanStillCompletes(t *testing.T) {
 			if p.Action != c.action {
 				t.Errorf("action = %v, want %v", p.Action, c.action)
 			}
-			if len(p.Warnings) != c.warns {
-				t.Fatalf("warnings = %q, want %d", p.Warnings, c.warns)
+			if len(p.Warnings()) != c.warns {
+				t.Fatalf("warnings = %q, want %d", details(p.Warnings()), c.warns)
 			}
-			if c.warns > 0 && !strings.Contains(p.Warnings[0], `instance "dns" has no root disk`) {
-				t.Errorf("warnings = %q, want the no-root-disk warning", p.Warnings)
+			if c.warns > 0 && !strings.Contains(p.Warnings()[0].Detail, `instance "dns" has no root disk`) {
+				t.Errorf("warnings = %q, want the no-root-disk warning", details(p.Warnings()))
 			}
 		})
 	}
@@ -228,7 +228,7 @@ func TestPlanOne_UnreadableProfileIsNotAPlanError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("planOne() error = %v", err)
 	}
-	if len(p.Warnings) != 0 {
-		t.Errorf("warnings = %q, want none for a profile that could not be read", p.Warnings)
+	if len(p.Warnings()) != 0 {
+		t.Errorf("warnings = %q, want none for a profile that could not be read", details(p.Warnings()))
 	}
 }

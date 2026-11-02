@@ -1,11 +1,11 @@
 package resolve
 
 import (
-	"fmt"
 	"strings"
 
 	incus "github.com/lxc/incus/v7/client"
 
+	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/incusapi"
 )
 
@@ -42,7 +42,7 @@ func hasRootDisk(devices map[string]map[string]string) bool {
 // It is conservative on purpose. If any profile cannot be read (a failed lookup), or exists neither in the stack nor on the server (Incus reports that on its own,
 // and there is nothing to say about its devices), there is no warning. A later profile that overrides an earlier root device is not modelled either: that can
 // only hide a warning, never add a false one.
-func rootDiskWarnings(server incus.InstanceServer, r Resource, declared map[string]Resource) []string {
+func rootDiskWarnings(server incus.InstanceServer, r Resource, declared map[string]Resource) []finding.Finding {
 	if r.Kind != KindInstance {
 		return nil
 	}
@@ -65,6 +65,6 @@ func rootDiskWarnings(server incus.InstanceServer, r Resource, declared map[stri
 			return nil
 		}
 	}
-	return []string{fmt.Sprintf("instance %q has no root disk: none of its profiles (%s) has a disk device with path: /. Incus is sent only the profiles when an instance is created, never the instance's own devices, so creation fails with \"No root device could be found\", and a root disk declared on the instance does not help. Declare a kind: profile with a root disk (a device with type: disk, path: /, pool: <pool>) and list it under profiles:; see docs/resolver-architecture.md",
+	return []finding.Finding{finding.Warnf(reasonNoRootDisk, "", "instance %q has no root disk: none of its profiles (%s) has a disk device with path: /. Incus is sent only the profiles when an instance is created, never the instance's own devices, so creation fails with \"No root device could be found\", and a root disk declared on the instance does not help. Declare a kind: profile with a root disk (a device with type: disk, path: /, pool: <pool>) and list it under profiles:; see docs/resolver-architecture.md",
 		r.Name, which)}
 }

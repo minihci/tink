@@ -385,9 +385,9 @@ func TestEveryKindReportsWhoseItIsAndNeverCallsTheStampAChange(t *testing.T) {
 				}
 				// phase 1 keeps today's behaviour for an object another stack stamped: only a volume says anything
 				if state == stampedElsewh {
-					warned := strings.Contains(strings.Join(p.Warnings, "|"), `"other"`)
+					warned := strings.Contains(strings.Join(details(p.Warnings()), "|"), `"other"`)
 					if warned != (kind == KindStorageVolume) {
-						t.Errorf("warns about the other owner = %v, want %v (only volumes do, today): %q", warned, kind == KindStorageVolume, p.Warnings)
+						t.Errorf("warns about the other owner = %v, want %v (only volumes do, today): %q", warned, kind == KindStorageVolume, details(p.Warnings()))
 					}
 				}
 			})
@@ -649,21 +649,21 @@ func TestAdoptStampsABridgeInUseAndItIsNotBlocked(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Action != ActionNone || len(p.Blocked) != 0 {
-		t.Errorf("a stamped bridge in use plans %v %v, want no changes", p.Action, p.Blocked)
+	if p.Action != ActionNone || len(p.Blocked()) != 0 {
+		t.Errorf("a stamped bridge in use plans %v %v, want no changes", p.Action, details(p.Blocked()))
 	}
 	// unstamped, in use, nothing else different: still no changes and not BLOCKED
 	f2 := newOwnFake()
 	r2 := f2.seed(KindNetwork, unstamped)
 	f2.networks["p"].UsedBy = []string{"/1.0/instances/web"}
-	if p, _ := planOne(f2, r2, ownOpts("lab")); p.Action != ActionNone || len(p.Blocked) != 0 {
-		t.Errorf("an unstamped bridge in use plans %v %v, want no changes", p.Action, p.Blocked)
+	if p, _ := planOne(f2, r2, ownOpts("lab")); p.Action != ActionNone || len(p.Blocked()) != 0 {
+		t.Errorf("an unstamped bridge in use plans %v %v, want no changes", p.Action, details(p.Blocked()))
 	}
 	// the guard itself exempts the key, should it ever reach the desired config
 	live := liveBridge(map[string]string{"ipv4.nat": "true"}, "/1.0/instances/web")
 	desired := Resource{Kind: KindNetwork, Name: "svc", Config: map[string]string{"ipv4.nat": "true", ownership.Key: "lab"}}
 	if p, _ := planNetwork(&netServer{live: live}, desired); p.Action == ActionBlocked {
-		t.Errorf("the stamp alone blocked a bridge in use: %v", p.Blocked)
+		t.Errorf("the stamp alone blocked a bridge in use: %v", details(p.Blocked()))
 	}
 }
 

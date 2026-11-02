@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/minihci/tink/internal/backupext"
+	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/instant"
 )
 
@@ -188,30 +189,32 @@ var verifyCadenceAge = map[string]time.Duration{
 // successful verification (the stamp `tink backup verify` leaves) is missing or
 // older than the cadence. "Untested backup" becomes a visible state of the stack
 // instead of something found out during an outage. No cadence declared, no nag.
-func VerifyWarning(name string, b *VolumeBackup, current map[string]string, now time.Time) string {
+func VerifyWarning(name string, b *VolumeBackup, current map[string]string, now time.Time) []finding.Finding {
 	if b == nil || b.None != "" || b.Verify == "" {
-		return ""
+		return nil
 	}
 	maxAge := verifyCadenceAge[b.Verify]
 	stamp := current[StampVerifiedAt]
 	if stamp == "" {
-		return fmt.Sprintf("verify: %s is declared but this volume has never been verified -- run `tink backup verify %s`", b.Verify, name)
+		return one(finding.Warnf("the volume has never been verified", "", "verify: %s is declared but this volume has never been verified -- run `tink backup verify %s`", b.Verify, name))
 	}
 	at, err := instant.Parse(stamp)
 	if err != nil {
-		return fmt.Sprintf("%s=%q is not a timestamp tink wrote -- run `tink backup verify %s` to replace it", StampVerifiedAt, stamp, name)
+		return one(finding.Warnf("the verify stamp is not a timestamp", "", "%s=%q is not a timestamp tink wrote -- run `tink backup verify %s` to replace it", StampVerifiedAt, stamp, name))
 	}
 	// A restore-only verification does not satisfy a declared check: otherwise running verify from
 	// somewhere the stack file is not found would make the volume look freshly verified while the
 	// check that matters never ran.
 	if b.VerifyCheck != nil && current[StampVerifiedWith] != "check" {
-		return fmt.Sprintf("a verify check is declared, but the last verification only proved the snapshot restores -- run `tink backup verify %s` with the stack file so the check runs", name)
+		return one(finding.Warnf("the last verification did not run the check", "", "a verify check is declared, but the last verification only proved the snapshot restores -- run `tink backup verify %s` with the stack file so the check runs", name))
 	}
 	if age := now.Sub(at); age > maxAge {
-		return fmt.Sprintf("last verified %s ago, older than the declared verify: %s -- run `tink backup verify %s`", humanAge(age), b.Verify, name)
+		return one(finding.Warnf("the last verification is too old", "", "last verified %s ago, older than the declared verify: %s -- run `tink backup verify %s`", humanAge(age), b.Verify, name))
 	}
-	return ""
+	return nil
 }
+
+func one(f finding.Finding) []finding.Finding { return []finding.Finding{f} }
 
 func humanAge(d time.Duration) string {
 	switch {

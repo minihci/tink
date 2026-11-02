@@ -96,15 +96,15 @@ func TestPlanHelperInstallsWhenThereIsNone(t *testing.T) {
 	if p.Action != ActionCreate || !strings.Contains(joined(p.Changes), "install the daemon helper tink-helper/helper") {
 		t.Errorf("plan = %+v", p)
 	}
-	if !strings.Contains(joined(p.Warnings), `remote "vps"`) || strings.Contains(joined(p.Warnings), `remote "host"`) {
-		t.Errorf("only the remote that needs another server's token is warned about: %q", joined(p.Warnings))
+	if !strings.Contains(joined(details(p.Warnings())), `remote "vps"`) || strings.Contains(joined(details(p.Warnings())), `remote "host"`) {
+		t.Errorf("only the remote that needs another server's token is warned about: %q", joined(details(p.Warnings())))
 	}
-	if strings.Contains(joined(p.Warnings), "timezone") {
-		t.Errorf("a timezone was given: %q", joined(p.Warnings))
+	if strings.Contains(joined(details(p.Warnings())), "timezone") {
+		t.Errorf("a timezone was given: %q", joined(details(p.Warnings())))
 	}
 	p, _ = planHelper(&helperKindServer{}, helperRes(func(r *Resource) { r.Timezone = "" }), helperNow, PlanOptions{})
-	if !strings.Contains(joined(p.Warnings), "no timezone") {
-		t.Errorf("no timezone should be said: %q", joined(p.Warnings))
+	if !strings.Contains(joined(details(p.Warnings())), "no timezone") {
+		t.Errorf("no timezone should be said: %q", joined(details(p.Warnings())))
 	}
 }
 
@@ -114,10 +114,10 @@ func TestPlanHelperAdoptsAHealthyOneAndChangesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Action != ActionNone || len(p.Warnings) != 0 || len(p.Blocked) != 0 {
+	if p.Action != ActionNone || len(p.Warnings()) != 0 || len(p.Blocked()) != 0 {
 		t.Fatalf("plan = %+v", p)
 	}
-	n := joined(p.Notes)
+	n := joined(details(p.Notes()))
 	if !strings.Contains(n, "the daemon helper tink-helper/helper is healthy") || !strings.Contains(n, "it runs v0.1.4;") || !strings.Contains(n, "tink helper upgrade") {
 		t.Errorf("notes = %q", n)
 	}
@@ -126,21 +126,21 @@ func TestPlanHelperAdoptsAHealthyOneAndChangesNothing(t *testing.T) {
 func TestPlanHelperWarnsWhenItIsNotWellButStillChangesNothing(t *testing.T) {
 	stopped := &helperKindServer{instances: []api.Instance{helperInstance(t, "tink-helper", "helper", "Stopped", goodStatus())}}
 	p, _ := planHelper(stopped, helperRes(nil), helperNow, PlanOptions{})
-	if p.Action != ActionNone || !strings.Contains(joined(p.Warnings), "the daemon helper is down") {
+	if p.Action != ActionNone || !strings.Contains(joined(details(p.Warnings())), "the daemon helper is down") {
 		t.Errorf("stopped: %+v", p)
 	}
 	silent := goodStatus()
 	silent.WrittenAt = instant.At(helperNow.Add(-3 * time.Hour))
 	srv := &helperKindServer{instances: []api.Instance{helperInstance(t, "tink-helper", "helper", "Running", silent)}}
 	p, _ = planHelper(srv, helperRes(nil), helperNow, PlanOptions{})
-	if p.Action != ActionNone || !strings.Contains(joined(p.Warnings), "stale") {
+	if p.Action != ActionNone || !strings.Contains(joined(details(p.Warnings())), "stale") {
 		t.Errorf("silent: %+v", p)
 	}
 	failing := goodStatus()
 	failing.Failing = []helper.Failing{{Volume: "identity-data", Target: "offsite", Count: 3, Since: instant.At(helperNow.Add(-time.Hour))}}
 	srv = &helperKindServer{instances: []api.Instance{helperInstance(t, "tink-helper", "helper", "Running", failing)}}
 	p, _ = planHelper(srv, helperRes(nil), helperNow, PlanOptions{})
-	if p.Action != ActionNone || !strings.Contains(joined(p.Warnings), "degraded") {
+	if p.Action != ActionNone || !strings.Contains(joined(details(p.Warnings())), "degraded") {
 		t.Errorf("failing a copy: %+v", p)
 	}
 }
@@ -160,7 +160,7 @@ func TestPlanHelperReadsAStatusVolumeTheInstancePointsAt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Action != ActionNone || len(p.Warnings) != 0 || !strings.Contains(joined(p.Notes), "the daemon helper tink-helper/helper is healthy") || !strings.Contains(joined(p.Notes), "it runs v0.1.4;") {
+	if p.Action != ActionNone || len(p.Warnings()) != 0 || !strings.Contains(joined(details(p.Notes())), "the daemon helper tink-helper/helper is healthy") || !strings.Contains(joined(details(p.Notes())), "it runs v0.1.4;") {
 		t.Errorf("read from the volume: %+v", p)
 	}
 
@@ -170,12 +170,12 @@ func TestPlanHelperReadsAStatusVolumeTheInstancePointsAt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("an unreadable status volume must not make the plan fail: %v", err)
 	}
-	w := joined(p.Warnings)
+	w := joined(details(p.Warnings()))
 	if p.Action != ActionNone || !strings.Contains(w, "the daemon helper is degraded: cannot read its status volume default/helper-status: not authorized") || strings.Contains(w, "has not published") {
 		t.Errorf("%+v", p)
 	}
-	if !strings.Contains(joined(p.Notes), "is degraded") {
-		t.Errorf("notes = %q", joined(p.Notes))
+	if !strings.Contains(joined(details(p.Notes())), "is degraded") {
+		t.Errorf("notes = %q", joined(details(p.Notes())))
 	}
 }
 
@@ -184,15 +184,15 @@ func TestPlanHelperChecksTheRemotesTheStackSays(t *testing.T) {
 	noVPS.Remotes = []helper.Remote{{Name: "host"}}
 	srv := &helperKindServer{instances: []api.Instance{helperInstance(t, "tink-helper", "helper", "Running", noVPS)}}
 	p, _ := planHelper(srv, helperRes(nil), helperNow, PlanOptions{})
-	if !strings.Contains(joined(p.Warnings), `needs remote "vps"`) || !strings.Contains(joined(p.Warnings), "tink helper remote add vps") || strings.Contains(joined(p.Warnings), `remote "host"`) {
-		t.Errorf("warnings = %q", joined(p.Warnings))
+	if !strings.Contains(joined(details(p.Warnings())), `needs remote "vps"`) || !strings.Contains(joined(details(p.Warnings())), "tink helper remote add vps") || strings.Contains(joined(details(p.Warnings())), `remote "host"`) {
+		t.Errorf("warnings = %q", joined(details(p.Warnings())))
 	}
 	// an older helper that does not say what it reaches is not checked
 	older := goodStatus()
 	older.Remotes = nil
 	srv = &helperKindServer{instances: []api.Instance{helperInstance(t, "tink-helper", "helper", "Running", older)}}
-	if p, _ = planHelper(srv, helperRes(nil), helperNow, PlanOptions{}); len(p.Warnings) != 0 {
-		t.Errorf("a helper that did not say is not checked: %q", joined(p.Warnings))
+	if p, _ = planHelper(srv, helperRes(nil), helperNow, PlanOptions{}); len(p.Warnings()) != 0 {
+		t.Errorf("a helper that did not say is not checked: %q", joined(details(p.Warnings())))
 	}
 }
 
@@ -202,7 +202,7 @@ func TestPlanHelperIsBlockedByAnInstanceOfThatNameThatIsNotAHelper(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Action != ActionBlocked || !strings.Contains(joined(p.Blocked), "is not a helper") {
+	if p.Action != ActionBlocked || !strings.Contains(joined(details(p.Blocked())), "is not a helper") {
 		t.Errorf("plan = %+v", p)
 	}
 	// the same name in another project is no obstacle

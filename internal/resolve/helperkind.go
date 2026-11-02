@@ -9,6 +9,7 @@ import (
 
 	incus "github.com/lxc/incus/v7/client"
 
+	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/helper"
 	"github.com/minihci/tink/internal/incusapi"
 )
@@ -107,33 +108,33 @@ func planHelper(server incus.InstanceServer, r Resource, now time.Time, opts Pla
 		if _, _, exists, err := incusapi.LookupInstance(server.UseProject(project), name); err != nil {
 			return PlannedResource{}, fmt.Errorf("checking whether %s exists: %w", label, err)
 		} else if exists {
-			return PlannedResource{Resource: r, Action: ActionBlocked, Blocked: []string{
-				fmt.Sprintf("an instance named %s exists and is not a helper (it lacks the marker %s): rename the helper, or move that instance", label, helper.MarkerKey)}}, nil
+			return PlannedResource{Resource: r, Action: ActionBlocked, Findings: []finding.Finding{
+				finding.Errorf(reasonHelperNameTaken, "", "an instance named %s exists and is not a helper (it lacks the marker %s): rename the helper, or move that instance", label, helper.MarkerKey)}}, nil
 		}
 		p.Action = ActionCreate
 		p.Changes = []string{fmt.Sprintf("install the daemon helper %s (what `tink helper install` does: a volume for its status document, a trust token from this certificate, then its own certificate)", label)}
 		if r.Timezone == "" {
-			p.Warnings = append(p.Warnings, "no timezone: the helper would evaluate its backup schedules in UTC")
+			p.Findings = append(p.Findings, finding.Warnf(reasonHelperNoTimezone, "", "no timezone: the helper would evaluate its backup schedules in UTC"))
 		}
 		for _, remote := range r.Remotes {
 			if remote != "host" {
-				p.Warnings = append(p.Warnings, fmt.Sprintf("the helper will not be able to reach remote %q until `tink helper remote add %s ...` (it needs a token or fingerprint from that server)", remote, remote))
+				p.Findings = append(p.Findings, finding.Warnf(reasonHelperRemoteToAdd, "", "the helper will not be able to reach remote %q until `tink helper remote add %s ...` (it needs a token or fingerprint from that server)", remote, remote))
 			}
 		}
 		return planAuthz(server, r, nil, p, opts), nil
 	}
 
 	rep := helper.Evaluate(*found, now)
-	p.Notes = append(p.Notes, fmt.Sprintf("the daemon helper %s is %s", label, rep.Health))
+	p.Findings = append(p.Findings, finding.Notef(reasonHelperState, "", "the daemon helper %s is %s", label, rep.Health))
 	if rep.Status != nil && rep.Status.Version != "" {
-		p.Notes = append(p.Notes, "it runs "+rep.Status.Version+"; plan never upgrades it (that is `tink helper upgrade`, which drains it first)")
+		p.Findings = append(p.Findings, finding.Notef(reasonHelperVersion, "", "it runs %s; plan never upgrades it (that is `tink helper upgrade`, which drains it first)", rep.Status.Version))
 	}
 	if found.APIRoute() == helper.APIViaProxy {
-		p.Notes = append(p.Notes, "it reaches the host's API through a proxy device: a restricted project must allow proxy devices (a helper installed with `tink helper install --api-via network`, the default where the bridge allows it, has none)")
+		p.Findings = append(p.Findings, finding.Notef(reasonHelperProxyAPI, "", "it reaches the host's API through a proxy device: a restricted project must allow proxy devices (a helper installed with `tink helper install --api-via network`, the default where the bridge allows it, has none)"))
 	}
 	if rep.Health != helper.Healthy {
 		for _, reason := range rep.Reasons {
-			p.Warnings = append(p.Warnings, "the daemon helper is "+rep.Health.String()+": "+reason)
+			p.Findings = append(p.Findings, finding.Warnf(reasonHelperHealth, "", "the daemon helper is %s: %s", rep.Health.String(), reason))
 		}
 	}
 	if rep.Status != nil && rep.Status.Remotes != nil {
@@ -143,7 +144,7 @@ func planHelper(server incus.InstanceServer, r Resource, now time.Time, opts Pla
 		}
 		for _, remote := range r.Remotes {
 			if !have[remote] {
-				p.Warnings = append(p.Warnings, fmt.Sprintf("the stack says the helper needs remote %q, and it reports none by that name: `tink helper remote add %s ...` (copies to it fail until then)", remote, remote))
+				p.Findings = append(p.Findings, finding.Warnf(reasonHelperRemoteMissing, "", "the stack says the helper needs remote %q, and it reports none by that name: `tink helper remote add %s ...` (copies to it fail until then)", remote, remote))
 			}
 		}
 	}

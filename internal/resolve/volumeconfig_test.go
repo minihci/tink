@@ -32,7 +32,7 @@ func TestCreationOnlyKeysAreAWarningOnAnExistingVolumeNotAChange(t *testing.T) {
 	if p.Action != ActionNone {
 		t.Errorf("initial.uid cannot be converged on a volume that exists, so it is no change: %+v", p)
 	}
-	if w := strings.Join(p.Warnings, "\n"); !strings.Contains(w, "initial.uid") || !strings.Contains(w, "only applies when a volume is created") {
+	if w := strings.Join(details(p.Warnings()), "\n"); !strings.Contains(w, "initial.uid") || !strings.Contains(w, "only applies when a volume is created") {
 		t.Errorf("but the difference is said: %q", w)
 	}
 
@@ -48,7 +48,7 @@ func TestCreationOnlyKeysAreAWarningOnAnExistingVolumeNotAChange(t *testing.T) {
 
 	// when they agree, nothing at all
 	cur = &api.StorageVolume{Name: "data", StorageVolumePut: api.StorageVolumePut{Config: map[string]string{"size": "1GiB", "initial.uid": "1000"}}}
-	if p := decideVolume(r, cur, volumeEnv{}); p.Action != ActionNone || len(p.Warnings) != 0 {
+	if p := decideVolume(r, cur, volumeEnv{}); p.Action != ActionNone || len(p.Warnings()) != 0 {
 		t.Errorf("%+v", p)
 	}
 }

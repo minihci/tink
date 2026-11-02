@@ -22,11 +22,11 @@ func TestACopyToARemoteTheHelperDoesNotHaveIsWarnedAbout(t *testing.T) {
 		t.Fatalf("one warning, for the one remote target: %v", got)
 	}
 	for _, want := range []string{`"vps"`, "will fail", "tink-helper/helper", "tink helper remote add vps"} {
-		if !strings.Contains(got[0], want) {
+		if !strings.Contains(got[0].Detail, want) {
 			t.Errorf("the warning must say %q: %s", want, got[0])
 		}
 	}
-	if strings.Contains(got[0], "nas") {
+	if strings.Contains(got[0].Detail, "nas") {
 		t.Errorf("a pool target on the helper's own server needs no remote: %s", got[0])
 	}
 }
@@ -76,8 +76,8 @@ func TestThePlanOfAVolumeCarriesTheWarningEvenWhenNothingChanges(t *testing.T) {
 	if p.Action != ActionNone {
 		t.Fatalf("converged: %v %v", p.Action, p.Changes)
 	}
-	if !strings.Contains(strings.Join(p.Warnings, "|"), `remote "vps"`) {
-		t.Errorf("warnings = %v", p.Warnings)
+	if !strings.Contains(strings.Join(details(p.Warnings()), "|"), `remote "vps"`) {
+		t.Errorf("warnings = %v", details(p.Warnings()))
 	}
 }
 
@@ -105,11 +105,11 @@ func TestTheWarningForARemoteWithNoDeclaredAddressNamesTheTokenRoute(t *testing.
 	env := volumeEnv{targets: policyTargets(), helperLabel: "tink-helper/helper", helperRemotes: map[string]bool{"host": true}}
 	got := env.helperRemoteWarnings(volumeCopyingToVPS())
 	want := `copies to "vps" (remote "vps") will fail: the helper (tink-helper/helper) has no remote of that name. Add it with a trust token made on that server (incus config trust add helper -q): tink helper remote add vps --token-file -`
-	if len(got) != 1 || got[0] != want {
+	if len(got) != 1 || got[0].Detail != want {
 		t.Errorf("the default text:\n  got:  %v\n  want: %s", got, want)
 	}
 	// the command must be one that works as typed: with a token the address is left out, and a placeholder for it is what misled people
-	if len(got) == 1 && strings.Contains(got[0], "ADDRESS") {
+	if len(got) == 1 && strings.Contains(got[0].Detail, "ADDRESS") {
 		t.Errorf("a token carries the server's address, so the hint must not ask for one: %s", got[0])
 	}
 }
@@ -123,13 +123,13 @@ func TestTheWarningNamesTheExactCommandWhenTheStackDeclaresTheAddress(t *testing
 		t.Fatalf("one warning: %v", got)
 	}
 	base := `copies to "vps" (remote "vps") will fail: the helper (tink-helper/helper) has no remote of that name. Add it with a trust token made on that server (incus config trust add helper -q): tink helper remote add vps --token-file -`
-	if !strings.HasPrefix(got[0], base) {
+	if !strings.HasPrefix(got[0].Detail, base) {
 		t.Errorf("the token route stays as it was, and the hint is added after it: %s", got[0])
 	}
-	if want := "tink helper remote add vps https://10.0.0.7:8443 --fingerprint " + declaredFingerprint; !strings.Contains(got[0], want) {
+	if want := "tink helper remote add vps https://10.0.0.7:8443 --fingerprint " + declaredFingerprint; !strings.Contains(got[0].Detail, want) {
 		t.Errorf("the warning must give the command in the form the helper takes (normalised address, lower-case hex) %q: %s", want, got[0])
 	}
-	if !strings.Contains(got[0], "already trusts") {
+	if !strings.Contains(got[0].Detail, "already trusts") {
 		t.Errorf("it must say when the no-token form applies: %s", got[0])
 	}
 }

@@ -235,12 +235,12 @@ func TestLoadFileRejectsAReferenceInFileContentFromSourcePath(t *testing.T) {
 func TestPlanRefusesAnUnexpandedReferenceAndABlockedSecret(t *testing.T) {
 	// no server needed: these are decided before anything is read from Incus
 	r := envInstance("db", map[string]string{"PW": "${secret:db-password}"})
-	if p, err := planOne(nil, r, PlanOptions{}); err != nil || p.Action != ActionBlocked || !strings.Contains(strings.Join(p.Blocked, ""), "never expanded") {
+	if p, err := planOne(nil, r, PlanOptions{}); err != nil || p.Action != ActionBlocked || !strings.Contains(strings.Join(details(p.Blocked()), ""), "never expanded") {
 		t.Errorf("an unexpanded reference must BLOCK rather than be pushed as the literal text: %+v, %v", p, err)
 	}
 	blocked := ExpandSecrets([]Resource{r}, &fakeSource{exists: true})[0]
 	p, err := planOne(nil, blocked, PlanOptions{})
-	if err != nil || p.Action != ActionBlocked || !strings.Contains(strings.Join(p.Blocked, ""), "is not set") {
+	if err != nil || p.Action != ActionBlocked || !strings.Contains(strings.Join(details(p.Blocked()), ""), "is not set") {
 		t.Errorf("an unresolved secret must BLOCK with the reason: %+v, %v", p, err)
 	}
 }

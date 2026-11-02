@@ -41,7 +41,7 @@ func TestCopyWarnings(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := strings.Join(copyWarnings(tc.r, tc.current, now), "\n")
+			got := strings.Join(details(copyWarnings(tc.r, tc.current, now)), "\n")
 			if tc.want == "" && got != "" || !strings.Contains(got, tc.want) {
 				t.Errorf("warnings = %q, want it to contain %q", got, tc.want)
 			}
@@ -62,11 +62,11 @@ func TestDecideVolumeWarnsAboutCopiesOnlyForExistingVolumes(t *testing.T) {
 	r := Resource{Kind: KindStorageVolume, Name: "lib", Backup: &backupmeta.VolumeBackup{
 		Snapshots: &backupmeta.SnapshotPolicy{Schedule: "@daily", Retain: "7d"},
 		Copies:    []backupmeta.BackupCopy{{Target: "nas", Schedule: "@daily", Retain: "30d"}}}}
-	if w := strings.Join(decideVolume(r, nil, volumeEnv{targets: nasTarget}).Warnings, "|"); strings.Contains(w, "has never run") {
+	if w := strings.Join(details(decideVolume(r, nil, volumeEnv{targets: nasTarget}).Warnings()), "|"); strings.Contains(w, "has never run") {
 		t.Errorf("a volume that does not exist yet cannot have missed a copy, got %q", w)
 	}
 	existing := &api.StorageVolume{StorageVolumePut: api.StorageVolumePut{Config: map[string]string{}}}
-	if w := strings.Join(decideVolume(r, existing, volumeEnv{targets: nasTarget}).Warnings, "|"); !strings.Contains(w, "the copy to nas has never run") {
+	if w := strings.Join(details(decideVolume(r, existing, volumeEnv{targets: nasTarget}).Warnings()), "|"); !strings.Contains(w, "the copy to nas has never run") {
 		t.Errorf("an existing volume whose copy never ran must say so, got %q", w)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/resolve"
 )
 
@@ -13,7 +14,7 @@ func TestPrintPlanned_ADeferredFile(t *testing.T) {
 	printPlanned(&out, resolve.PlannedResource{
 		Resource: resolve.Resource{Kind: resolve.KindFile, Name: "playlist"},
 		Action:   resolve.ActionDeferred,
-		Warnings: []string{"not written, because instance ha is not running (its status is Stopped) and /media/list.txt is at or under /media, a mounted host directory (device media)"},
+		Findings: []finding.Finding{finding.Warnf("a file is left for the next apply", "", "not written, because instance ha is not running (its status is Stopped) and /media/list.txt is at or under /media, a mounted host directory (device media)")},
 	})
 	want := "  file/playlist: DEFERRED\n      warning: not written, because instance ha is not running (its status is Stopped) and /media/list.txt is at or under /media, a mounted host directory (device media)\n"
 	if out.String() != want {

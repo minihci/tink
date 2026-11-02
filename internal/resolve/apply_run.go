@@ -156,14 +156,14 @@ func applyOne(server incus.InstanceServer, r Resource, opts PlanOptions, note fu
 	if err != nil {
 		return outConverged, err
 	}
-	for _, w := range plan.Warnings {
-		note("%s/%s: warning: %s", r.Kind, r.Name, w)
+	for _, w := range plan.Warnings() {
+		note("%s/%s: warning: %s", r.Kind, r.Name, w.Detail)
 	}
 	// A file read from, or written into, a volume says so: "no changes" and "updated" are claims about a place, and the place is not the instance's.
 	fileNotes := func() {
 		if r.Kind == KindFile {
-			for _, n := range plan.Notes {
-				note("%s/%s: %s", r.Kind, r.Name, n)
+			for _, n := range plan.Notes() {
+				note("%s/%s: %s", r.Kind, r.Name, n.Detail)
 			}
 		}
 	}
@@ -176,7 +176,7 @@ func applyOne(server incus.InstanceServer, r Resource, opts PlanOptions, note fu
 		note("%s/%s: deferred until the instance is running (see the warning above)", r.Kind, r.Name)
 		return outDeferred, nil
 	case ActionBlocked:
-		note("%s/%s: BLOCKED: %s", r.Kind, r.Name, strings.Join(plan.Blocked, "; "))
+		note("%s/%s: BLOCKED: %s", r.Kind, r.Name, strings.Join(details(plan.Blocked()), "; "))
 		return outBlocked, nil
 	case ActionCreate:
 		var first firstStartOutcome

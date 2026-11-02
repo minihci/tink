@@ -272,8 +272,8 @@ func TestPlanPlacedFile(t *testing.T) {
 			if p.Action != tc.wantAct {
 				t.Errorf("action = %v, want %v (changes %v)", p.Action, tc.wantAct, p.Changes)
 			}
-			if !reflect.DeepEqual(p.Notes, tc.wantNotes) {
-				t.Errorf("notes = %q\nwant    %q", p.Notes, tc.wantNotes)
+			if !reflect.DeepEqual(details(p.Notes()), tc.wantNotes) {
+				t.Errorf("notes = %q\nwant    %q", details(p.Notes()), tc.wantNotes)
 			}
 			if !reflect.DeepEqual(tc.fake.log, tc.wantLog) {
 				t.Errorf("calls = %v\nwant    %v", tc.fake.log, tc.wantLog)
@@ -303,7 +303,7 @@ func TestPlanPlacedFile_DeferredNamesTheFileTheDeviceTheMountAndWhy(t *testing.T
 			if err != nil {
 				t.Fatal(err)
 			}
-			if p.Action != ActionDeferred || !reflect.DeepEqual(p.Warnings, []string{tc.want}) || len(p.Changes) != 0 || len(p.Blocked) != 0 {
+			if p.Action != ActionDeferred || !reflect.DeepEqual(details(p.Warnings()), []string{tc.want}) || len(p.Changes) != 0 || len(p.Blocked()) != 0 {
 				t.Errorf("plan = %+v\nwant a deferred plan with the warning %q", p, tc.want)
 			}
 			if len(tc.fake.log) != 0 {
@@ -319,7 +319,7 @@ func TestPlanPlacedFile_TheOldEdges(t *testing.T) {
 
 	absent := newFileFake("", nil, nil)
 	absent.inst = nil
-	if p, err := planPlacedFile(absent, f); err != nil || p.Action != ActionCreate || len(p.Notes) != 0 {
+	if p, err := planPlacedFile(absent, f); err != nil || p.Action != ActionCreate || len(p.Notes()) != 0 {
 		t.Errorf("an absent instance: %+v %v", p, err)
 	}
 

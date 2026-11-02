@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/remote"
 )
 
@@ -156,12 +157,12 @@ func targetDomain(t Resource) string { return failureDomain(t.Remote, t.Pool) }
 //
 // A volume with no backup block (already warned about elsewhere) or an explicit
 // `none` is not evaluated.
-func backupWarnings(v Resource, targets map[string]Resource) []string {
+func backupWarnings(v Resource, targets map[string]Resource) []finding.Finding {
 	if v.Kind != KindStorageVolume || v.Backup == nil || v.Backup.None != "" {
 		return nil
 	}
 
-	var warnings []string
+	var warnings []finding.Finding
 	var counted []Resource
 	for _, c := range v.Backup.Copies {
 		t, ok := targets[c.Target]
@@ -169,12 +170,12 @@ func backupWarnings(v Resource, targets map[string]Resource) []string {
 			// Unreachable from a loaded stack (validateBackupReferences rejects it), so this is the
 			// planner being handed the wrong set of targets. Say so rather than judge 3-2-1 on a
 			// stack with legs missing: a silent skip here once reported "1 of 3" for a complete stack.
-			warnings = append(warnings, fmt.Sprintf(
+			warnings = append(warnings, finding.Warnf(reasonBackupTargetUnknown, "",
 				"copy target %q is not known to the planner, so 3-2-1 cannot be judged (this is a tink bug)", c.Target))
 			continue
 		}
 		if targetDomain(t) == volumeDomain(v) {
-			warnings = append(warnings, fmt.Sprintf(
+			warnings = append(warnings, finding.Warnf(reasonBackupSameDomain, "",
 				"copy to %q is on the live volume's own pool (%s), so it is not a separate failure domain and is not counted",
 				t.Name, volumeDomain(v)))
 			continue
@@ -208,7 +209,7 @@ func backupWarnings(v Resource, targets map[string]Resource) []string {
 		if have > 3 {
 			have = 3
 		}
-		warnings = append(warnings, fmt.Sprintf(
+		warnings = append(warnings, finding.Warnf(reasonBackup321, "",
 			"3-2-1 not met (%d of 3 copies; snapshots on the live volume's pool do not count). Missing: %s",
 			have, strings.Join(missing, "; ")))
 	}

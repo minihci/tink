@@ -150,11 +150,11 @@ func TestNATProxyWarnings(t *testing.T) {
 				t.Fatalf("got %d warnings %q, want exactly one", len(got), got)
 			}
 			for _, want := range c.wants {
-				if !strings.Contains(got[0], want) {
+				if !strings.Contains(got[0].Detail, want) {
 					t.Errorf("warning %q does not contain %q", got[0], want)
 				}
 			}
-			if !strings.Contains(got[0], "docs/public-exposure.md") {
+			if !strings.Contains(got[0].Detail, "docs/public-exposure.md") {
 				t.Errorf("warning %q should point at docs/public-exposure.md", got[0])
 			}
 		})
@@ -170,61 +170,61 @@ func TestProxyListenerNotes(t *testing.T) {
 	b := proxyInstance("b", map[string]map[string]string{"web": listenOn("tcp:203.0.113.10:443")})
 
 	t.Run("two instances on the same address and port are each told about the other", func(t *testing.T) {
-		n := proxyListenerNotes([]Resource{a, b}, nil)
+		n := proxyListenerWarnings([]Resource{a, b}, nil)
 		if len(n["a"]) != 1 || len(n["b"]) != 1 {
 			t.Fatalf("notes = %q", n)
 		}
-		if !strings.Contains(n["a"][0], "instance/b's device \"web\"") || !strings.Contains(n["b"][0], "instance/a's device \"web\"") {
+		if !strings.Contains(n["a"][0].Detail, "instance/b's device \"web\"") || !strings.Contains(n["b"][0].Detail, "instance/a's device \"web\"") {
 			t.Errorf("each note should name the other instance: %q", n)
 		}
-		if !strings.Contains(n["a"][0], "without complaint") || !strings.Contains(n["a"][0], "this stack only") {
-			t.Errorf("the note should say what Incus does and what the check covers: %q", n["a"][0])
+		if !strings.Contains(n["a"][0].Detail, "without complaint") || !strings.Contains(n["a"][0].Detail, "this stack only") {
+			t.Errorf("the note should say what Incus does and what the check covers: %q", n["a"][0].Detail)
 		}
 	})
 	t.Run("different ports", func(t *testing.T) {
 		c := proxyInstance("c", map[string]map[string]string{"web": listenOn("tcp:203.0.113.10:8443")})
-		if n := proxyListenerNotes([]Resource{a, c}, nil); n != nil {
+		if n := proxyListenerWarnings([]Resource{a, c}, nil); n != nil {
 			t.Errorf("notes = %q, want none", n)
 		}
 	})
 	t.Run("a port range that contains the other's port", func(t *testing.T) {
 		c := proxyInstance("c", map[string]map[string]string{"web": listenOn("tcp:203.0.113.10:400-500")})
-		if n := proxyListenerNotes([]Resource{a, c}, nil); len(n["a"]) != 1 || len(n["c"]) != 1 {
+		if n := proxyListenerWarnings([]Resource{a, c}, nil); len(n["a"]) != 1 || len(n["c"]) != 1 {
 			t.Errorf("notes = %q, want one each", n)
 		}
 	})
 	t.Run("a wildcard overlaps a specific address of its family only", func(t *testing.T) {
 		w4 := proxyInstance("w4", map[string]map[string]string{"web": listenOn("tcp:0.0.0.0:443")})
 		w6 := proxyInstance("w6", map[string]map[string]string{"web": listenOn("tcp:[::]:443")})
-		if n := proxyListenerNotes([]Resource{a, w4}, nil); len(n) != 2 {
+		if n := proxyListenerWarnings([]Resource{a, w4}, nil); len(n) != 2 {
 			t.Errorf("wildcard v4 against specific v4: notes = %q, want both instances", n)
 		}
-		if n := proxyListenerNotes([]Resource{a, w6}, nil); n != nil {
+		if n := proxyListenerWarnings([]Resource{a, w6}, nil); n != nil {
 			t.Errorf("wildcard v6 against specific v4: notes = %q, want none", n)
 		}
 	})
 	t.Run("udp and tcp do not clash", func(t *testing.T) {
 		u := proxyInstance("u", map[string]map[string]string{"web": listenOn("udp:203.0.113.10:443")})
-		if n := proxyListenerNotes([]Resource{a, u}, nil); n != nil {
+		if n := proxyListenerWarnings([]Resource{a, u}, nil); n != nil {
 			t.Errorf("notes = %q, want none", n)
 		}
 	})
 	t.Run("two devices of one instance are reported to it once", func(t *testing.T) {
 		d := proxyInstance("d", map[string]map[string]string{"one": listenOn("tcp:203.0.113.10:443"), "two": listenOn("tcp:203.0.113.10:443")})
-		n := proxyListenerNotes([]Resource{d}, nil)
-		if len(n["d"]) != 1 || !strings.Contains(n["d"][0], `"one"`) || !strings.Contains(n["d"][0], `"two"`) {
+		n := proxyListenerWarnings([]Resource{d}, nil)
+		if len(n["d"]) != 1 || !strings.Contains(n["d"][0].Detail, `"one"`) || !strings.Contains(n["d"][0].Detail, `"two"`) {
 			t.Errorf("notes = %q, want one note naming both devices", n)
 		}
 	})
 	t.Run("a listener bound inside the instance is not the host's", func(t *testing.T) {
 		in := proxyInstance("in", map[string]map[string]string{"web": {"type": "proxy", "bind": "container", "listen": "tcp:203.0.113.10:443", "connect": "tcp:127.0.0.1:1"}})
-		if n := proxyListenerNotes([]Resource{a, in}, nil); n != nil {
+		if n := proxyListenerWarnings([]Resource{a, in}, nil); n != nil {
 			t.Errorf("notes = %q, want none", n)
 		}
 	})
 	t.Run("three on one port: each is told about the other two", func(t *testing.T) {
 		c := proxyInstance("c", map[string]map[string]string{"web": listenOn("tcp:203.0.113.10:443")})
-		n := proxyListenerNotes([]Resource{a, b, c}, nil)
+		n := proxyListenerWarnings([]Resource{a, b, c}, nil)
 		if len(n["a"]) != 2 || len(n["b"]) != 2 || len(n["c"]) != 2 {
 			t.Errorf("notes = %q, want two each", n)
 		}
@@ -232,27 +232,27 @@ func TestProxyListenerNotes(t *testing.T) {
 	t.Run("projects do not matter, a listener is host-global", func(t *testing.T) {
 		pa, pb := a, b
 		pa.Project, pb.Project = "one", "two"
-		if n := proxyListenerNotes([]Resource{pa, pb}, nil); len(n) != 2 {
+		if n := proxyListenerWarnings([]Resource{pa, pb}, nil); len(n) != 2 {
 			t.Errorf("notes = %q, want both", n)
 		}
 	})
 	t.Run("a listener that comes from a declared profile counts", func(t *testing.T) {
 		profiles := map[string]Resource{"edge": {Kind: KindProfile, Name: "edge", Devices: map[string]map[string]string{"web": listenOn("tcp:203.0.113.10:443")}}}
 		p := proxyInstance("p", nil, "edge")
-		if n := proxyListenerNotes([]Resource{a, p}, profiles); len(n) != 2 {
+		if n := proxyListenerWarnings([]Resource{a, p}, profiles); len(n) != 2 {
 			t.Errorf("notes = %q, want both", n)
 		}
 	})
 	t.Run("non-instances and unparseable listens are ignored", func(t *testing.T) {
 		v := Resource{Kind: KindStorageVolume, Name: "v", Devices: map[string]map[string]string{"web": listenOn("tcp:203.0.113.10:443")}}
 		u := proxyInstance("u", map[string]map[string]string{"web": {"type": "proxy", "listen": "unix:/run/x.sock", "connect": "tcp:127.0.0.1:1"}})
-		if n := proxyListenerNotes([]Resource{a, v, u}, nil); n != nil {
+		if n := proxyListenerWarnings([]Resource{a, v, u}, nil); n != nil {
 			t.Errorf("notes = %q, want none", n)
 		}
 	})
 	t.Run("the order of the notes does not depend on the order of the resources", func(t *testing.T) {
 		c := proxyInstance("c", map[string]map[string]string{"web": listenOn("tcp:203.0.113.10:443")})
-		if x, y := proxyListenerNotes([]Resource{a, b, c}, nil), proxyListenerNotes([]Resource{c, b, a}, nil); !reflect.DeepEqual(x, y) {
+		if x, y := proxyListenerWarnings([]Resource{a, b, c}, nil), proxyListenerWarnings([]Resource{c, b, a}, nil); !reflect.DeepEqual(x, y) {
 			t.Errorf("notes differ with the order of the resources:\n%q\n%q", x, y)
 		}
 	})
@@ -271,8 +271,8 @@ func TestPlanOne_NATProxyWithoutAStaticAddressWarnsBeforeTheInstanceExists(t *te
 	if p.Action != ActionCreate {
 		t.Fatalf("action = %v, want ActionCreate: a warning must not stop the plan", p.Action)
 	}
-	if len(p.Warnings) != 1 || !strings.Contains(p.Warnings[0], "none of its NICs declares a static address") {
-		t.Errorf("warnings = %q, want the static-address warning", p.Warnings)
+	if len(p.Warnings()) != 1 || !strings.Contains(p.Warnings()[0].Detail, "none of its NICs declares a static address") {
+		t.Errorf("warnings = %q, want the static-address warning", details(p.Warnings()))
 	}
 }
 
@@ -292,8 +292,8 @@ func TestPlanOptions_ListenerNotesComeFromTheFullStack(t *testing.T) {
 			if err != nil {
 				t.Fatalf("planOne() error = %v", err)
 			}
-			if len(p.Warnings) != 1 || !strings.Contains(p.Warnings[0], "instance/a's device") {
-				t.Errorf("warnings = %q, want the note about instance a", p.Warnings)
+			if len(p.Warnings()) != 1 || !strings.Contains(p.Warnings()[0].Detail, "instance/a's device") {
+				t.Errorf("warnings = %q, want the note about instance a", details(p.Warnings()))
 			}
 		})
 	}

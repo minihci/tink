@@ -198,9 +198,9 @@ func guardDerived(f Resource, p PlannedResource, live string) PlannedResource {
 	fs := CheckDerived(DerivedCheck{Render: f.Derive, Path: f.Path, Instance: f.Instance, Live: live, Desired: f.Content, Zone: f.DerivedZone,
 		Adopt: f.AdoptExisting, AllowEmpty: f.AllowEmpty})
 	if finding.HasErrors(fs) {
-		return PlannedResource{Resource: f, Action: ActionBlocked, Blocked: detailsOf(fs, finding.Error)}
+		return PlannedResource{Resource: f, Action: ActionBlocked, Findings: fs}
 	}
-	p.Notes = append(p.Notes, detailsOf(fs, finding.Note)...)
+	p.Findings = append(p.Findings, fs...)
 	return p
 }
 
@@ -262,15 +262,4 @@ func checkRecords(c DerivedCheck) []finding.Finding {
 		return []finding.Finding{finding.Errorf(reasonDerivedEmpty, "", "nothing is published, so applying would empty the %d record(s) in %s on %s; that usually means the wrong server, or stacks that have not been applied yet (allow_empty: true says it is meant)", len(records), c.Path, c.Instance)}
 	}
 	return nil
-}
-
-// detailsOf is the detail of each finding in fs that has severity sev, in order: what a plan still keeps its blockers and notes as.
-func detailsOf(fs []finding.Finding, sev finding.Severity) []string {
-	var out []string
-	for _, f := range fs {
-		if f.Severity == sev {
-			out = append(out, f.Detail)
-		}
-	}
-	return out
 }

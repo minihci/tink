@@ -78,7 +78,7 @@ func TestPlanWithExtrasListsWhatTheStackDoesNotDeclareAndChangesNothing(t *testi
 		t.Fatal("WithExtras should report on an instance that exists")
 	}
 	// informational only: the action, changes, drift and blocks are exactly what they were
-	if with.Action != without.Action || !reflect.DeepEqual(with.Changes, without.Changes) || !reflect.DeepEqual(with.Blocked, without.Blocked) || !reflect.DeepEqual(with.Drift, without.Drift) {
+	if with.Action != without.Action || !reflect.DeepEqual(with.Changes, without.Changes) || !reflect.DeepEqual(with.Blocked(), without.Blocked()) || !reflect.DeepEqual(with.Drift(), without.Drift()) {
 		t.Errorf("reporting extras must not change the plan: %+v vs %+v", with, without)
 	}
 	e := *with.Extras

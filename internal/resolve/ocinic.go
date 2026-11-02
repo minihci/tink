@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/lxc/incus/v7/shared/cliconfig"
+
+	"github.com/minihci/tink/internal/finding"
 )
 
 // An OCI app container's network is set up by Incus's own `incusd forknet dhcp`, not by an init system in the image. Incus writes a record of what each
@@ -71,7 +73,7 @@ func setsStaticNIC(dev map[string]string) []string {
 // ociNICWarnings returns one warning per NIC device of an OCI instance that sets a static setting but has no name. It looks at the instance's own devices and at
 // the devices of the profiles the stack declares (an instance's device of the same name replaces the profile's whole device, as in Incus); a profile that is
 // not in the stack cannot be seen, and is not guessed at.
-func ociNICWarnings(r Resource, remotes map[string]cliconfig.Remote, profiles map[string]Resource) []string {
+func ociNICWarnings(r Resource, remotes map[string]cliconfig.Remote, profiles map[string]Resource) []finding.Finding {
 	if r.Kind != KindInstance || !isOCIImage(r.Image, remotes) {
 		return nil
 	}
@@ -103,7 +105,7 @@ func ociNICWarnings(r Resource, remotes map[string]cliconfig.Remote, profiles ma
 	}
 	sort.Strings(names)
 
-	var out []string
+	var out []finding.Finding
 	for _, name := range names {
 		n := effective[name]
 		if n.dev["name"] != "" {
@@ -117,7 +119,7 @@ func ociNICWarnings(r Resource, remotes map[string]cliconfig.Remote, profiles ma
 		if n.from != "" {
 			where += fmt.Sprintf(" (from profile %q)", n.from)
 		}
-		out = append(out, fmt.Sprintf("%s sets %s but has no name:. Incus's OCI network setup records only named NICs, so this interface is treated as fully dynamic: DHCP runs, the lease's default route and nameservers apply, and those settings are ignored. Add name: with the interface's name inside the container (eth1, say); see docs/oci-network.md",
+		out = append(out, finding.Warnf(reasonOCINICNoName, "", "%s sets %s but has no name:. Incus's OCI network setup records only named NICs, so this interface is treated as fully dynamic: DHCP runs, the lease's default route and nameservers apply, and those settings are ignored. Add name: with the interface's name inside the container (eth1, say); see docs/oci-network.md",
 			where, strings.Join(set, ", ")))
 	}
 	return out

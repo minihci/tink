@@ -27,18 +27,18 @@ func TestCopyWarningsAboutFailures(t *testing.T) {
 
 	// never succeeded, and failing: say so, and not the plain "never run"
 	w := copyWarnings(r, failCfg("t", t10.Add(-20*time.Minute), "3", nil), t10)
-	if len(w) != 1 || !strings.Contains(w[0], "never succeeded") || !strings.Contains(w[0], "3 attempt(s)") || strings.Contains(w[0], "never run") {
+	if len(w) != 1 || !strings.Contains(w[0].Detail, "never succeeded") || !strings.Contains(w[0].Detail, "3 attempt(s)") || strings.Contains(w[0].Detail, "never run") {
 		t.Errorf("never succeeded and failing: %q", w)
 	}
 	// succeeded earlier, failing now: failing, and not overdue yet (the next 03:00 is tomorrow)
 	w = copyWarnings(r, failCfg("t", t10.Add(-5*time.Minute), "1", map[string]string{backupmeta.CopiedAt("t"): lastOK.Format(time.RFC3339)}), t10)
-	if len(w) != 1 || !strings.Contains(w[0], "is failing") || !strings.Contains(w[0], "1 attempt(s)") {
+	if len(w) != 1 || !strings.Contains(w[0].Detail, "is failing") || !strings.Contains(w[0].Detail, "1 attempt(s)") {
 		t.Errorf("failing: %q", w)
 	}
 	// failing AND overdue: both are said
 	longAgo := time.Date(2026, 10, 4, 3, 0, 0, 0, time.UTC)
 	w = copyWarnings(r, failCfg("t", t10.Add(-5*time.Minute), "30", map[string]string{backupmeta.CopiedAt("t"): longAgo.Format(time.RFC3339)}), t10)
-	if len(w) != 2 || !strings.Contains(w[0], "is failing") || !strings.Contains(w[1], "overdue") {
+	if len(w) != 2 || !strings.Contains(w[0].Detail, "is failing") || !strings.Contains(w[1].Detail, "overdue") {
 		t.Errorf("failing and overdue: %q", w)
 	}
 	// healthy: nothing

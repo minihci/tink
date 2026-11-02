@@ -103,14 +103,14 @@ func TestGuardDerived(t *testing.T) {
 		c.file.Kind, c.file.Name, c.file.Instance, c.file.Path = KindFile, "hosts", "dns", "/hosts"
 		got := guardDerived(c.file, update(c.file), c.live)
 		if got.Action != c.action {
-			t.Errorf("%s: action = %v, want %v (%v)", c.name, got.Action, c.action, got.Blocked)
+			t.Errorf("%s: action = %v, want %v (%v)", c.name, got.Action, c.action, details(got.Blocked()))
 			continue
 		}
-		if c.blocked != "" && (len(got.Blocked) != 1 || !strings.Contains(got.Blocked[0], c.blocked)) {
-			t.Errorf("%s: blocked = %v, want it to contain %q", c.name, got.Blocked, c.blocked)
+		if c.blocked != "" && (len(got.Blocked()) != 1 || !strings.Contains(got.Blocked()[0].Detail, c.blocked)) {
+			t.Errorf("%s: blocked = %v, want it to contain %q", c.name, details(got.Blocked()), c.blocked)
 		}
-		if c.note != "" && (len(got.Notes) != 1 || !strings.Contains(got.Notes[0], c.note)) {
-			t.Errorf("%s: notes = %v, want one containing %q", c.name, got.Notes, c.note)
+		if c.note != "" && (len(got.Notes()) != 1 || !strings.Contains(got.Notes()[0].Detail, c.note)) {
+			t.Errorf("%s: notes = %v, want one containing %q", c.name, details(got.Notes()), c.note)
 		}
 	}
 	// a file that does not exist, or already holds the content, is not guarded
@@ -175,14 +175,14 @@ func TestGuardRecords(t *testing.T) {
 		c.file.Kind, c.file.Name, c.file.Instance, c.file.Path, c.file.Derive, c.file.DerivedZone = KindFile, "records", "hs", "/r.json", DeriveMesh, "home.example.org"
 		got := guardDerived(c.file, PlannedResource{Resource: c.file, Action: ActionUpdate}, c.live)
 		if got.Action != c.action {
-			t.Errorf("%s: action = %v, want %v (%v)", c.name, got.Action, c.action, got.Blocked)
+			t.Errorf("%s: action = %v, want %v (%v)", c.name, got.Action, c.action, details(got.Blocked()))
 			continue
 		}
-		if c.blocked != "" && (len(got.Blocked) != 1 || !strings.Contains(got.Blocked[0], c.blocked)) {
-			t.Errorf("%s: blocked = %v, want it to contain %q", c.name, got.Blocked, c.blocked)
+		if c.blocked != "" && (len(got.Blocked()) != 1 || !strings.Contains(got.Blocked()[0].Detail, c.blocked)) {
+			t.Errorf("%s: blocked = %v, want it to contain %q", c.name, details(got.Blocked()), c.blocked)
 		}
-		if c.note != "" && (len(got.Notes) != 1 || !strings.Contains(got.Notes[0], c.note)) {
-			t.Errorf("%s: notes = %v, want one containing %q", c.name, got.Notes, c.note)
+		if c.note != "" && (len(got.Notes()) != 1 || !strings.Contains(got.Notes()[0].Detail, c.note)) {
+			t.Errorf("%s: notes = %v, want one containing %q", c.name, details(got.Notes()), c.note)
 		}
 	}
 }

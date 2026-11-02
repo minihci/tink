@@ -19,11 +19,11 @@ func TestPlanHelperNotesAProxyDeviceAndSaysNothingAboutNone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	n := joined(p.Notes)
+	n := joined(details(p.Notes()))
 	if !strings.Contains(n, "reaches the host's API through a proxy device") || !strings.Contains(n, "restricted project must allow proxy devices") || !strings.Contains(n, "--api-via network") {
 		t.Errorf("notes = %q", n)
 	}
-	if p.Action != ActionNone || len(p.Warnings) != 0 || len(p.Blocked) != 0 {
+	if p.Action != ActionNone || len(p.Warnings()) != 0 || len(p.Blocked()) != 0 {
 		t.Errorf("a note, never a change or a warning: %+v", p)
 	}
 
@@ -36,7 +36,7 @@ func TestPlanHelperNotesAProxyDeviceAndSaysNothingAboutNone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := joined(p.Notes); strings.Contains(n, "proxy") {
+	if n := joined(details(p.Notes())); strings.Contains(n, "proxy") {
 		t.Errorf("a helper with no proxy device is not told about one: %q", n)
 	}
 }

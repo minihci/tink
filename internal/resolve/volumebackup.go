@@ -9,6 +9,7 @@ import (
 	"github.com/lxc/incus/v7/shared/api"
 
 	"github.com/minihci/tink/internal/backupext"
+	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/ownership"
 )
 
@@ -96,11 +97,11 @@ func (e volumeEnv) helperCannotRead() string {
 
 // helperRemoteWarnings names the copies of r that go to an Incus remote the helper does not have. The helper's schedule would try them and
 // fail every time, which shows up as a failing copy, late: this says it while the policy is being written.
-func (e volumeEnv) helperRemoteWarnings(r Resource) []string {
+func (e volumeEnv) helperRemoteWarnings(r Resource) []finding.Finding {
 	if e.helperRemotes == nil || r.Backup == nil || r.Backup.None != "" {
 		return nil
 	}
-	var out []string
+	var out []finding.Finding
 	said := map[string]bool{}
 	for _, c := range r.Backup.Copies {
 		t, ok := e.targets[c.Target]
@@ -115,7 +116,7 @@ func (e volumeEnv) helperRemoteWarnings(r Resource) []string {
 			msg += fmt.Sprintf(". This stack declares where it is, so if that server already trusts the helper's certificate no token is needed: tink helper remote add %s %s --fingerprint %s",
 				t.Remote, addr, fp)
 		}
-		out = append(out, msg)
+		out = append(out, finding.Warnf(reasonBackupHelperRemote, "", "%s", msg))
 	}
 	return out
 }
@@ -132,32 +133,30 @@ func (e volumeEnv) helperRemoteWarnings(r Resource) []string {
 func decideVolume(r Resource, current *api.StorageVolume, env volumeEnv) PlannedResource {
 	desired, remove, err := volumeBackupConfig(r, env)
 	if err != nil {
-		return PlannedResource{Resource: r, Action: ActionBlocked, Blocked: []string{err.Error()}}
+		return PlannedResource{Resource: r, Action: ActionBlocked, Findings: []finding.Finding{finding.Errorf(reasonBackupPolicy, "", "%s", err.Error())}}
 	}
 	keys := backupext.Get().Keys()
-	var warnings []string
+	var warnings []finding.Finding
 	if r.Backup == nil {
-		warnings = append(warnings, "no backup declared -- add `backup: {snapshots: {schedule: ..., retain: ...}}`, "+
+		warnings = append(warnings, finding.Warnf(reasonBackupUndeclared, "", "no backup declared -- add `backup: {snapshots: {schedule: ..., retain: ...}}`, "+
 			"or `backup: {none: \"<why this volume needs no backup>\"}` if it really does not need one; "+
-			"this will become an error in a future release")
+			"this will become an error in a future release"))
 	}
 	if r.Backup != nil && r.Backup.None != "" && current != nil && current.Config[keys.SnapshotSchedule] != "" {
-		warnings = append(warnings, fmt.Sprintf(
+		warnings = append(warnings, finding.Warnf(reasonBackupNoneButSet, "",
 			"backup: none, but the volume still has %s=%q set live -- tink does not remove it; clear it with `incus storage volume unset`",
 			keys.SnapshotSchedule, current.Config[keys.SnapshotSchedule]))
 	}
 
 	if current != nil && env.stack != "" {
 		if owner := ownership.Owner(current.Config); owner != "" && owner != env.stack {
-			warnings = append(warnings, fmt.Sprintf("this volume is stamped as belonging to stack %q (%s), and this stack declares it too: applying does not change the stamp, so the two stacks "+
+			warnings = append(warnings, finding.Warnf(reasonVolumeOtherStack, "", "this volume is stamped as belonging to stack %q (%s), and this stack declares it too: applying does not change the stamp, so the two stacks "+
 				"will both converge it", owner, ownership.Key))
 		}
 	}
 
 	if current != nil {
-		if w := verifyWarning(r, current.Config, timeNow()); w != "" {
-			warnings = append(warnings, w)
-		}
+		warnings = append(warnings, verifyWarning(r, current.Config, timeNow())...)
 		warnings = append(warnings, copyWarnings(r, current.Config, timeNow())...)
 	}
 
@@ -171,14 +170,14 @@ func decideVolume(r Resource, current *api.StorageVolume, env volumeEnv) Planned
 		}
 	}
 	if current == nil {
-		return PlannedResource{Resource: r, Action: ActionCreate, Changes: append(diffConfig(nil, rest, nil), backupext.Get().DescribePolicyChange("", wantPolicy)...), Warnings: warnings}
+		return PlannedResource{Resource: r, Action: ActionCreate, Changes: append(diffConfig(nil, rest, nil), backupext.Get().DescribePolicyChange("", wantPolicy)...), Findings: warnings}
 	}
 	// A creation-only key (initial.uid...) says how a volume is made, and Incus does nothing with it afterwards: it is a warning when the
 	// volume was made otherwise, not a change that apply could converge.
 	creationOnly := splitCreationOnly(rest)
 	for _, k := range sortedKeys(creationOnly) {
 		if have := current.Config[k]; have != creationOnly[k] {
-			warnings = append(warnings, fmt.Sprintf("config.%s is %q here and %q in the stack, but it only applies when a volume is created: this one exists, so change what it is by hand (for ownership: chown inside it)", k, have, creationOnly[k]))
+			warnings = append(warnings, finding.Warnf(reasonVolumeCreationOnly, "", "config.%s is %q here and %q in the stack, but it only applies when a volume is created: this one exists, so change what it is by hand (for ownership: chown inside it)", k, have, creationOnly[k]))
 		}
 	}
 	changes := diffConfig(current.Config, rest, nil)
@@ -189,9 +188,9 @@ func decideVolume(r Resource, current *api.StorageVolume, env volumeEnv) Planned
 		}
 	}
 	if len(changes) > 0 {
-		return PlannedResource{Resource: r, Action: ActionUpdate, Changes: changes, Warnings: warnings}
+		return PlannedResource{Resource: r, Action: ActionUpdate, Changes: changes, Findings: warnings}
 	}
-	return PlannedResource{Resource: r, Action: ActionNone, Warnings: warnings}
+	return PlannedResource{Resource: r, Action: ActionNone, Findings: warnings}
 }
 
 // timeNow is overridable so the staleness rule can be tested.
@@ -206,11 +205,11 @@ func validateBackup(r Resource) error {
 	return backupext.Get().Validate(r.Name, r.Backup)
 }
 
-func copyWarnings(r Resource, current map[string]string, now time.Time) []string {
+func copyWarnings(r Resource, current map[string]string, now time.Time) []finding.Finding {
 	return backupext.Get().CopyWarnings(r.Name, r.Backup, current, now)
 }
 
-func verifyWarning(r Resource, current map[string]string, now time.Time) string {
+func verifyWarning(r Resource, current map[string]string, now time.Time) []finding.Finding {
 	return backupext.Get().VerifyWarning(r.Name, r.Backup, current, now)
 }
 

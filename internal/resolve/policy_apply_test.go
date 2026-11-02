@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/minihci/tink/internal/finding"
 )
 
 func instRes(policy string) Resource {
@@ -46,26 +48,26 @@ func TestDecideInstance(t *testing.T) {
 		{"ignore + unverified: warning only", OnImageChangeIgnore, nil, unverified, preflight{}, ActionNone, "", "could not verify"},
 
 		{"rebuild + drift: would rebuild", OnImageChangeRebuild, changes, drift, preflight{}, ActionRebuild, "", ""},
-		{"rebuild + drift + failed preflight: blocked", OnImageChangeRebuild, nil, drift, preflight{Blockers: []string{"has instance snapshots"}}, ActionBlocked, "has instance snapshots", ""},
+		{"rebuild + drift + failed preflight: blocked", OnImageChangeRebuild, nil, drift, preflight{Findings: []finding.Finding{finding.Errorf(reasonSnapshotsExist, "", "has instance snapshots")}}, ActionBlocked, "has instance snapshots", ""},
 		{"rebuild + unverified: blocked, never rebuild blind (C)", OnImageChangeRebuild, nil, unverified, preflight{}, ActionBlocked, "will not act on an image it cannot verify", ""},
 		{"rebuild + unverified + config change: also withheld", OnImageChangeRebuild, changes, unverified, preflight{}, ActionBlocked, "withheld", ""},
 		{"rebuild + no drift: nothing to do", OnImageChangeRebuild, nil, imageCheck{}, preflight{}, ActionNone, "", ""},
-		{"rebuild + preflight warnings are surfaced", OnImageChangeRebuild, nil, drift, preflight{Warnings: []string{"could not size the image"}}, ActionRebuild, "", "could not size"},
+		{"rebuild + preflight warnings are surfaced", OnImageChangeRebuild, nil, drift, preflight{Findings: []finding.Finding{finding.Warnf(reasonRebuildImageUnsized, "", "could not size the image")}}, ActionRebuild, "", "could not size"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			p := decideInstance(instRes(tc.policy), tc.changes, tc.chk, tc.pre)
 			if p.Action != tc.want {
-				t.Fatalf("action = %d, want %d (blocked=%v)", p.Action, tc.want, p.Blocked)
+				t.Fatalf("action = %d, want %d (blocked=%v)", p.Action, tc.want, details(p.Blocked()))
 			}
-			got := strings.Join(p.Blocked, " | ")
+			got := strings.Join(details(p.Blocked()), " | ")
 			if tc.want != ActionBlocked && got != "" {
 				t.Errorf("a non-blocked disposition must carry no blocked reasons, got %q", got)
 			}
 			if !strings.Contains(got, tc.wantBlocked) {
 				t.Errorf("blocked = %q, want to contain %q", got, tc.wantBlocked)
 			}
-			if got := strings.Join(p.Warnings, " | "); !strings.Contains(got, tc.wantWarn) {
+			if got := strings.Join(details(p.Warnings()), " | "); !strings.Contains(got, tc.wantWarn) {
 				t.Errorf("warnings = %q, want to contain %q", got, tc.wantWarn)
 			}
 		})
@@ -275,5 +277,22 @@ func TestApplyLevelsStopsBetweenLevelsWhenTheContextIsCancelled(t *testing.T) {
 	last := notes[len(notes)-1]
 	if !strings.Contains(last, "1 changed") || !strings.Contains(last, "interrupted") {
 		t.Errorf("summary %q should count what was done and say the apply was interrupted", last)
+	}
+}
+
+// Confirmed drift is a warning with the reason ReasonImageDrift, not a blocker: what blocks under on_image_change: report is a separate error, so the
+// drift line and the blocked line are two findings. Under ignore the drift is reported once, as a warning that says it is ignored, not as drift.
+func TestDecideInstance_DriftIsAWarningWithItsReason(t *testing.T) {
+	chk := imageCheck{Drift: []string{"image: alias \"x\" moved"}}
+	p := decideInstance(instRes(OnImageChangeReport), nil, chk, preflight{})
+	if len(p.Drift()) != 1 || p.Drift()[0].Severity != finding.Warning || p.Drift()[0].Reason != ReasonImageDrift {
+		t.Errorf("drift = %+v", p.Drift())
+	}
+	if len(p.Blocked()) != 1 || p.Blocked()[0].Severity != finding.Error || p.Blocked()[0].Reason == ReasonImageDrift {
+		t.Errorf("blocked = %+v", p.Blocked())
+	}
+	p = decideInstance(instRes(OnImageChangeIgnore), nil, chk, preflight{})
+	if len(p.Drift()) != 0 || len(p.Warnings()) != 1 || p.Warnings()[0].Reason != reasonImageDriftIgnored {
+		t.Errorf("ignored: drift %+v, warnings %+v", p.Drift(), p.Warnings())
 	}
 }

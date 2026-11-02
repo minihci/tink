@@ -143,7 +143,7 @@ func TestBackupWarnings(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := strings.Join(backupWarnings(tc.vol, targets), "\n")
+			got := strings.Join(details(backupWarnings(tc.vol, targets)), "\n")
 			if tc.want == nil && got != "" {
 				t.Fatalf("expected no warnings, got:\n%s", got)
 			}
@@ -220,7 +220,7 @@ func TestWithTargetsNeverLetsASubsetReplaceTheStack(t *testing.T) {
 }
 
 func TestBackupWarningsSaysSoWhenATargetIsUnknown(t *testing.T) {
-	got := strings.Join(backupWarnings(volWith("v", "", true, "macpro"), nil), "\n")
+	got := strings.Join(details(backupWarnings(volWith("v", "", true, "macpro"), nil)), "\n")
 	if !strings.Contains(got, `copy target "macpro" is not known to the planner`) {
 		t.Errorf("a missing target must be reported loudly, got:\n%s", got)
 	}
@@ -272,8 +272,8 @@ func TestVerifyWarning(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			got := verifyWarning(tc.r, tc.current, now)
-			if tc.want == "" && got != "" || !strings.Contains(got, tc.want) {
-				t.Errorf("warning = %q, want it to contain %q", got, tc.want)
+			if tc.want == "" && len(got) != 0 || !strings.Contains(strings.Join(details(got), "\n"), tc.want) {
+				t.Errorf("warning = %q, want it to contain %q", details(got), tc.want)
 			}
 		})
 	}
@@ -282,11 +282,11 @@ func TestVerifyWarning(t *testing.T) {
 func TestDecideVolumeWarnsAboutStaleVerificationOnlyForExistingVolumes(t *testing.T) {
 	r := Resource{Kind: KindStorageVolume, Name: "lib", Backup: &backupmeta.VolumeBackup{
 		Snapshots: &backupmeta.SnapshotPolicy{Schedule: "@daily", Retain: "7d"}, Verify: "weekly"}}
-	if w := strings.Join(decideVolume(r, nil, volumeEnv{}).Warnings, "|"); strings.Contains(w, "verified") {
+	if w := strings.Join(details(decideVolume(r, nil, volumeEnv{}).Warnings()), "|"); strings.Contains(w, "verified") {
 		t.Errorf("a volume that does not exist yet has nothing to verify, got %q", w)
 	}
 	existing := &api.StorageVolume{StorageVolumePut: api.StorageVolumePut{Config: map[string]string{}}}
-	if w := strings.Join(decideVolume(r, existing, volumeEnv{}).Warnings, "|"); !strings.Contains(w, "never been verified") {
+	if w := strings.Join(details(decideVolume(r, existing, volumeEnv{}).Warnings()), "|"); !strings.Contains(w, "never been verified") {
 		t.Errorf("an existing, never-verified volume must be warned about, got %q", w)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/minihci/tink/internal/backupext"
+	"github.com/minihci/tink/internal/finding"
 )
 
 // This package is the backup capability the converger asks questions of (backupext.Backup). It registers itself, so a program that links
@@ -33,11 +34,11 @@ func (extension) DescribePolicyChange(have, want string) []string {
 	return DescribePolicyChange(have, want)
 }
 
-func (extension) CopyWarnings(volume string, b *VolumeBackup, current map[string]string, now time.Time) []string {
+func (extension) CopyWarnings(volume string, b *VolumeBackup, current map[string]string, now time.Time) []finding.Finding {
 	return CopyWarnings(volume, b, current, now)
 }
 
-func (extension) VerifyWarning(volume string, b *VolumeBackup, current map[string]string, now time.Time) string {
+func (extension) VerifyWarning(volume string, b *VolumeBackup, current map[string]string, now time.Time) []finding.Finding {
 	return VerifyWarning(volume, b, current, now)
 }
 

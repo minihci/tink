@@ -10,6 +10,7 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
 
+	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/incusapi"
 )
 
@@ -57,9 +58,9 @@ type PlanOptions struct {
 	projectNotes map[string]string
 	// firstStart are the files to place with each instance this apply creates, before its first start (see firststart.go), from the full stack.
 	firstStart map[string][]Resource
-	// listenerNotes are, by instance name, the notes about host-side proxy listeners that overlap another instance's in the stack (proxydev.go),
+	// listenerWarnings are, by instance name, the warnings about host-side proxy listeners that overlap another instance's in the stack (proxydev.go),
 	// computed from the full stack with targets, because the two instances that clash land in different levels.
-	listenerNotes map[string][]string
+	listenerWarnings map[string][]finding.Finding
 	// opTimeout, when set, replaces the deadlines on every call to the server (opbounds.go). Unexported: a test seam, not a setting.
 	opTimeout time.Duration
 	// helperAuthz is the narrowing of the daemon's certificate (WithHelperAuthz), and narrowers the labels of the helpers of the full stack that ask for it.
@@ -77,7 +78,7 @@ func (o PlanOptions) ForResources(resources []Resource) PlanOptions {
 	o.stack, _ = StackName(resources) // more than one is reported by Levels
 	o.projectNotes = mixedProjectNotes(resources)
 	o.firstStart = firstStartFiles(resources)
-	o.listenerNotes = proxyListenerNotes(resources, o.profiles)
+	o.listenerWarnings = proxyListenerWarnings(resources, o.profiles)
 	o.narrowers = authzNarrowers(resources)
 	return o
 }
@@ -92,7 +93,7 @@ func (o PlanOptions) withTargets(resources []Resource) PlanOptions {
 		if o.profiles == nil {
 			o.profiles = declaredProfiles(resources)
 		}
-		o.listenerNotes = proxyListenerNotes(resources, o.profiles)
+		o.listenerWarnings = proxyListenerWarnings(resources, o.profiles)
 		o.narrowers = authzNarrowers(resources)
 	}
 	if o.profiles == nil {
@@ -184,7 +185,7 @@ func planInstance(server incus.InstanceServer, r Resource, opts PlanOptions) (Pl
 		return PlannedResource{}, fmt.Errorf("reading the live instance: %w", err)
 	}
 	if !found {
-		return PlannedResource{Resource: r, Action: ActionCreate, Notes: firstStartNotes(server, r, opts)}, nil
+		return PlannedResource{Resource: r, Action: ActionCreate, Findings: firstStartNotes(server, r, opts)}, nil
 	}
 	changes := diffConfig(current.Config, r.Config, r.SecretKeys)
 	// The stamps of kind: publish are the one owned prefix: a live stamp the stack no longer derives is removed, not left (publishstamp.go).
@@ -221,10 +222,10 @@ func planInstance(server incus.InstanceServer, r Resource, opts PlanOptions) (Pl
 	return p, nil
 }
 
-// missingProfileBlockers are the reasons to block an instance that lacks a profile its stack names. Apply never changes an instance's profile list
+// missingProfileBlockers are the findings that block an instance that lacks a profile its stack names. Apply never changes an instance's profile list
 // (ApplyConfig writes config and devices only), so planning it as an update would promise a change that does not happen. Profiles the instance has
 // beyond the stack's are not drift (Extras reports them) and the order is not compared; a stack that names no profiles says nothing about them.
-func missingProfileBlockers(current *api.Instance, r Resource) []string {
+func missingProfileBlockers(current *api.Instance, r Resource) []finding.Finding {
 	if len(r.Profiles) == 0 {
 		return nil
 	}
@@ -232,7 +233,7 @@ func missingProfileBlockers(current *api.Instance, r Resource) []string {
 	if len(missing) == 0 {
 		return nil
 	}
-	return []string{fmt.Sprintf("profile(s) %s are in the stack's profiles list but not on the instance, and apply does not change an instance's profiles (add them with `incus profile add`, or recreate the instance)", strings.Join(missing, ", "))}
+	return []finding.Finding{finding.Errorf(reasonProfilesMissing, "", "profile(s) %s are in the stack's profiles list but not on the instance, and apply does not change an instance's profiles (add them with `incus profile add`, or recreate the instance)", strings.Join(missing, ", "))}
 }
 
 // decideInstance turns the findings into a disposition. Pure, so the policy
@@ -244,47 +245,65 @@ func missingProfileBlockers(current *api.Instance, r Resource) []string {
 //	ignore   warning, proceeds           warning, proceeds
 //	rebuild  would rebuild (or BLOCKED   BLOCKED -- never rebuild blind
 //	         if a preflight check fails)
-func decideInstance(r Resource, changes []string, chk imageCheck, pre preflight, blockers ...string) PlannedResource {
-	p := PlannedResource{Resource: r, Changes: changes, Drift: chk.Drift}
+func decideInstance(r Resource, changes []string, chk imageCheck, pre preflight, blockers ...finding.Finding) PlannedResource {
+	p := PlannedResource{Resource: r, Changes: changes}
+	drift := func() {
+		for _, d := range chk.Drift {
+			p.Findings = append(p.Findings, finding.Warnf(ReasonImageDrift, "", "%s", d))
+		}
+	}
+	unverified := func() {
+		for _, u := range chk.Unverified {
+			p.Findings = append(p.Findings, finding.Warnf(reasonImageUnverified, "", "%s", u))
+		}
+	}
 	if len(changes) > 0 {
 		p.Action = ActionUpdate
 	}
-	block := func(reasons ...string) {
+	block := func(fs ...finding.Finding) {
 		p.Action = ActionBlocked
-		p.Blocked = append(p.Blocked, reasons...)
+		p.Findings = append(p.Findings, fs...)
 		if len(changes) > 0 {
-			p.Blocked = append(p.Blocked, fmt.Sprintf("%d config/device change(s) are withheld until this instance matches the YAML", len(changes)))
+			p.Findings = append(p.Findings, finding.Errorf(reasonWithheldChanges, "", "%d config/device change(s) are withheld until this instance matches the YAML", len(changes)))
 		}
 	}
 
+	// Drift is the first thing a plan prints about an instance after its changes, and the printer takes it out of the findings by its reason, so where it
+	// is raised among them does not matter. Under on_image_change: ignore it is reported once, as a warning that says it is ignored, and not as drift.
 	switch r.onImageChangePolicy() {
 	case OnImageChangeIgnore:
 		for _, d := range chk.Drift {
-			p.Warnings = append(p.Warnings, d+" -- ignored (on_image_change: ignore)")
+			p.Findings = append(p.Findings, finding.Warnf(reasonImageDriftIgnored, "", "%s -- ignored (on_image_change: ignore)", d))
 		}
-		p.Drift = nil // already reported above; do not print it twice
-		p.Warnings = append(p.Warnings, chk.Unverified...)
+		unverified()
 
 	case OnImageChangeRebuild:
+		drift()
 		switch {
 		case len(chk.Unverified) > 0:
-			block(append([]string{"on_image_change: rebuild will not act on an image it cannot verify"}, chk.Unverified...)...)
-		case len(chk.Drift) > 0 && len(pre.Blockers) > 0:
-			block(pre.Blockers...)
+			head := finding.Errorf(reasonRebuildUnverified, "", "on_image_change: rebuild will not act on an image it cannot verify")
+			fs := []finding.Finding{head}
+			for _, u := range chk.Unverified {
+				fs = append(fs, finding.Errorf(reasonImageUnverified, "", "%s", u))
+			}
+			block(fs...)
+		case len(chk.Drift) > 0 && finding.HasErrors(pre.Findings):
+			block(pre.errors()...)
 		case len(chk.Drift) > 0:
 			p.Action = ActionRebuild
 		}
-		p.Warnings = append(p.Warnings, pre.Warnings...)
+		p.Findings = append(p.Findings, pre.warnings()...)
 
 	default: // report
+		drift()
 		if len(chk.Drift) > 0 {
-			block("image drift with on_image_change: report -- nothing on this instance is changed (set on_image_change: ignore to accept it, or on_image_change: rebuild to converge it)")
+			block(finding.Errorf(reasonImageDriftBlocks, "", "image drift with on_image_change: report -- nothing on this instance is changed (set on_image_change: ignore to accept it, or on_image_change: rebuild to converge it)"))
 		}
-		p.Warnings = append(p.Warnings, chk.Unverified...)
+		unverified()
 	}
 	if len(blockers) > 0 {
 		if p.Action == ActionBlocked { // the withheld count is already there
-			p.Blocked = append(p.Blocked, blockers...)
+			p.Findings = append(p.Findings, blockers...)
 		} else {
 			block(blockers...)
 		}

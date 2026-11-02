@@ -5,6 +5,7 @@ import (
 
 	incus "github.com/lxc/incus/v7/client"
 
+	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/helper"
 )
 
@@ -74,19 +75,19 @@ func authzNarrowers(resources []Resource) []string {
 // planAuthz adds to the plan of the helper r what it says about its certificate. found is the helper on the server, nil when there is none yet.
 func planAuthz(server incus.InstanceServer, r Resource, found *helper.Found, p PlannedResource, opts PlanOptions) PlannedResource {
 	declared := r.Authz == AuthzNarrow
-	block := func(reason string) PlannedResource {
-		return PlannedResource{Resource: r, Action: ActionBlocked, Blocked: []string{reason}}
+	block := func(reason, format string, args ...any) PlannedResource {
+		return PlannedResource{Resource: r, Action: ActionBlocked, Findings: []finding.Finding{finding.Errorf(reason, "", format, args...)}}
 	}
 	if declared {
 		project, name := helperTarget(r)
 		label := project + "/" + name
 		for _, other := range opts.narrowers {
 			if other != label {
-				return block(fmt.Sprintf("the helper %s also says authz: narrow, and the authorizer is one scriptlet for the whole server: keep it on one helper", other))
+				return block(reasonAuthzTwoNarrowers, "the helper %s also says authz: narrow, and the authorizer is one scriptlet for the whole server: keep it on one helper", other)
 			}
 		}
 		if opts.helperAuthz == nil {
-			return block("authz: narrow was asked of a tink that was not given the narrowing of the daemon's certificate (this is a tink bug: refusing to leave it unrestricted without saying so)")
+			return block(reasonAuthzNotGiven, "authz: narrow was asked of a tink that was not given the narrowing of the daemon's certificate (this is a tink bug: refusing to leave it unrestricted without saying so)")
 		}
 	}
 	if opts.helperAuthz == nil {
@@ -102,20 +103,20 @@ func planAuthz(server incus.InstanceServer, r Resource, found *helper.Found, p P
 	st, err := opts.helperAuthz.PlanAuthz(server, *found)
 	switch {
 	case err != nil && declared:
-		return block("cannot narrow the daemon's certificate: " + err.Error())
+		return block(reasonAuthzCannotNarrow, "cannot narrow the daemon's certificate: %s", err.Error())
 	case err != nil:
-		p.Warnings = append(p.Warnings, "cannot tell whether the daemon's certificate is narrowed: "+err.Error())
+		p.Findings = append(p.Findings, finding.Warnf(reasonAuthzUnknown, "", "cannot tell whether the daemon's certificate is narrowed: %s", err.Error()))
 		return p
 	case st.Refusal != "" && declared:
-		return block("cannot narrow the daemon's certificate: " + st.Refusal)
+		return block(reasonAuthzCannotNarrow, "cannot narrow the daemon's certificate: %s", st.Refusal)
 	case st.Refusal != "":
-		p.Notes = append(p.Notes, "the daemon's certificate is not narrowed by tink: "+st.Refusal)
+		p.Findings = append(p.Findings, finding.Notef(reasonAuthzNotNarrowed, "", "the daemon's certificate is not narrowed by tink: %s", st.Refusal))
 		return p
 	}
 
 	switch {
 	case declared && st.Narrowed && st.UpToDate:
-		p.Notes = append(p.Notes, fmt.Sprintf("the daemon's certificate is narrowed (%s)", rulesOf(st.Rules)))
+		p.Findings = append(p.Findings, finding.Notef(reasonAuthzNarrowed, "", "the daemon's certificate is narrowed (%s)", rulesOf(st.Rules)))
 	case declared && st.Narrowed:
 		p.Action = ActionUpdate
 		p.Changes = append(p.Changes, fmt.Sprintf("rewrite the authorization scriptlet for what the daemon touches now (%s)", rulesOf(st.Rules)))
@@ -123,12 +124,12 @@ func planAuthz(server incus.InstanceServer, r Resource, found *helper.Found, p P
 		p.Action = ActionUpdate
 		p.Changes = append(p.Changes, fmt.Sprintf("narrow the daemon's certificate: install an authorization scriptlet for it alone (%s) and route unrestricted TLS clients to it (`tink daemon authz`)", rulesOf(st.Rules)))
 	case st.Narrowed:
-		p.Notes = append(p.Notes, "the daemon's certificate is narrowed and the stack does not say so: authz: narrow on this helper keeps it that way (`tink daemon authz remove` undoes it)")
+		p.Findings = append(p.Findings, finding.Notef(reasonAuthzNarrowedUnasked, "", "the daemon's certificate is narrowed and the stack does not say so: authz: narrow on this helper keeps it that way (`tink daemon authz remove` undoes it)"))
 		if !st.UpToDate {
-			p.Warnings = append(p.Warnings, "the daemon's certificate is narrowed by rules that no longer match what the daemon touches (its volumes, the dns helpers, its flags): `tink daemon authz apply` (or authz: narrow) rewrites them")
+			p.Findings = append(p.Findings, finding.Warnf(reasonAuthzStale, "", "the daemon's certificate is narrowed by rules that no longer match what the daemon touches (its volumes, the dns helpers, its flags): `tink daemon authz apply` (or authz: narrow) rewrites them"))
 		}
 	default:
-		p.Notes = append(p.Notes, "the daemon's certificate is unrestricted: it has the reach of root on the host (authz: narrow on this helper narrows it)")
+		p.Findings = append(p.Findings, finding.Notef(reasonAuthzUnrestricted, "", "the daemon's certificate is unrestricted: it has the reach of root on the host (authz: narrow on this helper narrows it)"))
 	}
 	return p
 }

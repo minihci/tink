@@ -96,11 +96,11 @@ func TestAVolumeAnotherStackOwnsWarnsAndSaysWhoseItWas(t *testing.T) {
 	if p.Action != ActionNone {
 		t.Errorf("applying does not take it over (the stamp is not part of what apply converges): %v %v", p.Action, p.Changes)
 	}
-	if w := strings.Join(p.Warnings, "|"); !strings.Contains(w, `"nextcloud"`) || !strings.Contains(w, "does not change the stamp") {
+	if w := strings.Join(details(p.Warnings()), "|"); !strings.Contains(w, `"nextcloud"`) || !strings.Contains(w, "does not change the stamp") {
 		t.Errorf("the warning names the owner and says the stamp stays: %q", w)
 	}
-	if p := decideVolume(r, liveVolume(map[string]string{backupmeta.StackKey: "immich"}), volumeEnv{stack: "immich"}); len(p.Warnings) != 0 {
-		t.Errorf("no warning for its own volume: %v", p.Warnings)
+	if p := decideVolume(r, liveVolume(map[string]string{backupmeta.StackKey: "immich"}), volumeEnv{stack: "immich"}); len(p.Warnings()) != 0 {
+		t.Errorf("no warning for its own volume: %v", details(p.Warnings()))
 	}
 }
 

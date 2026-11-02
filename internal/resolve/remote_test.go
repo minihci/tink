@@ -17,10 +17,10 @@ func TestKindIncusIsBlockedUnderARemote(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Action != ActionBlocked || len(got.Blocked) != 1 {
+	if got.Action != ActionBlocked || len(got.Blocked()) != 1 {
 		t.Fatalf("expected a BLOCKED resource, got %+v", got)
 	}
-	if !strings.Contains(got.Blocked[0], `"homelab"`) || !strings.Contains(got.Blocked[0], "local `incus` CLI") {
-		t.Errorf("the reason must say why and name the remote: %q", got.Blocked[0])
+	if !strings.Contains(got.Blocked()[0].Detail, `"homelab"`) || !strings.Contains(got.Blocked()[0].Detail, "local `incus` CLI") {
+		t.Errorf("the reason must say why and name the remote: %q", got.Blocked()[0])
 	}
 }

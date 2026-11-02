@@ -2,6 +2,11 @@ package finding
 
 import (
 	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -125,5 +130,42 @@ func TestSort_ErrorsFirstThenSubjectThenDetail_AndIsStable(t *testing.T) {
 	}
 	if fs[0].Reason != "r" || fs[1].Reason != "first raised" {
 		t.Errorf("equal findings were reordered: %q then %q", fs[0].Reason, fs[1].Reason)
+	}
+}
+
+// The constructor is where an empty reason is refused, so nothing else may build a Finding by hand: a literal would skip it. A slice of findings
+// ([]finding.Finding{...}) is not a literal of one.
+func TestNoCodeBuildsAFindingWithoutTheConstructor(t *testing.T) {
+	literal := regexp.MustCompile(`[^\]\w]finding\.Finding\{`)
+	var bad []string
+	err := filepath.WalkDir("../..", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() && (d.Name() == ".git" || d.Name() == "finding") {
+			return fs.SkipDir
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for i, line := range strings.Split(string(b), "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "//") {
+				continue
+			}
+			if literal.MatchString(line) {
+				bad = append(bad, fmt.Sprintf("%s:%d", path, i+1))
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bad) > 0 {
+		t.Errorf("a finding.Finding literal skips the check for a reason; use finding.New, Errorf, Warnf or Notef: %s", strings.Join(bad, ", "))
 	}
 }

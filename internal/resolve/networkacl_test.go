@@ -494,8 +494,8 @@ func TestPlanNetworkACL(t *testing.T) {
 			if !reflect.DeepEqual(p.Changes, c.wantChange) {
 				t.Errorf("changes =\n  %q\nwant\n  %q", p.Changes, c.wantChange)
 			}
-			if len(p.Blocked) != 0 || len(p.Warnings) != 0 {
-				t.Errorf("an ACL plan has nothing to block or warn about: blocked %v warnings %v", p.Blocked, p.Warnings)
+			if len(p.Blocked()) != 0 || len(p.Warnings()) != 0 {
+				t.Errorf("an ACL plan has nothing to block or warn about: blocked %v warnings %v", details(p.Blocked()), details(p.Warnings()))
 			}
 		})
 	}
@@ -687,10 +687,10 @@ func TestPlanNetwork_AttachingAnACLToABridgeInUseIsNotDisruption(t *testing.T) {
 		t.Fatal(err)
 	}
 	if p.Action != ActionUpdate {
-		t.Fatalf("action = %v (%v), want ActionUpdate: attaching an ACL needs no allow_disruption", p.Action, p.Blocked)
+		t.Fatalf("action = %v (%v), want ActionUpdate: attaching an ACL needs no allow_disruption", p.Action, details(p.Blocked()))
 	}
-	if len(p.Warnings) != 0 || len(p.Blocked) != 0 {
-		t.Errorf("warnings %v blocked %v, want neither", p.Warnings, p.Blocked)
+	if len(p.Warnings()) != 0 || len(p.Blocked()) != 0 {
+		t.Errorf("warnings %v blocked %v, want neither", details(p.Warnings()), details(p.Blocked()))
 	}
 	want := []string{`config.security.acls.default.egress.action: "" -> "allow"`, `config.security.acls: "" -> "svc-in"`} // diffConfig sorts the printed lines
 	if !reflect.DeepEqual(p.Changes, want) {
@@ -702,8 +702,8 @@ func TestPlanNetwork_ChangingAnAttachedACLListOnABridgeInUseIsNotDisruption(t *t
 	live := liveBridge(map[string]string{"security.acls": "a", "security.acls.default.ingress.action": "reject"}, "/1.0/instances/ha")
 	r := netResource(map[string]string{"security.acls": "a,b", "security.acls.default.ingress.action": "drop", "security.acls.default.ingress.logged": "true"})
 	p, _ := planNetwork(&netServer{live: live}, r)
-	if p.Action != ActionUpdate || len(p.Warnings) != 0 {
-		t.Fatalf("action %v warnings %v (%v), want a plain update", p.Action, p.Warnings, p.Blocked)
+	if p.Action != ActionUpdate || len(p.Warnings()) != 0 {
+		t.Fatalf("action %v warnings %v (%v), want a plain update", p.Action, details(p.Warnings()), details(p.Blocked()))
 	}
 }
 
@@ -719,8 +719,8 @@ func TestPlanNetwork_AnACLKeyDoesNotLetADisruptiveKeyThrough(t *testing.T) {
 	}
 	// With the consent the resource gives, the warning is about the instances, and the update goes through.
 	r.AllowDisruption = true
-	if p, _ = planNetwork(&netServer{live: live}, r); p.Action != ActionUpdate || len(p.Warnings) != 1 {
-		t.Errorf("with allow_disruption: action %v warnings %v", p.Action, p.Warnings)
+	if p, _ = planNetwork(&netServer{live: live}, r); p.Action != ActionUpdate || len(p.Warnings()) != 1 {
+		t.Errorf("with allow_disruption: action %v warnings %v", p.Action, details(p.Warnings()))
 	}
 }
 
@@ -745,12 +745,12 @@ func TestPlanOne_NetworkNamingAnACLThatExistsNowhereIsFlagged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(p.Warnings) != 1 {
-		t.Fatalf("warnings = %q, want exactly one, for the ACL that exists nowhere", p.Warnings)
+	if len(p.Warnings()) != 1 {
+		t.Fatalf("warnings = %q, want exactly one, for the ACL that exists nowhere", details(p.Warnings()))
 	}
 	for _, want := range []string{"config security.acls", `"nowhere"`, "does not declare", "does not have", "refuse"} {
-		if !strings.Contains(p.Warnings[0], want) {
-			t.Errorf("warning %q does not mention %q", p.Warnings[0], want)
+		if !strings.Contains(p.Warnings()[0].Detail, want) {
+			t.Errorf("warning %q does not mention %q", p.Warnings()[0], want)
 		}
 	}
 	if !slices.Equal(s.reads, []string{"on-the-server", "nowhere"}) {
@@ -765,8 +765,8 @@ func TestPlanOne_NetworkWarningSurvivesWhateverElseThePlanSays(t *testing.T) {
 	if err != nil || p.Action != ActionCreate {
 		t.Fatalf("planOne() = %v, %v", p.Action, err)
 	}
-	if len(p.Warnings) != 1 || !strings.Contains(p.Warnings[0], `"nowhere"`) {
-		t.Errorf("warnings = %q", p.Warnings)
+	if len(p.Warnings()) != 1 || !strings.Contains(p.Warnings()[0].Detail, `"nowhere"`) {
+		t.Errorf("warnings = %q", details(p.Warnings()))
 	}
 }
 
@@ -778,14 +778,14 @@ func TestACLReferenceWarnings_DeviceOnAnInstance(t *testing.T) {
 		"data": {"type": "disk", "security.acls": "not-a-nic"},
 	}}
 	got := aclReferenceWarnings(s, r, map[string]bool{})
-	if len(got) != 1 || !strings.Contains(got[0], `device "eth0" security.acls`) || !strings.Contains(got[0], `"nowhere"`) {
+	if len(got) != 1 || !strings.Contains(got[0].Detail, `device "eth0" security.acls`) || !strings.Contains(got[0].Detail, `"nowhere"`) {
 		t.Errorf("warnings = %q, want one naming device eth0 and the ACL", got)
 	}
 }
 
 func TestACLReferenceWarnings_AnUnreadableServerIsUnverifiedNotMissing(t *testing.T) {
 	got := aclReferenceWarnings(&aclServer{err: errForbidden}, netResource(map[string]string{"security.acls": "x"}), map[string]bool{})
-	if len(got) != 1 || !strings.Contains(got[0], "could not be asked") || strings.Contains(got[0], "does not have") {
+	if len(got) != 1 || !strings.Contains(got[0].Detail, "could not be asked") || strings.Contains(got[0].Detail, "does not have") {
 		t.Errorf("warnings = %q: a 403 says nothing about whether the ACL exists", got)
 	}
 }

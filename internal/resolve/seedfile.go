@@ -1,6 +1,10 @@
 package resolve
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/minihci/tink/internal/finding"
+)
 
 // A kind: file with seed: true is written when its path does not exist and never again. See Resource.Seed, and docs/first-start-files-design.md, "Seed".
 //
@@ -13,7 +17,12 @@ func seedNote(f Resource) string {
 	return fmt.Sprintf("seed: %s on %s exists and differs from the declared content; it is left as it is", f.Path, f.Instance)
 }
 
+// seedFinding is seedNote as a finding.
+func seedFinding(f Resource) finding.Finding {
+	return finding.Notef(reasonFileSeedDiffers, "", "%s", seedNote(f))
+}
+
 // seededFile is the plan of a seed file that exists with other content than declared: nothing to do.
 func seededFile(f Resource) PlannedResource {
-	return PlannedResource{Resource: f, Action: ActionNone, Notes: []string{seedNote(f)}}
+	return PlannedResource{Resource: f, Action: ActionNone, Findings: []finding.Finding{seedFinding(f)}}
 }
