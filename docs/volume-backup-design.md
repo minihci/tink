@@ -242,6 +242,9 @@ tink backup verify <volume> [--from <target>]
    volume mounted read-only (e.g. `pg_controldata`, a file count, a checksum manifest).
 3. Delete the scratch volume. Stamp the *source* volume with
    `user.tink.backup.verified-at` / `user.tink.backup.verified-from`.
+   Every instant a stamp holds is written the glossary's way ([Time words](glossary.md#time-words)): RFC 3339, UTC, whole seconds, and named
+   `<past-participle>-at`. The per-target stamps on the source volume are `copy.<target>.copied-at` (the last success) and, while a copy is
+   failing, `failed-at` (the last attempt), `failing-since` (when the run of failures began) and `failures` (how many in a row).
 
 `plan` then warns when a copy has never been verified, or the stamp is older than the
 declared cadence (`verify: weekly`). That is the whole value of the feature: "untested
@@ -297,7 +300,7 @@ Ordered so each step is useful alone, and the Incus-supported path comes first.
      consistent content but deletes the target's own snapshots. A mirror cannot keep longer history than its source and propagates
      deletion or damage into the backup. So each run copies a fresh snapshot into a **new, separately named volume** and tink prunes by
      `retain`. Cost: a full copy per run.
-   - **Markers** on every restore point (`user.tink.backup.copy-of` = `project/pool/volume`, `-at`, `-target`, `-snapshot`) are what pruning
+   - **Markers** on every restore point (`user.tink.backup.copy-of` = `project/pool/volume`, `copied-at`, `copy-target`, `copy-snapshot`; an in-progress copy carries `copy-partial-of` and `copy-partial-started-at` instead) are what pruning
      and restore trust; a volume without the marker for exactly that volume is never listed, pruned or restored from.
    - **Restoring from a target does not require the source volume**, because that is the case it exists for; `verify` then cannot record
      the result and says so.
