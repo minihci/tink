@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/robfig/cron/v3"
+
+	"github.com/minihci/tink/internal/instant"
 )
 
 // NextRun returns the first time after `after` at which schedule fires. schedule is anything
@@ -100,7 +102,7 @@ func CopyWarnings(name string, b *VolumeBackup, current map[string]string, now t
 			}
 			continue
 		}
-		last, err := time.Parse(time.RFC3339, stamp)
+		last, err := instant.Parse(stamp)
 		if err != nil {
 			out = append(out, fmt.Sprintf("%s=%q is not a timestamp tink wrote -- `tink backup run %s` replaces it", CopyStampAt(c.Target), stamp, name))
 			continue
@@ -148,7 +150,7 @@ type CopyDecision struct {
 func CopyDue(schedule string, current map[string]string, target string, now time.Time) (CopyDecision, error) {
 	d := CopyDecision{Due: true}
 	if stamp := current[CopyStampAt(target)]; stamp != "" {
-		if last, err := time.Parse(time.RFC3339, stamp); err == nil { // a stamp we cannot read is as good as none
+		if last, err := instant.Parse(stamp); err == nil { // a stamp we cannot read is as good as none
 			due, err := NextRun(schedule, last.In(now.Location()))
 			if err != nil {
 				return CopyDecision{}, err

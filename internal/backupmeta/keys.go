@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/minihci/tink/internal/instant"
 	"github.com/minihci/tink/internal/ownership"
 )
 
@@ -52,7 +53,7 @@ type CopyFailure struct {
 // copy is not failing: no stamp, an unreadable one, or one older than the last success (a stale stamp a success
 // should have cleared, never believed over a newer success).
 func FailureOf(current map[string]string, target string) (CopyFailure, bool) {
-	at, err := time.Parse(time.RFC3339, current[CopyFailAt(target)])
+	at, err := instant.Parse(current[CopyFailAt(target)])
 	if err != nil {
 		return CopyFailure{}, false
 	}
@@ -60,7 +61,7 @@ func FailureOf(current map[string]string, target string) (CopyFailure, bool) {
 	if _, err := fmt.Sscanf(current[CopyFailCount(target)], "%d", &n); err != nil || n < 1 {
 		n = 1
 	}
-	if last, err := time.Parse(time.RFC3339, current[CopyStampAt(target)]); err == nil && !at.After(last) {
+	if last, err := instant.Parse(current[CopyStampAt(target)]); err == nil && !at.After(last) {
 		return CopyFailure{}, false
 	}
 	return CopyFailure{At: at, N: n}, true

@@ -13,6 +13,7 @@ import (
 
 	"github.com/minihci/tink/internal/backupmeta"
 	"github.com/minihci/tink/internal/incusapi"
+	"github.com/minihci/tink/internal/instant"
 )
 
 // Target is where copies of a volume go: a storage pool on THIS server (a second disk, or the
@@ -236,13 +237,13 @@ func takeSnapshot(s incus.InstanceServer, v Volume, name string, expires time.Ti
 func copyMarkers(copyOf string, start time.Time, t Target, snapshot, me string) (inProgress, markers map[string]string) {
 	inProgress = map[string]string{
 		backupmeta.MarkerPartialOf:  copyOf,
-		backupmeta.MarkerPartialAt:  start.UTC().Format(time.RFC3339),
+		backupmeta.MarkerPartialAt:  instant.Format(start),
 		backupmeta.MarkerCopyTarget: t.Name,
 		backupmeta.MarkerCopyServer: me,
 	}
 	markers = map[string]string{
 		backupmeta.MarkerCopyOf:     copyOf,
-		backupmeta.MarkerCopyAt:     start.UTC().Format(time.RFC3339),
+		backupmeta.MarkerCopyAt:     instant.Format(start),
 		backupmeta.MarkerCopyTarget: t.Name,
 		backupmeta.MarkerCopySnap:   snapshot,
 		backupmeta.MarkerCopyServer: me,
@@ -329,7 +330,7 @@ func stampCopy(s incus.InstanceServer, v Volume, target, restorePoint string, at
 		if put.Config == nil {
 			put.Config = map[string]string{}
 		}
-		put.Config[backupmeta.CopyStampAt(target)] = at.UTC().Format(time.RFC3339)
+		put.Config[backupmeta.CopyStampAt(target)] = instant.Format(at)
 		put.Config[backupmeta.CopyStampVolume(target)] = restorePoint
 		// a success ends any run of failures
 		delete(put.Config, backupmeta.CopyFailAt(target))
@@ -359,7 +360,7 @@ func recordFailure(server incus.InstanceServer, v Volume, target string, at time
 		if put.Config == nil {
 			put.Config = map[string]string{}
 		}
-		put.Config[backupmeta.CopyFailAt(target)] = at.UTC().Format(time.RFC3339)
+		put.Config[backupmeta.CopyFailAt(target)] = instant.Format(at)
 		put.Config[backupmeta.CopyFailCount(target)] = fmt.Sprintf("%d", n)
 		if err := s.UpdateStoragePoolVolume(v.pool(), "custom", v.Name, put, etag); err != nil {
 			return fmt.Errorf("recording the failure on %s/%s: %w", v.pool(), v.Name, err)
@@ -402,7 +403,7 @@ func restorePointsOf(vols []api.StorageVolume, copyOf string) []RestorePoint {
 		if vol.Type != "custom" || vol.Config[backupmeta.MarkerCopyOf] != copyOf {
 			continue
 		}
-		at, err := time.Parse(time.RFC3339, vol.Config[backupmeta.MarkerCopyAt])
+		at, err := instant.Parse(vol.Config[backupmeta.MarkerCopyAt])
 		if err != nil {
 			continue // a marker we cannot read: leave the volume alone rather than guess its age
 		}
@@ -582,7 +583,7 @@ func sweepPartials(dst incus.InstanceServer, v Volume, t Target, now time.Time, 
 		if srv := vol.Config[backupmeta.MarkerCopyServer]; srv != "" && srv != me {
 			continue
 		}
-		started, err := time.Parse(time.RFC3339, vol.Config[backupmeta.MarkerPartialAt])
+		started, err := instant.Parse(vol.Config[backupmeta.MarkerPartialAt])
 		if err != nil || now.Sub(started) < PartialGrace {
 			continue
 		}

@@ -32,6 +32,7 @@ import (
 	"github.com/minihci/tink/internal/backupmeta"
 	"github.com/minihci/tink/internal/incusapi"
 	"github.com/minihci/tink/internal/instance"
+	"github.com/minihci/tink/internal/instant"
 )
 
 // Volume identifies a custom storage volume.
@@ -370,7 +371,7 @@ func stamp(s incus.InstanceServer, v Volume, snap, with, from string, at time.Ti
 		if put.Config == nil {
 			put.Config = map[string]string{}
 		}
-		put.Config[backupmeta.StampVerifiedAt] = at.UTC().Format(time.RFC3339)
+		put.Config[backupmeta.StampVerifiedAt] = instant.Format(at)
 		put.Config[backupmeta.StampVerifiedSnapshot] = snap
 		put.Config[backupmeta.StampVerifiedWith] = with
 		put.Config[backupmeta.StampVerifiedFrom] = from
