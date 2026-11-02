@@ -83,10 +83,10 @@ type CopyReport struct {
 	Outcome Outcome `json:"outcome"`
 	// Detail is the reason for a skip, or the error of a failure, as printed.
 	Detail       string   `json:"detail,omitempty"`
-	RestorePoint string   `json:"restore_point,omitempty"`
+	RestorePoint string   `json:"restore-point,omitempty"`
 	Pruned       []string `json:"pruned,omitempty"`
 	Swept        []string `json:"swept,omitempty"`
-	OtherServers []string `json:"other_servers,omitempty"`
+	OtherServers []string `json:"other-servers,omitempty"`
 }
 
 // Report is everything a run did.

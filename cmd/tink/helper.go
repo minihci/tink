@@ -381,13 +381,13 @@ func nameList(names []string, max int) string {
 type helperJSON struct {
 	Project string   `json:"project"`
 	Name    string   `json:"name"`
-	State   string   `json:"instance_state"`
+	State   string   `json:"instance-state"`
 	Health  string   `json:"health"`
-	Code    int      `json:"exit_code"`
+	Code    int      `json:"exit-code"`
 	Reasons []string `json:"reasons,omitempty"`
 	// StatusVolume is POOL/VOLUME when the helper's status document is on a volume its instance points at; absent for one that keeps it
 	// on the instance.
-	StatusVolume string         `json:"status_volume,omitempty"`
+	StatusVolume string         `json:"status-volume,omitempty"`
 	Status       *helper.Status `json:"status,omitempty"`
 }
 

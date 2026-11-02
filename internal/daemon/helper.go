@@ -23,7 +23,7 @@ const KindBackupRun = "backup-run"
 type BackupRunArgs struct {
 	Volumes []string `json:"volumes,omitempty"`
 	Due     bool     `json:"due,omitempty"`
-	DryRun  bool     `json:"dry_run,omitempty"`
+	DryRun  bool     `json:"dry-run,omitempty"`
 }
 
 // Helper is the part of the daemon that runs queued work and decides what to queue: the helper design's "scheduler

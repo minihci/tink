@@ -194,7 +194,7 @@ func TestHelperStatusReadsTheVolumeAndSaysWhereAndSaysWhenItCannot(t *testing.T)
 	if !strings.Contains(out, "status on:   volume default/helper-status") || !strings.Contains(out, "version:     v1") {
 		t.Errorf("the details say where the document was read from:\n%s", out)
 	}
-	if out, _ = statusRun(t, srv, "", "", false, true); !strings.Contains(out, `"status_volume": "default/helper-status"`) {
+	if out, _ = statusRun(t, srv, "", "", false, true); !strings.Contains(out, `"status-volume": "default/helper-status"`) {
 		t.Errorf("and so does the JSON:\n%s", out)
 	}
 
