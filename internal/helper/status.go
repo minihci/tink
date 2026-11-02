@@ -16,15 +16,16 @@ import (
 	"time"
 
 	"github.com/minihci/tink/internal/instant"
+	"github.com/minihci/tink/internal/ownership"
 )
 
 const (
 	// StatusKey is the config key the helper publishes its status document under: on its status volume, or, for a helper installed
 	// before there was one, on its own instance.
-	StatusKey = "user.tink.helper.status"
+	StatusKey = MarkerKey + ".status"
 	// MarkerKey marks an instance as a helper and says which job protocol it speaks. `helper install` sets it, so a helper is
 	// found even before it has ever published anything.
-	MarkerKey = "user.tink.helper"
+	MarkerKey = ownership.OutcomePrefix + "helper"
 	// WrittenAtField and HeartbeatField are the document's names for when it was written and how often, as a health reason says them.
 	WrittenAtField, HeartbeatField = "written-at", "heartbeat"
 	// StatusProto is the version of the document. A reader refuses a newer one rather than guessing, and does nothing special for an older

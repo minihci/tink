@@ -52,7 +52,7 @@ func ListVolumes(s incus.InstanceServer) (vols []ListedVolume, poolErrs map[stri
 
 // Forget removes a volume's copy policy, so that nothing copies it any more. It reports whether there was one. The
 // volume's data, its restore points on the targets and the stamps of what has happened are left exactly as they are:
-// forgetting stops the schedule and nothing else. owner is the stack the volume points back at (its user.tink.stack),
+// forgetting stops the schedule and nothing else. owner is the stack the volume points back at (its user.tink.intent.stack),
 // if any, so the caller can say whose YAML still has to change.
 func Forget(s incus.InstanceServer, v Volume) (had bool, owner string, err error) {
 	err = incusapi.RetryOnConflict(func() error {

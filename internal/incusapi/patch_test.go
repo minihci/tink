@@ -25,14 +25,14 @@ func (s *patchServer) RawQuery(method, path string, data any, etag string) (*api
 
 func TestPatchInstanceConfigSendsOnlyTheKeysItNames(t *testing.T) {
 	s := &patchServer{}
-	if err := PatchInstanceConfig(s, "tink-helper", "helper", map[string]string{"user.tink.helper.status": `{"proto":1}`}); err != nil {
+	if err := PatchInstanceConfig(s, "tink-helper", "helper", map[string]string{"user.tink.outcome.helper.status": `{"proto":1}`}); err != nil {
 		t.Fatal(err)
 	}
 	if s.method != "PATCH" || s.path != "/1.0/instances/helper?project=tink-helper" || s.etag != "" {
 		t.Errorf("%s %s etag=%q: a PATCH of the one instance, scoped to its project, and no etag to conflict on", s.method, s.path, s.etag)
 	}
 	b, _ := json.Marshal(s.body)
-	if string(b) != `{"config":{"user.tink.helper.status":"{\"proto\":1}"}}` {
+	if string(b) != `{"config":{"user.tink.outcome.helper.status":"{\"proto\":1}"}}` {
 		t.Errorf("body = %s: only the config keys, nothing else to overwrite", b)
 	}
 }

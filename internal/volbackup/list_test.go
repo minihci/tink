@@ -64,7 +64,7 @@ func TestForgetClearsOnlyThePolicyAndSaysWhoseItWas(t *testing.T) {
 	f := newFake("homelab", "default")
 	f.add("default", "lib", map[string]string{
 		backupmeta.PolicyKey: somePolicy, backupmeta.StackKey: "immich",
-		"snapshots.schedule": "@daily", "user.tink.backup.copy.bk.copied-at": "2026-10-07T00:00:00Z", "user.tink.backup.verified-at": "2026-10-01T00:00:00Z"})
+		"snapshots.schedule": "@daily", "user.tink.outcome.backup.copy.bk.copied-at": "2026-10-07T00:00:00Z", "user.tink.outcome.backup.verified-at": "2026-10-01T00:00:00Z"})
 	f.add("default", "plain", map[string]string{backupmeta.StackKey: "immich"})
 
 	had, owner, err := Forget(f, Volume{Name: "lib"})
@@ -75,7 +75,7 @@ func TestForgetClearsOnlyThePolicyAndSaysWhoseItWas(t *testing.T) {
 	if _, has := cfg[backupmeta.PolicyKey]; has {
 		t.Errorf("the policy is gone: %v", cfg)
 	}
-	for _, keep := range []string{backupmeta.StackKey, "snapshots.schedule", "user.tink.backup.copy.bk.copied-at", "user.tink.backup.verified-at"} {
+	for _, keep := range []string{backupmeta.StackKey, "snapshots.schedule", "user.tink.outcome.backup.copy.bk.copied-at", "user.tink.outcome.backup.verified-at"} {
 		if cfg[keep] == "" {
 			t.Errorf("forgetting stops the schedule and nothing else, but %s was lost: %v", keep, cfg)
 		}

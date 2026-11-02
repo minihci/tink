@@ -8,6 +8,9 @@ import (
 
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
+
+	"github.com/minihci/tink/internal/instance"
+	"github.com/minihci/tink/internal/ownership"
 )
 
 func pub(name, instance, offer string, allow ...string) Resource {
@@ -51,7 +54,7 @@ func TestAPublishStampIsCompactJSONWithSortedKeysAndGroupsInDeclaredOrder(t *tes
 			t.Errorf("stamp = %q, %v; want %q", got, err, c.want)
 		}
 	}
-	if k := PublishStampKey("whoami-admin"); k != "user.tink.publish.whoami-admin" {
+	if k := PublishStampKey("whoami-admin"); k != "user.tink.intent.publish.whoami-admin" {
 		t.Errorf("key = %q", k)
 	}
 }
@@ -80,30 +83,30 @@ func TestAPublishStampIsReadStrictly(t *testing.T) {
 	cases := []struct {
 		name, key, value, want string
 	}{
-		{"not JSON", "user.tink.publish.w", `family`, "not a JSON object"},
-		{"not an object", "user.tink.publish.w", `["family"]`, "not a JSON object"},
-		{"null", "user.tink.publish.w", `null`, "not a JSON object"},
-		{"empty", "user.tink.publish.w", ``, "not a JSON object"},
-		{"truncated", "user.tink.publish.w", `{"allow":["family"],"offer":`, "not valid JSON"},
-		{"something after it", "user.tink.publish.w", good + ` {}`, "more after the JSON object"},
-		{"a field that is not one", "user.tink.publish.w", `{"allow":["family"],"offer":"web","instance":"x"}`, `"instance" is not a field`},
-		{"names are matched exactly", "user.tink.publish.w", `{"Allow":["family"],"offer":"web"}`, `"Allow" is not a field`},
-		{"a field given twice", "user.tink.publish.w", `{"allow":["family"],"offer":"web","offer":"api"}`, `"offer" is given twice`},
-		{"no allow", "user.tink.publish.w", `{"offer":"web"}`, `no "allow"`},
-		{"no offer", "user.tink.publish.w", `{"allow":["family"]}`, `no "offer"`},
-		{"offer is not a string", "user.tink.publish.w", `{"allow":["family"],"offer":7}`, "offer is not a string"},
-		{"allow is not a list", "user.tink.publish.w", `{"allow":"family","offer":"web"}`, "allow is not a list of group names"},
-		{"allow lists a number", "user.tink.publish.w", `{"allow":[1],"offer":"web"}`, "allow is not a list of group names"},
+		{"not JSON", "user.tink.intent.publish.w", `family`, "not a JSON object"},
+		{"not an object", "user.tink.intent.publish.w", `["family"]`, "not a JSON object"},
+		{"null", "user.tink.intent.publish.w", `null`, "not a JSON object"},
+		{"empty", "user.tink.intent.publish.w", ``, "not a JSON object"},
+		{"truncated", "user.tink.intent.publish.w", `{"allow":["family"],"offer":`, "not valid JSON"},
+		{"something after it", "user.tink.intent.publish.w", good + ` {}`, "more after the JSON object"},
+		{"a field that is not one", "user.tink.intent.publish.w", `{"allow":["family"],"offer":"web","instance":"x"}`, `"instance" is not a field`},
+		{"names are matched exactly", "user.tink.intent.publish.w", `{"Allow":["family"],"offer":"web"}`, `"Allow" is not a field`},
+		{"a field given twice", "user.tink.intent.publish.w", `{"allow":["family"],"offer":"web","offer":"api"}`, `"offer" is given twice`},
+		{"no allow", "user.tink.intent.publish.w", `{"offer":"web"}`, `no "allow"`},
+		{"no offer", "user.tink.intent.publish.w", `{"allow":["family"]}`, `no "offer"`},
+		{"offer is not a string", "user.tink.intent.publish.w", `{"allow":["family"],"offer":7}`, "offer is not a string"},
+		{"allow is not a list", "user.tink.intent.publish.w", `{"allow":"family","offer":"web"}`, "allow is not a list of group names"},
+		{"allow lists a number", "user.tink.intent.publish.w", `{"allow":[1],"offer":"web"}`, "allow is not a list of group names"},
 		// from here on the shape is right and the PUBLISH RULES (publish.go) are what refuse it
-		{"nobody may open it", "user.tink.publish.w", `{"allow":[],"offer":"web"}`, "needs allow"},
-		{"allow is null", "user.tink.publish.w", `{"allow":null,"offer":"web"}`, "needs allow"},
-		{"a typed subject", "user.tink.publish.w", `{"allow":["group:family"],"offer":"web"}`, "plain group names"},
-		{"a group twice", "user.tink.publish.w", `{"allow":["family","family"],"offer":"web"}`, "twice"},
-		{"a quote in a group", "user.tink.publish.w", `{"allow":["fam'ily"],"offer":"web"}`, "corrupt the sign-on rule"},
-		{"an offer name that is not one", "user.tink.publish.w", `{"allow":["family"],"offer":"Web"}`, "is not an offer name"},
-		{"an empty offer", "user.tink.publish.w", `{"allow":["family"],"offer":""}`, "needs offer"},
-		{"a label that is not a DNS label", "user.tink.publish.Who.Am.I", good, "host label"},
-		{"no label", "user.tink.publish.", good, "host label"},
+		{"nobody may open it", "user.tink.intent.publish.w", `{"allow":[],"offer":"web"}`, "needs allow"},
+		{"allow is null", "user.tink.intent.publish.w", `{"allow":null,"offer":"web"}`, "needs allow"},
+		{"a typed subject", "user.tink.intent.publish.w", `{"allow":["group:family"],"offer":"web"}`, "plain group names"},
+		{"a group twice", "user.tink.intent.publish.w", `{"allow":["family","family"],"offer":"web"}`, "twice"},
+		{"a quote in a group", "user.tink.intent.publish.w", `{"allow":["fam'ily"],"offer":"web"}`, "corrupt the sign-on rule"},
+		{"an offer name that is not one", "user.tink.intent.publish.w", `{"allow":["family"],"offer":"Web"}`, "is not an offer name"},
+		{"an empty offer", "user.tink.intent.publish.w", `{"allow":["family"],"offer":""}`, "needs offer"},
+		{"a label that is not a DNS label", "user.tink.intent.publish.Who.Am.I", good, "host label"},
+		{"no label", "user.tink.intent.publish.", good, "host label"},
 		{"not a stamp key", "user.tink.offer.web.port", good, "is not a publish stamp"},
 	}
 	for _, c := range cases {
@@ -155,10 +158,10 @@ func TestPlanStampsEachPublishOntoItsInstanceAndLeavesThePublishesOutOfTheGraph(
 	}
 	inst := instanceOf(t, all, "whoami")
 	wantConfig := map[string]string{
-		"user.tink.offer.web.port":       "80",
-		"user.tink.offer.web.proto":      "http",
-		"user.tink.publish.whoami":       `{"allow":["family"],"offer":"web"}`,
-		"user.tink.publish.whoami-admin": `{"allow":["admins","family"],"offer":"web"}`,
+		"user.tink.offer.web.port":              "80",
+		"user.tink.offer.web.proto":             "http",
+		"user.tink.intent.publish.whoami":       `{"allow":["family"],"offer":"web"}`,
+		"user.tink.intent.publish.whoami-admin": `{"allow":["admins","family"],"offer":"web"}`,
 	}
 	if !reflect.DeepEqual(inst.Config, wantConfig) {
 		t.Errorf("desired config = %v\nwant %v", inst.Config, wantConfig)
@@ -198,7 +201,7 @@ func TestAPublishIsStampedOnItsOwnInstanceAndOnNoOther(t *testing.T) {
 			t.Errorf("instance %s carries %v, but nothing was published from it", name, cfg)
 		}
 	}
-	if got := instanceOf(t, all, "b").Config; !reflect.DeepEqual(got, map[string]string{"user.tink.publish.bee": `{"allow":["family"],"offer":"web"}`}) {
+	if got := instanceOf(t, all, "b").Config; !reflect.DeepEqual(got, map[string]string{"user.tink.intent.publish.bee": `{"allow":["family"],"offer":"web"}`}) {
 		t.Errorf("instance b = %v", got)
 	}
 }
@@ -260,7 +263,7 @@ func TestThePublishAndItsInstanceMeetInTheStacksDefaultProject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := instanceOf(t, levels[0], "whoami").Config["user.tink.publish.web"]; !ok {
+	if _, ok := instanceOf(t, levels[0], "whoami").Config["user.tink.intent.publish.web"]; !ok {
 		t.Errorf("the stamp is missing: %v", instanceOf(t, levels[0], "whoami").Config)
 	}
 	// neither names a project and the stack names none: both are in the server's default project
@@ -271,9 +274,9 @@ func TestThePublishAndItsInstanceMeetInTheStacksDefaultProject(t *testing.T) {
 }
 
 func TestAnInstanceMayNotDeclareAKeyUnderTheOwnedPrefix(t *testing.T) {
-	r := Resource{Kind: KindInstance, Name: "whoami", Image: "docker-oci:x", Config: map[string]string{"user.tink.publish.web": `{"allow":["family"],"offer":"web"}`}}
+	r := Resource{Kind: KindInstance, Name: "whoami", Image: "docker-oci:x", Config: map[string]string{"user.tink.intent.publish.web": `{"allow":["family"],"offer":"web"}`}}
 	err := Validate(r)
-	if err == nil || !strings.Contains(err.Error(), "which tink owns") || !strings.Contains(err.Error(), "user.tink.publish.web") {
+	if err == nil || !strings.Contains(err.Error(), "which tink owns") || !strings.Contains(err.Error(), "user.tink.intent.publish.web") {
 		t.Errorf("err = %v", err)
 	}
 	// anything else under user.tink. is the person's to declare
@@ -335,7 +338,7 @@ func TestPlanConvergesAMissingAndAChangedStampLikeAnyOtherConfigKey(t *testing.T
 	r := desiredWhoami(t, stampedStack())
 	live := map[string]string{
 		"user.tink.offer.web.port": "80", "user.tink.offer.web.proto": "http",
-		"user.tink.publish.whoami": `{"allow":["old"],"offer":"web"}`, // changed
+		"user.tink.intent.publish.whoami": `{"allow":["old"],"offer":"web"}`, // changed
 		// whoami-admin is missing
 	}
 	p, err := planInstance(&stampServer{inst: liveWhoami(live)}, r, NewPlanOptions(true))
@@ -344,8 +347,8 @@ func TestPlanConvergesAMissingAndAChangedStampLikeAnyOtherConfigKey(t *testing.T
 	}
 	got := strings.Join(p.Changes, "\n")
 	for _, w := range []string{
-		`config.user.tink.publish.whoami: "{\"allow\":[\"old\"],\"offer\":\"web\"}" -> "{\"allow\":[\"family\"],\"offer\":\"web\"}"`,
-		`config.user.tink.publish.whoami-admin: "" -> "{\"allow\":[\"admins\",\"family\"],\"offer\":\"web\"}"`,
+		`config.user.tink.intent.publish.whoami: "{\"allow\":[\"old\"],\"offer\":\"web\"}" -> "{\"allow\":[\"family\"],\"offer\":\"web\"}"`,
+		`config.user.tink.intent.publish.whoami-admin: "" -> "{\"allow\":[\"admins\",\"family\"],\"offer\":\"web\"}"`,
 	} {
 		if !strings.Contains(got, w) {
 			t.Errorf("changes lack %s:\n%s", w, got)
@@ -355,8 +358,8 @@ func TestPlanConvergesAMissingAndAChangedStampLikeAnyOtherConfigKey(t *testing.T
 		t.Errorf("action = %v, want update", p.Action)
 	}
 	// converged: the same stamps live, nothing to do
-	live["user.tink.publish.whoami"] = `{"allow":["family"],"offer":"web"}`
-	live["user.tink.publish.whoami-admin"] = `{"allow":["admins","family"],"offer":"web"}`
+	live["user.tink.intent.publish.whoami"] = `{"allow":["family"],"offer":"web"}`
+	live["user.tink.intent.publish.whoami-admin"] = `{"allow":["admins","family"],"offer":"web"}`
 	p, err = planInstance(&stampServer{inst: liveWhoami(live)}, r, NewPlanOptions(true))
 	if err != nil || p.Action != ActionNone || len(p.Changes) != 0 {
 		t.Errorf("a converged instance: %+v, %v", p, err)
@@ -367,18 +370,18 @@ func TestPlanRemovesAStaleStampAndNothingElseUndeclared(t *testing.T) {
 	r := desiredWhoami(t, stampedStack())
 	live := map[string]string{
 		"user.tink.offer.web.port": "80", "user.tink.offer.web.proto": "http",
-		"user.tink.publish.whoami":       `{"allow":["family"],"offer":"web"}`,
-		"user.tink.publish.whoami-admin": `{"allow":["admins","family"],"offer":"web"}`,
-		"user.tink.publish.retired":      `{"allow":["kids"],"offer":"web"}`, // its publish was deleted from the stack
+		"user.tink.intent.publish.whoami":       `{"allow":["family"],"offer":"web"}`,
+		"user.tink.intent.publish.whoami-admin": `{"allow":["admins","family"],"offer":"web"}`,
+		"user.tink.intent.publish.retired":      `{"allow":["kids"],"offer":"web"}`, // its publish was deleted from the stack
 		// keys the stack does not declare, none of them under the owned prefix: left alone, as ever
-		"user.tink.helper.status": "x", "user.tink.role": "app", "user.tink.publisher": "x", "user.tink.publish": "x",
+		"user.tink.outcome.helper.status": "x", "user.tink.role": "app", "user.tink.publisher": "x", "user.tink.publish": "x",
 		"user.example.domain": "a.example", "limits.cpu": "2", "boot.autostart": "true",
 	}
 	p, err := planInstance(&stampServer{inst: liveWhoami(live)}, r, NewPlanOptions(true))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{`config.user.tink.publish.retired: "{\"allow\":[\"kids\"],\"offer\":\"web\"}" -> (unset)`}; !reflect.DeepEqual(p.Changes, want) {
+	if want := []string{`config.user.tink.intent.publish.retired: "{\"allow\":[\"kids\"],\"offer\":\"web\"}" -> (unset)`}; !reflect.DeepEqual(p.Changes, want) {
 		t.Errorf("changes = %q\nwant      %q", p.Changes, want)
 	}
 	if p.Action != ActionUpdate {
@@ -389,19 +392,19 @@ func TestPlanRemovesAStaleStampAndNothingElseUndeclared(t *testing.T) {
 func TestAStackThatNoLongerPublishesAnythingRemovesEveryStampOnItsInstance(t *testing.T) {
 	rs := []Resource{{Kind: KindInstance, Name: "whoami", Project: "canary", Config: map[string]string{"user.tink.offer.web.port": "80"}}}
 	r := desiredWhoami(t, rs)
-	live := map[string]string{"user.tink.offer.web.port": "80", "user.tink.publish.a": "{}", "user.tink.publish.b": "{}", "user.tink.role": "app"}
+	live := map[string]string{"user.tink.offer.web.port": "80", "user.tink.intent.publish.a": "{}", "user.tink.intent.publish.b": "{}", "user.tink.role": "app"}
 	p, err := planInstance(&stampServer{inst: liveWhoami(live)}, r, NewPlanOptions(true))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(p.Changes, "|"); got != `config.user.tink.publish.a: "{}" -> (unset)|config.user.tink.publish.b: "{}" -> (unset)` {
+	if got := strings.Join(p.Changes, "|"); got != `config.user.tink.intent.publish.a: "{}" -> (unset)|config.user.tink.intent.publish.b: "{}" -> (unset)` {
 		t.Errorf("changes = %s", got)
 	}
 }
 
 func TestAStampIsNeverAnExtraNorAStaleOneListedAsOne(t *testing.T) {
-	declared := Resource{Config: map[string]string{"user.tink.publish.kept": "{}"}}
-	live := Resource{Config: map[string]string{"user.tink.publish.kept": "{}", "user.tink.publish.gone": "{}", "limits.cpu": "2"}}
+	declared := Resource{Config: map[string]string{"user.tink.intent.publish.kept": "{}"}}
+	live := Resource{Config: map[string]string{"user.tink.intent.publish.kept": "{}", "user.tink.intent.publish.gone": "{}", "limits.cpu": "2"}}
 	if got := undeclaredExtras(live, declared).Config; !reflect.DeepEqual(got, []string{"limits.cpu"}) {
 		t.Errorf("extras = %v: a stale stamp is a planned removal, not an extra", got)
 	}
@@ -410,14 +413,14 @@ func TestAStampIsNeverAnExtraNorAStaleOneListedAsOne(t *testing.T) {
 func TestUpdatingTheInstanceSetsTheStampsAndTakesBackOnlyTheStaleOnes(t *testing.T) {
 	r := desiredWhoami(t, stampedStack())
 	live := map[string]string{
-		"user.tink.offer.web.port":  "80",
-		"user.tink.publish.whoami":  `{"allow":["old"],"offer":"web"}`,
-		"user.tink.publish.retired": `{"allow":["kids"],"offer":"web"}`,
-		"user.tink.role":            "app",
-		"user.tink.publisher":       "x",
-		"user.example.domain":       "a.example",
-		"limits.cpu":                "2",
-		"volatile.base_image":       "abc",
+		"user.tink.offer.web.port":         "80",
+		"user.tink.intent.publish.whoami":  `{"allow":["old"],"offer":"web"}`,
+		"user.tink.intent.publish.retired": `{"allow":["kids"],"offer":"web"}`,
+		"user.tink.role":                   "app",
+		"user.tink.publisher":              "x",
+		"user.example.domain":              "a.example",
+		"limits.cpu":                       "2",
+		"volatile.base_image":              "abc",
 	}
 	s := &stampServer{inst: liveWhoami(live)}
 	if err := updateInstance(s, r, 0); err != nil {
@@ -428,9 +431,9 @@ func TestUpdatingTheInstanceSetsTheStampsAndTakesBackOnlyTheStaleOnes(t *testing
 	}
 	want := map[string]string{
 		"user.tink.offer.web.port": "80", "user.tink.offer.web.proto": "http",
-		"user.tink.publish.whoami":       `{"allow":["family"],"offer":"web"}`,
-		"user.tink.publish.whoami-admin": `{"allow":["admins","family"],"offer":"web"}`,
-		"user.tink.role":                 "app", "user.tink.publisher": "x", "user.example.domain": "a.example", "limits.cpu": "2", "volatile.base_image": "abc",
+		"user.tink.intent.publish.whoami":       `{"allow":["family"],"offer":"web"}`,
+		"user.tink.intent.publish.whoami-admin": `{"allow":["admins","family"],"offer":"web"}`,
+		"user.tink.role":                        "app", "user.tink.publisher": "x", "user.example.domain": "a.example", "limits.cpu": "2", "volatile.base_image": "abc",
 	}
 	if !reflect.DeepEqual(map[string]string(s.updated.Config), want) {
 		t.Errorf("written config = %v\nwant %v", s.updated.Config, want)
@@ -441,14 +444,14 @@ func TestUpdatingTheInstanceSetsTheStampsAndTakesBackOnlyTheStaleOnes(t *testing
 
 func TestExportWritesTheStampsBackAsPublishDocumentsAndVerifies(t *testing.T) {
 	inst := kumaInstance()
-	inst.Config["user.tink.publish.kuma"] = `{"allow":["family","admins"],"offer":"web"}`
-	inst.Config["user.tink.publish.kuma-admin"] = `{"allow":["admins"],"offer":"web"}`
+	inst.Config["user.tink.intent.publish.kuma"] = `{"allow":["family","admins"],"offer":"web"}`
+	inst.Config["user.tink.intent.publish.kuma-admin"] = `{"allow":["admins"],"offer":"web"}`
 	s := &exportServer{inst: inst, volCfg: map[string]string{}}
 	res, err := Export(s, ExportOptions{Project: "tink-play", Instances: []string{"kuma-play"}, Offline: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(res.YAML, "user.tink.publish.") {
+	if strings.Contains(res.YAML, "user.tink.intent.publish.") {
 		t.Errorf("the stamp keys must not be written as config (a stack that declares one is refused):\n%s", res.YAML)
 	}
 	for _, want := range []string{
@@ -477,7 +480,7 @@ func TestExportWritesTheStampsBackAsPublishDocumentsAndVerifies(t *testing.T) {
 	}
 	for _, l := range levels {
 		for _, r := range l {
-			if r.Kind == KindInstance && r.Config["user.tink.publish.kuma"] != `{"allow":["family","admins"],"offer":"web"}` {
+			if r.Kind == KindInstance && r.Config["user.tink.intent.publish.kuma"] != `{"allow":["family","admins"],"offer":"web"}` {
 				t.Errorf("the exported stack does not derive the stamp: %v", r.Config)
 			}
 		}
@@ -486,7 +489,7 @@ func TestExportWritesTheStampsBackAsPublishDocumentsAndVerifies(t *testing.T) {
 
 func TestExportDoesNotGuessAtAStampThatIsNotAPublish(t *testing.T) {
 	inst := kumaInstance()
-	inst.Config["user.tink.publish.kuma"] = `{"allow":"family","offer":"web"}`
+	inst.Config["user.tink.intent.publish.kuma"] = `{"allow":"family","offer":"web"}`
 	s := &exportServer{inst: inst, volCfg: map[string]string{}}
 	res, err := Export(s, ExportOptions{Project: "tink-play", Instances: []string{"kuma-play"}, Offline: true})
 	if err != nil {
@@ -495,7 +498,7 @@ func TestExportDoesNotGuessAtAStampThatIsNotAPublish(t *testing.T) {
 	if strings.Contains(res.YAML, "kind: publish") || strings.Contains(res.YAML, "user.tink.publish") {
 		t.Errorf("nothing is written for a stamp that cannot be read:\n%s", res.YAML)
 	}
-	if n := strings.Join(res.Notes, "\n"); !strings.Contains(n, "user.tink.publish.kuma") || !strings.Contains(n, "would remove it") {
+	if n := strings.Join(res.Notes, "\n"); !strings.Contains(n, "user.tink.intent.publish.kuma") || !strings.Contains(n, "would remove it") {
 		t.Errorf("a note must name the stamp: %q", n)
 	}
 	if res.Verified {
@@ -505,10 +508,38 @@ func TestExportDoesNotGuessAtAStampThatIsNotAPublish(t *testing.T) {
 
 func TestAStackFileThatDeclaresAStampKeyDoesNotLoad(t *testing.T) {
 	path := t.TempDir() + "/tink.yaml"
-	if err := writeFile(path, "kind: instance\nname: whoami\nimage: docker-oci:x\nconfig:\n  user.tink.publish.web: '{\"allow\":[\"family\"],\"offer\":\"web\"}'\n"); err != nil {
+	if err := writeFile(path, "kind: instance\nname: whoami\nimage: docker-oci:x\nconfig:\n  user.tink.intent.publish.web: '{\"allow\":[\"family\"],\"offer\":\"web\"}'\n"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := LoadFile(path); err == nil || !strings.Contains(err.Error(), "which tink owns") {
 		t.Errorf("err = %v", err)
+	}
+}
+
+// tink owns everything under the intent prefix on an instance: an intent key that the stack no longer derives is a planned removal, whatever it is called. The
+// stamps that are not derived into a config at all (the owner stamp, the resource stamp, the applied record) are never taken back, and neither is a fact, an
+// outcome or a key of the person's own.
+func TestAnIntentKeyNothingDerivesAnyMoreIsAPlannedRemovalAndOnlyThat(t *testing.T) {
+	live := map[string]string{
+		"user.tink.intent.publish.old":          "{}",
+		"user.tink.intent.derive.old":           "{}",
+		"user.tink.intent.site":                 "herd",
+		"user.tink.intent.whatever":             "x",
+		"user.tink.intent.publish.web":          "{}", // still derived
+		ownership.Key:                           "lab",
+		ownership.ResourceKey:                   "instance/app",
+		ownership.AppliedKey:                    "{}",
+		"user.tink.role":                        "app",
+		"user.tink.outcome.exec.x.trigger-hash": "abc",
+		"user.note":                             "mine",
+	}
+	desired := map[string]string{"user.tink.intent.publish.web": "{}"}
+	got := instance.StaleOwnedKeys(live, desired, ownedConfigPrefixes)
+	want := []string{"user.tink.intent.derive.old", "user.tink.intent.publish.old", "user.tink.intent.site", "user.tink.intent.whatever"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("stale = %v, want %v", got, want)
+	}
+	if lines := staleOwnedChanges(live, desired); len(lines) != len(want) {
+		t.Errorf("plan lines = %v: one removal per stale key", lines)
 	}
 }

@@ -557,7 +557,7 @@ func (in *Installer) Remove(opts RemoveOptions) error {
 
 // volumePool is the pool the helper's volumes were made in, which install recorded on the instance; "default" for one that did not.
 func volumePool(f *Found) string {
-	if p := f.Config["user.tink.helper.pool"]; p != "" {
+	if p := f.Config[MarkerKey+".pool"]; p != "" {
 		return p
 	}
 	return "default"

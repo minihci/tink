@@ -69,7 +69,7 @@ func TestVolumeConfigThatTinkOwnsOrIncusOwnsIsRefused(t *testing.T) {
 	}{
 		"volatile":        {volumeWithConfig(map[string]string{"volatile.idmap.last": "[]"}), "belongs to Incus"},
 		"copy policy":     {volumeWithConfig(map[string]string{backupmeta.PolicyKey: "{}"}), "written by tink itself"},
-		"copy stamp":      {volumeWithConfig(map[string]string{"user.tink.backup.copy.nas.copied-at": "x"}), "written by tink itself"},
+		"copy stamp":      {volumeWithConfig(map[string]string{"user.tink.outcome.backup.copy.nas.copied-at": "x"}), "written by tink itself"},
 		"stack pointer":   {volumeWithConfig(map[string]string{backupmeta.StackKey: "s"}), "written by tink itself"},
 		"snapshots twice": {Resource{Kind: KindStorageVolume, Name: "data", Backup: snap, Config: map[string]string{"snapshots.schedule": "@daily"}}, "use one or the other"},
 	} {

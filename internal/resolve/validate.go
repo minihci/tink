@@ -113,7 +113,7 @@ func Validate(r Resource) error {
 	if err := validateStackOwnership(r); err != nil {
 		return err
 	}
-	if err := validateStampKey(r); err != nil {
+	if err := validateStateKeys(r); err != nil {
 		return err
 	}
 	if err := validateStackDefaults(r); err != nil {
@@ -126,9 +126,6 @@ func Validate(r Resource) error {
 		return err
 	}
 	if err := validatePublish(r); err != nil {
-		return err
-	}
-	if err := validateOwnedConfig(r); err != nil {
 		return err
 	}
 	if err := validateHelper(r); err != nil {

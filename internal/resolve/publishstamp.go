@@ -9,13 +9,14 @@ import (
 	"strings"
 
 	"github.com/minihci/tink/internal/instance"
+	"github.com/minihci/tink/internal/ownership"
 	"github.com/minihci/tink/internal/secrets"
 )
 
 // A `kind: publish` is a declaration that stays out of the plan graph (publish.go). It is also STAMPED onto the instance it governs, so that whatever acts
 // for the site later (the daemon helper) can read the declarations from the SERVER and does not need the stack files:
 //
-//	user.tink.publish.<name>: {"allow":["family"],"offer":"web"}
+//	user.tink.intent.publish.<name>: {"allow":["family"],"offer":"web"}
 //
 // <name> is the publish's host label. The value is compact JSON with its keys sorted and the groups in the order the publish declares them, so the same
 // stack always stamps the same bytes (a re-plan reads "no changes"). It names no instance (the key is on it) and holds no secret: a publish holds group
@@ -29,12 +30,13 @@ import (
 // instance (docs/plan-extras.md; removing them is proposed in #138), but a stamp that stays after its publish is deleted would keep the name rendered: it would go on being
 // routed and let in. So when planning an instance that the stack declares, a live key under the prefix that the stack no longer derives is reported as a
 // removal and removed on apply (instance.StaleOwnedKeys). Only that prefix, and only on instances the stack declares: any other key, tink's or not, is untouched.
-const PublishStampPrefix = "user.tink.publish."
+const PublishStampPrefix = ownership.IntentPrefix + "publish."
 
-// ownedConfigPrefixes are what tink owns on a stack's instances: the family of publish stamps (above), the family of derived-file stamps (derivestamp.go) and the
-// one key of the site stamp (SiteKey, site.go). The first two end in a dot and own everything under them; the last does not, and owns only itself
-// (instance.StaleOwnedKeys).
-var ownedConfigPrefixes = []string{PublishStampPrefix, DeriveStampPrefix, SiteKey}
+// ownedConfigPrefixes are what tink owns in the config of an instance and of a network ACL: everything under the intent prefix (internal/ownership), which is
+// where the publish stamps (above), the derived-file stamps (derivestamp.go) and the site stamp (SiteKey, site.go) live. An intent key that the stack no longer
+// derives is a planned removal. The keys of that class that are not derived into a desired config at all (the owner stamp and the two named beside it) are
+// never returned (instance.StaleOwnedKeys).
+var ownedConfigPrefixes = []string{ownership.IntentPrefix}
 
 // publishStamp is the stamped value. Its fields are in key order, which is the order the JSON is written in.
 type publishStamp struct {
@@ -130,41 +132,6 @@ func strictObject(s string) (map[string]json.RawMessage, error) {
 		return nil, fmt.Errorf("there is more after the JSON object")
 	}
 	return out, nil
-}
-
-// validateOwnedConfig rejects an instance that declares a key under a prefix tink owns. Such a key would be overwritten by the derived stamp or removed as
-// stale, so declaring it could only mislead.
-func validateOwnedConfig(r Resource) error {
-	if r.Kind == KindNetworkACL {
-		for k := range r.Config {
-			if strings.HasPrefix(k, DeriveStampPrefix) {
-				return fmt.Errorf("resource %q: config %s is under %s, which tink owns: it writes that key from derive_ingress: true and removes it when the stack no longer derives the rules, so declare derive_ingress and not the key", r.Name, k, DeriveStampPrefix)
-			}
-		}
-		return nil
-	}
-	if r.Kind != KindInstance {
-		return nil
-	}
-	keys := make([]string, 0)
-	for k := range r.Config {
-		for _, p := range ownedConfigPrefixes {
-			if strings.HasPrefix(k, p) {
-				keys = append(keys, k)
-			}
-		}
-	}
-	if len(keys) == 0 {
-		return nil
-	}
-	sort.Strings(keys)
-	if strings.HasPrefix(keys[0], SiteKey) {
-		return fmt.Errorf("resource %q: config %s is the site stamp, which tink owns: it writes it from `site:` on the stack's kind: stack document (on the instances that state a role or are published) and removes it where the stack no longer derives it, so declare the site and not the key", r.Name, keys[0])
-	}
-	if strings.HasPrefix(keys[0], DeriveStampPrefix) {
-		return fmt.Errorf("resource %q: config %s is under %s, which tink owns: it writes those keys from the kind: file documents of the stack that say derive: and removes the ones no file derives, so declare the file and not the key", r.Name, keys[0], DeriveStampPrefix)
-	}
-	return fmt.Errorf("resource %q: config %s is under %s, which tink owns: it writes those keys from the kind: publish documents of the stack and removes the ones no publish derives, so declare the publish and not the key", r.Name, keys[0], PublishStampPrefix)
 }
 
 // derivePublishStamps adds, to the desired config of every instance a publish names, the stamp of each of its publishes. It changes the caller's resources in

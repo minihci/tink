@@ -6,7 +6,11 @@
 // nothing of docker-run flags: translating those into a Spec is internal/dockerrun, which imports this package and not the other way round (#216).
 package instance
 
-import "time"
+import (
+	"time"
+
+	"github.com/minihci/tink/internal/ownership"
+)
 
 // Spec is the fully-resolved instance-creation request produced by
 // translating docker-run-style flags onto Incus primitives -- see
@@ -69,4 +73,4 @@ func isRootDisk(dev map[string]string) bool {
 
 // KeyCommand is the instance config key tink run records the command it was given in: the only trace, on the instance, of how it
 // came to be. `tink export` reads it back as a comment. Environment values that look like secrets are masked in it.
-const KeyCommand = "user.tink.run.command"
+const KeyCommand = ownership.OutcomePrefix + "run.command"

@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/minihci/tink/internal/ownership"
 )
 
 // A `kind: file` with `derive:` (derivedfile.go) is also STAMPED onto the instance it is pushed to, so that whatever keeps the site converged later (the daemon,
 // #271) can read what to keep from the SERVER and does not need the stack files:
 //
-//	user.tink.derive.<file name>: {"path":"/etc/caddy/apps.caddy","render":"caddy","restart":false}
+//	user.tink.intent.derive.<file name>: {"path":"/etc/caddy/apps.caddy","render":"caddy","restart":false}
 //
 // <file name> is the name of the kind: file document, which is unique in its stack. The value is compact JSON with its keys sorted, so the same stack always
 // stamps the same bytes (a re-plan reads "no changes"). It names no instance (the key is on it) and holds no content and no secret: what is between the
@@ -23,7 +25,7 @@ import (
 // The stamp is DERIVED, like a publish stamp (publishstamp.go, which says why the prefix is the one tink owns): deriveFileStamps adds it to the desired config
 // of the instance the file names, in the same project, and the ordinary instance plan and apply converge it. A file whose instance is not declared in the stack has
 // nothing to carry it and is left alone: it keeps working under `plan apply`, and internal/derive says in the plan that the daemon cannot keep it.
-const DeriveStampPrefix = "user.tink.derive."
+const DeriveStampPrefix = ownership.IntentPrefix + "derive."
 
 // deriveFileNamePattern is what a file's name may be for the key to be its name: it ends up as the last part of a config key.
 var deriveFileNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
@@ -161,7 +163,7 @@ func deriveFileStamps(resources []Resource) error {
 
 // A network ACL that derives its ingress rules (`derive_ingress: true`, networkacl.go) is stamped too, on the ACL itself:
 //
-//	user.tink.derive.ingress: {"render":"acl"}
+//	user.tink.intent.derive.ingress: {"render":"acl"}
 //
 // The ACL is the object, so there is no file name to end the key with: it ends with the direction that is derived. The value names the join's rendering, as a
 // file's does. It is a marker and not a copy of the rules: what the rules are made from (the apps, their publish stamps, the ingress helper's addresses) is on

@@ -12,6 +12,7 @@ import (
 	"github.com/lxc/incus/v7/shared/cliconfig"
 	"github.com/minihci/tink/internal/incusapi"
 	"github.com/minihci/tink/internal/incusconf"
+	"github.com/minihci/tink/internal/ownership"
 )
 
 // Create creates spec's instance without starting it (create, never
@@ -209,13 +210,14 @@ func ApplyConfig(server incus.InstanceServer, spec *Spec) error {
 }
 
 // StaleOwnedKeys are the keys of live that are owned and that declared does not carry, sorted. A prefix that ends in a dot owns every key under it
-// (user.tink.publish. owns the stamps of every publish); one that does not owns that one key and nothing built from its name (user.tink.site owns
-// user.tink.site and not user.tink.sitemap). It is the whole of what "tink owns this" means: plan reports these as removals and ApplyConfig makes them,
-// and both ask here so they cannot disagree. A key that is owned by none is never returned, however absent from declared it is.
+// (user.tink.intent. owns every key tink derives from a stack: the stamps of every publish, of the site, of every derived file); one that does not owns that
+// one key and nothing built from its name. It is the whole of what "tink owns this" means: plan reports these as removals and ApplyConfig makes them, and both
+// ask here so they cannot disagree. A key that is owned by none is never returned, however absent from declared it is, and neither is a stamp
+// (ownership.IsStamp): those are written once or by a pass of their own, so a declared config never carries them.
 func StaleOwnedKeys(live, declared map[string]string, prefixes []string) []string {
 	var out []string
 	for k := range live {
-		if _, ok := declared[k]; ok {
+		if _, ok := declared[k]; ok || ownership.IsStamp(k) {
 			continue
 		}
 		for _, p := range prefixes {

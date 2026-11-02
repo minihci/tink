@@ -239,10 +239,10 @@ func stampedInstance(project, name string, stamps map[string]string) api.Instanc
 
 func TestTheDerivedScopeIsTheInstancesThatCarryAStampAndTheOnesThatRestart(t *testing.T) {
 	insts := []api.Instance{
-		stampedInstance("site", "sso", map[string]string{"user.tink.derive.sso": `{"path":"/app/c.yml","render":"sso","restart":true}`}),
-		stampedInstance("site", "dns", map[string]string{"user.tink.derive.hosts": `{"path":"/hosts","render":"dns","restart":false}`, resolve.RoleKey: "dns"}),
+		stampedInstance("site", "sso", map[string]string{"user.tink.intent.derive.sso": `{"path":"/app/c.yml","render":"sso","restart":true}`}),
+		stampedInstance("site", "dns", map[string]string{"user.tink.intent.derive.hosts": `{"path":"/hosts","render":"dns","restart":false}`, resolve.RoleKey: "dns"}),
 		stampedInstance("site", "plain", map[string]string{"user.tink.offer.web.port": "80"}),
-		stampedInstance("site", "broken", map[string]string{"user.tink.derive.x": `{"path":"relative","render":"caddy","restart":true}`}),
+		stampedInstance("site", "broken", map[string]string{"user.tink.intent.derive.x": `{"path":"relative","render":"caddy","restart":true}`}),
 	}
 	sc, notes := instanceScope(authz.Scope{Derived: true}, nil, insts, AuthzOptions{Derived: true})
 	if want := []authz.Instance{{Project: "site", Name: "dns"}, {Project: "site", Name: "sso"}}; !reflect.DeepEqual(sc.Files, want) {
@@ -254,7 +254,7 @@ func TestTheDerivedScopeIsTheInstancesThatCarryAStampAndTheOnesThatRestart(t *te
 	if len(sc.DNS) != 0 {
 		t.Errorf("--reconcile-derived alone names the dns helper: %v", sc.DNS)
 	}
-	if len(notes) != 1 || !strings.Contains(notes[0], "site/broken") || !strings.Contains(notes[0], "user.tink.derive.x") {
+	if len(notes) != 1 || !strings.Contains(notes[0], "site/broken") || !strings.Contains(notes[0], "user.tink.intent.derive.x") {
 		t.Errorf("notes = %v, want one that names the stamp that cannot be read", notes)
 	}
 

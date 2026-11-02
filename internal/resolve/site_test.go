@@ -65,12 +65,12 @@ func TestPlanAddsTheSiteStampToAHelperThatHasNone(t *testing.T) {
 		pubIn("canary", "whoami", "whoami", "web", "family"),
 	}
 	r := desiredWhoami(t, rs)
-	live := map[string]string{"user.tink.offer.web.port": "80", "user.tink.offer.web.proto": "http", "user.tink.publish.whoami": `{"allow":["family"],"offer":"web"}`}
+	live := map[string]string{"user.tink.offer.web.port": "80", "user.tink.offer.web.proto": "http", "user.tink.intent.publish.whoami": `{"allow":["family"],"offer":"web"}`}
 	p, err := planInstance(&stampServer{inst: liveWhoami(live)}, r, NewPlanOptions(true))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(p.Changes, "|"); got != `config.user.tink.site: "" -> "herd"` {
+	if got := strings.Join(p.Changes, "|"); got != `config.user.tink.intent.site: "" -> "herd"` {
 		t.Errorf("changes = %s", got)
 	}
 	live[SiteKey] = "herd"
@@ -92,7 +92,7 @@ func TestPlanRemovesTheSiteStampWhenTheStackNoLongerHasASite(t *testing.T) {
 		t.Fatal(err)
 	}
 	// the stamp and only the stamp: a key that merely starts with the same words is not the site stamp and is not the stack's to take back
-	if got := strings.Join(p.Changes, "|"); got != `config.user.tink.site: "herd" -> (unset)` {
+	if got := strings.Join(p.Changes, "|"); got != `config.user.tink.intent.site: "herd" -> (unset)` {
 		t.Errorf("changes = %s", got)
 	}
 }

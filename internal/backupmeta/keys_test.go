@@ -97,14 +97,14 @@ func TestFailureOfReadsTheOnsetSeparatelyFromTheLastAttempt(t *testing.T) {
 
 func TestTheFailureKeysReadAsOneFamily(t *testing.T) {
 	want := []string{
-		"user.tink.backup.copy.nas.failed-at",
-		"user.tink.backup.copy.nas.failing-since",
-		"user.tink.backup.copy.nas.failures",
+		"user.tink.outcome.backup.copy.nas.failed-at",
+		"user.tink.outcome.backup.copy.nas.failing-since",
+		"user.tink.outcome.backup.copy.nas.failures",
 	}
 	if got := FailureStamps("nas"); !reflect.DeepEqual(got, want) {
 		t.Errorf("FailureStamps = %v, want %v", got, want)
 	}
-	if got := CopiedAt("nas"); got != "user.tink.backup.copy.nas.copied-at" {
+	if got := CopiedAt("nas"); got != "user.tink.outcome.backup.copy.nas.copied-at" {
 		t.Errorf("CopiedAt = %q", got)
 	}
 }

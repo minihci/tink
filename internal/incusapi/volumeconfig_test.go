@@ -59,9 +59,9 @@ func (s *volServer) UpdateStoragePoolVolume(_, _, _ string, put api.StorageVolum
 func TestMergeVolumeConfigSetsTheKeysItNamesAndKeepsEveryOtherOne(t *testing.T) {
 	s := &volServer{vol: api.StorageVolume{StorageVolumePut: api.StorageVolumePut{
 		Description: "the helper's status",
-		Config:      map[string]string{"user.mine": "keep", "user.tink.helper.status": "old", "volatile.uuid": "abc"},
+		Config:      map[string]string{"user.mine": "keep", "user.tink.outcome.helper.status": "old", "volatile.uuid": "abc"},
 	}}}
-	if err := MergeVolumeConfig(s, "tink-helper", "fast", "helper-status", map[string]string{"user.tink.helper.status": "new"}); err != nil {
+	if err := MergeVolumeConfig(s, "tink-helper", "fast", "helper-status", map[string]string{"user.tink.outcome.helper.status": "new"}); err != nil {
 		t.Fatal(err)
 	}
 	if s.project != "tink-helper" {
@@ -71,7 +71,7 @@ func TestMergeVolumeConfigSetsTheKeysItNamesAndKeepsEveryOtherOne(t *testing.T) 
 		t.Fatalf("one write: %d", len(s.updates))
 	}
 	got := s.updates[0]
-	if got.Config["user.tink.helper.status"] != "new" {
+	if got.Config["user.tink.outcome.helper.status"] != "new" {
 		t.Errorf("the key is set: %v", got.Config)
 	}
 	if got.Config["user.mine"] != "keep" || got.Config["volatile.uuid"] != "abc" || len(got.Config) != 3 {
@@ -87,13 +87,13 @@ func TestMergeVolumeConfigSetsTheKeysItNamesAndKeepsEveryOtherOne(t *testing.T) 
 
 func TestMergeVolumeConfigReadsAgainWhenSomeoneWroteInBetween(t *testing.T) {
 	s := &volServer{conflicts: 1, vol: api.StorageVolume{StorageVolumePut: api.StorageVolumePut{Config: map[string]string{"user.mine": "keep"}}}}
-	if err := MergeVolumeConfig(s, "", "fast", "helper-status", map[string]string{"user.tink.helper.status": "new"}); err != nil {
+	if err := MergeVolumeConfig(s, "", "fast", "helper-status", map[string]string{"user.tink.outcome.helper.status": "new"}); err != nil {
 		t.Fatal(err)
 	}
 	if len(s.updates) != 2 || s.etags[0] == s.etags[1] {
 		t.Errorf("the refused write is redone against what is there now: %d writes, etags %v", len(s.updates), s.etags)
 	}
-	if s.vol.Config["user.tink.helper.status"] != "new" || s.vol.Config["user.mine"] != "keep" {
+	if s.vol.Config["user.tink.outcome.helper.status"] != "new" || s.vol.Config["user.mine"] != "keep" {
 		t.Errorf("%v", s.vol.Config)
 	}
 	if s.project != "" {

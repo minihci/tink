@@ -9,7 +9,9 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
 	"github.com/lxc/incus/v7/shared/cliconfig"
+	"github.com/minihci/tink/internal/helper"
 	"github.com/minihci/tink/internal/instance"
+	"github.com/minihci/tink/internal/ownership"
 	yaml "go.yaml.in/yaml/v4"
 )
 
@@ -216,7 +218,7 @@ func writeFile(path, content string) error { return os.WriteFile(path, []byte(co
 // A volume's settings (size, initial.uid...) are written back as config: and the file loads; --user made them matter (found live: a stack rebuilt from
 // an export had root-owned volumes and the app could not open its database).
 func TestAVolumeWithConfigExportsAsAFileTinkCanLoad(t *testing.T) {
-	s := &exportServer{inst: kumaInstance(), volCfg: map[string]string{"size": "1GiB", "initial.uid": "1000", "volatile.idmap.last": "[]", "user.tink.backup.copy.nas.copied-at": "2026-10-09T00:00:00Z", "user.tink.stack": "s"}}
+	s := &exportServer{inst: kumaInstance(), volCfg: map[string]string{"size": "1GiB", "initial.uid": "1000", "volatile.idmap.last": "[]", "user.tink.outcome.backup.copy.nas.copied-at": "2026-10-09T00:00:00Z", "user.tink.intent.stack": "s"}}
 	res, err := Export(s, ExportOptions{Project: "tink-play", Instances: []string{"kuma-play"}, Offline: true})
 	if err != nil {
 		t.Fatal(err)
@@ -327,4 +329,81 @@ func TestEphemeralIsOnlyForInstances(t *testing.T) {
 	if err := Validate(Resource{Kind: KindInstance, Name: "x", Image: "docker-oci:alpine:3", Ephemeral: true}); err != nil {
 		t.Errorf("an instance can: %v", err)
 	}
+}
+
+// What tink wrote on an instance as state is not something a person declared, so an exported stack must not carry it: a stack that declared such a
+// key would be applying a record of what happened on this host as if it were a setting. What a person set under user.tink.* (the role, a leg, an
+// offer, the dns zone) is declaration, and stays. The run command is the one record that is written, as a comment, because it says how the instance
+// was made.
+func TestExportWritesNoKeyTinkWroteAsState(t *testing.T) {
+	inst := kumaInstance()
+	state := []string{
+		triggerHashConfigKey("reload-proxy"),    // what a kind: exec with triggers stores to know it already ran
+		helper.MarkerKey,                        // the helper's marker
+		helper.StatusKey,                        // its status document
+		helper.StatusVolumeKey,                  // the pointer to the volume that holds the status document
+		helper.MarkerKey + ".pool",              // where it was installed
+		helper.MarkerKey + ".remote",            // the remote it reaches the host's API by
+		helper.MarkerKey + ".image",             // the image it runs
+		helper.MarkerKey + ".image-fingerprint", // the fingerprint of that image
+		PublishStampPrefix + "web",              // stamps that export re-expresses or drops
+		DeriveStampPrefix + "proxy-routes",      //
+		SiteKey,                                 //
+		ownership.Key,                           //
+		instance.KeyCommand,                     // written to a comment, not to config
+	}
+	for _, k := range state {
+		inst.Config[k] = "x"
+	}
+	inst.Config[PublishStampPrefix+"web"] = `{"offer":"web","allow":["family"]}`
+	facts := map[string]string{
+		RoleKey:                     "ingress",
+		"user.tink.leg.eth0":        "serves",
+		"user.tink.offer.web.port":  "3001",
+		"user.tink.offer.web.proto": "http",
+		"user.tink.dns.zone":        "example.org",
+	}
+	for k, v := range facts {
+		inst.Config[k] = v
+	}
+
+	s := &exportServer{inst: inst, volCfg: map[string]string{}}
+	res, err := Export(s, ExportOptions{Project: "tink-play", Instances: []string{"kuma-play"}, Offline: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rs := loadExported(t, res.YAML)
+	var got Resource
+	for _, r := range rs {
+		if r.Kind == KindInstance {
+			got = r
+		}
+	}
+	for k := range got.Config {
+		if !strings.HasPrefix(k, "user.tink.") {
+			continue
+		}
+		if _, isFact := facts[k]; !isFact {
+			t.Errorf("the exported instance declares %s, which tink wrote as state:\n%s", k, res.YAML)
+		}
+	}
+	for k, v := range facts {
+		if got.Config[k] != v {
+			t.Errorf("a fact a person set is kept: %s = %q, want %q\n%s", k, got.Config[k], v, res.YAML)
+		}
+	}
+}
+
+// loadExported reads exported YAML back the way a person's stack would be read.
+func loadExported(t *testing.T, y string) []Resource {
+	t.Helper()
+	path := t.TempDir() + "/tink.yaml"
+	if err := writeFile(path, y); err != nil {
+		t.Fatal(err)
+	}
+	rs, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("tink must be able to read what tink export wrote: %v\n%s", err, y)
+	}
+	return rs
 }

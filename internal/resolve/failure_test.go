@@ -47,7 +47,7 @@ func TestCopyWarningsAboutFailures(t *testing.T) {
 	}
 	// the failure text never reaches a warning, because it is never stored: only two times and a count are
 	for _, k := range backupmeta.FailureStamps("t") {
-		if !strings.HasPrefix(k, "user.tink.backup.copy.t.fail") {
+		if !strings.HasPrefix(k, "user.tink.outcome.backup.copy.t.fail") {
 			t.Errorf("unexpected failure key %q", k)
 		}
 	}

@@ -61,7 +61,7 @@ func TestTriggerHash_NoBoundaryCollision(t *testing.T) {
 
 func TestTriggerHashConfigKey_NamespacedByResourceName(t *testing.T) {
 	got := triggerHashConfigKey("new-id")
-	want := "user.tink.exec.new-id.trigger-hash"
+	want := "user.tink.outcome.exec.new-id.trigger-hash"
 	if got != want {
 		t.Errorf("triggerHashConfigKey(%q) = %q, want %q", "new-id", got, want)
 	}

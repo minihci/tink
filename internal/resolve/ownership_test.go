@@ -17,6 +17,8 @@ import (
 	yaml "go.yaml.in/yaml/v4"
 
 	"github.com/minihci/tink/internal/backupmeta"
+	"github.com/minihci/tink/internal/helper"
+	"github.com/minihci/tink/internal/instance"
 	"github.com/minihci/tink/internal/ownership"
 )
 
@@ -798,7 +800,7 @@ func TestAnUnnamedStackSaysSoOnce(t *testing.T) {
 func TestAdoptSummaryNamesTheKindsAndCountsNoRestart(t *testing.T) {
 	a := AdoptResult{Stamped: make([]string, 14), ByKind: map[Kind]int{KindInstance: 9, KindProfile: 3, KindStorageVolume: 2}}
 	got := a.Lines()[0]
-	want := "adopt: stamped user.tink.stack on 14 objects (9 instance, 3 profile, 2 storage-volume); restarted 0"
+	want := "adopt: stamped user.tink.intent.stack on 14 objects (9 instance, 3 profile, 2 storage-volume); restarted 0"
 	if got != want {
 		t.Errorf("summary = %q, want %q", got, want)
 	}
@@ -823,7 +825,7 @@ func TestTheStampCannotBeDeclaredForAnyKind(t *testing.T) {
 		}
 	}
 	// through the loader too, as a person would meet it
-	path := writeTemp(t, "kind: profile\nname: p\nconfig:\n  user.tink.stack: x\n")
+	path := writeTemp(t, "kind: profile\nname: p\nconfig:\n  user.tink.intent.stack: x\n")
 	if _, err := LoadFile(path); err == nil || !strings.Contains(err.Error(), "written by tink itself") {
 		t.Errorf("load err = %v", err)
 	}
@@ -860,7 +862,7 @@ func TestExportNeverWritesTheStamp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(res.YAML, ownership.Key) || strings.Contains(res.YAML, "user.tink.stack") {
+	if strings.Contains(res.YAML, ownership.Key) || strings.Contains(res.YAML, "user.tink.intent.stack") {
 		t.Errorf("the export wrote the stamp:\n%s", res.YAML)
 	}
 	path := filepath.Join(t.TempDir(), "tink.yaml")
@@ -911,6 +913,43 @@ func TestClassify(t *testing.T) {
 	for _, c := range cases {
 		if s, o := ownership.Classify(c.cfg, c.stack); s != c.state || o != c.owner {
 			t.Errorf("Classify(%v, %q) = %v, %q; want %v, %q", c.cfg, c.stack, s, o, c.state, c.owner)
+		}
+	}
+}
+
+// Every key tink writes itself, intent or outcome, is refused in a declaration of every kind that has a config or properties; a fact is not.
+func TestNoKeyTinkWritesCanBeDeclaredForAnyKind(t *testing.T) {
+	written := []string{
+		ownership.Key, ownership.ResourceKey, ownership.AppliedKey, SiteKey, PublishStampKey("web"), DeriveStampKey("routes"), backupmeta.PolicyKey,
+		backupmeta.CopiedAt("nas"), backupmeta.StampVerifiedAt, backupmeta.MarkerCopyOf, triggerHashConfigKey("reload"), helper.MarkerKey, helper.StatusKey,
+		instance.KeyCommand,
+	}
+	facts := map[string]string{"user.tink.role": "ingress", "user.tink.leg.eth0": "serves", "user.tink.offer.web.port": "80", "user.tink.dns.zone": "example.org"}
+	for _, kind := range stampedKinds {
+		for _, k := range written {
+			r := stampedResource(kind)
+			field := "config"
+			if kind == KindImage {
+				r.Properties[k] = "x"
+				field = "properties"
+			} else {
+				r.Config[k] = "x"
+			}
+			err := Validate(r)
+			if err == nil || !strings.Contains(err.Error(), k) {
+				t.Errorf("%s: declaring %s in %s must be refused naming the key: %v", kind, k, field, err)
+			}
+		}
+		r := stampedResource(kind)
+		for k, v := range facts {
+			if kind == KindImage {
+				r.Properties[k] = v
+			} else {
+				r.Config[k] = v
+			}
+		}
+		if err := Validate(r); err != nil {
+			t.Errorf("%s: facts are a person's to declare: %v", kind, err)
 		}
 	}
 }

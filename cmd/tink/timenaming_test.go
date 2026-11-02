@@ -99,7 +99,7 @@ func TestTheNamingCheckSeesABareTimeWord(t *testing.T) {
 		"a bare at":           "package p\ntype T struct {\n\tAt string `json:\"at\"`\n}\n",
 		"a bare time":         "package p\ntype T struct {\n\tTime string `json:\"time,omitzero\"`\n}\n",
 		"a bare tick":         "package p\ntype T struct {\n\tTick string `json:\"tick\"`\n}\n",
-		"a stamp ending at":   "package p\nvar k = \"user.tink.backup.copy.x.at\"\n",
+		"a stamp ending at":   "package p\nvar k = \"user.tink.outcome.backup.copy.x.at\"\n",
 		"a suffix .at":        "package p\nvar k = prefix + target + \".at\"\n",
 		"a stamp ending time": "package p\nvar k = \"user.tink.thing.time\"\n",
 	}
@@ -110,9 +110,9 @@ func TestTheNamingCheckSeesABareTimeWord(t *testing.T) {
 	}
 	good := map[string]string{
 		"an event record":                 "package p\ntype E struct {\n\tEvent string `json:\"event\"`\n\tAt string `json:\"at\"`\n}\n",
-		"named instants":                  "package p\ntype T struct {\n\tA string `json:\"written-at\"`\n\tB string `json:\"created-at,omitzero\"`\n}\nvar k = \"user.tink.backup.verified-at\"\nvar s = \".copied-at\"\n",
+		"named instants":                  "package p\ntype T struct {\n\tA string `json:\"written-at\"`\n\tB string `json:\"created-at,omitzero\"`\n}\nvar k = \"user.tink.outcome.backup.verified-at\"\nvar s = \".copied-at\"\n",
 		"since and until":                 "package p\ntype T struct {\n\tA string `json:\"since\"`\n\tB string `json:\"until\"`\n}\nvar k = \"user.tink.x.failing-since\"\n",
-		"a word that merely contains one": "package p\nvar k = \"user.tink.backup.format\"\nvar f = \".json\"\nvar g = \"user.tink.thing-time\"\n",
+		"a word that merely contains one": "package p\nvar k = \"user.tink.outcome.backup.format\"\nvar f = \".json\"\nvar g = \"user.tink.thing-time\"\n",
 		"a field with no JSON name":       "package p\ntype T struct {\n\tAt string\n\tTime string `json:\"-\"`\n}\n",
 	}
 	for name, src := range good {

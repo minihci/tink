@@ -134,7 +134,7 @@ func TestDerivedFilesAreAsStrictAsTheJoin(t *testing.T) {
 			for k, v := range srv.instances[i].Config {
 				cfg[k] = v
 			}
-			cfg["user.tink.publish.broken"] = "not json"
+			cfg["user.tink.intent.publish.broken"] = "not json"
 			srv.instances[i].Config = cfg
 		}
 	}

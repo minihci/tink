@@ -39,7 +39,7 @@ func TestAServerWhoseStampsChangeIsReconciledWithTheNewRecords(t *testing.T) {
 	files := platformFiles()
 	reconcile(t, f, files)
 
-	delete(f.whoami(t).Config, "user.tink.publish.whoami-admin")
+	delete(f.whoami(t).Config, "user.tink.intent.publish.whoami-admin")
 	out := reconcile(t, f, files)
 	if out.State != DNSChanged {
 		t.Fatalf("reconcile after a stamp was dropped = %+v, want changed", out)
@@ -123,7 +123,7 @@ func TestAWriteThatFailsIsFailingNotBlocked(t *testing.T) {
 
 func TestAStampThatCannotBeReadIsBlockedWithoutWriting(t *testing.T) {
 	f := serverOf(t, load(t))
-	f.whoami(t).Config["user.tink.publish.whoami"] = "not json"
+	f.whoami(t).Config["user.tink.intent.publish.whoami"] = "not json"
 	files := platformFiles()
 
 	out := reconcile(t, f, files)

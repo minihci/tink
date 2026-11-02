@@ -90,7 +90,7 @@ func TestADerivedFileStampIsReadStrictly(t *testing.T) {
 			t.Errorf("%s: err = %v, want it to mention %q", c.name, err, c.want)
 		}
 	}
-	if _, err := DecodeDeriveStamp("site", "inst", "user.tink.publish.x", `{}`); err == nil || !strings.Contains(err.Error(), "not a derived file's stamp") {
+	if _, err := DecodeDeriveStamp("site", "inst", "user.tink.intent.publish.x", `{}`); err == nil || !strings.Contains(err.Error(), "not a derived file's stamp") {
 		t.Errorf("a key outside the prefix: %v", err)
 	}
 	if _, err := DecodeDeriveStamp("site", "inst", DeriveStampPrefix+"a b", `{"path":"/a","render":"caddy","restart":false}`); err == nil || !strings.Contains(err.Error(), "config key") {
@@ -198,7 +198,7 @@ func TestPlanConvergesTheDerivedFileStampAndSecondPlanSaysNoChanges(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Action != ActionUpdate || !strings.Contains(strings.Join(p.Changes, "\n"), "config.user.tink.derive.ingress-routes") {
+	if p.Action != ActionUpdate || !strings.Contains(strings.Join(p.Changes, "\n"), "config.user.tink.intent.derive.ingress-routes") {
 		t.Fatalf("the missing stamp is a planned change: %+v", p)
 	}
 	live[DeriveStampKey("ingress-routes")] = want.Config[DeriveStampKey("ingress-routes")]
@@ -235,14 +235,14 @@ func TestDroppingDeriveRemovesTheStampAndNothingElse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(p.Changes, "|"); got != `config.user.tink.derive.ingress-routes: "{\"path\":\"/etc/caddy/apps.caddy\",\"render\":\"caddy\",\"restart\":true}" -> (unset)` {
+	if got := strings.Join(p.Changes, "|"); got != `config.user.tink.intent.derive.ingress-routes: "{\"path\":\"/etc/caddy/apps.caddy\",\"render\":\"caddy\",\"restart\":true}" -> (unset)` {
 		t.Errorf("changes = %s", got)
 	}
 }
 
 func TestAStackFileThatDeclaresADeriveStampKeyDoesNotLoad(t *testing.T) {
 	path := t.TempDir() + "/tink.yaml"
-	if err := writeFile(path, "kind: instance\nname: ingress\nimage: docker-oci:x\nconfig:\n  user.tink.derive.routes: '{}'\n"); err != nil {
+	if err := writeFile(path, "kind: instance\nname: ingress\nimage: docker-oci:x\nconfig:\n  user.tink.intent.derive.routes: '{}'\n"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := LoadFile(path); err == nil || !strings.Contains(err.Error(), "which tink owns") || !strings.Contains(err.Error(), "derive:") {
@@ -258,7 +258,7 @@ func TestExportDoesNotWriteADerivedFileAndSaysWhy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(res.YAML, "user.tink.derive") || strings.Contains(res.YAML, "kind: file") {
+	if strings.Contains(res.YAML, "user.tink.intent.derive") || strings.Contains(res.YAML, "kind: file") {
 		t.Errorf("neither the key nor a file is written:\n%s", res.YAML)
 	}
 	if n := strings.Join(res.Notes, "\n"); !strings.Contains(n, DeriveStampKey("routes")) || !strings.Contains(n, "removes the stamp") {

@@ -327,7 +327,7 @@ func TestBadDefaultsAreLoadErrors(t *testing.T) {
 		{"a secret in a backup block", "  storage-volume:\n    backup:\n      none: \"${secret:x}\"\n", "secret reference is not allowed"},
 		{"a secret in a backup check", "  storage-volume:\n    backup:\n      snapshots: {schedule: \"0 3 * * *\", retain: 7d}\n      verify: {every: weekly, check: {image: x, command: [\"${secret:x}\"]}}\n", "secret reference is not allowed"},
 		{"a malformed reference in environment", "  instance:\n    config: {environment.A: \"${secret:}\"}\n", "environment.A"},
-		{"the tink-owned prefix", "  instance:\n    config: {user.tink.publish.web: \"{}\"}\n", "tink owns"},
+		{"the tink-owned prefix", "  instance:\n    config: {user.tink.intent.publish.web: \"{}\"}\n", "tink owns"},
 		{"a backup block that is not one", "  storage-volume:\n    backup:\n      verify: weekly\n", "give snapshots"},
 	}
 	for _, c := range cases {
@@ -368,7 +368,7 @@ func TestASecretReferenceInAnEnvironmentDefaultIsExpanded(t *testing.T) {
 
 // A volume's secret rule is not bypassed by the filled result either: the resource is re-validated after it receives a default.
 func TestAFilledResourceIsValidatedLikeAWrittenOne(t *testing.T) {
-	d := &StackDefaults{Instance: &InstanceDefaults{Config: map[string]string{"user.tink.publish.web": "{}"}}}
+	d := &StackDefaults{Instance: &InstanceDefaults{Config: map[string]string{"user.tink.intent.publish.web": "{}"}}}
 	_, err := ApplyDefaults([]Resource{{Kind: KindStack, Name: "s", Defaults: d}, {Kind: KindInstance, Name: "app"}})
 	if err == nil || !strings.Contains(err.Error(), "after the stack's defaults") {
 		t.Errorf("error = %v", err)

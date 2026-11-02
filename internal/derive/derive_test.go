@@ -168,7 +168,7 @@ func TestNoPlatformIsAnError(t *testing.T) {
 func TestOtherAppsOnTheServerAreNotRead(t *testing.T) {
 	f := platformOnServer(t)
 	f.instances = append(f.instances,
-		api.Instance{Name: "stranger", Project: "elsewhere", InstancePut: api.InstancePut{Config: map[string]string{"user.tink.publish.x": "not json"}}},
+		api.Instance{Name: "stranger", Project: "elsewhere", InstancePut: api.InstancePut{Config: map[string]string{"user.tink.intent.publish.x": "not json"}}},
 		api.Instance{Name: "whoami", Project: "canary", InstancePut: api.InstancePut{Config: map[string]string{"user.tink.offer.web.port": "8080", "user.tink.offer.web.proto": "http"}}},
 	)
 	rs := canary(t)

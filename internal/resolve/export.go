@@ -105,7 +105,7 @@ func Export(server incus.InstanceServer, opts ExportOptions) (*ExportResult, err
 			return nil, fmt.Errorf("project %q does not exist", project)
 		}
 		// the ownership stamp is state, not declaration: it is never written, so an exported stack can be applied under any name
-		docs = append(docs, exportDoc{res: Resource{Kind: KindProject, Name: project, Config: withoutOwnershipKey(copyMap(p.Config))}})
+		docs = append(docs, exportDoc{res: Resource{Kind: KindProject, Name: project, Config: withoutTinkState(p.Config)}})
 	}
 
 	var instDocs, pubDocs []exportDoc
@@ -210,9 +210,9 @@ func exportVolumes(scoped incus.InstanceServer, inst *api.Instance, project stri
 			case k == keys.SnapshotExpiry:
 				snapExpiry = v
 			case k == keys.Policy:
-				d.trailing = append(d.trailing, "this volume carries a copy policy (user.tink.backup.policy); the backup-target resources it names cannot be rebuilt from the volume, declare them in the stack")
+				d.trailing = append(d.trailing, "this volume carries a copy policy (user.tink.intent.backup.policy); the backup-target resources it names cannot be rebuilt from the volume, declare them in the stack")
 				res.Notes = append(res.Notes, fmt.Sprintf("volume %s: carries a copy policy; copies and their targets are not exported", key))
-			case strings.HasPrefix(k, keys.Prefix) || k == ownership.Key:
+			case ownership.WrittenByTink(k):
 				// tink's own stamps (last copy, failures, owning stack): state, not declaration
 			default:
 				d.res.Config[k] = v
@@ -296,6 +296,8 @@ func exportInstance(server, scoped incus.InstanceServer, env *imageEnv, inst *ap
 			// helper's configuration into a stack text. The stack declares the file itself; until then plan says it would remove the stamp.
 			note("%s is the stamp of a derived file: the file is not written (its content is yours, and may hold secrets), so declare a kind: file with derive: for it, or applying this stack removes the stamp", k)
 			continue
+		case ownership.WrittenByTink(k):
+			continue // intent or an outcome (the exec hash, the helper's marker and status, the copy stamps): a record of what tink did, which no stack declares
 		case derived[k]:
 			dropped = append(dropped, k)
 			continue

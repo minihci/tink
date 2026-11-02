@@ -23,7 +23,7 @@ import (
 // The state `tink backup run` leaves on the SOURCE volume for each copy target, as Incus volume
 // config (no state file of tink's own), so `plan` can see whether copies are happening.
 const (
-	copyStampPrefix = "user.tink.backup.copy."
+	copyStampPrefix = ownership.OutcomePrefix + "backup.copy."
 )
 
 // CopiedAt is the config key holding when the last copy to target succeeded (an instant, see internal/instant).
@@ -98,14 +98,14 @@ func RetryAfter(f CopyFailure, interval time.Duration) time.Time {
 // restoring touch only volumes that carry the marker for the volume in question, so a volume tink did
 // not make is never deleted and never mistaken for a backup.
 const (
-	MarkerCopyOf     = "user.tink.backup.copy-of"     // "<project>/<pool>/<volume>"
-	MarkerCopiedAt   = "user.tink.backup.copied-at"   // an instant: when the copy was started
-	MarkerCopyTarget = "user.tink.backup.copy-target" // the backup-target's name
-	MarkerCopySnap   = "user.tink.backup.copy-snapshot"
+	MarkerCopyOf     = ownership.OutcomePrefix + "backup.copy-of"     // "<project>/<pool>/<volume>"
+	MarkerCopiedAt   = ownership.OutcomePrefix + "backup.copied-at"   // an instant: when the copy was started
+	MarkerCopyTarget = ownership.OutcomePrefix + "backup.copy-target" // the backup-target's name
+	MarkerCopySnap   = ownership.OutcomePrefix + "backup.copy-snapshot"
 	// MarkerCopyServer names the Incus server the SOURCE volume lives on (its server_name, the host name by default).
 	// Pruning only ever removes restore points made by the server doing the pruning, so two servers copying a
 	// volume with the same name into one target cannot delete each other's backups. Restore sees every point.
-	MarkerCopyServer = "user.tink.backup.copy-server"
+	MarkerCopyServer = ownership.OutcomePrefix + "backup.copy-server"
 )
 
 // The mark of a copy that is still being made. It is a DIFFERENT key from a restore point's (MarkerCopyOf), so a copy in
@@ -114,8 +114,8 @@ const (
 // the host lost power): without it such a volume carries no mark at all and nothing may touch it. The finished copy
 // swaps these for the restore point's markers.
 const (
-	MarkerPartialOf        = "user.tink.backup.copy-partial-of"         // "<project>/<pool>/<volume>", as MarkerCopyOf
-	MarkerPartialStartedAt = "user.tink.backup.copy-partial-started-at" // an instant: when the copy was started
+	MarkerPartialOf        = ownership.OutcomePrefix + "backup.copy-partial-of"         // "<project>/<pool>/<volume>", as MarkerCopyOf
+	MarkerPartialStartedAt = ownership.OutcomePrefix + "backup.copy-partial-started-at" // an instant: when the copy was started
 )
 
 // CopyOf is the value of MarkerCopyOf for a volume.
@@ -136,7 +136,7 @@ func CopyOf(project, pool, volume string) string {
 //
 // It is the one key tink also REMOVES: a volume whose declaration no longer has copies or verification must stop
 // being copied, which a key tink never clears would not allow. The snapshot policy stays on Incus's own keys.
-const PolicyKey = "user.tink.backup.policy"
+const PolicyKey = ownership.IntentPrefix + "backup.policy"
 
 // PolicyProto is the version of the policy document. A reader refuses a document with another one rather than
 // guessing at it.
@@ -154,8 +154,8 @@ const StackKey = ownership.Key
 // `plan` can see it without tink keeping a state file of its own. Written only when a verification passes: a failed one must not
 // look fresh.
 const (
-	StampVerifiedAt       = "user.tink.backup.verified-at"       // an instant
-	StampVerifiedSnapshot = "user.tink.backup.verified-snapshot" // which snapshot was restored
-	StampVerifiedWith     = "user.tink.backup.verified-with"     // "check" or "restore"
-	StampVerifiedFrom     = "user.tink.backup.verified-from"     // "local" (a snapshot on the volume's pool) or a backup-target's name
+	StampVerifiedAt       = ownership.OutcomePrefix + "backup.verified-at"       // an instant
+	StampVerifiedSnapshot = ownership.OutcomePrefix + "backup.verified-snapshot" // which snapshot was restored
+	StampVerifiedWith     = ownership.OutcomePrefix + "backup.verified-with"     // "check" or "restore"
+	StampVerifiedFrom     = ownership.OutcomePrefix + "backup.verified-from"     // "local" (a snapshot on the volume's pool) or a backup-target's name
 )

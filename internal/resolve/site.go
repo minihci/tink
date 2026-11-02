@@ -3,6 +3,8 @@ package resolve
 import (
 	"fmt"
 	"strings"
+
+	"github.com/minihci/tink/internal/ownership"
 )
 
 // A site is the group of stacks that serve one set of published names: the platform stack that declares the helpers, and the app stacks whose publishes
@@ -12,7 +14,7 @@ import (
 // `kind: stack` may say `site: NAME`. tink does not make an object for the site: the name is stamped where the server already learns things, on the
 // instances the join reads across stacks,
 //
-//	user.tink.site: NAME
+//	user.tink.intent.site: NAME
 //
 // on every instance of the stack that states a role (the helpers: user.tink.role) and on every instance a publish of the stack names (so a publish,
 // which is stamped on its instance, is in the site of that instance and its stamp keeps its shape). An instance with a role or a publish stamp and no
@@ -20,10 +22,10 @@ import (
 //
 // The key is OWNED, like the publish stamps (publishstamp.go): it is derived from the stack, so a stack declaring it is refused, and one the stack no longer
 // derives (the stack dropped `site:`, or the instance lost its role) is a planned removal. Only on instances the stack declares.
-const SiteKey = "user.tink.site"
+const SiteKey = ownership.IntentPrefix + "site"
 
 // RoleKey is the config key an instance states its role in (dns, ingress, sso, mesh). The join finds the helpers by it.
-const RoleKey = "user.tink.role"
+const RoleKey = ownership.RoleKey
 
 // StackSite is the site the stack's own `kind: stack` document names, or "" for the unnamed site. A stack that names itself twice has no single answer
 // (Levels reports that error), so it has no site either.

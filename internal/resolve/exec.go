@@ -13,6 +13,7 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 
 	"github.com/minihci/tink/internal/incusapi"
+	"github.com/minihci/tink/internal/ownership"
 )
 
 // planCheckAttempts/planCheckDelay are Plan's own, separate retry budget
@@ -62,7 +63,7 @@ func agentRetry(r Resource) (attempts int, delay time.Duration) {
 // rather than one field broadened to cover both.
 
 // triggerHash is what gets stored in and compared against the
-// user.tink.exec.<name>.trigger-hash config key -- see Resource.Triggers'
+// user.tink.outcome.exec.<name>.trigger-hash config key -- see Resource.Triggers'
 // own doc comment for why this exists at all. \x00-joined rather than
 // plain concatenation so, e.g., ["ab", "c"] and ["a", "bc"] hash
 // differently.
@@ -72,7 +73,7 @@ func triggerHash(triggers []string) string {
 }
 
 func triggerHashConfigKey(name string) string {
-	return "user.tink.exec." + name + ".trigger-hash"
+	return ownership.OutcomePrefix + "exec." + name + ".trigger-hash"
 }
 
 // execConverged answers planExec's and runExec's shared "was this

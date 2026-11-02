@@ -99,10 +99,9 @@ type Target struct {
 type Keys struct {
 	// SnapshotSchedule and SnapshotExpiry are Incus's own snapshot keys, which a snapshots block converges.
 	SnapshotSchedule, SnapshotExpiry string
-	// Policy is the resolved copy policy a volume carries.
+	// Policy is the resolved copy policy a volume carries. Every other key the capability writes (stamps and markers) is an outcome, and the class
+	// of a key is read from its prefix (internal/ownership), so the capability names no prefix of its own.
 	Policy string
-	// Prefix starts every other key the capability writes (stamps and markers): state, not declaration.
-	Prefix string
 }
 
 // Backup is what the converger asks of the backup capability. Every method is a function of what it is given: none reads the server or the stack.

@@ -216,7 +216,7 @@ func TestAPublishStampThatCannotBeReadBlocksEveryFile(t *testing.T) {
 	f := serverOf(t, withDerived(t, routesFile(false)))
 	files, rs := platformFiles(), &fakeRestarter{}
 	files.files[fkey("tink", "ingress", routesPath)] = emptyShell
-	f.whoami(t).Config["user.tink.publish.whoami"] = `{"allow":"family"}`
+	f.whoami(t).Config["user.tink.intent.publish.whoami"] = `{"allow":"family"}`
 
 	o := one(t, reconcileDerived(f, files, rs), "ingress-routes")
 	if o.State != DerivedBlocked || o.Reason != "a publish stamp cannot be read" || len(files.writes) != 0 {

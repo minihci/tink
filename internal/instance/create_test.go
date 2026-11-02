@@ -123,11 +123,11 @@ func TestHasRootDisk(t *testing.T) {
 func TestCreateSendsCreateConfigInTheRequestAndNothingElseOfConfig(t *testing.T) {
 	t.Setenv("INCUS_CONF", t.TempDir())
 	f := &createFake{readFake: readFake{aliasErr: errNotFound}}
-	spec := &Spec{Name: "web", Image: "local-image", Config: map[string]string{"environment.A": "b"}, CreateConfig: map[string]string{"user.tink.stack": "lab"}}
+	spec := &Spec{Name: "web", Image: "local-image", Config: map[string]string{"environment.A": "b"}, CreateConfig: map[string]string{"user.tink.intent.stack": "lab"}}
 	if err := Create(f, spec, ""); err != nil {
 		t.Fatal(err)
 	}
-	if got := f.posted[0].Config; !reflect.DeepEqual(map[string]string(got), map[string]string{"user.tink.stack": "lab"}) {
+	if got := f.posted[0].Config; !reflect.DeepEqual(map[string]string(got), map[string]string{"user.tink.intent.stack": "lab"}) {
 		t.Errorf("the request's config = %v, want only the create config", got)
 	}
 	f = &createFake{readFake: readFake{aliasErr: errNotFound}}

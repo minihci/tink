@@ -229,8 +229,8 @@ func splitCreationOnly(m map[string]string) map[string]string {
 	return out
 }
 
-// validateVolumeConfig refuses the config keys a volume's declaration owns elsewhere: the ones tink writes itself (snapshots from the
-// backup block, its own stamps), and Incus's volatile.* state. Two sources for one key would let one silently win.
+// validateVolumeConfig refuses the config keys a volume's declaration owns elsewhere: the snapshot keys its backup block writes, and Incus's volatile.*
+// state. Two sources for one key would let one silently win. The keys tink writes itself are refused for every kind alike (validateStateKeys).
 func validateVolumeConfig(r Resource) error {
 	if r.Kind != KindStorageVolume {
 		return nil
@@ -240,8 +240,6 @@ func validateVolumeConfig(r Resource) error {
 		switch {
 		case strings.HasPrefix(k, "volatile."):
 			return fmt.Errorf("storage-volume %q: config.%s belongs to Incus", r.Name, k)
-		case strings.HasPrefix(k, keys.Prefix):
-			return fmt.Errorf("storage-volume %q: config.%s is written by tink itself (the backup block)", r.Name, k)
 		case (k == keys.SnapshotSchedule || k == keys.SnapshotExpiry) && r.Backup != nil && r.Backup.Snapshots != nil:
 			return fmt.Errorf("storage-volume %q: config.%s is set by its backup: snapshots block: use one or the other", r.Name, k)
 		}
