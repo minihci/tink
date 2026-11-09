@@ -171,6 +171,7 @@ func TestRunSeedsTheClockFromTheStoredDocumentBeforeTheFirstPass(t *testing.T) {
 	prev.clock.Observe(derivedResult(observe.Blocked, "the file is not there"), stateT0)
 	stored := storedBy(t, &prev)
 
+	shortSeedRetry(t)
 	for name, read := range map[string]func() (string, error){
 		"a stored document": func() (string, error) { return stored, nil },
 		"a read that fails": func() (string, error) { return "", errors.New("the volume is not there") },
@@ -259,4 +260,57 @@ func TestAThingThePassNoLongerReportsIsForgotten(t *testing.T) {
 		}
 		return true
 	})
+}
+
+func shortSeedRetry(t *testing.T) {
+	t.Helper()
+	a, d := seedAttempts, seedRetryDelay
+	seedAttempts, seedRetryDelay = 3, time.Millisecond
+	t.Cleanup(func() { seedAttempts, seedRetryDelay = a, d })
+}
+
+// The place the document is read from may not answer for a moment after the daemon starts: a failed read is tried again, and the document that
+// the third try returns still seeds the clock.
+func TestSeedingTriesAgainWhenTheStoredDocumentCannotBeReadYet(t *testing.T) {
+	shortSeedRetry(t)
+	var prev Live
+	prev.clock.Observe(derivedResult(observe.Blocked, "the file is not there"), stateT0)
+	stored := storedBy(t, &prev)
+	calls := 0
+	p := &helper.Publisher{Read: func() (string, error) {
+		calls++
+		if calls < 3 {
+			return "", errors.New("the API is not reachable yet")
+		}
+		return stored, nil
+	}}
+	var live Live
+	var log strings.Builder
+	seedFromStored(context.Background(), &log, p, &live)
+	if calls != 3 || log.Len() != 0 {
+		t.Fatalf("%d reads, log %q: want 3 reads and nothing said", calls, log.String())
+	}
+	rec, _ := live.clock.Observe(derivedResult(observe.Blocked, "the file is not there"), stateT0.Add(48*time.Hour))
+	if !rec.Since.Equal(stateT0) {
+		t.Errorf("since = %v: the stored document seeded nothing", rec.Since)
+	}
+}
+
+func TestSeedingGivesUpAfterTheLastTryAndSaysSo(t *testing.T) {
+	shortSeedRetry(t)
+	calls := 0
+	p := &helper.Publisher{Read: func() (string, error) { calls++; return "", errors.New("the volume is not there") }}
+	var live Live
+	var log strings.Builder
+	seedFromStored(context.Background(), &log, p, &live)
+	if calls != 3 || !strings.Contains(log.String(), "after 3 attempts") {
+		t.Errorf("%d reads, log %q", calls, log.String())
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	calls = 0
+	seedFromStored(ctx, &log, p, &live)
+	if calls != 1 {
+		t.Errorf("a cancelled context must not keep trying: %d reads", calls)
+	}
 }

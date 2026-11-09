@@ -55,7 +55,7 @@ func Run(ctx context.Context, out io.Writer, opts RunOptions) error {
 		if opts.Helper != nil {
 			opts.Helper.Live = live
 		}
-		seedFromStored(out, opts.Status.Publisher, live)
+		seedFromStored(ctx, out, opts.Status.Publisher, live)
 	}
 	if h := opts.Helper; h != nil {
 		if h.Logf == nil {
@@ -88,19 +88,36 @@ func Run(ctx context.Context, out io.Writer, opts RunOptions) error {
 
 // seedFromStored gives the Live what this daemon's own status document said before it started, so that a restart does not make every standing problem look
 // new: the clock keeps a state's since when the first pass confirms it, and the list of what the daemon did carries on. It reads the key the publisher
-// writes, from where it writes it. A document that cannot be read (or a place that cannot be reached) seeds nothing: the clock starts empty, and there is no
-// version handling to go wrong.
-func seedFromStored(out io.Writer, p *helper.Publisher, live *Live) {
+// writes, from where it writes it. The place it reads from may not be reachable yet (the helper's proxy to the host's API comes up a moment after its
+// process does), so a failed read is tried again a few times, seedRetryDelay apart, before giving up. A document that still cannot be read seeds nothing:
+// the clock starts empty, and there is no version handling to go wrong.
+func seedFromStored(ctx context.Context, out io.Writer, p *helper.Publisher, live *Live) {
 	if p == nil {
 		return
 	}
-	st, err := p.Load()
-	if err != nil {
-		fmt.Fprintf(out, "tink daemon: the stored status document could not be read, so the states start empty: %v\n", err)
-		return
+	var err error
+	for attempt := 1; attempt <= seedAttempts; attempt++ {
+		var st helper.Status
+		if st, err = p.Load(); err == nil {
+			live.Seed(st)
+			return
+		}
+		if attempt < seedAttempts {
+			select {
+			case <-time.After(seedRetryDelay):
+			case <-ctx.Done():
+				return
+			}
+		}
 	}
-	live.Seed(st)
+	fmt.Fprintf(out, "tink daemon: the stored status document could not be read after %d attempts, so the states start empty: %v\n", seedAttempts, err)
 }
+
+// seedAttempts and seedRetryDelay bound how long the daemon waits at start for its stored status document. Variables so a test can shorten them.
+var (
+	seedAttempts   = 3
+	seedRetryDelay = 2 * time.Second
+)
 
 func orInterval(d time.Duration) time.Duration {
 	if d <= 0 {
