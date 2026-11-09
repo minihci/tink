@@ -39,6 +39,10 @@ type Stack struct {
 	// with several sites is the usual reason a site seems to lack a helper, and a stack that forgot its `site:` is a publish that is not where it was
 	// meant to be, which nothing else shows.
 	Elsewhere map[string]Left
+
+	// Ignored are the instances of the server whose stamps were not read, and why (stamps.go): a copy of an instance carries the stamps of the original, and one
+	// that has no resource stamp yet cannot be told from a copy. Set by the readers of the server; Build says each once, as a finding.
+	Ignored []IgnoredStamps
 }
 
 // Published is one publish, joined to the offer it shows and the facts the renderings need.
@@ -122,6 +126,12 @@ func build(stacks []Stack) Result {
 			panic("join: " + err.Error()) // a reason is a literal at every call: this is a mistake in the code
 		}
 		res.Findings = append(res.Findings, f)
+	}
+
+	for _, s := range stacks {
+		for _, ig := range s.Ignored {
+			res.Findings = append(res.Findings, ig.Finding)
+		}
 	}
 
 	instances := map[key]resolve.Resource{}

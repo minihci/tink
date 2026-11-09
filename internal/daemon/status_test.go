@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"github.com/minihci/tink/internal/backuprun"
 	"github.com/minihci/tink/internal/helper"
 	"github.com/minihci/tink/internal/jobs"
+	"github.com/minihci/tink/internal/ownership"
 	"github.com/minihci/tink/internal/volbackup"
 )
 
@@ -54,6 +56,44 @@ func TestATickTellsTheStatusDocumentWhatItCouldNotDoAndWhatIsFailing(t *testing.
 		if strings.Contains(s.Reason, "SECRET") {
 			t.Errorf("an Incus error's text must never reach the status document: %+v", s)
 		}
+	}
+}
+
+// A copy of a managed volume carries its policy and its stamps; the scheduler leaves it alone, says so in the status document with a fixed reason, and
+// still schedules the original.
+func TestATickSkipsACopyAndAnUnboundVolumeWithAFixedReasonAndStillSchedulesTheOriginal(t *testing.T) {
+	r := newRig(t)
+	r.h.Live = &Live{}
+	r.volume(t, "lib", "lib-copy", "old")
+	stamp := func(name, owner, resource string) {
+		for i := range r.eng.listed {
+			if r.eng.listed[i].Volume.Name == name {
+				if owner != "" {
+					r.eng.listed[i].Config[ownership.Key] = owner
+				}
+				if resource != "" {
+					r.eng.listed[i].Config[ownership.ResourceKey] = resource
+				}
+			}
+		}
+	}
+	stamp("lib", "lab", "storage-volume/default/default/lib")
+	stamp("lib-copy", "lab", "storage-volume/default/default/lib") // what the copy inherited
+	stamp("old", "lab", "")
+	r.eng.live["lib"] = map[string]string{} // never copied: due
+
+	var st SchedulerState
+	if n := r.h.Tick(&st); n != 1 {
+		t.Errorf("the original is still scheduled: queued %d", n)
+	}
+	skipped, _ := r.h.Live.snapshot()
+	got := map[string]string{}
+	for _, s := range skipped {
+		got[s.Volume] = s.Reason
+	}
+	want := map[string]string{"lib-copy": backuprun.ReasonCopy, "old": backuprun.ReasonUnbound}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("skipped = %v, want %v", got, want)
 	}
 }
 

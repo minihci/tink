@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -221,6 +222,11 @@ func scopeFromServer(server incus.InstanceServer, o AuthzOptions) (authz.Scope, 
 	}
 	sc.Copies = copiesOf(items)
 	for label, perr := range problems {
+		var skip *backuprun.SkipError
+		if errors.As(perr, &skip) {
+			notes = append(notes, fmt.Sprintf("%s: %s, so it is not copied and not covered", label, skip.Reason))
+			continue
+		}
 		notes = append(notes, fmt.Sprintf("%s: its copy policy cannot be read, so it is not covered (%v)", label, perr))
 	}
 	sort.Strings(notes)

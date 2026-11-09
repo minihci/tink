@@ -353,7 +353,7 @@ not counted. See docs/plan-extras.md.`, resolve.DefaultFile),
 					}
 				}
 			}
-			if line := owned.Line(); line != "" {
+			for _, line := range owned.Lines() {
 				fmt.Fprintln(cmd.OutOrStdout(), line)
 			}
 			noteUndeclaredPolicies(cmd.OutOrStdout(), backuprun.ServerEngine{Server: server}, resources)
@@ -395,11 +395,15 @@ An instance with image drift is only converged by apply if its YAML
 says on_image_change: rebuild; see docs/image-updates.md.
 
 Every object apply creates for a stack that has a name (a kind: stack document)
-carries the stack's name in user.tink.intent.stack from the creation request on. One that
-existed before is not touched; "tink plan" says how many declared objects have no
-stamp. --adopt (or "ownership: adopt-on-apply" in the kind: stack document) stamps
-them first, in one pass that writes that one key and nothing else: no instance is
-restarted, whatever its restart: says. See docs/ownership.md.`, resolve.DefaultFile),
+carries two stamps from the creation request on: the stack's name in
+user.tink.intent.stack and, in user.tink.intent.resource, the object's own address.
+One that existed before is not claimed; "tink plan" says how many declared objects
+have no stamp, carry stamps made for another resource (a copy?) or lack the resource
+stamp, and apply writes the resource stamp an object of this stack lacks, restarting
+nothing. --adopt (or "ownership: adopt-on-apply" in the kind: stack document) claims
+the declared objects that have no stamp and the copies first, in one pass that writes
+those two keys and nothing else: no instance is restarted, whatever its restart: says.
+See docs/ownership.md.`, resolve.DefaultFile),
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			stack, err := flags.prepare(cmd, args)
@@ -432,7 +436,7 @@ restarted, whatever its restart: says. See docs/ownership.md.`, resolve.DefaultF
 			return err
 		},
 	}
-	cmd.Flags().BoolVar(&adopt, "adopt", false, "first stamp the declared objects that exist and have no ownership stamp (user.tink.intent.stack) with the stack's name, writing that one key and restarting nothing; the stack must have a name")
+	cmd.Flags().BoolVar(&adopt, "adopt", false, "first claim the declared objects that exist and have no ownership stamp (user.tink.intent.stack), or carry stamps made for another resource (copies), writing the owner and resource stamps and restarting nothing; the stack must have a name")
 	return cmd
 }
 

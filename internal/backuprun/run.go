@@ -16,6 +16,7 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 
 	"github.com/minihci/tink/internal/backupmeta"
+	"github.com/minihci/tink/internal/ownership"
 	"github.com/minihci/tink/internal/resolve"
 	"github.com/minihci/tink/internal/volbackup"
 )
@@ -170,6 +171,20 @@ func FromStack(resources []resolve.Resource) ([]Item, error) {
 	return items, nil
 }
 
+// The two reasons a volume that carries a copy policy is not scheduled because of what its stamps say (ownership.Classify). They are fixed phrases, the same
+// for every volume and with no name in them, because the helper's status document carries them: the first for a volume that was copied from another
+// (it carries the copy policy and the stamps of the original, and scheduling it would back up a copy the stack does not declare), the second for one of this
+// stack's made before the resource stamp existed, whose stamps cannot yet be told from a copy's. The second names the next action.
+const (
+	ReasonCopy    = "its stamps were made for another object (a copy?)"
+	ReasonUnbound = "it has no resource stamp yet (plan apply writes it)"
+)
+
+// A SkipError is a volume that is left alone because of what its stamps say; its text is the fixed reason.
+type SkipError struct{ Reason string }
+
+func (e *SkipError) Error() string { return e.Reason }
+
 // Discover is the volumes that carry a copy policy, found by listing the server: what the helper's scheduler and its
 // jobs work from, so there is no stack to keep in step with the volumes.
 //
@@ -177,6 +192,11 @@ func FromStack(resources []resolve.Resource) ([]Item, error) {
 // protocol, a field that is not known, a schedule that cannot be read): acting on half of a policy is worse than not
 // acting. A pool that could not be listed is a problem under "pool NAME", and the others are still listed. A restore
 // point or an unfinished copy is never an item, whatever config it carries, so a backup is not scheduled for backup.
+//
+// A volume that carries an owner stamp is acted on only when its resource stamp is its own address (ownership.Classify says it is here): a copy of a
+// volume carries the policy and both stamps of the original, and one made before the resource stamp existed has none to compare, so each is skipped, with
+// the fixed reason (ReasonCopy, ReasonUnbound) in problems. A volume with no owner stamp at all is scheduled as before: no stack made it, and there is
+// nothing to compare.
 func Discover(eng Engine) (items []Item, problems map[string]error, err error) {
 	vols, poolErrs, err := eng.Volumes()
 	if err != nil {
@@ -198,6 +218,17 @@ func Discover(eng Engine) (items []Item, problems map[string]error, err error) {
 			continue
 		}
 		label := Label(lv.Volume)
+		if owner := ownership.Owner(lv.Config); owner != "" {
+			// the volume is asked whose it is by its own stamp: the question here is only whether the stamp is meant for this very volume
+			switch state, _ := ownership.Classify(lv.Config, owner, ownership.Address(ownership.KindStorageVolume, lv.Volume.Project, lv.Volume.Pool, lv.Volume.Name)); state {
+			case ownership.Copy:
+				problems[label] = &SkipError{Reason: ReasonCopy}
+				continue
+			case ownership.Unbound:
+				problems[label] = &SkipError{Reason: ReasonUnbound}
+				continue
+			}
+		}
 		p, perr := backupmeta.ParsePolicy(text)
 		if perr != nil {
 			problems[label] = perr

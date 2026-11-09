@@ -51,9 +51,12 @@ tink fills gaps; it does not replace what it builds on. It gives a home or self-
 | `kind: exec` | run a command in an instance, guarded by a `check` so it is idempotent | yes |
 | `kind: file` | a file placed in an instance | yes |
 | `kind: incus` | the escape hatch: arguments for the local `incus` command | yes |
-| stamp | a `user.tink.*` key tink writes on an object to remember something (which stack made an object, when a copy was made) | yes |
+| stamp | a `user.tink.*` key tink writes on an object to remember something (which stack made an object, what it was made for, when a copy was made) | yes |
 | owner | the stack named in an object's `user.tink.intent.stack` stamp, written when tink creates the object (a stack with no `kind: stack` name has none). A record of who made it, not a lock ([ownership.md](ownership.md)) | yes |
-| adopt | stamp a declared object that exists and has no stamp with the stack's name, with `tink plan apply --adopt` or `ownership: adopt-on-apply`. It writes that one key and restarts nothing. (`kind: helper` also says "adopt", for "accept and leave alone"; this one writes.) | yes |
+| resource stamp | `user.tink.intent.resource`, written beside the owner stamp: the object's own address (`instance/PROJECT/NAME`, `storage-volume/PROJECT/POOL/NAME`, `project/NAME`, `network/NAME`, ...; an empty project or pool is `default`), which says what the object was made for. "Resource" here is the **Incus object's address**, not a document in a stack. Built by `ownership.Address`; the same string names the object in status, logs and notifications ([ownership.md](ownership.md#the-resource-stamp-and-the-five-states)) | yes |
+| the five states | what `ownership.Classify` answers for an object, from its stamps and its real address: *unstamped* (no owner stamp), *elsewhere* (another stack's), *here* (this stack's and its own address), *copy* (this stack's and another object's address: `incus copy` keeps every `user.*` key) and *unbound* (this stack's and no resource stamp yet). A reader acts only on *here* | yes |
+| stamp dimension | the part of a plan that says whose an object is and whether its stamps are its own. It is never a change line, an action or an exit status; `plan` prints it as grouped lines ("N objects carry stamps made for another resource (copies?)", "N objects have no resource stamp yet"). An ordinary `plan apply` writes a missing resource stamp on an object this stack owns, restarting nothing | yes |
+| adopt | claim a declared object that exists and has no stamp, or is a copy, for this stack and this address, with `tink plan apply --adopt` or `ownership: adopt-on-apply`. It writes the two stamps in one stamp-only update and restarts nothing; an object another stack stamped is left alone. (`kind: helper` also says "adopt", for "accept and leave alone"; this one writes.) | yes |
 | `on_image_change` | the policy for when a pinned image's digest moves: update, or report | yes |
 | offer | what an instance provides, stated as keys on it: `user.tink.offer.<offer>.port` and `.proto`. A fact about the app; it says nothing about who may use it | yes (read by `tink join`; web offers) |
 | `kind: publish` | a declaration: a name in the site's zone (the document's `name:`, plus the dns helper's zone) shows one offer of an instance to named groups. tink converges nothing for it and `plan` leaves it out of the graph, but stamps it onto its instance as `user.tink.intent.publish.<name>` so the server holds it; `tink join` reads it, from files or `--from-server` ([join.md](join.md)) | yes (a declaration) |
@@ -86,7 +89,7 @@ Every key under `user.tink.` is one of three kinds, and the kind is the prefix, 
 | Class | Prefix | Written by | Examples |
 |---|---|---|---|
 | fact | none: the short list below | a person, in `config:` | `user.tink.role`, `user.tink.leg.<nic>`, `user.tink.offer.<name>.*`, `user.tink.dns.zone` |
-| intent | `user.tink.intent.` | tink, from the declaration, by `plan apply` | `intent.stack` (the owner), `intent.site`, `intent.publish.<name>`, `intent.derive.<file>`, `intent.backup.policy`; named and not yet written: `intent.resource`, `intent.applied` |
+| intent | `user.tink.intent.` | tink, from the declaration, by `plan apply` | `intent.stack` (the owner), `intent.resource` (the address it was made for), `intent.site`, `intent.publish.<name>`, `intent.derive.<file>`, `intent.backup.policy`; named and not yet written: `intent.applied` |
 | outcome | `user.tink.outcome.` | whatever ran an operation | `outcome.backup.copy.<target>.copied-at`, `outcome.backup.verified-at`, `outcome.exec.<id>.trigger-hash`, `outcome.helper` (the marker), `outcome.helper.status`, `outcome.run.command` |
 
 What each consumer does with the class:

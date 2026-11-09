@@ -255,7 +255,7 @@ func createNetworkACL(server incus.InstanceServer, r Resource, stack string) err
 			Description: r.Description,
 			Ingress:     aclRules(r.Ingress),
 			Egress:      aclRules(r.Egress),
-			Config:      ownership.With(r.Config, stack),
+			Config:      ownership.With(r.Config, stack, addressOf(r)),
 		},
 	})
 }

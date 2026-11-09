@@ -104,6 +104,9 @@ type Keys struct {
 	// Policy is the resolved copy policy a volume carries. Every other key the capability writes (stamps and markers) is an outcome, and the class
 	// of a key is read from its prefix (internal/ownership), so the capability names no prefix of its own.
 	Policy string
+	// RestorePointMarkers are the keys whose presence says that a volume is one of the capability's own restore points, or a copy still being made. Such
+	// a volume carries the stamps of the volume it was copied from, by design, so it must not be counted as a stray copy of a declared object.
+	RestorePointMarkers []string
 }
 
 // Backup is what the converger asks of the backup capability. Every method is a function of what it is given: none reads the server or the stack.

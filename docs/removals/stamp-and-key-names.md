@@ -41,7 +41,7 @@ A key under `user.tink.` is a fact (a person writes it), intent (tink wrote it f
 | `user.tink.helper.pool`, `.remote`, `.image`, `.image-fingerprint`, `.status-volume` | the same names under `user.tink.outcome.helper.` | the helper instance |
 | `user.tink.helper.status` | `user.tink.outcome.helper.status` | the helper's status volume (an older helper: the helper instance) |
 
-Two intent keys are named and not written yet: `user.tink.intent.resource` and `user.tink.intent.applied`. A server will not have them.
+`user.tink.intent.resource` (the address of the object the stamps were made for, #309; [ownership.md](../ownership.md#the-resource-stamp-and-the-five-states)) is new: an object made by an older tink has no such key, and `user.tink.intent.applied` is named and not written yet. An object that carries the owner stamp and no resource stamp reads as **unbound**: `plan apply` writes the missing key by itself (nothing is restarted), and until then the helper's scheduler leaves an unbound volume alone ("it has no resource stamp yet (plan apply writes it)") and the join and the daemon's derived files read an unbound instance without its stamps. An object stamped under the old owner key reads as unstamped, as below, and `plan apply --adopt` writes both.
 
 ### Time words (#305)
 
@@ -147,6 +147,7 @@ Read the `diff`: it is the whole change. The dotted forms in the table are not t
 
 Each bullet was checked on the seeded server with the new tink, reading only (live run); what could not be checked without writing is said so.
 
+- **Objects that carry the new owner key and no resource key read as unbound** (a volume you re-marked by hand in step 2, say, or one made by a tink between the key classes and the resource stamp). Nothing is wrong with them, but until `tink plan apply` writes the resource stamp the helper's scheduler skips such a volume, and says so in `tink helper status`, so **copies of it stop**; `tink plan` ends with a line saying how many objects have no resource stamp yet. Run step 4 for every stack that declares such a volume before relying on the schedule.
 - **Objects stamped under the old names read as unstamped.** `tink plan` ends with its line about declared objects that have no stamp, and the old keys are listed as "not in the stack (left alone)" (they are undeclared keys under `user.tink.` that belong to no class). Checked.
 - **The publish, site and derive stamps are not read from the old names.** Checked: `tink join --from-server` prints nothing and warns that no publish is declared (the warning says "in the files given", although no file was given); `join apply dns --from-server --dry-run` refuses on zero publishes rather than write an empty zone. `tink plan` of the stack that holds the derived files wants to write the new derive stamps and **BLOCKS** each derived file ("nothing is published, so applying would empty the N lines tink wrote"), exit status 1 for an apply: the guard works, and it is why [step 4](#4-write-the-intent-stamps) applies the stack with the publishers first. Not checked: the daemon's own reconcile of derived files.
 - **A helper installed before the change is not found.** Checked: `tink helper status` prints "no helper instance found (an instance with user.tink.outcome.helper set, in any project)" and exits 1. Not checked, because it would write: that `tink backup run` then runs in the foreground instead of handing off (its `--dry-run` does not say where it would run).
@@ -310,12 +311,12 @@ The owner stamp, site, publish and derive stamps are written by `tink plan apply
 - **Apply the stacks that hold the publishes before the stack that holds the derived files** (the dns records, the proxy routes, the sign-on rules). Until the publishers are stamped under the new names, nothing is published as far as the new tink can see, and the guard BLOCKS every derived file ("nothing is published, so applying would empty the N lines tink wrote"; exit status 1). In the live run the platform stack applied first stamped its objects and was blocked on its three files, nothing was lost, and applying the apps stack and then the platform stack again made `no changes`. If you apply in the other order, that is what you will see: do not reach for `allow_empty`.
 
 ```sh
-tink plan apply --adopt STACK.yaml    # once per stack: stamps the declared objects that exist and read as unstamped, restarts nothing
-tink plan apply STACK.yaml            # writes the publish, site and derive stamps under the new names
+tink plan apply --adopt STACK.yaml    # once per stack: claims the declared objects that exist and read as unstamped (or as copies), restarts nothing
+tink plan apply STACK.yaml            # writes the publish, site and derive stamps under the new names, and a missing resource stamp
 tink plan STACK.yaml                  # no changes, and no line about unstamped objects
 ```
 
-Run it for every stack the server holds. An object that is stamped nowhere, because no stack file declares it, keeps the old key until you remove it in step 5, or rename it by hand with the expression above (`incus config set NAME user.tink.intent.stack=VALUE`) if you want it to keep an owner. `tink plan` still lists the old keys as "not in the stack (left alone)" until step 5. `adopt` printed `stamped user.tink.intent.stack on N objects ... restarted 0`.
+Run it for every stack the server holds. An object that is stamped nowhere, because no stack file declares it, keeps the old key until you remove it in step 5, or rename it by hand with the expression above (`incus config set NAME user.tink.intent.stack=VALUE`) if you want it to keep an owner. `tink plan` still lists the old keys as "not in the stack (left alone)" until step 5. `adopt` printed `stamped user.tink.intent.stack and user.tink.intent.resource on N objects ... restarted 0`.
 
 ### 5. Remove the old keys that are left
 

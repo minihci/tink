@@ -78,7 +78,7 @@ func ForSite(stacks []Stack, site string) []Stack {
 	}
 	out := make([]Stack, 0, len(stacks))
 	for i, s := range stacks {
-		kept := Stack{Name: s.Name, Elsewhere: copyCounts(s.Elsewhere)}
+		kept := Stack{Name: s.Name, Elsewhere: copyCounts(s.Elsewhere), Ignored: s.Ignored}
 		for _, r := range s.Resources {
 			switch r.Kind {
 			case resolve.KindInstance:

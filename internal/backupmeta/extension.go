@@ -21,6 +21,8 @@ func (extension) Keys() backupext.Keys {
 		SnapshotSchedule: KeySnapshotSchedule,
 		SnapshotExpiry:   KeySnapshotExpiry,
 		Policy:           PolicyKey,
+
+		RestorePointMarkers: []string{MarkerCopyOf, MarkerPartialOf},
 	}
 }
 

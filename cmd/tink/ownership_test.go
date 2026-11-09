@@ -18,6 +18,23 @@ import (
 type planServer struct {
 	incus.InstanceServer
 	stamp string // what the profile and the instance carry, or "" for nothing
+	// resource is what they carry as their resource stamp: "" for none, "own" for the address each really has, anything else as it is
+	resource string
+}
+
+func (s *planServer) resourceFor(address string) map[string]string {
+	cfg := map[string]string{}
+	if s.stamp != "" {
+		cfg[ownership.Key] = s.stamp
+	}
+	switch s.resource {
+	case "":
+	case "own":
+		cfg[ownership.ResourceKey] = address
+	default:
+		cfg[ownership.ResourceKey] = s.resource
+	}
+	return cfg
 }
 
 func (s *planServer) UseProject(string) incus.InstanceServer { return s }
@@ -32,10 +49,8 @@ func (s *planServer) GetProfile(name string) (*api.Profile, string, error) {
 	if name != "base" {
 		return nil, "", api.StatusErrorf(http.StatusNotFound, "not found")
 	}
-	cfg := map[string]string{"user.note": "x"}
-	if s.stamp != "" {
-		cfg[ownership.Key] = s.stamp
-	}
+	cfg := s.resourceFor("profile/default/base")
+	cfg["user.note"] = "x"
 	return &api.Profile{Name: name, ProfilePut: api.ProfilePut{Config: cfg}}, "", nil
 }
 
@@ -43,10 +58,8 @@ func (s *planServer) GetInstance(name string) (*api.Instance, string, error) {
 	if name != "app" {
 		return nil, "", api.StatusErrorf(http.StatusNotFound, "not found")
 	}
-	cfg := map[string]string{"environment.A": "b"}
-	if s.stamp != "" {
-		cfg[ownership.Key] = s.stamp
-	}
+	cfg := s.resourceFor("instance/default/app")
+	cfg["environment.A"] = "b"
 	return &api.Instance{Name: name, Type: "container", Status: "Running", StatusCode: api.Running,
 		InstancePut: api.InstancePut{Config: cfg, Profiles: []string{"default", "base"}}}, "", nil
 }
@@ -111,14 +124,42 @@ level 1:
 	}
 
 	// once the objects are stamped the output is the old output, to the byte
-	out, err = runPlan(t, &planServer{stamp: "lab"}, ownershipStack(true))
+	out, err = runPlan(t, &planServer{stamp: "lab", resource: "own"}, ownershipStack(true))
 	if err != nil || out != before {
 		t.Errorf("stamped here: err %v, output:\n%s", err, out)
 	}
 	// stamped by another stack: today's output (only a volume says anything), and no line
-	out, err = runPlan(t, &planServer{stamp: "other"}, ownershipStack(true))
+	out, err = runPlan(t, &planServer{stamp: "other", resource: "own"}, ownershipStack(true))
 	if err != nil || out != before {
 		t.Errorf("stamped elsewhere: err %v, output:\n%s", err, out)
+	}
+}
+
+// The stamp dimension is lines and nothing else: a copy and an object with no resource stamp yet are each one grouped line after the levels, the levels
+// read as they did, and the exit status is the same.
+func TestPlanSaysCopiesAndUnboundObjectsInOneLineEachAndChangesNothingElse(t *testing.T) {
+	const before = `level 0:
+  profile/base: no changes
+level 1:
+  instance/app: no changes
+`
+	for _, c := range []struct {
+		name     string
+		server   *planServer
+		wantLine string
+	}{
+		{"no resource stamp yet", &planServer{stamp: "lab"},
+			"ownership: 2 declared objects have no resource stamp yet: instance/app, profile/base; `tink plan apply` writes it and restarts none\n"},
+		{"stamps made for another resource", &planServer{stamp: "lab", resource: "somewhere/else"},
+			"ownership: 2 declared objects carry stamps made for another resource (copies?): instance/app, profile/base; nothing acts on them and nothing changes because of it; `tink plan apply --adopt` takes them over for this declaration in one pass and restarts none\n"},
+	} {
+		out, err := runPlan(t, c.server, ownershipStack(true))
+		if err != nil {
+			t.Fatalf("%s: a stamp is never an exit status: %v", c.name, err)
+		}
+		if want := before + c.wantLine; out != want {
+			t.Errorf("%s:\n%s\nwant:\n%s", c.name, out, want)
+		}
 	}
 }
 

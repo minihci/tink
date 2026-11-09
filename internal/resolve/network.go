@@ -181,7 +181,7 @@ func createNetwork(server incus.InstanceServer, r Resource, stack string) error 
 	return server.CreateNetwork(api.NetworksPost{
 		Name:       r.Name,
 		Type:       "bridge",
-		NetworkPut: api.NetworkPut{Config: ownership.With(r.Config, stack), Description: r.Description},
+		NetworkPut: api.NetworkPut{Config: ownership.With(r.Config, stack, addressOf(r)), Description: r.Description},
 	})
 }
 
