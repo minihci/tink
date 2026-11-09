@@ -94,3 +94,92 @@ func TestJudgeStatusSaysWhatEvaluateSaysAboutTheDocument(t *testing.T) {
 		})
 	}
 }
+
+func reconcile(what, resource string, state string) observe.Record {
+	return observe.Record{What: what, Resource: resource, Site: "home", State: state, Reason: "a fixed phrase", Since: instant.At(t0.Add(-time.Hour))}
+}
+
+func judged(t *testing.T, mut func(*Status)) Report {
+	t.Helper()
+	return Evaluate(found("Running", fresh(mut)), t0)
+}
+
+func TestABlockedOrFailingReconcileDegradesAndASkippedOrConvergedOneDoesNot(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		rec    observe.Record
+		health Health
+		line   string
+	}{
+		{"a blocked derived file", reconcile("derived", "ingress-routes", observe.Blocked), Degraded, "derived/ingress-routes (home) is blocked: a fixed phrase"},
+		{"a failing derived file", reconcile("derived", "ingress-routes", observe.Failing), Degraded, "derived/ingress-routes (home) is failing: a fixed phrase"},
+		{"a blocked dns reconcile", reconcile("dns", "", observe.Blocked), Degraded, "dns (home) is blocked"},
+		{"a failing dns reconcile", reconcile("dns", "", observe.Failing), Degraded, "dns (home) is failing"},
+		{"a skipped derived file is information: no stamped file, or the instance is not running", reconcile("derived", "ingress-routes", observe.Skipped), Healthy, ""},
+		{"a converged derived file", reconcile("derived", "ingress-routes", observe.Converged), Healthy, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := judged(t, func(s *Status) { s.States = []observe.Record{tc.rec} })
+			if r.Health != tc.health {
+				t.Fatalf("health = %s, want %s (%v)", r.Health, tc.health, r.Reasons)
+			}
+			if tc.line != "" && !strings.Contains(r.Summary(), tc.line) {
+				t.Errorf("summary = %q, want it to contain %q", r.Summary(), tc.line)
+			}
+			if tc.health == Healthy && len(r.Reasons) != 0 {
+				t.Errorf("nothing to say, said %v", r.Reasons)
+			}
+		})
+	}
+}
+
+func TestAFailedLastJobDegradesAndTheNextFinishedJobClearsIt(t *testing.T) {
+	job := func(id, state string, finished time.Duration) func(*Status) {
+		return func(s *Status) { s.LastJob = &LastJob{ID: id, State: state, FinishedAt: instant.At(t0.Add(-finished))} }
+	}
+	r := judged(t, job("j7", "failed", 5*time.Minute))
+	if r.Health != Degraded || !strings.Contains(r.Summary(), "the last job (j7) failed 5m ago") {
+		t.Errorf("a failed job: %s %s", r.Health, r.Summary())
+	}
+	// the next finished job takes its place in the document, whatever its state (the daemon keeps the newest finished one)
+	for _, state := range []string{"succeeded", "cancelled"} {
+		if r := judged(t, job("j8", state, time.Minute)); r.Health != Healthy || len(r.Reasons) != 0 {
+			t.Errorf("a later %s job clears it: %s %v", state, r.Health, r.Reasons)
+		}
+	}
+	// a cancelled job does not count by itself, and neither does having no job
+	if r := judged(t, job("j9", "cancelled", time.Minute)); r.Health != Healthy {
+		t.Errorf("cancelled: %s %v", r.Health, r.Reasons)
+	}
+	if r := judged(t, nil); r.Health != Healthy {
+		t.Errorf("no job: %s %v", r.Health, r.Reasons)
+	}
+	// a document that does not say when the job finished is not aged from the year 1
+	r = judged(t, func(s *Status) { s.LastJob = &LastJob{ID: "j1", State: "failed"} })
+	if r.Health != Degraded || !strings.Contains(r.Summary(), "the last job (j1) failed") || strings.Contains(r.Summary(), "ago") {
+		t.Errorf("no finish time: %s", r.Summary())
+	}
+}
+
+// A failed job whose failure is already listed as a failing copy says it twice. That is decided (the rule is one line and the duplicate is harmless,
+// since notifications come from states and not from these lines): both are said.
+func TestAFailedJobIsSaidEvenWhenTheFailingCopyAlreadySaysIt(t *testing.T) {
+	r := judged(t, func(s *Status) {
+		s.States = []observe.Record{failingCopy("lib", "nas", 1, t0.Add(-time.Hour))}
+		s.LastJob = &LastJob{ID: "j2", State: "failed", FinishedAt: instant.At(t0.Add(-time.Minute))}
+	})
+	if r.Health != Degraded || !strings.Contains(r.Summary(), "1 copy(ies) failing") || !strings.Contains(r.Summary(), "the last job (j2) failed") {
+		t.Errorf("%s", r.Summary())
+	}
+}
+
+// What is outside the document still wins: a helper that has gone quiet is down, whatever its last job did.
+func TestAFailedJobDoesNotHideAStaleHelper(t *testing.T) {
+	r := Evaluate(found("Running", fresh(func(s *Status) {
+		s.WrittenAt = instant.At(t0.Add(-3 * time.Hour))
+		s.LastJob = &LastJob{ID: "j", State: "failed"}
+	})), t0)
+	if r.Health != Down || !strings.Contains(r.Summary(), "stale") {
+		t.Errorf("%s", r.Summary())
+	}
+}
