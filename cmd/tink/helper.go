@@ -381,13 +381,13 @@ func nameList(names []string, max int) string {
 type helperJSON struct {
 	Project string   `json:"project"`
 	Name    string   `json:"name"`
-	State   string   `json:"instance_state"`
+	State   string   `json:"instance-state"`
 	Health  string   `json:"health"`
-	Code    int      `json:"exit_code"`
+	Code    int      `json:"exit-code"`
 	Reasons []string `json:"reasons,omitempty"`
 	// StatusVolume is POOL/VOLUME when the helper's status document is on a volume its instance points at; absent for one that keeps it
 	// on the instance.
-	StatusVolume string         `json:"status_volume,omitempty"`
+	StatusVolume string         `json:"status-volume,omitempty"`
 	Status       *helper.Status `json:"status,omitempty"`
 }
 
@@ -431,7 +431,10 @@ func printHelperDetails(out io.Writer, r helper.Report, now time.Time) {
 		f := st.Failing[i]
 		return fmt.Sprintf("%s -> %s, %d in a row since %s, the last %s ago", f.Volume, f.Target, f.Count, f.Since.Format("2006-01-02 15:04 MST"), roundAge(now.Sub(f.FailedAt.Time)))
 	}))
-	if j := st.LastJob; j != nil {
+	if j := st.LastJob; j != nil && j.FinishedAt.IsZero() {
+		// A job that says nothing about when it finished (a document from before the time words) must not be aged from the year 1.
+		fmt.Fprintf(out, "  last job:    %s %s, finish time not recorded\n", j.ID, j.State)
+	} else if j != nil {
 		fmt.Fprintf(out, "  last job:    %s %s, %s ago\n", j.ID, j.State, roundAge(now.Sub(j.FinishedAt.Time)))
 	} else {
 		fmt.Fprintf(out, "  last job:    none finished\n")

@@ -167,6 +167,22 @@ func TestStatusWithoutCheckPrintsDetailsAndExitsZero(t *testing.T) {
 	}
 }
 
+func TestAJobWithNoFinishTimeIsNotAgedFromTheYearOne(t *testing.T) {
+	st := goodStatus(func(s *helper.Status) {
+		s.LastJob = &helper.LastJob{ID: "20261007T110000Z-abc", State: "succeeded"}
+	})
+	out, err := statusRun(t, instancesServer{all: []api.Instance{helperInstance("tink-helper", "helper", "Running", st)}}, "", "", false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "20261007T110000Z-abc succeeded, finish time not recorded") {
+		t.Errorf("a job with no finish time must say so:\n%s", out)
+	}
+	if strings.Contains(out, "106751d") {
+		t.Errorf("a job with no finish time must not be aged from the zero time:\n%s", out)
+	}
+}
+
 func TestStatusJSONCarriesTheJudgementAndTheDocument(t *testing.T) {
 	st := goodStatus(func(s *helper.Status) { s.Skipped = []helper.Skip{{Volume: "lib", Reason: "x"}} })
 	out, err := statusRun(t, instancesServer{all: []api.Instance{helperInstance("p", "h", "Running", st)}}, "", "", true, true)

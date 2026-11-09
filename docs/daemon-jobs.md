@@ -61,6 +61,8 @@ say, and a checkout of a branch with a shortened `retain` cannot prune real rest
 stack's copies, use `tink backup run -f FILE`: it names those volumes and hands the run to the helper when there is one ([helper.md](helper.md#running-a-backup-on-the-helper)),
 and otherwise runs where you start it.
 
+The one kind of job today is `backup-run`. Its `args` in `request.json` are `volumes` (the names asked for), `due` and `dry-run` (booleans), and the summary in `status.json` is the run's report: `copies` (one entry per volume and target: `volume`, `target`, `outcome`, `detail`, `restore-point`, `pruned`, `swept`, `other-servers`) and the counts `unknown`, `failed`, `tried` and `skipped`. Every key tink defines in these files is spelled with hyphens, never an underscore ([JSON keys](glossary.md#json-keys)).
+
 Earlier versions of tink could also send a stack with a job (`daemon enqueue -f`, with its files in a `bundle/` directory). That is gone, and a request that still
 carries one is **refused** (the job fails and says so), not run as an ordinary job, which would copy something other than what was asked for.
 

@@ -253,7 +253,7 @@ either way. `Ctrl-C` stops following and leaves the job running.
   (skipping a volume, failing a copy, stopped, silent, or without its certificate), the same judgement `tink helper status` makes. A note, never a
   failure, and nothing is said when there is no helper or it is healthy.
 - **They will not write a copy policy the helper cannot read.** The status document says the newest policy protocol the helper reads
-  (`policy_proto`). If this tink would write a policy of a newer protocol, the volume is **BLOCKED** with the reason, instead of being applied and then
+  (`policy-proto`). If this tink would write a policy of a newer protocol, the volume is **BLOCKED** with the reason, instead of being applied and then
   skipped by the helper without a word: that is how copies would stop and nothing would say so. The way out is `tink helper upgrade`. Nothing is
   checked on a server with no helper, or one that has not said what it reads (an older helper). There is only protocol 1 today, so no helper is older
   than the policies written now; this is the net for the first time that stops being true.
@@ -427,11 +427,12 @@ was read, **keeping every other key as it was**; if the volume changed in betwee
 | Field | Meaning |
 |---|---|
 | `version`, `tz`, `started-at` | which tink, which time zone schedules run in, and when it started |
-| `job_proto`, `policy_proto` | the job-directory protocol it speaks, and the **newest copy-policy protocol it can read** |
+| `job-proto`, `policy-proto` | the job-directory protocol it speaks, and the **newest copy-policy protocol it can read** |
 | `written-at`, `heartbeat` | when it was written (an RFC 3339 UTC instant to the whole second), and how often it is written when nothing changes (a Go duration string, `10m0s`) |
 | `skipped` | volumes it will **not** copy, and why: a policy of a protocol it does not read, one that does not parse, a pool it cannot list, a volume it cannot read |
 | `failing` | copies that have failed since their last success: `volume`, `target`, `count` (how many in a row), `since` (when the run of failures began, which stays through the retries) and `failed-at` (when the latest attempt failed, which moves with each) |
-| `last_job` | the newest finished job: `id`, `state`, `finished-at` |
+| `last-job` | the newest finished job: `id`, `state`, `finished-at` |
+| `running-jobs`, `queued-jobs`, `draining` | the jobs in the job directory right now (left out when zero), and whether the helper is starting none (an upgrade waits for `running-jobs` to reach zero) |
 | `reconciles` | with `--reconcile-dns`: one entry per site kept, `what` (`dns`), `site`, `state` (`converged`, `blocked`, `skipped`, `failing`), a fixed `reason` when it is not converged, and `since`, when that state began (so a pass that finds the same thing writes nothing new) |
 | `remotes` | the Incus servers the helper can reach by name: `host`, and any added with `tink helper remote add` (name, address, project; no credential). Absent from an older helper, which is why a missing list is not read as "none" |
 
@@ -487,6 +488,16 @@ $ tink helper status --check
 degraded: tink-helper/helper: 1 volume(s) skipped: tenant/lib (user.tink.intent.backup.policy was written for protocol 2; this tink speaks 1)
 $ echo $?
 1
+```
+
+`--json` prints a list with one object per helper: `project`, `name`, `instance-state` (the instance's own state, `Running`, `Stopped`, ...), `health` (`healthy`, `degraded` or `down`), `exit-code` (0, 1 or 2, the same as `--check` sets), `reasons`, `status-volume` (`POOL/VOLUME`, left out for a helper that keeps its document on its instance) and `status` (the [status document](#the-status-document) as it was read, left out when there was none). Every key is spelled with hyphens, like the status document's: **a script that read `instance_state`, `exit_code`, `status_volume`, `last_job`, `job_proto`, `policy_proto`, `running_jobs` or `queued_jobs` must read the hyphenated name** ([the removal page](removals/stamp-and-key-names.md) has the full list). In `jq` a hyphenated key takes brackets:
+
+```
+$ tink helper status --json | jq -r '.[0]["instance-state"], .[0]["exit-code"]'
+Running
+1
+$ tink helper status --json | jq -r '.[0].status["last-job"].state'
+succeeded
 ```
 
 **"Down" is the one the helper cannot report for itself**, which is why it is judged from outside, from a document that is still on its volume

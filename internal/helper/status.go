@@ -48,8 +48,8 @@ type Status struct {
 	Version string `json:"version,omitempty"`
 	// JobProto is the job-directory protocol it speaks; PolicyProto is the newest copy-policy protocol it can read. A writer of
 	// policies compares against the latter so that it never writes one the helper would silently skip.
-	JobProto    int    `json:"job_proto,omitempty"`
-	PolicyProto int    `json:"policy_proto,omitempty"`
+	JobProto    int    `json:"job-proto,omitempty"`
+	PolicyProto int    `json:"policy-proto,omitempty"`
 	TZ          string `json:"tz,omitempty"`
 
 	StartedAt instant.Time `json:"started-at,omitzero"`
@@ -63,12 +63,12 @@ type Status struct {
 	Skipped []Skip `json:"skipped,omitempty"`
 	// Failing are copies that have failed since their last success.
 	Failing []Failing `json:"failing,omitempty"`
-	LastJob *LastJob  `json:"last_job,omitempty"`
+	LastJob *LastJob  `json:"last-job,omitempty"`
 
 	// Running and Queued are the jobs in the job directory right now, and Draining says the helper is not starting any: an upgrade
 	// waits for Running to reach zero.
-	Running  int  `json:"running_jobs,omitempty"`
-	Queued   int  `json:"queued_jobs,omitempty"`
+	Running  int  `json:"running-jobs,omitempty"`
+	Queued   int  `json:"queued-jobs,omitempty"`
 	Draining bool `json:"draining,omitempty"`
 
 	// Reconciles say what the daemon's reconciler last found for each thing it keeps in step with the server, one entry per site. A person reads it to know
