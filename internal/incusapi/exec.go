@@ -187,17 +187,23 @@ func execOnce(ctx context.Context, server incus.InstanceServer, instance string,
 
 	// op.Wait has no deadline of its own, so it runs beside the context. Cancelling the operation is what makes it return, and what asks
 	// the daemon to stop the command.
-	waited := make(chan error, 1)
-	go func() { waited <- op.Wait() }()
+	waited := make(chan execWait, 1)
+	go func() { waited <- waitForExec(ctx, server, op) }()
 	var waitErr error
+	var final *api.Operation
 	select {
-	case waitErr = <-waited:
+	case w := <-waited:
+		waitErr, final = w.err, w.final
 	case <-ctx.Done():
 		_ = op.Cancel()
 		return 0, buf.String(), execStopped(ctx, command, instance, timeout)
 	}
 
-	if opAPI := op.Get(); opAPI.Metadata != nil {
+	opAPI := op.Get()
+	if final != nil {
+		opAPI = *final
+	}
+	if opAPI.Metadata != nil {
 		if code, ok := opAPI.Metadata["return"].(float64); ok {
 			exitCode = int(code)
 		}
@@ -220,6 +226,59 @@ func execOnce(ctx context.Context, server incus.InstanceServer, instance string,
 		return exitCode, buf.String(), execStopped(ctx, command, instance, timeout)
 	}
 	return exitCode, buf.String(), nil
+}
+
+// execWait is how an exec's operation ended: the error op.Wait returned, and, when the answer came from asking the server rather than from
+// the operation the client tracks, the operation as the server last described it (it carries the exit status).
+type execWait struct {
+	err   error
+	final *api.Operation
+}
+
+// lostListenerMessage is what the Incus client's operation says when the event stream it watches for the operation's end dropped
+// (client/operations.go, since Incus 7.5: a websocket operation, which an exec is, is no longer resumed on a new stream). The text is the
+// client's, so a test pins what this function does with it, and a client that words it differently only loses the fallback below.
+const lostListenerMessage = "Lost connection to the event listener"
+
+// lostListenerWindow is how long waitForExec keeps asking the server for the end of an exec after the event stream dropped, counted from the
+// last answer it got. A variable so a test can shorten it.
+var lostListenerWindow = 30 * time.Second
+
+// lostListenerRetry is the pause between two failed requests to the server in waitForExec. A variable for the same reason.
+var lostListenerRetry = time.Second
+
+// waitForExec waits for an exec operation to end. Since Incus 7.5 the client fails the whole operation when its event stream drops, even
+// though the exec's own data connections are separate and may be fine: a command that is running, silent, for minutes (a NAT or a proxy
+// that closes an idle stream does exactly this) was reported as failed, and the process was then killed when tink closed its side. For that
+// one error, and while ctx is live, it asks the server for the operation directly (an ordinary request, which a dropped stream does not
+// affect) until it is final, and returns the server's final state, which holds the exit status. If the server cannot be reached for
+// lostListenerWindow, the original error is returned. Any other error is returned as it came.
+func waitForExec(ctx context.Context, server incus.InstanceServer, op incus.Operation) execWait {
+	err := op.Wait()
+	if err == nil || ctx.Err() != nil || !strings.Contains(err.Error(), lostListenerMessage) {
+		return execWait{err: err}
+	}
+	id := op.Get().ID
+	deadline := time.Now().Add(lostListenerWindow)
+	for ctx.Err() == nil {
+		o, _, perr := server.GetOperationWait(id, 5)
+		switch {
+		case perr == nil && !o.StatusCode.IsFinal():
+			deadline = time.Now().Add(lostListenerWindow) // the server answered: the command is still running
+			continue
+		case perr == nil && o.Err != "":
+			return execWait{err: errors.New(o.Err), final: o}
+		case perr == nil:
+			return execWait{final: o}
+		case api.StatusErrorCheck(perr, 404) || time.Now().After(deadline):
+			return execWait{err: err}
+		}
+		select {
+		case <-time.After(lostListenerRetry):
+		case <-ctx.Done():
+		}
+	}
+	return execWait{err: err}
 }
 
 // execStopped is the error for an exec abandoned because ctx ended: a deadline names ErrExecTimeout, a cancellation keeps ctx's error.

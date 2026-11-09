@@ -97,6 +97,23 @@ laptop, and `backup run` prints a note saying so. The way around this is [the he
 copies already run there, and a `backup run` you start is **handed to it** when the server has a healthy one ([running a backup on the helper](helper.md#running-a-backup-on-the-helper)),
 so nothing passes through the laptop. With no helper, or with `--local`, it runs, and relays, on the machine you start it on.
 
+## A connection that drops while an exec runs
+
+A `kind: exec` (and every command tink runs in a guest) waits for its command over the Incus API, through a stream of events that reports the
+command's end and, separately, the command's own streams for input and output. What a drop does depends on what was lost:
+
+- **Only the event stream** (a proxy or a NAT that closes an idle stream does this): tink keeps waiting by asking the server for the
+  operation directly, and takes the exit status from the server's answer. The command is not disturbed. Since Incus 7.5 the Go client itself
+  fails the operation in this case, and tink works around that; without the workaround a silent command that runs for minutes was reported
+  failed and killed when tink closed its side.
+- **The whole connection:** the command's own streams are gone with it, and Incus stops the command. tink reports the exec as failed
+  (`exit 137` with no output, or the client's error), the command did not finish, and the next apply runs it again. A command that must not
+  run twice needs a `check` that tells whether it already did.
+
+Run live (L-2026-11-09, an Incus 7.5.1 server, tink built with the 7.6.0 client): both cases above, with a 25-second command through a proxy that
+closed one connection, or all of them, 8 seconds in. The first ended with exit status 0 and the command's effect in the guest; the second failed
+at 9 seconds with the command not finished.
+
 ## Running tink from Windows
 
 Releases carry `tink.exe` for Windows (`amd64` and `arm64`), built by the same workflow as the other platforms. It is a **client**: point it at a server with `--remote`,

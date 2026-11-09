@@ -199,3 +199,115 @@ func TestExecOutputIsCapped(t *testing.T) {
 		t.Error("the start of the output must be kept")
 	}
 }
+
+// lostListenerOp is an exec whose event stream dropped: the Incus client (since 7.5) fails the operation with this message even though the
+// command is still running on the server.
+type lostListenerOp struct {
+	incus.Operation
+	err error
+}
+
+func (o lostListenerOp) Wait() error { return o.err }
+func (o lostListenerOp) Get() api.Operation {
+	return api.Operation{ID: "op-1"}
+}
+
+// pollServer runs an exec whose operation fails as above and answers GetOperationWait from a list, one answer per call (the last repeats).
+type pollServer struct {
+	incus.InstanceServer
+	op      lostListenerOp
+	answers []func() (*api.Operation, error)
+	calls   int
+}
+
+func (s *pollServer) ExecInstance(_ string, _ api.InstanceExecPost, args *incus.InstanceExecArgs) (incus.Operation, error) {
+	args.Stdout.Write([]byte("out\n"))
+	close(args.DataDone)
+	return s.op, nil
+}
+
+func (s *pollServer) GetOperationWait(id string, _ int) (*api.Operation, string, error) {
+	if id != "op-1" {
+		return nil, "", errors.New("asked for the wrong operation: " + id)
+	}
+	i := min(s.calls, len(s.answers)-1)
+	s.calls++
+	o, err := s.answers[i]()
+	return o, "", err
+}
+
+func running() (*api.Operation, error) {
+	return &api.Operation{ID: "op-1", StatusCode: api.Running}, nil
+}
+func finished(code float64, errText string) func() (*api.Operation, error) {
+	return func() (*api.Operation, error) {
+		return &api.Operation{ID: "op-1", StatusCode: api.Success, Err: errText, Metadata: map[string]any{"return": code}}, nil
+	}
+}
+
+func shortListenerWait(t *testing.T) {
+	t.Helper()
+	w, r := lostListenerWindow, lostListenerRetry
+	lostListenerWindow, lostListenerRetry = 30*time.Millisecond, time.Millisecond
+	t.Cleanup(func() { lostListenerWindow, lostListenerRetry = w, r })
+}
+
+func lostListener() error {
+	return errors.New(lostListenerMessage + ": websocket: close 1006 (abnormal closure): unexpected EOF")
+}
+
+// The event stream dropped while the command ran: the exec is still waited for, by asking the server, and its exit status comes from the
+// server's answer. Before this, the exec was reported failed, and the command was killed when tink closed its connections.
+func TestExecWaitsOnTheServerWhenTheEventStreamDrops(t *testing.T) {
+	shortListenerWait(t)
+	s := &pollServer{op: lostListenerOp{err: lostListener()}, answers: []func() (*api.Operation, error){running, running, finished(3, "")}}
+	code, out, err := ExecWithStdin(s, "probe", []string{"sh", "-c", "sleep 25"}, strings.NewReader(""), nil)
+	if err != nil || code != 3 || out != "out\n" {
+		t.Fatalf("the command ended with status 3 and no error: %d %q %v", code, out, err)
+	}
+	if s.calls != 3 {
+		t.Errorf("it should have asked until the operation was final: %d requests", s.calls)
+	}
+}
+
+func TestExecWaitKeepsTheServersErrorWhenTheOperationEndedInOne(t *testing.T) {
+	shortListenerWait(t)
+	s := &pollServer{op: lostListenerOp{err: lostListener()}, answers: []func() (*api.Operation, error){finished(0, "the instance was stopped")}}
+	_, _, err := ExecWithStdin(s, "probe", []string{"x"}, strings.NewReader(""), nil)
+	if err == nil || !strings.Contains(err.Error(), "the instance was stopped") || strings.Contains(err.Error(), lostListenerMessage) {
+		t.Errorf("the operation's own error is the one to report: %v", err)
+	}
+}
+
+func TestExecWaitGivesTheOriginalErrorWhenTheServerCannotBeReached(t *testing.T) {
+	shortListenerWait(t)
+	down := func() (*api.Operation, error) { return nil, errors.New("connection refused") }
+	s := &pollServer{op: lostListenerOp{err: lostListener()}, answers: []func() (*api.Operation, error){down}}
+	_, _, err := ExecWithStdin(s, "probe", []string{"x"}, strings.NewReader(""), nil)
+	if err == nil || !strings.Contains(err.Error(), lostListenerMessage) {
+		t.Errorf("with the server unreachable the client's error stands: %v", err)
+	}
+	if s.calls < 2 {
+		t.Errorf("it should have tried more than once: %d", s.calls)
+	}
+}
+
+func TestExecWaitGivesTheOriginalErrorWhenTheServerNoLongerKnowsTheOperation(t *testing.T) {
+	shortListenerWait(t)
+	gone := func() (*api.Operation, error) { return nil, api.StatusErrorf(404, "Operation not found") }
+	s := &pollServer{op: lostListenerOp{err: lostListener()}, answers: []func() (*api.Operation, error){gone}}
+	_, _, err := ExecWithStdin(s, "probe", []string{"x"}, strings.NewReader(""), nil)
+	if err == nil || !strings.Contains(err.Error(), lostListenerMessage) || s.calls != 1 {
+		t.Errorf("a 404 is final, no retries: %d requests, %v", s.calls, err)
+	}
+}
+
+// Any other error from the operation is returned as it came, without asking the server (the VM-agent retry depends on its text). The server
+// here has no GetOperationWait, so a request to it would panic.
+func TestExecWaitReturnsOtherErrorsUnchanged(t *testing.T) {
+	s := &pollServer{op: lostListenerOp{err: errors.New("VM agent isn't currently running")}}
+	_, _, err := ExecWithStdin(s, "vm", []string{"x"}, strings.NewReader(""), nil)
+	if err == nil || !strings.Contains(err.Error(), "VM agent isn't currently running") || s.calls != 0 {
+		t.Errorf("%d requests, %v", s.calls, err)
+	}
+}
