@@ -8,58 +8,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/minihci/tink/internal/join"
+	"github.com/minihci/tink/internal/observe"
 )
 
-func TestAReconcileOutcomeBecomesTheDaemonsResultWithTheDetailOnlyForTheLog(t *testing.T) {
-	got := resultOf(join.DNSOutcome{
-		Site: "home", State: join.DNSBlocked, Reason: "the apply was refused",
-		Findings: []string{"error: instance/dns: something"}, Err: errors.New("secret-looking detail"),
-	})
-	if got.What != "dns" || got.Site != "home" || got.State != "blocked" || got.Reason != "the apply was refused" {
+func TestASiteTheDaemonCannotReachIsFailingWithAFixedReasonAndTheCauseOnlyForTheLog(t *testing.T) {
+	got := unreachable("derived", "home", errors.New("secret-looking detail"))
+	if got.What != "derived" || got.Site != "home" || got.State != observe.Failing || got.Reason != "the server could not be reached" {
 		t.Errorf("result = %+v", got)
 	}
-	if len(got.Detail) != 2 || !strings.Contains(got.Detail[1], "secret-looking detail") {
-		t.Errorf("detail = %v, want the findings then the error", got.Detail)
-	}
-	if strings.Contains(got.State+got.Reason, "secret-looking") {
-		t.Error("error text reached the state or the reason, which the status document carries")
-	}
-}
-
-func TestARewriteAndAnUnchangedPassAreBothConvergedAndOnlyTheRewriteIsSaidInTheLog(t *testing.T) {
-	rewrote := resultOf(join.DNSOutcome{State: join.DNSChanged, Report: join.ApplyReport{Instance: "dns", Path: "/hosts", Added: []string{"a"}, Removed: []string{"b", "c"}}})
-	if rewrote.State != "converged" || !rewrote.Wrote || len(rewrote.Detail) != 1 || !strings.Contains(rewrote.Detail[0], "1 record(s) added, 2 removed") {
-		t.Errorf("rewrite = %+v", rewrote)
-	}
-	same := resultOf(join.DNSOutcome{State: join.DNSUnchanged})
-	if same.State != "converged" || same.Wrote || len(same.Detail) != 0 {
-		t.Errorf("unchanged = %+v", same)
-	}
-}
-
-func TestADerivedOutcomeBecomesTheDaemonsResultNamedByItsFileWithTheDetailOnlyForTheLog(t *testing.T) {
-	blocked := derivedResultOf(join.DerivedOutcome{
-		Site: "home", Name: "ingress-routes", State: join.DerivedBlocked, Reason: "the file is not the daemon's to replace",
-		Findings: []string{"warning: something"}, Detail: []string{"/etc/caddy/apps.caddy on ingress: nothing is published"}, Err: errors.New("secret-looking detail"),
-	})
-	if blocked.What != "derived/ingress-routes" || blocked.Site != "home" || blocked.State != "blocked" || blocked.Reason != "the file is not the daemon's to replace" {
-		t.Errorf("result = %+v", blocked)
-	}
-	if len(blocked.Detail) != 3 || !strings.Contains(blocked.Detail[2], "secret-looking detail") {
-		t.Errorf("detail = %v, want the findings, then the detail, then the error", blocked.Detail)
-	}
-	if strings.Contains(blocked.State+blocked.Reason+blocked.What, "secret-looking") {
-		t.Error("error text reached what the status document carries")
-	}
-
-	if site := derivedResultOf(join.DerivedOutcome{Site: "home", State: join.DerivedSkipped}); site.What != "derived" || site.State != "skipped" {
-		t.Errorf("a result about the whole site = %+v", site)
-	}
-	rewrote := derivedResultOf(join.DerivedOutcome{Name: "x", State: join.DerivedChanged, Wrote: true})
-	same := derivedResultOf(join.DerivedOutcome{Name: "x", State: join.DerivedUnchanged})
-	if rewrote.State != "converged" || !rewrote.Wrote || same.State != "converged" || same.Wrote {
-		t.Errorf("rewrote = %+v, same = %+v: both are converged, only the rewrite is said in the log", rewrote, same)
+	if got.Err == nil || strings.Contains(got.State+got.Reason, "secret-looking") {
+		t.Errorf("result = %+v: the cause is for the log and must not be in the state or the reason", got)
 	}
 }
 

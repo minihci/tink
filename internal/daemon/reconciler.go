@@ -9,6 +9,7 @@ import (
 
 	"github.com/minihci/tink/internal/helper"
 	"github.com/minihci/tink/internal/instant"
+	"github.com/minihci/tink/internal/observe"
 )
 
 // A Reconciler keeps derived state in step with the stamps on the server. It is level-triggered: a pass reads the server, works out what should be true,
@@ -24,7 +25,7 @@ type Reconciler struct {
 	// ctx is done, and returns an error when the stream ends before that. incusapi.WatchLifecycle is the real one.
 	Watch func(ctx context.Context, ready func(), handle func(action string)) error
 	// Reconcile does one full pass and says what it found, one entry per thing it keeps and per site.
-	Reconcile func(ctx context.Context) []ReconcileResult
+	Reconcile func(ctx context.Context) []observe.Result
 
 	// Debounce is the quiet time after the last event before a pass (default 2 seconds), and MaxWait the longest a steady stream of events can put one off
 	// (default 10). Resync is the longest between passes (default 5 minutes). Backoff is the first wait before subscribing again (default 2 seconds, doubling up
@@ -36,14 +37,6 @@ type Reconciler struct {
 	Logf func(format string, args ...any)
 	// Now is a test seam; nil is the real clock.
 	Now func() time.Time
-}
-
-// ReconcileResult is what one pass found for one thing it keeps. State and Reason are the fixed words the status document carries (State is converged, blocked,
-// skipped or failing); Wrote says the pass rewrote something, which is worth a line in the log each time and is not a state; Detail is for the log.
-type ReconcileResult struct {
-	What, Site, State, Reason string
-	Wrote                     bool
-	Detail                    []string
 }
 
 // wakeActions are the lifecycle events that can change what a published name's records are derived from: an instance appearing, going, being renamed or
@@ -176,10 +169,11 @@ func (r *Reconciler) watch(ctx context.Context, poke func()) {
 // pass runs one reconcile and records what it found. It says what it found in the log when that changes, not on every pass.
 func (r *Reconciler) pass(ctx context.Context, last map[string]string) {
 	for _, res := range r.Reconcile(ctx) {
+		what := observe.Name(res.What, res.Resource, res.Target)
 		if r.Live != nil {
-			r.Live.setReconcile(helper.Reconcile{What: res.What, Site: res.Site, State: res.State, Reason: res.Reason, Since: instant.At(r.now())})
+			r.Live.setReconcile(helper.Reconcile{What: what, Site: res.Site, State: res.State, Reason: res.Reason, Since: instant.At(r.now())})
 		}
-		key := res.What + "/" + res.Site
+		key := what + "/" + res.Site
 		state := res.State + ": " + res.Reason
 		if last[key] == state && !res.Wrote {
 			continue
@@ -189,7 +183,7 @@ func (r *Reconciler) pass(ctx context.Context, last map[string]string) {
 		if site == "" {
 			site = "the unnamed site"
 		}
-		msg := fmt.Sprintf("reconcile %s, %s: %s", res.What, site, res.State)
+		msg := fmt.Sprintf("reconcile %s, %s: %s", what, site, res.State)
 		if res.Wrote {
 			msg += ", rewrote it"
 		}
@@ -199,6 +193,9 @@ func (r *Reconciler) pass(ctx context.Context, last map[string]string) {
 		r.logf("%s", msg)
 		for _, d := range res.Detail {
 			r.logf("  %s", d)
+		}
+		if res.Err != nil {
+			r.logf("  %s", res.Err)
 		}
 	}
 }
