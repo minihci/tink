@@ -92,10 +92,14 @@ func (r Report) Summary() string {
 	return fmt.Sprintf("%s: %s: %s", r.Health, r.Found.Label(), strings.Join(r.Reasons, "; "))
 }
 
-// Evaluate judges a helper from what it published and the state of its instance. A helper that has stopped or has gone quiet is
-// Down; one that is running and speaking but skipping volumes or failing copies is Degraded; a running one that has published
-// nothing yet, or something unreadable, is Degraded (it may be new, or old); and so is one whose status volume could not be read,
-// with that said as the reason.
+// Evaluate judges a helper from what it published and the state of its instance. It is two parts. The outside part needs the server's answer and
+// is here: whether the instance is running, whether the status volume could be read, and whether the document has gone quiet for longer than it
+// said it would (a document cannot say that of itself). The rest is what the document says, and is JudgeStatus's: it is a function of the document
+// and the time, so anything that holds the document can run it.
+//
+// A helper that has stopped or has gone quiet is Down; one that is running and speaking but skipping volumes or failing copies is Degraded; a
+// running one that has published nothing yet, or something unreadable, is Degraded (it may be new, or old); and so is one whose status volume could
+// not be read, with that said as the reason.
 func Evaluate(f Found, now time.Time) Report {
 	r := Report{Found: f}
 	down := func(format string, args ...any) {
@@ -141,29 +145,20 @@ func Evaluate(f Found, now time.Time) Report {
 		return r
 	}
 
-	// A document that does not say when it was written, or how often it is written, cannot be shown fresh. It must not read as healthy:
-	// that would hide a helper that has stopped, whether the document came from another version, was edited by hand, or is damaged.
-	// There is no version logic here: the rule is about what the document says, not about who wrote it.
-	switch hb := st.Heartbeat.D(); {
-	case st.WrittenAt.IsZero():
-		degrade("its status document has no write time (%s), so it cannot be shown to be fresh", WrittenAtField)
-	case hb <= 0:
-		degrade("its status document has no heartbeat (%s), so it cannot be told from a helper that has stopped", HeartbeatField)
-	default:
+	// Silent for longer than it said it would be: only someone looking from outside, at a time of their own, can say that. A document that does
+	// not say when it was written or how often is JudgeStatus's to call degraded, and is not called stale here.
+	if hb := st.Heartbeat.D(); !st.WrittenAt.IsZero() && hb > 0 {
 		if silent := now.Sub(st.WrittenAt.Time); silent > hb*staleNumerator/staleDenominator {
 			down("stale: last heard from %s ago, and it publishes at least every %s", age(silent), age(hb))
 			return r
 		}
 	}
-	if skipped := st.Backup(observe.Skipped); len(skipped) > 0 {
-		degrade("%d volume(s) skipped: %s", len(skipped), skipList(skipped))
+
+	health, reasons := JudgeStatus(st, now)
+	if health > r.Health {
+		r.Health = health
 	}
-	if failing := st.Backup(observe.Failing); len(failing) > 0 {
-		degrade("%d copy(ies) failing: %s", len(failing), failList(failing))
-	}
-	if st.Draining {
-		degrade("draining: it is not starting new work (an upgrade is in progress, or one did not finish: remove /data/jobs/DRAIN)")
-	}
+	r.Reasons = append(r.Reasons, reasons...)
 	return r
 }
 
