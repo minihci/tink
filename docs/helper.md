@@ -548,7 +548,7 @@ succeeded
 
 ### Health: what the document says
 
-**Status: built (#311); unit-tested against fakes. Not yet run live.**
+**Status: built (#311); unit-tested against fakes, and run live on a disposable Incus 7.5.1 server over `--remote` on 2026-11-09 (L-2026-11-09e).** With `tink daemon run --reconcile-derived` publishing its status on an instance: `tink helper status --check` said healthy (exit 0); after the proxy helper's role was removed, so that the join had an error, the derived file's state became blocked and `--check` said degraded (exit 1) with the reason "a derived file is blocked", its subject and its detail, and `--json` carried the same as a finding; after the role was put back it said healthy again (exit 0). Not run live: a failed last job, a failing copy, the `plan` warning for an adopted helper, and the backup hand-off.
 
 Health is judged in two parts. **`Evaluate`** needs the server: whether the instance is running, whether the status volume could be read, whether the document has
 gone quiet for longer than its heartbeat, and (`CheckTrust`) whether the helper's certificate is still trusted. **`JudgeStatus(status, now)`** needs only the
