@@ -3,6 +3,8 @@ package resolve
 import (
 	"strings"
 	"testing"
+
+	"github.com/minihci/tink/internal/finding"
 )
 
 func TestFillDerived(t *testing.T) {
@@ -101,14 +103,14 @@ func TestGuardDerived(t *testing.T) {
 		c.file.Kind, c.file.Name, c.file.Instance, c.file.Path = KindFile, "hosts", "dns", "/hosts"
 		got := guardDerived(c.file, update(c.file), c.live)
 		if got.Action != c.action {
-			t.Errorf("%s: action = %v, want %v (%v)", c.name, got.Action, c.action, got.Blocked)
+			t.Errorf("%s: action = %v, want %v (%v)", c.name, got.Action, c.action, details(got.Blocked()))
 			continue
 		}
-		if c.blocked != "" && (len(got.Blocked) != 1 || !strings.Contains(got.Blocked[0], c.blocked)) {
-			t.Errorf("%s: blocked = %v, want it to contain %q", c.name, got.Blocked, c.blocked)
+		if c.blocked != "" && (len(got.Blocked()) != 1 || !strings.Contains(got.Blocked()[0].Detail, c.blocked)) {
+			t.Errorf("%s: blocked = %v, want it to contain %q", c.name, details(got.Blocked()), c.blocked)
 		}
-		if c.note != "" && (len(got.Notes) != 1 || !strings.Contains(got.Notes[0], c.note)) {
-			t.Errorf("%s: notes = %v, want one containing %q", c.name, got.Notes, c.note)
+		if c.note != "" && (len(got.Notes()) != 1 || !strings.Contains(got.Notes()[0].Detail, c.note)) {
+			t.Errorf("%s: notes = %v, want one containing %q", c.name, details(got.Notes()), c.note)
 		}
 	}
 	// a file that does not exist, or already holds the content, is not guarded
@@ -173,14 +175,41 @@ func TestGuardRecords(t *testing.T) {
 		c.file.Kind, c.file.Name, c.file.Instance, c.file.Path, c.file.Derive, c.file.DerivedZone = KindFile, "records", "hs", "/r.json", DeriveMesh, "home.example.org"
 		got := guardDerived(c.file, PlannedResource{Resource: c.file, Action: ActionUpdate}, c.live)
 		if got.Action != c.action {
-			t.Errorf("%s: action = %v, want %v (%v)", c.name, got.Action, c.action, got.Blocked)
+			t.Errorf("%s: action = %v, want %v (%v)", c.name, got.Action, c.action, details(got.Blocked()))
 			continue
 		}
-		if c.blocked != "" && (len(got.Blocked) != 1 || !strings.Contains(got.Blocked[0], c.blocked)) {
-			t.Errorf("%s: blocked = %v, want it to contain %q", c.name, got.Blocked, c.blocked)
+		if c.blocked != "" && (len(got.Blocked()) != 1 || !strings.Contains(got.Blocked()[0].Detail, c.blocked)) {
+			t.Errorf("%s: blocked = %v, want it to contain %q", c.name, details(got.Blocked()), c.blocked)
 		}
-		if c.note != "" && (len(got.Notes) != 1 || !strings.Contains(got.Notes[0], c.note)) {
-			t.Errorf("%s: notes = %v, want one containing %q", c.name, got.Notes, c.note)
+		if c.note != "" && (len(got.Notes()) != 1 || !strings.Contains(got.Notes()[0].Detail, c.note)) {
+			t.Errorf("%s: notes = %v, want one containing %q", c.name, details(got.Notes()), c.note)
 		}
+	}
+}
+
+// CheckDerived says what it found as findings: an error when the file is not to be replaced, a note when it is replaced under adopt_existing, and
+// nothing when it is clear. Each carries a fixed reason.
+func TestCheckDerived_ReturnsAnErrorOrANoteWithAReason(t *testing.T) {
+	filled := "# generated\n" + DeriveBegin + "\n192.0.2.3 a.example.org\n" + DeriveEnd + "\n"
+	empty := "# generated\n" + DeriveBegin + "\n" + DeriveEnd + "\n"
+	for _, c := range []struct {
+		name   string
+		c      DerivedCheck
+		sev    finding.Severity
+		reason string
+	}{
+		{"a file a person wrote", DerivedCheck{Render: DeriveDNS, Path: "/hosts", Instance: "dns", Live: "192.0.2.9 hand.example.org\n", Desired: filled}, finding.Error, reasonDerivedNotTinks},
+		{"the same, adopted", DerivedCheck{Render: DeriveDNS, Path: "/hosts", Instance: "dns", Live: "192.0.2.9 hand.example.org\n", Desired: filled, Adopt: true}, finding.Note, reasonDerivedAdopted},
+		{"nothing published", DerivedCheck{Render: DeriveDNS, Path: "/hosts", Instance: "dns", Live: filled, Desired: empty}, finding.Error, reasonDerivedEmpty},
+		{"not a records file", DerivedCheck{Render: DeriveMesh, Path: "/r.json", Instance: "hs", Live: "listen_addr: 0.0.0.0\n", Desired: "[]\n"}, finding.Error, reasonDerivedNotJSON},
+		{"a record outside the zone", DerivedCheck{Render: DeriveMesh, Path: "/r.json", Instance: "hs", Zone: "home.example.org", Live: `[{"name": "x.example.net", "type": "A", "value": "192.0.2.9"}]`, Desired: "[]\n"}, finding.Error, reasonDerivedForeign},
+	} {
+		fs := CheckDerived(c.c)
+		if len(fs) != 1 || fs[0].Severity != c.sev || fs[0].Reason != c.reason || fs[0].Detail == "" {
+			t.Errorf("%s: got %+v, want one %v with reason %q", c.name, fs, c.sev, c.reason)
+		}
+	}
+	if fs := CheckDerived(DerivedCheck{Render: DeriveDNS, Path: "/hosts", Instance: "dns", Live: filled, Desired: filled}); len(fs) != 0 {
+		t.Errorf("a file tink wrote and a rendering with lines is clear, got %+v", fs)
 	}
 }

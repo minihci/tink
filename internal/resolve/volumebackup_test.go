@@ -91,13 +91,13 @@ func TestDecideVolume(t *testing.T) {
 			}
 			// Missing backup is a warning for now, never a block; flip this
 			// assertion together with decideVolume when it becomes an error.
-			if len(p.Blocked) != 0 {
-				t.Errorf("a volume must not be blocked yet, got %v", p.Blocked)
+			if len(p.Blocked()) != 0 {
+				t.Errorf("a volume must not be blocked yet, got %v", details(p.Blocked()))
 			}
 			if got := strings.Join(p.Changes, " | "); !strings.Contains(got, tc.wantChange) || (tc.wantChange == "" && got != "") {
 				t.Errorf("changes = %q, want to contain %q", got, tc.wantChange)
 			}
-			if got := strings.Join(p.Warnings, " | "); !strings.Contains(got, tc.wantWarn) || (tc.wantWarn == "" && got != "") {
+			if got := strings.Join(details(p.Warnings()), " | "); !strings.Contains(got, tc.wantWarn) || (tc.wantWarn == "" && got != "") {
 				t.Errorf("warnings = %q, want to contain %q", got, tc.wantWarn)
 			}
 		})

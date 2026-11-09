@@ -26,6 +26,7 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
 
+	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/incusapi"
 )
 
@@ -109,7 +110,7 @@ func planPlacedFile(s incus.InstanceServer, f Resource) (PlannedResource, error)
 		}
 		return guardDerived(f, p, p.liveContent), nil
 	case withheld:
-		return PlannedResource{Resource: f, Action: ActionDeferred, Warnings: []string{t.withheldWarning(f)}}, nil
+		return PlannedResource{Resource: f, Action: ActionDeferred, Findings: []finding.Finding{finding.Warnf(reasonFileDeferred, "", "%s", t.withheldWarning(f))}}, nil
 	}
 	p, err := planFile(s, f)
 	if err != nil {
@@ -124,13 +125,13 @@ func planVolumeFile(s incus.InstanceServer, f Resource, t fileTarget) (PlannedRe
 	if err != nil {
 		return PlannedResource{}, fmt.Errorf("reading current content of %s on %s: %w", f.Path, f.Instance, err)
 	}
-	p := PlannedResource{Resource: f, Notes: []string{t.volumeNote(f)}}
+	p := PlannedResource{Resource: f, Findings: []finding.Finding{finding.Notef(reasonFileInVolume, "", "%s", t.volumeNote(f))}}
 	switch {
 	case !found:
 		p.Action = ActionCreate
 	case f.Seed:
 		if current != f.Content {
-			p.Notes = append(p.Notes, seedNote(f))
+			p.Findings = append(p.Findings, seedFinding(f))
 		}
 	case current != f.Content:
 		p.Action = ActionUpdate

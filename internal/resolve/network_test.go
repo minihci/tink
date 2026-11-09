@@ -10,6 +10,8 @@ import (
 
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
+
+	"github.com/minihci/tink/internal/finding"
 )
 
 // netServer is a fake Incus server for the network planner and applier. Methods a network has no business calling panic (nil embedded
@@ -213,8 +215,8 @@ func TestPlanNetwork_DifferenceOnAnUnusedBridgeUpdates(t *testing.T) {
 	if want := []string{`config.ipv4.nat: "true" -> "false"`}; !reflect.DeepEqual(p.Changes, want) {
 		t.Errorf("changes = %v, want %v", p.Changes, want)
 	}
-	if len(p.Warnings) != 0 {
-		t.Errorf("an unused bridge needs no disruption warning, got %v", p.Warnings)
+	if len(p.Warnings()) != 0 {
+		t.Errorf("an unused bridge needs no disruption warning, got %v", details(p.Warnings()))
 	}
 }
 
@@ -231,7 +233,7 @@ func TestPlanNetwork_DifferenceOnABridgeInUseIsBlockedAndNamesTheInstances(t *te
 	if len(p.Changes) != 1 {
 		t.Errorf("a blocked plan still shows what it would change, got %v", p.Changes)
 	}
-	why := strings.Join(p.Blocked, " ")
+	why := strings.Join(details(p.Blocked()), " ")
 	for _, want := range []string{"2 instance(s)", "ha-eval/ha", "mosquitto", "allow_disruption: true"} {
 		if !strings.Contains(why, want) {
 			t.Errorf("blocked reason %q does not mention %q", why, want)
@@ -247,8 +249,8 @@ func TestPlanNetwork_AllowDisruptionAppliesAndWarns(t *testing.T) {
 	if p.Action != ActionUpdate {
 		t.Fatalf("action = %v, want ActionUpdate", p.Action)
 	}
-	if len(p.Warnings) != 1 || !strings.Contains(p.Warnings[0], "mosquitto") {
-		t.Errorf("warnings = %v, want one naming the affected instance", p.Warnings)
+	if len(p.Warnings()) != 1 || !strings.Contains(p.Warnings()[0].Detail, "mosquitto") {
+		t.Errorf("warnings = %v, want one naming the affected instance", details(p.Warnings()))
 	}
 }
 
@@ -257,20 +259,21 @@ func TestPlanNetwork_DescriptionOnlyChangeIsNeverBlocked(t *testing.T) {
 	r := netResource(map[string]string{"ipv4.nat": "true"})
 	r.Description = "the service bridge"
 	p, _ := planNetwork(&netServer{live: live}, r)
-	if p.Action != ActionUpdate || len(p.Warnings) != 0 {
-		t.Fatalf("a description change on a bridge in use is harmless: action %v warnings %v", p.Action, p.Warnings)
+	if p.Action != ActionUpdate || len(p.Warnings()) != 0 {
+		t.Fatalf("a description change on a bridge in use is harmless: action %v warnings %v", p.Action, details(p.Warnings()))
 	}
 }
 
 func TestPlanNetwork_RefusesWhatItDoesNotOwn(t *testing.T) {
 	cases := []struct {
-		name string
-		live api.Network
-		want string
+		name   string
+		live   api.Network
+		want   string
+		reason string
 	}{
-		{"unmanaged host interface", api.Network{Name: "svc", Type: "bridge", Managed: false}, "does not manage it"},
-		{"not a bridge", api.Network{Name: "svc", Type: "ovn", Managed: true, Status: "Created"}, `type "ovn"`},
-		{"not created", api.Network{Name: "svc", Type: "bridge", Managed: true, Status: "Errored"}, `status "Errored"`},
+		{"unmanaged host interface", api.Network{Name: "svc", Type: "bridge", Managed: false}, "does not manage it", reasonNetworkNotManaged},
+		{"not a bridge", api.Network{Name: "svc", Type: "ovn", Managed: true, Status: "Created"}, `type "ovn"`, reasonNetworkNotBridge},
+		{"not created", api.Network{Name: "svc", Type: "bridge", Managed: true, Status: "Errored"}, `status "Errored"`, reasonNetworkNotCreated},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -279,8 +282,12 @@ func TestPlanNetwork_RefusesWhatItDoesNotOwn(t *testing.T) {
 			if err != nil || p.Action != ActionBlocked {
 				t.Fatalf("planNetwork() = %v, %v; want ActionBlocked", p.Action, err)
 			}
-			if !strings.Contains(strings.Join(p.Blocked, " "), c.want) {
-				t.Errorf("blocked = %v, want it to mention %q", p.Blocked, c.want)
+			if !strings.Contains(strings.Join(details(p.Blocked()), " "), c.want) {
+				t.Errorf("blocked = %v, want it to mention %q", details(p.Blocked()), c.want)
+			}
+			// what stops apply is an error, with the reason that names the kind of refusal and none of the names
+			if len(p.Findings) != 1 || p.Findings[0].Severity != finding.Error || p.Findings[0].Reason != c.reason {
+				t.Errorf("findings = %+v, want one error with the reason %q", p.Findings, c.reason)
 			}
 		})
 	}

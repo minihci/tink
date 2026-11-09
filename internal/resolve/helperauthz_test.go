@@ -59,28 +59,28 @@ func TestPlanSaysHowTheCertificateStandsWhenTheStackSaysNothing(t *testing.T) {
 	}
 	for _, c := range cases {
 		p := planWith(t, authzServer(t), helperRes(nil), &fakeAuthz{state: c.state})
-		if p.Action != ActionNone || len(p.Blocked) != 0 {
+		if p.Action != ActionNone || len(p.Blocked()) != 0 {
 			t.Errorf("%s: asking nothing changes nothing: %+v", c.name, p)
 		}
-		if !strings.Contains(joined(p.Notes), c.note) {
-			t.Errorf("%s: notes = %q, want %q", c.name, joined(p.Notes), c.note)
+		if !strings.Contains(joined(details(p.Notes())), c.note) {
+			t.Errorf("%s: notes = %q, want %q", c.name, joined(details(p.Notes())), c.note)
 		}
-		if got := strings.Contains(joined(p.Warnings), "no longer match"); got != c.wantWarnings {
-			t.Errorf("%s: warnings = %q", c.name, joined(p.Warnings))
+		if got := strings.Contains(joined(details(p.Warnings())), "no longer match"); got != c.wantWarnings {
+			t.Errorf("%s: warnings = %q", c.name, joined(details(p.Warnings())))
 		}
 	}
 }
 
 func TestPlanDoesNotAskAboutTheCertificateWhenNoneWasHandedOver(t *testing.T) {
 	p := planWith(t, authzServer(t), helperRes(nil), nil)
-	if strings.Contains(joined(p.Notes), "certificate") || len(p.Warnings) != 0 {
+	if strings.Contains(joined(details(p.Notes())), "certificate") || len(p.Warnings()) != 0 {
 		t.Errorf("a plan that was not given the narrowing says nothing of it: %+v", p)
 	}
 }
 
 func TestPlanCannotTellIsAWarningWhenNothingWasAsked(t *testing.T) {
 	p := planWith(t, authzServer(t), helperRes(nil), &fakeAuthz{planErr: errors.New("the certificate is restricted")})
-	if p.Action != ActionNone || !strings.Contains(joined(p.Warnings), "cannot tell whether the daemon's certificate is narrowed: the certificate is restricted") {
+	if p.Action != ActionNone || !strings.Contains(joined(details(p.Warnings())), "cannot tell whether the daemon's certificate is narrowed: the certificate is restricted") {
 		t.Errorf("plan = %+v", p)
 	}
 }
@@ -91,7 +91,7 @@ func TestPlanNarrowsWhenAskedAndSaysNoChangesAfterwards(t *testing.T) {
 		t.Errorf("unrestricted and asked: %+v", p)
 	}
 	p = planWith(t, authzServer(t), narrowRes(), &fakeAuthz{state: AuthzState{Narrowed: true, UpToDate: true, Rules: 1}})
-	if p.Action != ActionNone || !strings.Contains(joined(p.Notes), "narrowed (1 rule)") {
+	if p.Action != ActionNone || !strings.Contains(joined(details(p.Notes())), "narrowed (1 rule)") {
 		t.Errorf("narrowed and asked is a second plan with no changes: %+v", p)
 	}
 }
@@ -106,15 +106,15 @@ func TestPlanRewritesTheRulesWhenTheyAreOutOfDate(t *testing.T) {
 func TestPlanBlocksNarrowingWhatItMustNotChange(t *testing.T) {
 	refused := &fakeAuthz{state: AuthzState{Refusal: "authorization.client.tls is \"openfga\""}}
 	p := planWith(t, authzServer(t), narrowRes(), refused)
-	if p.Action != ActionBlocked || !strings.Contains(joined(p.Blocked), "openfga") {
+	if p.Action != ActionBlocked || !strings.Contains(joined(details(p.Blocked())), "openfga") {
 		t.Errorf("a route someone chose: %+v", p)
 	}
 	p = planWith(t, authzServer(t), narrowRes(), &fakeAuthz{planErr: errors.New("no certificate named \"tink-helper\" is trusted")})
-	if p.Action != ActionBlocked || !strings.Contains(joined(p.Blocked), "no certificate named") {
+	if p.Action != ActionBlocked || !strings.Contains(joined(details(p.Blocked())), "no certificate named") {
 		t.Errorf("no certificate to narrow: %+v", p)
 	}
 	p = planWith(t, authzServer(t), narrowRes(), nil)
-	if p.Action != ActionBlocked || !strings.Contains(joined(p.Blocked), "tink bug") {
+	if p.Action != ActionBlocked || !strings.Contains(joined(details(p.Blocked())), "tink bug") {
 		t.Errorf("asked of a tink that cannot do it: %+v", p)
 	}
 }
@@ -128,7 +128,7 @@ func TestPlanBlocksTwoHelpersAskingForTheOneAuthorizer(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if p.Action != ActionBlocked || !strings.Contains(joined(p.Blocked), "also says authz: narrow") {
+		if p.Action != ActionBlocked || !strings.Contains(joined(details(p.Blocked())), "also says authz: narrow") {
 			t.Errorf("%s: %+v", r.Name, p)
 		}
 	}

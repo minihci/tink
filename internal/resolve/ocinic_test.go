@@ -50,7 +50,7 @@ func TestOCINICWarnings(t *testing.T) {
 				t.Fatalf("got %d warnings %q, want %d", len(got), got, len(c.wants))
 			}
 			for i, want := range c.wants {
-				if !strings.Contains(got[i], want) {
+				if !strings.Contains(got[i].Detail, want) {
 					t.Errorf("warning %d = %q, want it to contain %q", i, got[i], want)
 				}
 			}
@@ -72,7 +72,7 @@ func TestOCINICWarnings_ProfileDevices(t *testing.T) {
 	}
 	// a profile the stack declares is seen, and the warning names it
 	got := ociNICWarnings(nicInstance("docker-oci:x:1", nil, "base"), ociTestRemotes, profiles)
-	if len(got) != 1 || !strings.Contains(got[0], `(from profile "base")`) {
+	if len(got) != 1 || !strings.Contains(got[0].Detail, `(from profile "base")`) {
 		t.Fatalf("got %q, want one warning naming the profile", got)
 	}
 	// the instance's own device of the same name replaces the profile's WHOLE device
@@ -117,7 +117,7 @@ func TestPlanOne_UnnamedOCINICWarnsBeforeTheInstanceExists(t *testing.T) {
 	if p.Action != ActionCreate {
 		t.Fatalf("action = %v, want ActionCreate", p.Action)
 	}
-	if len(p.Warnings) != 1 || !strings.Contains(p.Warnings[0], "ipv4.address") || !strings.Contains(p.Warnings[0], "docs/oci-network.md") {
-		t.Errorf("warnings = %q, want the unnamed-NIC warning pointing at the doc", p.Warnings)
+	if len(p.Warnings()) != 1 || !strings.Contains(p.Warnings()[0].Detail, "ipv4.address") || !strings.Contains(p.Warnings()[0].Detail, "docs/oci-network.md") {
+		t.Errorf("warnings = %q, want the unnamed-NIC warning pointing at the doc", details(p.Warnings()))
 	}
 }

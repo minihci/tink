@@ -207,7 +207,7 @@ func TestForResourcesCarriesTheProjectNoteIntoThePlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(p.Warnings) != 1 || p.Warnings[0] != "the note" {
-		t.Errorf("warnings = %v", p.Warnings)
+	if len(p.Warnings()) != 1 || p.Warnings()[0].Detail != "the note" {
+		t.Errorf("warnings = %v", details(p.Warnings()))
 	}
 }

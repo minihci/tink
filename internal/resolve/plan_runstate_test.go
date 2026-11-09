@@ -116,8 +116,8 @@ func TestPlanMissingProfileIsBlocked(t *testing.T) {
 	if p.Action != ActionBlocked {
 		t.Fatalf("action = %v, want ActionBlocked", p.Action)
 	}
-	if len(p.Blocked) == 0 || !strings.Contains(p.Blocked[0], "web") {
-		t.Errorf("blocked = %q, want a reason that names the profile web", p.Blocked)
+	if len(p.Blocked()) == 0 || !strings.Contains(p.Blocked()[0].Detail, "web") {
+		t.Errorf("blocked = %q, want a reason that names the profile web", details(p.Blocked()))
 	}
 }
 
@@ -138,7 +138,7 @@ func TestPlanProfilesNotMissingAreNotAChange(t *testing.T) {
 				t.Fatal(err)
 			}
 			if p.Action != ActionNone {
-				t.Errorf("action = %v (%q %q), want ActionNone", p.Action, p.Changes, p.Blocked)
+				t.Errorf("action = %v (%q %q), want ActionNone", p.Action, p.Changes, details(p.Blocked()))
 			}
 		})
 	}
@@ -153,7 +153,7 @@ func TestPlanStoppedAndMissingProfileIsBlocked(t *testing.T) {
 	if p.Action != ActionBlocked {
 		t.Fatalf("action = %v, want ActionBlocked", p.Action)
 	}
-	if got := strings.Join(p.Blocked, "; "); !strings.Contains(got, "withheld") {
+	if got := strings.Join(details(p.Blocked()), "; "); !strings.Contains(got, "withheld") {
 		t.Errorf("blocked = %q, want the withheld-change count", got)
 	}
 }

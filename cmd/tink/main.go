@@ -23,6 +23,7 @@ import (
 	"github.com/minihci/tink/internal/bootstrap"
 	"github.com/minihci/tink/internal/daemon"
 	"github.com/minihci/tink/internal/dockerrun"
+	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/helper"
 	"github.com/minihci/tink/internal/incusapi"
 	"github.com/minihci/tink/internal/jobs"
@@ -457,17 +458,15 @@ func printPlanned(w interface{ Write([]byte) (int, error) }, p resolve.PlannedRe
 	for _, c := range p.Changes {
 		fmt.Fprintf(w, "      %s\n", c)
 	}
-	for _, d := range p.Drift {
-		fmt.Fprintf(w, "      drift: %s\n", d)
-	}
-	for _, b := range p.Blocked {
-		fmt.Fprintf(w, "      blocked: %s\n", b)
-	}
-	for _, x := range p.Warnings {
-		fmt.Fprintf(w, "      warning: %s\n", x)
-	}
-	for _, n := range p.Notes {
-		fmt.Fprintf(w, "      note: %s\n", n)
+	// The findings are printed in groups, by severity and reason, each in the order it was raised: image drift (a warning with its own reason), then what
+	// blocks, then the other warnings, then the notes. A group is the same lines under the same label whatever raised them.
+	for _, group := range []struct {
+		label string
+		of    func() []finding.Finding
+	}{{"drift", p.Drift}, {"blocked", p.Blocked}, {"warning", p.Warnings}, {"note", p.Notes}} {
+		for _, f := range group.of() {
+			fmt.Fprintf(w, "      %s: %s\n", group.label, f.Detail)
+		}
 	}
 	if p.Extras != nil && !p.Extras.Empty() {
 		fmt.Fprintf(w, "      %s\n", p.Extras.Describe())

@@ -8,39 +8,16 @@ package headscale
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"regexp"
 	"sort"
 	"strings"
 
+	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/identity"
 )
 
 // DefaultMemberFormat writes a person the way Headscale's own documentation writes a user: "alice@".
 const DefaultMemberFormat = "{id}@"
-
-// Severity of a Finding.
-type Severity int
-
-const (
-	// Warning is worth saying but does not stop the projection.
-	Warning Severity = iota
-	// Error means no fragment is produced.
-	Error
-)
-
-// Finding is one thing the projection noticed.
-type Finding struct {
-	Severity Severity
-	Message  string
-}
-
-func (f Finding) String() string {
-	if f.Severity == Error {
-		return "error: " + f.Message
-	}
-	return "warning: " + f.Message
-}
 
 // Options say what to project.
 type Options struct {
@@ -60,20 +37,13 @@ type GroupMembers struct {
 type Result struct {
 	// Text is the huJSON fragment. It is empty when there is an Error finding: a partial projection is never produced.
 	Text     string
-	Findings []Finding
+	Findings []finding.Finding
 	// Groups is what Text says, group by group, for checks that compare it with something else (see CrossCheck). Empty when Text is.
 	Groups []GroupMembers
 }
 
 // HasErrors reports whether any finding is an Error.
-func (r Result) HasErrors() bool {
-	for _, f := range r.Findings {
-		if f.Severity == Error {
-			return true
-		}
-	}
-	return false
-}
+func (r Result) HasErrors() bool { return finding.HasErrors(r.Findings) }
 
 // groupName is deliberately conservative: a name outside it is reported, never rewritten.
 var groupName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
@@ -83,11 +53,11 @@ var placeholder = regexp.MustCompile(`\{[^{}]*\}`)
 // Project makes the "groups" fragment from the directory snapshot.
 func Project(s identity.Snapshot, o Options) Result {
 	var res Result
-	errorf := func(format string, a ...any) {
-		res.Findings = append(res.Findings, Finding{Error, fmt.Sprintf(format, a...)})
+	errorf := func(reason, format string, a ...any) {
+		res.Findings = append(res.Findings, finding.Errorf(reason, "", format, a...))
 	}
-	warnf := func(format string, a ...any) {
-		res.Findings = append(res.Findings, Finding{Warning, fmt.Sprintf(format, a...)})
+	warnf := func(reason, format string, a ...any) {
+		res.Findings = append(res.Findings, finding.Warnf(reason, "", format, a...))
 	}
 
 	format := o.MemberFormat
@@ -102,10 +72,10 @@ func Project(s identity.Snapshot, o Options) Result {
 		return p
 	})
 	if strings.ContainsAny(left, "{}") {
-		errorf("the member format %q has a placeholder other than {id} and {email}", format)
+		errorf("the member format has an unknown placeholder", "the member format %q has a placeholder other than {id} and {email}", format)
 		formatOK = false
 	} else if !strings.Contains(format, "{id}") && !strings.Contains(format, "{email}") {
-		errorf("the member format %q has no {id} or {email}, so every person would get the same name", format)
+		errorf("the member format names no one", "the member format %q has no {id} or {email}, so every person would get the same name", format)
 		formatOK = false
 	}
 
@@ -118,7 +88,7 @@ func Project(s identity.Snapshot, o Options) Result {
 			}
 		}
 		if len(targets) == 0 {
-			warnf("the directory has no groups other than its own system groups, so there is nothing to emit")
+			warnf("there are no groups to emit", "the directory has no groups other than its own system groups, so there is nothing to emit")
 		}
 	} else {
 		seen := map[string]bool{}
@@ -135,11 +105,11 @@ func Project(s identity.Snapshot, o Options) Result {
 	for _, name := range targets {
 		g, ok := s.Group(name)
 		if !ok {
-			errorf("group %q is not in the directory", name)
+			errorf("a group is not in the directory", "group %q is not in the directory", name)
 			continue
 		}
 		if !groupName.MatchString(name) {
-			errorf("group %q cannot be used as a policy group name (letters, digits, '_', '.' and '-' only, starting with a letter or digit)", name)
+			errorf("a group name cannot be used", "group %q cannot be used as a policy group name (letters, digits, '_', '.' and '-' only, starting with a letter or digit)", name)
 			continue
 		}
 		e := entry{name: name, members: []string{}}
@@ -148,11 +118,11 @@ func Project(s identity.Snapshot, o Options) Result {
 			for _, p := range g.Members {
 				m := strings.NewReplacer("{id}", p.ID, "{email}", p.Email).Replace(format)
 				if p.ID == "" || (strings.Contains(format, "{email}") && p.Email == "") {
-					errorf("group %q: person %q has no %s to build a policy name from", name, personLabel(p), missingField(format, p))
+					errorf("a person lacks a field the member format needs", "group %q: person %q has no %s to build a policy name from", name, personLabel(p), missingField(format, p))
 					continue
 				}
 				if other, dup := seen[m]; dup {
-					errorf("group %q: %q and %q would both be written as %q", name, other, personLabel(p), m)
+					errorf("two people get one policy name", "group %q: %q and %q would both be written as %q", name, other, personLabel(p), m)
 					continue
 				}
 				seen[m] = personLabel(p)
@@ -161,7 +131,7 @@ func Project(s identity.Snapshot, o Options) Result {
 			sort.Strings(e.members)
 		}
 		if len(g.Members) == 0 {
-			warnf("group %q has no members", name)
+			warnf("a group has no members", "group %q has no members", name)
 		}
 		entries = append(entries, e)
 	}

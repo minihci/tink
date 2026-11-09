@@ -141,7 +141,7 @@ func TestPlanSaysWhatANetworkKeeps(t *testing.T) {
 	r := Resource{Kind: KindNetwork, Name: "br0", Config: map[string]string{"ipv4.address": "203.0.113.1/24"}}
 	p := planExtrasOf(t, &kindsServer{network: live}, r)
 	if p.Action != ActionNone {
-		t.Errorf("action = %v, %v", p.Action, p.Blocked)
+		t.Errorf("action = %v, %v", p.Action, details(p.Blocked()))
 	}
 	if p.Extras == nil || !reflect.DeepEqual(p.Extras.Config, []string{"ipv4.dhcp"}) {
 		t.Errorf("Extras = %+v, want ipv4.dhcp only", p.Extras)

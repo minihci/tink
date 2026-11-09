@@ -26,6 +26,7 @@ import (
 
 	incus "github.com/lxc/incus/v7/client"
 
+	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/incusapi"
 )
 
@@ -220,14 +221,14 @@ func skippedNote(s skippedFile) string {
 
 // firstStartNotes are the notes for the plan of an instance that does not exist yet: the files that will not be placed before its first start. The
 // plan can say what a mount hides; whether a write into a volume will work it finds out when it happens.
-func firstStartNotes(server incus.InstanceServer, r Resource, opts PlanOptions) []string {
+func firstStartNotes(server incus.InstanceServer, r Resource, opts PlanOptions) []finding.Finding {
 	candidates := opts.firstStart[instanceKey(r.Project, r.Name)]
 	if len(candidates) == 0 {
 		return nil
 	}
-	var notes []string
+	var notes []finding.Finding
 	for _, s := range placeBy(r, candidates, profileLookup(server, opts.profiles)).Skipped {
-		notes = append(notes, skippedNote(s))
+		notes = append(notes, finding.Notef(reasonFileNotPlacedFirst, "", "%s", skippedNote(s)))
 	}
 	return notes
 }

@@ -8,6 +8,7 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
 
+	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/resolve"
 )
 
@@ -205,10 +206,10 @@ func (e *StampError) Error() string {
 }
 
 // Findings are the problems as join findings (errors, one per stamp), so a caller can print them as it prints the join's own.
-func (e *StampError) Findings() []Finding {
-	out := make([]Finding, 0, len(e.Problems))
+func (e *StampError) Findings() []finding.Finding {
+	out := make([]finding.Finding, 0, len(e.Problems))
 	for _, p := range e.Problems {
-		out = append(out, Finding{Error, "instance/" + p.Instance, fmt.Sprintf("(project %s) %s", p.Project, p.Reason)})
+		out = append(out, finding.Errorf("a stamp cannot be read", "instance/"+p.Instance, "(project %s) %s", p.Project, p.Reason))
 	}
 	return out
 }

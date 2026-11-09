@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/resolve"
 )
 
@@ -73,7 +74,7 @@ func golden(t *testing.T, name string) string {
 	return string(b)
 }
 
-func messages(r Result, sev Severity) string {
+func messages(r Result, sev finding.Severity) string {
 	var out []string
 	for _, f := range r.Findings {
 		if f.Severity == sev {
@@ -278,16 +279,21 @@ func TestErrorsStopTheRenderingAndSayWhy(t *testing.T) {
 			stacks := load(t)
 			c.edit(t, stacks)
 			res := Build(stacks)
+			for _, f := range res.Findings {
+				if f.Reason == "" {
+					t.Errorf("a finding with no reason: %v", f)
+				}
+			}
 			if c.want == "" { // the one case that must stay clean
 				if res.Errors() != 0 {
-					t.Errorf("unexpected errors: %s", messages(res, Error))
+					t.Errorf("unexpected errors: %s", messages(res, finding.Error))
 				}
 				return
 			}
 			if res.Errors() == 0 {
 				t.Fatalf("no error, want one containing %q", c.want)
 			}
-			if got := messages(res, Error); !strings.Contains(got, c.want) {
+			if got := messages(res, finding.Error); !strings.Contains(got, c.want) {
 				t.Errorf("errors =\n%s\nwant one containing %q", got, c.want)
 			}
 			if res.DNS != "" || res.Mesh != "" || res.Caddy != "" || res.SSO != "" || res.ACL != "" {
@@ -306,10 +312,10 @@ func TestWarningsDoNotStopTheRendering(t *testing.T) {
 		edit(t, stacks, resolve.KindInstance, "mesh", func(r *resolve.Resource) { setConfig(r, "user.tink.role", "") })
 		res := Build(stacks)
 		if res.Errors() != 0 || res.Mesh != "" || res.DNS == "" || res.ACL == "" {
-			t.Errorf("errors %q mesh %q dns %q acl %q", messages(res, Error), res.Mesh, res.DNS, res.ACL)
+			t.Errorf("errors %q mesh %q dns %q acl %q", messages(res, finding.Error), res.Mesh, res.DNS, res.ACL)
 		}
-		if !strings.Contains(messages(res, Warning), "not offered to mesh clients") {
-			t.Errorf("warnings = %q", messages(res, Warning))
+		if !strings.Contains(messages(res, finding.Warning), "not offered to mesh clients") {
+			t.Errorf("warnings = %q", messages(res, finding.Warning))
 		}
 		for _, s := range res.Sections() {
 			if s.Name == "mesh" {
@@ -322,10 +328,10 @@ func TestWarningsDoNotStopTheRendering(t *testing.T) {
 		stacks[1].Resources = removeKind(stacks[1].Resources, resolve.KindNetwork, "canary0")
 		res := Build(stacks)
 		if res.Errors() != 0 || res.ACL != "" || res.Caddy == "" {
-			t.Errorf("errors %q acl %q", messages(res, Error), res.ACL)
+			t.Errorf("errors %q acl %q", messages(res, finding.Error), res.ACL)
 		}
-		if !strings.Contains(messages(res, Warning), "network canary0 is not declared in the files given") {
-			t.Errorf("warnings = %q", messages(res, Warning))
+		if !strings.Contains(messages(res, finding.Warning), "network canary0 is not declared in the files given") {
+			t.Errorf("warnings = %q", messages(res, finding.Warning))
 		}
 	})
 	t.Run("an http offer nobody publishes", func(t *testing.T) {
@@ -336,8 +342,8 @@ func TestWarningsDoNotStopTheRendering(t *testing.T) {
 			setConfig(r, "user.tink.offer.status.listen", "eth0")
 		})
 		res := Build(stacks)
-		if res.Errors() != 0 || !strings.Contains(messages(res, Warning), `offer "status" (http) is shown by no publish`) {
-			t.Errorf("errors %q warnings %q", messages(res, Error), messages(res, Warning))
+		if res.Errors() != 0 || !strings.Contains(messages(res, finding.Warning), `offer "status" (http) is shown by no publish`) {
+			t.Errorf("errors %q warnings %q", messages(res, finding.Error), messages(res, finding.Warning))
 		}
 		if res.DNS != golden(t, "dns") {
 			t.Error("a warning must not change the rendering")
@@ -373,9 +379,9 @@ func TestNothingToJoinIsAWarningNotAnError(t *testing.T) {
 	stacks[1].Resources = removeKind(removeKind(stacks[1].Resources, resolve.KindPublish, "whoami"), resolve.KindPublish, "whoami-admin")
 	res := Build(stacks)
 	if res.Errors() != 0 || len(res.Sections()) != 0 {
-		t.Errorf("errors %q sections %d", messages(res, Error), len(res.Sections()))
+		t.Errorf("errors %q sections %d", messages(res, finding.Error), len(res.Sections()))
 	}
-	w := messages(res, Warning)
+	w := messages(res, finding.Warning)
 	if !strings.Contains(w, "no publish is declared") || !strings.Contains(w, `offer "web" (http) is shown by no publish`) {
 		t.Errorf("warnings = %q", w)
 	}
@@ -386,10 +392,31 @@ func TestFindingsAreOrderedErrorsFirstAndStable(t *testing.T) {
 	edit(t, stacks, resolve.KindInstance, "mesh", func(r *resolve.Resource) { setConfig(r, "user.tink.role", "") })
 	edit(t, stacks, resolve.KindInstance, "dns", func(r *resolve.Resource) { setConfig(r, "user.tink.dns.zone", "") })
 	res := Build(stacks)
-	if len(res.Findings) < 2 || res.Findings[0].Severity != Error || res.Findings[len(res.Findings)-1].Severity != Warning {
+	if len(res.Findings) < 2 || res.Findings[0].Severity != finding.Error || res.Findings[len(res.Findings)-1].Severity != finding.Warning {
 		t.Errorf("findings = %v", res.Findings)
 	}
 	if got := res.Findings[0].String(); !strings.HasPrefix(got, "error: instance/dns: ") {
 		t.Errorf("String() = %q", got)
+	}
+}
+
+// A reason names the kind of problem in a fixed phrase, the same for every instance of the problem; the severities are the ones the join has always used.
+func TestFindingsReasonsAreFixedPhrasesAndSeveritiesAreAsStated(t *testing.T) {
+	stacks := load(t)
+	edit(t, stacks, resolve.KindInstance, "mesh", func(r *resolve.Resource) { setConfig(r, "user.tink.role", "") })
+	edit(t, stacks, resolve.KindInstance, "sso", func(r *resolve.Resource) { setConfig(r, "user.tink.role", "") })
+	res := Build(stacks)
+	byReason := map[string]finding.Severity{}
+	for _, f := range res.Findings {
+		byReason[f.Reason] = f.Severity
+	}
+	want := map[string]finding.Severity{
+		"a helper is missing": finding.Error,   // sso: a publish needs something to enforce it
+		"no mesh helper":      finding.Warning, // the names are only not offered to mesh clients
+	}
+	for reason, sev := range want {
+		if got, ok := byReason[reason]; !ok || got != sev {
+			t.Errorf("reason %q: severity %v (found: %v), want %v; findings: %v", reason, got, ok, sev, res.Findings)
+		}
 	}
 }

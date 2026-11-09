@@ -7,6 +7,7 @@ import (
 
 	"github.com/robfig/cron/v3"
 
+	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/instant"
 )
 
@@ -82,11 +83,11 @@ func scheduleInterval(schedule string, at time.Time) (time.Duration, error) {
 
 // CopyWarnings says so when a declared copy has never run, is failing, or is overdue by its own schedule. It
 // needs the volume's live config (where the stamps are), so it only speaks about volumes that exist.
-func CopyWarnings(name string, b *VolumeBackup, current map[string]string, now time.Time) []string {
+func CopyWarnings(name string, b *VolumeBackup, current map[string]string, now time.Time) []finding.Finding {
 	if b == nil || b.None != "" {
 		return nil
 	}
-	var out []string
+	var out []finding.Finding
 	for _, c := range b.Copies {
 		fail, failing := FailureOf(current, c.Target)
 		failingNote := ""
@@ -96,19 +97,19 @@ func CopyWarnings(name string, b *VolumeBackup, current map[string]string, now t
 		stamp := current[CopiedAt(c.Target)]
 		if stamp == "" {
 			if failing {
-				out = append(out, fmt.Sprintf("the copy to %s has never succeeded: %s -- `tink backup run %s` shows why", c.Target, failingNote, name))
+				out = append(out, finding.Warnf("a copy has never succeeded", "", "the copy to %s has never succeeded: %s -- `tink backup run %s` shows why", c.Target, failingNote, name))
 			} else {
-				out = append(out, fmt.Sprintf("the copy to %s has never run -- `tink backup run %s`", c.Target, name))
+				out = append(out, finding.Warnf("a copy has never run", "", "the copy to %s has never run -- `tink backup run %s`", c.Target, name))
 			}
 			continue
 		}
 		last, err := instant.Parse(stamp)
 		if err != nil {
-			out = append(out, fmt.Sprintf("%s=%q is not a timestamp tink wrote -- `tink backup run %s` replaces it", CopiedAt(c.Target), stamp, name))
+			out = append(out, finding.Warnf("a copy stamp is not a timestamp", "", "%s=%q is not a timestamp tink wrote -- `tink backup run %s` replaces it", CopiedAt(c.Target), stamp, name))
 			continue
 		}
 		if failing {
-			out = append(out, fmt.Sprintf("the copy to %s is failing: %s -- `tink backup run %s` shows why", c.Target, failingNote, name))
+			out = append(out, finding.Warnf("a copy is failing", "", "the copy to %s is failing: %s -- `tink backup run %s` shows why", c.Target, failingNote, name))
 		}
 		due, err := NextRun(c.Schedule, last.In(now.Location()))
 		if err != nil {
@@ -126,7 +127,7 @@ func CopyWarnings(name string, b *VolumeBackup, current map[string]string, now t
 			grace = 6 * time.Hour
 		}
 		if now.After(due.Add(grace)) {
-			out = append(out, fmt.Sprintf("the copy to %s is overdue: last ran %s ago, and its schedule %q was due at %s -- `tink backup run %s` (or run `tink backup run --due` from cron)",
+			out = append(out, finding.Warnf("a copy is overdue", "", "the copy to %s is overdue: last ran %s ago, and its schedule %q was due at %s -- `tink backup run %s` (or run `tink backup run --due` from cron)",
 				c.Target, humanAge(now.Sub(last)), c.Schedule, due.Format("2006-01-02 15:04"), name))
 		}
 	}

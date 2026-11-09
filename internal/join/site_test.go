@@ -10,6 +10,7 @@ import (
 
 	"github.com/lxc/incus/v7/shared/api"
 
+	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/resolve"
 )
 
@@ -116,7 +117,7 @@ func TestANamedSiteBesideAnUnnamedPlatformAndLabsJoinsOnItsOwn(t *testing.T) {
 		t.Fatal(err)
 	}
 	res := Build(unnamed)
-	msgs := messages(res, Error)
+	msgs := messages(res, finding.Error)
 	for _, want := range []string{"2 instances have user.tink.role: ingress (lab/ingress, tink/ingress)", "2 instances have user.tink.role: dns (lab/dns, tink/dns)"} {
 		if !strings.Contains(msgs, want) {
 			t.Errorf("the unnamed site's errors do not say %q:\n%s", want, msgs)
@@ -133,7 +134,7 @@ func TestANamedSiteBesideAnUnnamedPlatformAndLabsJoinsOnItsOwn(t *testing.T) {
 	}
 	got := Build(named)
 	// the one finding is the note of what was left out: the unnamed site's seven helpers and the two publishes of its apps
-	if got.Errors() != 0 || len(got.Findings) != 1 || !strings.Contains(got.Findings[0].Message, "the unnamed site (7 helper(s), 2 publish(es))") {
+	if got.Errors() != 0 || len(got.Findings) != 1 || !strings.Contains(got.Findings[0].Detail, "the unnamed site (7 helper(s), 2 publish(es))") {
 		t.Fatalf("findings for site trial: %v", got.Findings)
 	}
 	if got.Zone != "trial.example.org" || got.DNSProject != "trial" || got.DNSInstance != "dns" {
@@ -189,7 +190,7 @@ func TestANamedPlatformRendersItsGoldenFilesBesideAnotherSiteAndTheLabs(t *testi
 		t.Fatal(err)
 	}
 	res := Build(st)
-	if len(res.Findings) != 1 || !strings.Contains(res.Findings[0].Message, `the unnamed site (2 helper(s)), site "trial" (5 helper(s), 2 publish(es))`) {
+	if len(res.Findings) != 1 || !strings.Contains(res.Findings[0].Detail, `the unnamed site (2 helper(s)), site "trial" (5 helper(s), 2 publish(es))`) {
 		t.Fatalf("findings: %v", res.Findings)
 	}
 	for name, got := range map[string]string{"dns": res.DNS, "mesh": res.Mesh, "caddy": res.Caddy, "sso": res.SSO, "acl": res.ACL} {
@@ -279,7 +280,7 @@ func TestAViewWithNoHelpersSaysThatOtherSitesHaveThem(t *testing.T) {
 	if len(res.Published) != 0 || res.DNSInstance != "" {
 		t.Fatalf("a view of the unnamed site found %d publishes and dns %q on a server whose only site is trial", len(res.Published), res.DNSInstance)
 	}
-	if w := messages(res, Warning); !strings.Contains(w, `site "trial" (5 helper(s), 2 publish(es))`) || !strings.Contains(w, "--site NAME") {
+	if w := messages(res, finding.Warning); !strings.Contains(w, `site "trial" (5 helper(s), 2 publish(es))`) || !strings.Contains(w, "--site NAME") {
 		t.Errorf("warnings do not name the other site:\n%s", w)
 	}
 
@@ -288,7 +289,7 @@ func TestAViewWithNoHelpersSaysThatOtherSitesHaveThem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if w := messages(Build(ok), Warning); strings.Contains(w, "other sites") {
+	if w := messages(Build(ok), finding.Warning); strings.Contains(w, "other sites") {
 		t.Errorf("a working view mentions other sites:\n%s", w)
 	}
 }
@@ -324,7 +325,7 @@ func TestASiteCutFromFilesIsTheSiteReadFromTheServer(t *testing.T) {
 	if fromFiles.Errors() != 0 || fromServerRes.Errors() != 0 {
 		t.Fatalf("files %v, server %v", fromFiles.Findings, fromServerRes.Findings)
 	}
-	if f, s := messages(fromFiles, Warning), messages(fromServerRes, Warning); f != s {
+	if f, s := messages(fromFiles, finding.Warning), messages(fromServerRes, finding.Warning); f != s {
 		t.Errorf("the note of what was left out differs between files and server:\nfiles: %s\nserver: %s", f, s)
 	}
 	if fromFiles.DNS != fromServerRes.DNS || fromFiles.Caddy != fromServerRes.Caddy || fromFiles.SSO != fromServerRes.SSO || fromFiles.ACL != fromServerRes.ACL || fromFiles.Mesh != fromServerRes.Mesh {
@@ -395,7 +396,7 @@ func TestAPublishLeftOutOfTheSiteIsCounted(t *testing.T) {
 	}
 	res := Build(ForSite(all, "trial"))
 	want := fmt.Sprintf("%d publish(es)", n)
-	if w := messages(res, Warning); !strings.Contains(w, "the unnamed site") || !strings.Contains(w, want) {
+	if w := messages(res, finding.Warning); !strings.Contains(w, "the unnamed site") || !strings.Contains(w, want) {
 		t.Errorf("warnings do not count the %d publishes left out:\n%s", n, w)
 	}
 }

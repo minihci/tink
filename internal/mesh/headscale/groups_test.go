@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/identity"
 )
 
@@ -145,5 +146,24 @@ func TestProject_QuotingDoesNotEscapeHTMLCharacters(t *testing.T) {
 	res := Project(s, Options{Groups: []string{"g"}, MemberFormat: "{email}"})
 	if !strings.Contains(res.Text, `"a+b&c@x"`) {
 		t.Errorf("the member was escaped:\n%s", res.Text)
+	}
+}
+
+// Every finding carries a reason, and the severity words are the ones the projection has always printed.
+func TestProject_FindingsCarryAReasonAndKeepTheirWords(t *testing.T) {
+	res := Project(labSnapshot(), Options{Groups: []string{"nope", "kids"}, MemberFormat: "{what}"})
+	if !res.HasErrors() || len(res.Findings) == 0 {
+		t.Fatalf("expected errors, got %s", findings(res))
+	}
+	for _, f := range res.Findings {
+		if f.Reason == "" {
+			t.Errorf("a finding with no reason: %v", f)
+		}
+		if !strings.HasPrefix(f.String(), "error: ") && !strings.HasPrefix(f.String(), "warning: ") {
+			t.Errorf("String() = %q", f.String())
+		}
+	}
+	if res.Findings[0].Reason != "the member format has an unknown placeholder" || res.Findings[0].Severity != finding.Error {
+		t.Errorf("first finding = %+v", res.Findings[0])
 	}
 }

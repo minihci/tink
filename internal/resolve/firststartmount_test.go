@@ -578,8 +578,8 @@ func TestPlanInstance_SaysWhichFilesAMountKeepsFromTheFirstStart(t *testing.T) {
 		"file/playlist: not placed before the first start, because /media is a mounted host directory (device media); it is written right after the start, so the app may read its config first",
 		"file/art: not placed before the first start, because /art is a mounted host directory (device art); it is written right after the start, so the app may read its config first",
 	}
-	if !reflect.DeepEqual(p.Notes, want) {
-		t.Errorf("notes = %q\nwant    %q", p.Notes, want)
+	if !reflect.DeepEqual(details(p.Notes()), want) {
+		t.Errorf("notes = %q\nwant    %q", details(p.Notes()), want)
 	}
 
 	// an instance that exists has its mounts in place already: its files are pushed into them, and there is nothing to say
@@ -588,8 +588,8 @@ func TestPlanInstance_SaysWhichFilesAMountKeepsFromTheFirstStart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(p.Notes) != 0 {
-		t.Errorf("an existing instance has no first start to wait for: %q", p.Notes)
+	if len(p.Notes()) != 0 {
+		t.Errorf("an existing instance has no first start to wait for: %q", details(p.Notes()))
 	}
 }
 
@@ -597,7 +597,7 @@ func TestPlanInstance_NoCandidateFilesNoNotes(t *testing.T) {
 	inst := instanceWith(map[string]map[string]string{"media": disk("/media", "/srv/media", "")}, "somewhere")
 	srv := &planServer{} // GetProfile would answer 404, which is fine; the point is the result
 	p, err := planInstance(srv, inst, PlanOptions{Offline: true}.withTargets([]Resource{inst}))
-	if err != nil || p.Action != ActionCreate || len(p.Notes) != 0 {
+	if err != nil || p.Action != ActionCreate || len(p.Notes()) != 0 {
 		t.Errorf("%+v %v", p, err)
 	}
 }

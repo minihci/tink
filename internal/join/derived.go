@@ -10,6 +10,7 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
 
+	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/instance"
 	"github.com/minihci/tink/internal/resolve"
 )
@@ -228,8 +229,10 @@ func reconcileDerivedFile(f Files, r Restarter, res Result, sf StampedFile) Deri
 	if live == desired {
 		return DerivedOutcome{State: DerivedUnchanged}
 	}
-	if refusal, _ := resolve.CheckDerived(resolve.DerivedCheck{Render: d.Render, Path: d.Path, Instance: d.Instance, Live: live, Desired: desired, Zone: res.Zone}); refusal != "" {
-		return blocked("the file is not the daemon's to replace", refusal)
+	for _, fi := range resolve.CheckDerived(resolve.DerivedCheck{Render: d.Render, Path: d.Path, Instance: d.Instance, Live: live, Desired: desired, Zone: res.Zone}) {
+		if fi.Severity == finding.Error {
+			return blocked("the file is not the daemon's to replace", fi.Detail)
+		}
 	}
 
 	if err := f.Write(d.Project, d.Instance, d.Path, desired); err != nil {

@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/minihci/tink/internal/backupmeta"
+	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/helper"
 	"github.com/minihci/tink/internal/instant"
 	"github.com/minihci/tink/internal/jobs"
@@ -456,7 +457,7 @@ func TestPlanPrintsOneChangePerLine(t *testing.T) {
 	printPlanned(&out, resolve.PlannedResource{
 		Resource: resolve.Resource{Kind: resolve.KindStorageVolume, Name: "lib"}, Action: resolve.ActionCreate,
 		Changes:  []string{`config.snapshots.schedule: "" -> "0 3 * * *"`, `backup policy: + copy to nas (pool nas): schedule "@daily", keep 7d`},
-		Warnings: []string{"3-2-1 not met"},
+		Findings: []finding.Finding{finding.Warnf("3-2-1 is not met", "", "3-2-1 not met")},
 	})
 	want := "  storage-volume/lib: would create\n" +
 		"      config.snapshots.schedule: \"\" -> \"0 3 * * *\"\n" +
@@ -477,8 +478,10 @@ func TestPlanPrintsNotesAfterWarnings(t *testing.T) {
 	var out bytes.Buffer
 	printPlanned(&out, resolve.PlannedResource{
 		Resource: resolve.Resource{Kind: resolve.KindInstance, Name: "ha"}, Action: resolve.ActionCreate,
-		Warnings: []string{"w"},
-		Notes:    []string{"file/ha-yaml: not placed before the first start, because /media is a mounted host directory (device media); it is written right after the start, so the app may read its config first"},
+		Findings: []finding.Finding{
+			finding.Notef("a file is not placed before the first start", "", "file/ha-yaml: not placed before the first start, because /media is a mounted host directory (device media); it is written right after the start, so the app may read its config first"),
+			finding.Warnf("a reason", "", "w"),
+		},
 	})
 	want := "  instance/ha: would create\n" +
 		"      warning: w\n" +

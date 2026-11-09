@@ -1,12 +1,12 @@
 package join
 
 import (
-	"fmt"
 	"net/netip"
 	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/ownership"
 	"github.com/minihci/tink/internal/resolve"
 )
@@ -36,9 +36,9 @@ type Offer struct {
 
 // parseOffers reads the offers an instance states, strictly: a key tink does not know is an error and not something to skip, in the same spirit as the
 // resolver's KnownFields, because a misspelled attribute would otherwise leave an offer half-stated without a word.
-func parseOffers(inst resolve.Resource) (map[string]Offer, []Finding) {
+func parseOffers(inst resolve.Resource) (map[string]Offer, []finding.Finding) {
 	subject := "instance/" + inst.Name
-	var findings []Finding
+	var findings []finding.Finding
 	raw := map[string]map[string]string{}
 	keys := make([]string, 0, len(inst.Config))
 	for k := range inst.Config {
@@ -50,7 +50,7 @@ func parseOffers(inst resolve.Resource) (map[string]Offer, []Finding) {
 	for _, k := range keys {
 		name, attr, ok := strings.Cut(strings.TrimPrefix(k, offerKey), ".")
 		if !ok || !resolve.OfferNamePattern(name) {
-			findings = append(findings, Finding{Error, subject, fmt.Sprintf("%s: expected %s<offer>.<port|proto|listen>, with an offer name of lower case letters, digits and '-'", k, offerKey)})
+			findings = append(findings, finding.Errorf("an offer key is not well formed", subject, "%s: expected %s<offer>.<port|proto|listen>, with an offer name of lower case letters, digits and '-'", k, offerKey))
 			continue
 		}
 		switch attr {
@@ -60,7 +60,7 @@ func parseOffers(inst resolve.Resource) (map[string]Offer, []Finding) {
 			}
 			raw[name][attr] = strings.TrimSpace(inst.Config[k])
 		default:
-			findings = append(findings, Finding{Error, subject, fmt.Sprintf("%s: %q is not an offer attribute (known: port, proto, listen)", k, attr)})
+			findings = append(findings, finding.Errorf("an offer attribute is not known", subject, "%s: %q is not an offer attribute (known: port, proto, listen)", k, attr))
 		}
 	}
 	out := map[string]Offer{}
@@ -72,12 +72,12 @@ func parseOffers(inst resolve.Resource) (map[string]Offer, []Finding) {
 	for _, n := range names {
 		a := raw[n]
 		if a["port"] == "" || a["proto"] == "" {
-			findings = append(findings, Finding{Error, subject, fmt.Sprintf("offer %q needs both %s%s.port and %s%s.proto", n, offerKey, n, offerKey, n)})
+			findings = append(findings, finding.Errorf("an offer is incomplete", subject, "offer %q needs both %s%s.port and %s%s.proto", n, offerKey, n, offerKey, n))
 			continue
 		}
 		port, err := strconv.Atoi(a["port"])
 		if err != nil || port < 1 || port > maxPortNum {
-			findings = append(findings, Finding{Error, subject, fmt.Sprintf("offer %q: port %q is not a port number (1-%d)", n, a["port"], maxPortNum)})
+			findings = append(findings, finding.Errorf("an offer port is not a number", subject, "offer %q: port %q is not a port number (1-%d)", n, a["port"], maxPortNum))
 			continue
 		}
 		out[n] = Offer{Name: n, Port: port, Proto: a["proto"], Listen: a["listen"]}

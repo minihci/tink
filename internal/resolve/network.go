@@ -10,6 +10,7 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
 
+	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/incusapi"
 	"github.com/minihci/tink/internal/ownership"
 )
@@ -136,17 +137,17 @@ func planNetwork(server incus.InstanceServer, r Resource) (PlannedResource, erro
 		return PlannedResource{Resource: r, Action: ActionCreate}, nil
 	}
 
-	blocked := func(why string) (PlannedResource, error) {
-		return PlannedResource{Resource: r, Action: ActionBlocked, Blocked: []string{why}}, nil
+	blocked := func(reason, format string, args ...any) (PlannedResource, error) {
+		return PlannedResource{Resource: r, Action: ActionBlocked, Findings: []finding.Finding{finding.Errorf(reason, "", format, args...)}}, nil
 	}
 	if !current.Managed {
-		return blocked(fmt.Sprintf("%q exists but Incus does not manage it (a host interface, such as a LAN bridge). tink never creates over or changes one of those: name a different network, or leave this one out of the stack", r.Name))
+		return blocked(reasonNetworkNotManaged, "%q exists but Incus does not manage it (a host interface, such as a LAN bridge). tink never creates over or changes one of those: name a different network, or leave this one out of the stack", r.Name)
 	}
 	if current.Type != "bridge" {
-		return blocked(fmt.Sprintf("%q is a managed network of type %q; kind: network manages type bridge only", r.Name, current.Type))
+		return blocked(reasonNetworkNotBridge, "%q is a managed network of type %q; kind: network manages type bridge only", r.Name, current.Type)
 	}
 	if current.Status != "" && current.Status != "Created" {
-		return blocked(fmt.Sprintf("%q has status %q, not Created, so it is not safe to change", r.Name, current.Status))
+		return blocked(reasonNetworkNotCreated, "%q has status %q, not Created, so it is not safe to change", r.Name, current.Status)
 	}
 
 	wanted := networkWanted(current.Config, r.Config)
@@ -167,9 +168,9 @@ func planNetwork(server incus.InstanceServer, r Resource) (PlannedResource, erro
 		list := strings.Join(users, ", ")
 		if !r.AllowDisruption {
 			plan.Action = ActionBlocked
-			plan.Blocked = []string{fmt.Sprintf("changing a bridge that %d instance(s) use can interrupt their traffic (%s); nothing was changed. Set allow_disruption: true on this resource to apply it", len(users), list)}
+			plan.Findings = append(plan.Findings, finding.Errorf(reasonNetworkDisruption, "", "changing a bridge that %d instance(s) use can interrupt their traffic (%s); nothing was changed. Set allow_disruption: true on this resource to apply it", len(users), list))
 		} else {
-			plan.Warnings = append(plan.Warnings, fmt.Sprintf("affects %d instance(s): %s", len(users), list))
+			plan.Findings = append(plan.Findings, finding.Warnf(reasonNetworkAffectsUsers, "", "affects %d instance(s): %s", len(users), list))
 		}
 	}
 	return plan, nil

@@ -66,26 +66,26 @@ func TestRebuildPreflightReadsTheNewImageFromTheRegistry(t *testing.T) {
 	}
 	roomy := rebuildServer{archServer{archs: []string{"x86_64"}}, 100 << 30}
 
-	if p := rebuildPreflight(roomy, instance(), resource("2"), envFor(host)); len(p.Blockers) != 0 || len(p.Warnings) != 0 {
+	if p := rebuildPreflight(roomy, instance(), resource("2"), envFor(host)); len(p.errors()) != 0 || len(p.warnings()) != 0 {
 		t.Errorf("an image with the instance's own runtime config, and room for it: %+v", p)
 	}
 	p := rebuildPreflight(roomy, instance(), resource("3"), envFor(host))
-	if len(p.Blockers) != 1 || !strings.Contains(p.Blockers[0], "the new image changes runtime config") || !strings.Contains(p.Blockers[0], "environment.A") {
+	if len(p.errors()) != 1 || !strings.Contains(p.errors()[0].Detail, "the new image changes runtime config") || !strings.Contains(p.errors()[0].Detail, "environment.A") {
 		t.Errorf("a rebuild does not refresh the environment, so an image that changes it is blocked, naming the key: %+v", p)
 	}
 	tight := rebuildServer{archServer{archs: []string{"x86_64"}}, 4 << 20}
 	p = rebuildPreflight(tight, instance(), resource("2"), envFor(host))
-	if len(p.Blockers) != 1 || !strings.Contains(p.Blockers[0], `pool "default" has 4 MiB free`) {
+	if len(p.errors()) != 1 || !strings.Contains(p.errors()[0].Detail, `pool "default" has 4 MiB free`) {
 		t.Errorf("the size of the new image is read from the registry and the pool's space is checked against it: %+v", p)
 	}
 	p = rebuildPreflight(roomy, instance(), resource("missing"), envFor(host))
-	if len(p.Blockers) != 1 || !strings.Contains(p.Blockers[0], "could not read the new image's runtime config") ||
-		len(p.Warnings) != 1 || !strings.Contains(p.Warnings[0], "could not size the new image") {
+	if len(p.errors()) != 1 || !strings.Contains(p.errors()[0].Detail, "could not read the new image's runtime config") ||
+		len(p.warnings()) != 1 || !strings.Contains(p.warnings()[0].Detail, "could not size the new image") {
 		t.Errorf("an image the registry does not have: %+v", p)
 	}
 	off := envFor(host)
 	off.offline = true
-	if p := rebuildPreflight(roomy, instance(), resource("2"), off); len(p.Blockers) != 1 || !strings.Contains(p.Blockers[0], "--offline") {
+	if p := rebuildPreflight(roomy, instance(), resource("2"), off); len(p.errors()) != 1 || !strings.Contains(p.errors()[0].Detail, "--offline") {
 		t.Errorf("offline cannot read the image, so a rebuild is blocked: %+v", p)
 	}
 }

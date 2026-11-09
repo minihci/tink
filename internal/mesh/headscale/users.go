@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/minihci/tink/internal/finding"
 )
 
 // DefaultBinary and DefaultConfig are where the upstream image and tink's example stack put Headscale's command and configuration.
@@ -91,7 +93,7 @@ func parseUsers(where, out string) ([]User, error) {
 // Headscale accepts such a member without complaint (policy check calls the policy valid and a reload completes) and it simply matches nobody, so a
 // typo, or a person who has no Headscale user yet, would otherwise go unnoticed. It is a warning because Headscale does not mind and the user may
 // be created later. A member matches a user by "<name>@" (how Headscale's documentation writes a user) or by the user's email.
-func CrossCheck(res Result, users []User) []Finding {
+func CrossCheck(res Result, users []User) []finding.Finding {
 	known := map[string]bool{}
 	for _, u := range users {
 		if u.Name != "" {
@@ -101,15 +103,15 @@ func CrossCheck(res Result, users []User) []Finding {
 			known[u.Email] = true
 		}
 	}
-	var out []Finding
+	var out []finding.Finding
 	if len(users) == 0 && len(res.Groups) > 0 {
-		out = append(out, Finding{Warning, "Headscale has no users yet, so no member of any group can match"})
+		out = append(out, finding.Warnf("Headscale has no users", "", "Headscale has no users yet, so no member of any group can match"))
 		return out
 	}
 	for _, g := range res.Groups {
 		for _, m := range g.Members {
 			if !known[m] {
-				out = append(out, Finding{Warning, fmt.Sprintf("group %q: %q matches no Headscale user (Headscale accepts it and it matches nobody)", g.Name, m)})
+				out = append(out, finding.Warnf("a member matches no Headscale user", "", "group %q: %q matches no Headscale user (Headscale accepts it and it matches nobody)", g.Name, m))
 			}
 		}
 	}

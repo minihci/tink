@@ -55,13 +55,13 @@ func TestPlanPlacedFile_Seed(t *testing.T) {
 				t.Errorf("action = %v, want %v", p.Action, tc.wantAct)
 			}
 			hasNote := false
-			for _, n := range p.Notes {
+			for _, n := range details(p.Notes()) {
 				if strings.HasPrefix(n, notePrefix) {
 					hasNote = true
 				}
 			}
 			if hasNote != tc.wantNote {
-				t.Errorf("notes = %q, want the seed note: %v", p.Notes, tc.wantNote)
+				t.Errorf("notes = %q, want the seed note: %v", details(p.Notes()), tc.wantNote)
 			}
 			if len(p.Changes) != 0 {
 				t.Errorf("changes = %v, want none: a seed file is never a change once it exists", p.Changes)

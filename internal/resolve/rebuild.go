@@ -10,6 +10,7 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
 
+	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/incusapi"
 	"github.com/minihci/tink/internal/instance"
 )
@@ -51,57 +52,82 @@ func unlockRebuild() { <-rebuildSlot }
 // preflight is the read-only part: everything that can be checked before
 // anything is pulled, stopped or deleted.
 type preflight struct {
-	Blockers []string
-	Warnings []string
+	Findings []finding.Finding
+}
+
+// errors are the findings that stop a rebuild, warnings the ones that do not.
+func (p preflight) errors() []finding.Finding {
+	var out []finding.Finding
+	for _, f := range p.Findings {
+		if f.Severity == finding.Error {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+func (p preflight) warnings() []finding.Finding {
+	var out []finding.Finding
+	for _, f := range p.Findings {
+		if f.Severity == finding.Warning {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 func rebuildPreflight(server incus.InstanceServer, current *api.Instance, r Resource, env *imageEnv) preflight {
 	var p preflight
-	block := func(format string, a ...any) { p.Blockers = append(p.Blockers, fmt.Sprintf(format, a...)) }
+	block := func(reason, format string, a ...any) {
+		p.Findings = append(p.Findings, finding.Errorf(reason, "", format, a...))
+	}
+	warn := func(reason, format string, a ...any) {
+		p.Findings = append(p.Findings, finding.Warnf(reason, "", format, a...))
+	}
 
 	if current.Type != "container" {
-		block("on_image_change: rebuild supports containers only; %s is a %s", r.Name, current.Type)
+		block(reasonRebuildNotContainer, "on_image_change: rebuild supports containers only; %s is a %s", r.Name, current.Type)
 		return p
 	}
 	if current.Config["image.type"] != "oci" {
-		block("on_image_change: rebuild is for OCI app containers; %s was not built from an OCI image (image.type=%q)", r.Name, current.Config["image.type"])
+		block(reasonRebuildNotOCI, "on_image_change: rebuild is for OCI app containers; %s was not built from an OCI image (image.type=%q)", r.Name, current.Config["image.type"])
 	}
 
 	if names, err := server.GetInstanceSnapshotNames(r.Name); err != nil {
-		block("could not list snapshots of %s: %v", r.Name, err)
+		block(reasonSnapshotsUnlisted, "could not list snapshots of %s: %v", r.Name, err)
 	} else if len(names) > 0 {
-		block("%s has instance snapshots (%s); Incus refuses to rebuild an instance that has them -- delete them and snapshot the data volumes instead", r.Name, strings.Join(names, ", "))
+		block(reasonSnapshotsExist, "%s has instance snapshots (%s); Incus refuses to rebuild an instance that has them -- delete them and snapshot the data volumes instead", r.Name, strings.Join(names, ", "))
 	}
 
 	if !hasDataVolume(current.ExpandedDevices) {
-		p.Warnings = append(p.Warnings, fmt.Sprintf("%s has no attached data volume: a rebuild discards everything written to its root filesystem", r.Name))
+		warn(reasonRebuildNoDataVolume, "%s has no attached data volume: a rebuild discards everything written to its root filesystem", r.Name)
 	}
 
 	remoteName, ref, _ := strings.Cut(r.Image, ":")
 	remote, ok := env.remotes()[remoteName]
 	if !ok || remote.Protocol != "oci" {
-		block("image %q is not a ref on a configured OCI remote", r.Image)
+		block(reasonRebuildImageNotOCI, "image %q is not a ref on a configured OCI remote", r.Image)
 		return p
 	}
 
 	if rt, err := env.runtimeConfig(server, remote, ref); err != nil {
-		block("could not read the new image's runtime config: %v", err)
+		block(reasonRebuildConfigUnread, "could not read the new image's runtime config: %v", err)
 	} else if diffs, keys := runtimeConfigDiff(current.Config, r.Config, rt); len(diffs) > 0 {
-		block("the new image changes runtime config that a rebuild does not refresh; declare these keys under config: so they are written after the rebuild (%s) -- %s",
+		block(reasonRebuildConfigChanges, "the new image changes runtime config that a rebuild does not refresh; declare these keys under config: so they are written after the rebuild (%s) -- %s",
 			strings.Join(keys, ", "), strings.Join(diffs, "; "))
 	}
 
 	if img, err := env.registryImage(server, remoteName, ref); err != nil {
-		p.Warnings = append(p.Warnings, fmt.Sprintf("could not size the new image for the free-space check: %v", err))
+		warn(reasonRebuildImageUnsized, "could not size the new image for the free-space check: %v", err)
 	} else if pool := current.ExpandedDevices["root"]["pool"]; pool != "" && img.Size > 0 {
 		if res, err := server.GetStoragePoolResources(pool); err != nil {
-			p.Warnings = append(p.Warnings, fmt.Sprintf("could not read free space of pool %q: %v", pool, err))
+			warn(reasonRebuildPoolUnread, "could not read free space of pool %q: %v", pool, err)
 		} else {
 			// Compressed layers expand and the image is cached as well as unpacked
 			// into the instance: a generous heuristic, not a measurement.
 			need := uint64(img.Size)*3 + 256<<20
 			if free := res.Space.Total - res.Space.Used; res.Space.Total > 0 && free < need {
-				block("pool %q has %d MiB free, the rebuild needs roughly %d MiB", pool, free>>20, need>>20)
+				block(reasonRebuildPoolTooSmall, "pool %q has %d MiB free, the rebuild needs roughly %d MiB", pool, free>>20, need>>20)
 			}
 		}
 	}

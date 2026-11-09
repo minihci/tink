@@ -286,7 +286,7 @@ With `--from-server` it also **reads** the instances of every project, the profi
 
 ## Findings
 
-Findings go to standard error. **Any error means nothing is printed and the exit status is 1**: a partial rendering (a mesh view missing one name) looks exactly like a complete one. Warnings are printed beside a complete rendering.
+Findings go to standard error. **Any error means nothing is printed and the exit status is 1**: a partial rendering (a mesh view missing one name) looks exactly like a complete one. Warnings are printed beside a complete rendering. A finding is the shape every part of tink uses for "something was noticed" (`internal/finding`): a severity, a reason (a fixed phrase naming the kind of problem; it is the key a test, a log or a status document groups by, and it is not printed here), a subject and a detail, which is the text below. Error means the finding blocks what it is about.
 
 | Finding | Severity |
 |---|---|

@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/minihci/tink/internal/finding"
 )
 
 // An instance's `proxy` device with `nat: "true"` is how a host with one public address carries a port to an instance without a userspace relay: Incus writes a
@@ -19,7 +21,7 @@ import (
 //   - Two host-side listeners on the same address and port are accepted. Both instances run, both rules exist, and the one that matches first answers: the
 //     other never sees traffic, and nothing says so.
 //
-// natProxyWarnings and proxyListenerNotes close those on the tink side. Like ociNICWarnings they are warnings, not errors, and they are about the stack: they
+// natProxyWarnings and proxyListenerWarnings close those on the tink side. Like ociNICWarnings they are warnings, not errors, and they are about the stack: they
 // appear on the next plan whether or not the instance exists yet. What they cannot see is not guessed at: a profile the stack does not declare, an instance in
 // another stack, and a rule that lives outside Incus.
 
@@ -185,7 +187,7 @@ func staticAddresses(devs map[string]map[string]string) []netip.Addr {
 
 // natProxyWarnings returns one warning per NAT proxy device of an instance whose connect address Incus will refuse or cannot start with: one that is not an IP
 // address, or that is not a static address of a NIC the instance declares (its own, or from a profile the stack declares).
-func natProxyWarnings(r Resource, profiles map[string]Resource) []string {
+func natProxyWarnings(r Resource, profiles map[string]Resource) []finding.Finding {
 	if r.Kind != KindInstance {
 		return nil
 	}
@@ -198,7 +200,7 @@ func natProxyWarnings(r Resource, profiles map[string]Resource) []string {
 	}
 	sort.Strings(names)
 
-	var out []string
+	var out []finding.Finding
 	for _, name := range names {
 		connect, ok := parseProxyEndpoint(devs[name]["connect"])
 		if !ok {
@@ -206,7 +208,7 @@ func natProxyWarnings(r Resource, profiles map[string]Resource) []string {
 		}
 		ip, err := netip.ParseAddr(connect.addr)
 		if err != nil {
-			out = append(out, fmt.Sprintf("proxy device %q has nat on but connects to %q, which is not an IP address. Incus refuses a NAT proxy whose connect address is not an IP address, so the device cannot be added; see docs/public-exposure.md",
+			out = append(out, finding.Warnf(reasonNATProxyNotIP, "", "proxy device %q has nat on but connects to %q, which is not an IP address. Incus refuses a NAT proxy whose connect address is not an IP address, so the device cannot be added; see docs/public-exposure.md",
 				name, connect.addr))
 			continue
 		}
@@ -233,15 +235,15 @@ func natProxyWarnings(r Resource, profiles map[string]Resource) []string {
 		if un := undeclaredProfiles(r, profiles); len(un) > 0 {
 			msg += fmt.Sprintf(" (profiles %s are not declared in this stack, so their NICs were not consulted)", strings.Join(un, ", "))
 		}
-		out = append(out, msg)
+		out = append(out, finding.Warnf(reasonNATProxyNotStatic, "", "%s", msg))
 	}
 	return out
 }
 
-// proxyListenerNotes compares the host-side listeners of every instance of the stack and returns, by instance name, a note for each other listener it overlaps.
+// proxyListenerWarnings compares the host-side listeners of every instance of the stack and returns, by instance name, a warning for each other listener it overlaps.
 // A listener is global to the host, so the comparison ignores projects. A pair is reported once to each instance involved, and a pair inside one instance is
 // reported to it once.
-func proxyListenerNotes(resources []Resource, profiles map[string]Resource) map[string][]string {
+func proxyListenerWarnings(resources []Resource, profiles map[string]Resource) map[string][]finding.Finding {
 	type listener struct {
 		instance, device, raw string
 		ep                    proxyEndpoint
@@ -270,7 +272,7 @@ func proxyListenerNotes(resources []Resource, profiles map[string]Resource) map[
 			}
 		}
 	}
-	notes := map[string][]string{}
+	notes := map[string][]finding.Finding{}
 	for i := range all {
 		for j := i + 1; j < len(all); j++ {
 			a, b := all[i], all[j]
@@ -279,13 +281,13 @@ func proxyListenerNotes(resources []Resource, profiles map[string]Resource) map[
 			}
 			const tail = "Incus accepts two proxies on overlapping listen addresses and ports without complaint, and the rule written first answers, so one of them never sees traffic. This check covers this stack only"
 			if a.instance == b.instance {
-				notes[a.instance] = append(notes[a.instance], fmt.Sprintf("proxy devices %q (%s) and %q (%s) of this instance listen on overlapping addresses and ports. %s",
+				notes[a.instance] = append(notes[a.instance], finding.Warnf(reasonProxyOverlap, "", "proxy devices %q (%s) and %q (%s) of this instance listen on overlapping addresses and ports. %s",
 					a.device, a.raw, b.device, b.raw, tail))
 				continue
 			}
-			notes[a.instance] = append(notes[a.instance], fmt.Sprintf("proxy device %q listens on %s, which overlaps instance/%s's device %q (%s). %s",
+			notes[a.instance] = append(notes[a.instance], finding.Warnf(reasonProxyOverlap, "", "proxy device %q listens on %s, which overlaps instance/%s's device %q (%s). %s",
 				a.device, a.raw, b.instance, b.device, b.raw, tail))
-			notes[b.instance] = append(notes[b.instance], fmt.Sprintf("proxy device %q listens on %s, which overlaps instance/%s's device %q (%s). %s",
+			notes[b.instance] = append(notes[b.instance], finding.Warnf(reasonProxyOverlap, "", "proxy device %q listens on %s, which overlaps instance/%s's device %q (%s). %s",
 				b.device, b.raw, a.instance, a.device, a.raw, tail))
 		}
 	}

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/resolve"
 )
 
@@ -38,7 +39,7 @@ func publicGolden(t *testing.T, name string) string {
 func TestAPublicOnlySiteJoinsToTheHandWrittenPieces(t *testing.T) {
 	res := Build(loadPublic(t))
 	if res.Errors() != 0 {
-		t.Fatalf("errors: %s", messages(res, Error))
+		t.Fatalf("errors: %s", messages(res, finding.Error))
 	}
 	if res.Zone != "apps.example.org" || res.PublicAddress != "10.20.50.3" || res.HasMesh || res.LANAddress != "" || res.MeshAddress != "" || res.DNSInstance != "" {
 		t.Errorf("facts = zone %q public %q lan %q mesh %q hasMesh %v dns %q", res.Zone, res.PublicAddress, res.LANAddress, res.MeshAddress, res.HasMesh, res.DNSInstance)
@@ -66,7 +67,7 @@ func TestAPublicOnlySiteJoinsToTheHandWrittenPieces(t *testing.T) {
 // With no dns helper the join says, as a warning, what the person has to do outside tink, with the names to do it for.
 func TestAPublicOnlySiteSaysWhichNamesBelongInPublicDNS(t *testing.T) {
 	res := Build(loadPublic(t))
-	if len(res.Findings) != 1 || res.Findings[0].Severity != Warning {
+	if len(res.Findings) != 1 || res.Findings[0].Severity != finding.Warning {
 		t.Fatalf("findings = %v, want exactly the one warning", res.Findings)
 	}
 	w := res.Findings[0].String()
@@ -154,7 +155,7 @@ func TestAPublicOnlySiteErrorsStopTheRenderingAndSayWhy(t *testing.T) {
 			if res.Errors() == 0 {
 				t.Fatalf("no error, want one containing %q", c.want)
 			}
-			if got := messages(res, Error); !strings.Contains(got, c.want) {
+			if got := messages(res, finding.Error); !strings.Contains(got, c.want) {
 				t.Errorf("errors =\n%s\nwant one containing %q", got, c.want)
 			}
 			if res.DNS != "" || res.Mesh != "" || res.Caddy != "" || res.SSO != "" || res.ACL != "" || len(res.Sections()) != 0 {
@@ -211,12 +212,12 @@ func TestThePublicLegWarnsWhenNothingCarriesTrafficToIt(t *testing.T) {
 			c.edit(t, stacks)
 			res := Build(stacks)
 			if res.Errors() != 0 {
-				t.Fatalf("a warning must not be an error: %s", messages(res, Error))
+				t.Fatalf("a warning must not be an error: %s", messages(res, finding.Error))
 			}
 			if res.Caddy != publicGolden(t, "caddy") || res.ACL != publicGolden(t, "acl") {
 				t.Error("a warning must not change the rendering")
 			}
-			w := messages(res, Warning)
+			w := messages(res, finding.Warning)
 			if c.want == "" {
 				if strings.Contains(w, "public leg") {
 					t.Errorf("unexpected warning about the public leg: %s", w)
@@ -236,7 +237,7 @@ func TestOneNICThatIsMeshAndPublicIsAdmittedOnce(t *testing.T) {
 	edit(t, stacks, resolve.KindInstance, "ingress", func(r *resolve.Resource) { setConfig(r, "user.tink.leg.eth0", "mesh, public") })
 	res := Build(stacks)
 	if res.Errors() != 0 {
-		t.Fatalf("errors: %s", messages(res, Error))
+		t.Fatalf("errors: %s", messages(res, finding.Error))
 	}
 	if len(res.Sources) != 1 || res.Sources[0] != "192.0.2.3" || res.PublicAddress != "192.0.2.3" || res.MeshAddress != "192.0.2.3" {
 		t.Errorf("sources %v public %q mesh %q", res.Sources, res.PublicAddress, res.MeshAddress)
@@ -255,7 +256,7 @@ func TestAMeshLegAndASeparatePublicLegAreBothAdmitted(t *testing.T) {
 	})
 	res := Build(stacks)
 	if res.Errors() != 0 {
-		t.Fatalf("errors: %s", messages(res, Error))
+		t.Fatalf("errors: %s", messages(res, finding.Error))
 	}
 	if got := strings.Join(res.Sources, ","); got != "10.0.99.5,192.0.2.3" {
 		t.Errorf("sources = %s", got)

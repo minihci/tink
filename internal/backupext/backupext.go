@@ -1,5 +1,5 @@
 // Package backupext is the one seam between the converger (internal/resolve) and the backup capability (internal/backupmeta). It imports nothing
-// of tink's, so each side can import it and neither imports the other: the converger holds the SHAPE of a storage volume's backup block and asks
+// of tink's but the leaf internal/finding, so each side can import it and neither imports the other: the converger holds the SHAPE of a storage volume's backup block and asks
 // a registered Backup for everything that follows from it; the capability registers itself.
 //
 // Of the three extension points (docs/roadmap.md, "Three extension points"), backup uses two: a PASS that derives a volume's config from its
@@ -20,6 +20,8 @@ package backupext
 import (
 	"sync"
 	"time"
+
+	"github.com/minihci/tink/internal/finding"
 )
 
 // VolumeBackup is a storage-volume's answer to "how is this backed up?".
@@ -122,8 +124,8 @@ type Backup interface {
 	DescribePolicyChange(have, want string) []string
 
 	// CopyWarnings and VerifyWarning are the plan-time findings about an existing volume's copies and its restore rehearsal (checks).
-	CopyWarnings(volume string, b *VolumeBackup, current map[string]string, now time.Time) []string
-	VerifyWarning(volume string, b *VolumeBackup, current map[string]string, now time.Time) string
+	CopyWarnings(volume string, b *VolumeBackup, current map[string]string, now time.Time) []finding.Finding
+	VerifyWarning(volume string, b *VolumeBackup, current map[string]string, now time.Time) []finding.Finding
 }
 
 var (

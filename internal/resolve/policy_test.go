@@ -152,8 +152,8 @@ func TestDecideVolumeRemovesAPolicyTheDeclarationNoLongerHas(t *testing.T) {
 
 func TestDecideVolumeBlocksOnAMissingTarget(t *testing.T) {
 	p := decideVolume(volWithCopies(), nil, volumeEnv{targets: map[string]Resource{}})
-	if p.Action != ActionBlocked || len(p.Blocked) != 1 {
-		t.Errorf("a copy naming a target that is not there must block the volume (it cannot be resolved): %v %v", p.Action, p.Blocked)
+	if p.Action != ActionBlocked || len(p.Blocked()) != 1 {
+		t.Errorf("a copy naming a target that is not there must block the volume (it cannot be resolved): %v %v", p.Action, details(p.Blocked()))
 	}
 }
 
@@ -190,12 +190,12 @@ func planVolume(t *testing.T, current map[string]string, env volumeEnv) PlannedR
 func TestAPolicyTheHelperCannotReadIsNotWritten(t *testing.T) {
 	// this tink writes protocol 2; the helper reads up to 1
 	p := planVolume(t, nil, volumeEnv{helperReads: 1, helperLabel: "tink-helper/helper", policyProto: 2})
-	if p.Action != ActionBlocked || len(p.Blocked) != 1 {
-		t.Fatalf("action = %v %v: a create that would write a policy the helper skips must be blocked", p.Action, p.Blocked)
+	if p.Action != ActionBlocked || len(p.Blocked()) != 1 {
+		t.Fatalf("action = %v %v: a create that would write a policy the helper skips must be blocked", p.Action, details(p.Blocked()))
 	}
 	for _, want := range []string{"tink-helper/helper", "up to protocol 1", "writes protocol 2", "silently", "tink helper upgrade"} {
-		if !strings.Contains(p.Blocked[0], want) {
-			t.Errorf("the reason must say %q: %s", want, p.Blocked[0])
+		if !strings.Contains(p.Blocked()[0].Detail, want) {
+			t.Errorf("the reason must say %q: %s", want, p.Blocked()[0])
 		}
 	}
 	// an update that would write it too
@@ -212,7 +212,7 @@ func TestAPolicyTheHelperCanReadIsWrittenAsBefore(t *testing.T) {
 		"the real protocol and a helper that does": {helperReads: backupmeta.PolicyProto},
 	} {
 		if p := planVolume(t, nil, env); p.Action != ActionCreate {
-			t.Errorf("%s: action = %v %v", name, p.Action, p.Blocked)
+			t.Errorf("%s: action = %v %v", name, p.Action, details(p.Blocked()))
 		}
 	}
 }
@@ -222,7 +222,7 @@ func TestAPolicyAlreadyOnTheVolumeIsNotBlockedAndAVolumeWithoutCopiesNeverIs(t *
 	want, _ := BuildPolicy(volumeWithCopies(), policyTargets())
 	env := volumeEnv{helperReads: 1, policyProto: 2}
 	if p := planVolume(t, map[string]string{backupmeta.PolicyKey: want}, env); p.Action == ActionBlocked {
-		t.Errorf("nothing is written, so nothing is refused: %v", p.Blocked)
+		t.Errorf("nothing is written, so nothing is refused: %v", details(p.Blocked()))
 	}
 	// a volume that declares no copies writes no policy, whatever the helper reads
 	env.targets = policyTargets()

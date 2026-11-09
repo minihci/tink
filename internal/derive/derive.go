@@ -18,6 +18,7 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
 
+	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/incusapi"
 	"github.com/minihci/tink/internal/join"
 	"github.com/minihci/tink/internal/resolve"
@@ -62,7 +63,7 @@ func ACLRules(server incus.InstanceServer, resources []resolve.Resource) ([]stri
 	if res.Errors() > 0 {
 		var lines []string
 		for _, f := range res.Findings {
-			if f.Severity == join.Error {
+			if f.Severity == finding.Error {
 				lines = append(lines, "  "+f.String())
 			}
 		}
@@ -139,7 +140,7 @@ func DerivedFiles(server incus.InstanceServer, resources []resolve.Resource) ([]
 	if res.Errors() > 0 {
 		var lines []string
 		for _, f := range res.Findings {
-			if f.Severity == join.Error {
+			if f.Severity == finding.Error {
 				lines = append(lines, "  "+f.String())
 			}
 		}

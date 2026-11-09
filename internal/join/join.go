@@ -24,6 +24,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/resolve"
 )
 
@@ -38,28 +39,6 @@ type Stack struct {
 	// with several sites is the usual reason a site seems to lack a helper, and a stack that forgot its `site:` is a publish that is not where it was
 	// meant to be, which nothing else shows.
 	Elsewhere map[string]Left
-}
-
-// Severity says whether a finding stops the rendering.
-type Severity string
-
-const (
-	Error   Severity = "error"
-	Warning Severity = "warning"
-)
-
-// A Finding is something the join noticed that a person should read. Subject names the document it is about ("publish/whoami", "instance/whoami").
-type Finding struct {
-	Severity Severity
-	Subject  string
-	Message  string
-}
-
-func (f Finding) String() string {
-	if f.Subject == "" {
-		return fmt.Sprintf("%s: %s", f.Severity, f.Message)
-	}
-	return fmt.Sprintf("%s: %s: %s", f.Severity, f.Subject, f.Message)
 }
 
 // Published is one publish, joined to the offer it shows and the facts the renderings need.
@@ -93,22 +72,14 @@ type Result struct {
 	Sources   []string
 	HasMesh   bool // a helper with role mesh is declared
 	Published []Published
-	Findings  []Finding
+	Findings  []finding.Finding
 
 	// The five renderings. All are empty when any finding is an error.
 	DNS, Mesh, Caddy, SSO, ACL string
 }
 
 // Errors counts the findings that stop the rendering.
-func (r Result) Errors() int {
-	n := 0
-	for _, f := range r.Findings {
-		if f.Severity == Error {
-			n++
-		}
-	}
-	return n
-}
+func (r Result) Errors() int { return finding.Count(r.Findings, finding.Error) }
 
 type key struct{ project, name string }
 
@@ -137,16 +108,20 @@ var zonePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9](
 func Build(stacks []Stack) Result {
 	res := build(stacks)
 	if note := elsewhereNote(stacks); note != "" {
-		res.Findings = append(res.Findings, Finding{Warning, "", note})
-		sortFindings(res.Findings)
+		res.Findings = append(res.Findings, finding.Warnf("other sites were left out", "", "%s", note))
+		finding.Sort(res.Findings)
 	}
 	return res
 }
 
 func build(stacks []Stack) Result {
 	var res Result
-	add := func(sev Severity, subject, format string, args ...any) {
-		res.Findings = append(res.Findings, Finding{sev, subject, fmt.Sprintf(format, args...)})
+	add := func(sev finding.Severity, reason, subject, format string, args ...any) {
+		f, err := finding.New(sev, reason, subject, fmt.Sprintf(format, args...))
+		if err != nil {
+			panic("join: " + err.Error()) // a reason is a literal at every call: this is a mistake in the code
+		}
+		res.Findings = append(res.Findings, f)
 	}
 
 	instances := map[key]resolve.Resource{}
@@ -160,7 +135,7 @@ func build(stacks []Stack) Result {
 			case resolve.KindInstance:
 				k := key{projectOf(r), r.Name}
 				if _, dup := instances[k]; dup {
-					add(Error, "instance/"+r.Name, "declared twice (project %s) across the files given", k.project)
+					add(finding.Error, "an instance is declared twice", "instance/"+r.Name, "declared twice (project %s) across the files given", k.project)
 					continue
 				}
 				instances[k] = r
@@ -217,19 +192,19 @@ func build(stacks []Stack) Result {
 		sort.Strings(names)
 		for _, n := range names {
 			if offers[k][n].Proto == protoHTTP && !published[fmt.Sprintf("%s/%s/%s", k.project, k.name, n)] {
-				add(Warning, "instance/"+k.name, "offer %q (http) is shown by no publish: nobody can open it through the site's door", n)
+				add(finding.Warning, "an offer is published by no one", "instance/"+k.name, "offer %q (http) is shown by no publish: nobody can open it through the site's door", n)
 			}
 		}
 	}
 
 	if len(publishes) == 0 {
 		res.HasMesh = len(roles["mesh"]) > 0 // a fact about the site, not about what is published
-		add(Warning, "", "no publish is declared in the files given, so there is nothing to render")
+		add(finding.Warning, "no publish is declared", "", "no publish is declared in the files given, so there is nothing to render")
 		if len(roles["dns"]) == 1 { // no error either way: a site with no publishes need not have a dns helper; this only tells an explicit empty apply where to write
 			d := roles["dns"][0]
 			res.DNSProject, res.DNSInstance, res.Zone = projectOf(d), d.Name, strings.TrimSpace(d.Config[zoneKey])
 		}
-		sortFindings(res.Findings)
+		finding.Sort(res.Findings)
 		return res
 	}
 
@@ -239,9 +214,9 @@ func build(stacks []Stack) Result {
 		case 1:
 			return roles[role][0], true
 		case 0:
-			add(Error, role+" helper", "no instance has %s: %s, and a publish needs one", roleKey, role)
+			add(finding.Error, "a helper is missing", role+" helper", "no instance has %s: %s, and a publish needs one", roleKey, role)
 		default:
-			add(Error, role+" helper", "%d instances have %s: %s (%s), and the join needs exactly one in a site", len(roles[role]), roleKey, role, where(roles[role]))
+			add(finding.Error, "more than one helper has the role", role+" helper", "%d instances have %s: %s (%s), and the join needs exactly one in a site", len(roles[role]), roleKey, role, where(roles[role]))
 		}
 		return resolve.Resource{}, false
 	}
@@ -253,20 +228,20 @@ func build(stacks []Stack) Result {
 		res.DNSProject, res.DNSInstance = projectOf(dns), dns.Name
 		res.Zone = strings.TrimSpace(dns.Config[zoneKey])
 		if !zonePattern.MatchString(res.Zone) {
-			add(Error, "instance/"+dns.Name, "%s is %q: the dns helper must state the zone it serves (for example home.example.org), the part every published name ends with", zoneKey, res.Zone)
+			add(finding.Error, "the zone is missing or not a domain name", "instance/"+dns.Name, "%s is %q: the dns helper must state the zone it serves (for example home.example.org), the part every published name ends with", zoneKey, res.Zone)
 			res.Zone = ""
 		}
 		if z := strings.TrimSpace(ing.Config[zoneKey]); haveIngress && z != "" && res.Zone != "" && z != res.Zone {
-			add(Error, "instance/"+ing.Name, "%s is %q, but the dns helper serves %q: a site has one zone", zoneKey, z, res.Zone)
+			add(finding.Error, "the helpers state different zones", "instance/"+ing.Name, "%s is %q, but the dns helper serves %q: a site has one zone", zoneKey, z, res.Zone)
 		}
 	case 0:
 		if haveIngress {
 			res.Zone = strings.TrimSpace(ing.Config[zoneKey])
 			switch {
 			case res.Zone == "":
-				add(Error, "dns helper", "no instance has %s: dns, and the ingress helper states no zone (%s): a published name ends with the zone, and with no dns helper the ingress helper is where it is stated", roleKey, zoneKey)
+				add(finding.Error, "the zone is not stated", "dns helper", "no instance has %s: dns, and the ingress helper states no zone (%s): a published name ends with the zone, and with no dns helper the ingress helper is where it is stated", roleKey, zoneKey)
 			case !zonePattern.MatchString(res.Zone):
-				add(Error, "instance/"+ing.Name, "%s is %q: with no dns helper the ingress helper must state the zone the published names end with (for example apps.example.org)", zoneKey, res.Zone)
+				add(finding.Error, "the zone is missing or not a domain name", "instance/"+ing.Name, "%s is %q: with no dns helper the ingress helper must state the zone the published names end with (for example apps.example.org)", zoneKey, res.Zone)
 				res.Zone = ""
 			default:
 				names := make([]string, 0, len(publishes))
@@ -274,22 +249,22 @@ func build(stacks []Stack) Result {
 					names = append(names, p.Name+"."+res.Zone)
 				}
 				sort.Strings(names)
-				add(Warning, "dns helper", "no instance has %s: dns, so no dns records are rendered: point DNS for %s at the host that carries the ingress helper's traffic", roleKey, strings.Join(names, ", "))
+				add(finding.Warning, "no dns helper", "dns helper", "no instance has %s: dns, so no dns records are rendered: point DNS for %s at the host that carries the ingress helper's traffic", roleKey, strings.Join(names, ", "))
 			}
 		}
 	default:
-		add(Error, "dns helper", "%d instances have %s: dns (%s), and the join needs exactly one in a site", len(roles["dns"]), roleKey, where(roles["dns"]))
+		add(finding.Error, "more than one helper has the role", "dns helper", "%d instances have %s: dns (%s), and the join needs exactly one in a site", len(roles["dns"]), roleKey, where(roles["dns"]))
 	}
 	if haveIngress {
 		lg := legAddresses(ing, profiles, len(roles["dns"]) > 0, len(roles["mesh"]) > 0, add)
 		res.LANAddress, res.MeshAddress, res.PublicAddress, res.Sources = lg.serves, lg.mesh, lg.public, lg.sources
 	}
 	if len(roles["sso"]) == 0 {
-		add(Error, "sso helper", "no instance has %s: sso, and a publish is a sign-on rule that something has to enforce", roleKey)
+		add(finding.Error, "a helper is missing", "sso helper", "no instance has %s: sso, and a publish is a sign-on rule that something has to enforce", roleKey)
 	}
 	res.HasMesh = len(roles["mesh"]) > 0
 	if !res.HasMesh && res.MeshAddress != "" { // a site with no mesh leg never had a mesh to leave out
-		add(Warning, "mesh helper", "no instance has %s: mesh, so the names are not offered to mesh clients", roleKey)
+		add(finding.Warning, "no mesh helper", "mesh helper", "no instance has %s: mesh, so the names are not offered to mesh clients", roleKey)
 	}
 
 	// The publishes, one at a time.
@@ -297,7 +272,7 @@ func build(stacks []Stack) Result {
 	for _, p := range publishes {
 		subject := "publish/" + p.Name
 		if prev, dup := labels[p.Name]; dup {
-			add(Error, subject, "the name %q is also published by %s: a published name is unique in the zone", p.Name, prev)
+			add(finding.Error, "a name is published twice", subject, "the name %q is also published by %s: a published name is unique in the zone", p.Name, prev)
 			continue
 		}
 		labels[p.Name] = projectOf(p) + "/" + p.Instance
@@ -313,7 +288,7 @@ func build(stacks []Stack) Result {
 	}
 	sort.Slice(res.Published, func(i, j int) bool { return res.Published[i].Label < res.Published[j].Label })
 
-	sortFindings(res.Findings)
+	finding.Sort(res.Findings)
 	if res.Errors() > 0 {
 		return res
 	}
@@ -344,7 +319,7 @@ var legPurposes = map[string]bool{"serves": true, "mesh": true, "public": true, 
 // Each rendering needs only what it renders. The dns records need a dns helper and a serves leg, the mesh records a mesh helper and a mesh leg; the proxy's
 // routes, the sign-on rules and the apps' ACLs need neither, but the ACLs need at least one address to admit, so a site has a mesh leg or a public leg. At most
 // one NIC has each purpose, and the NIC of a purpose that is read must have a static address.
-func legAddresses(ing resolve.Resource, profiles map[key]resolve.Resource, needServes, needMesh bool, add func(Severity, string, string, ...any)) legs {
+func legAddresses(ing resolve.Resource, profiles map[key]resolve.Resource, needServes, needMesh bool, add func(finding.Severity, string, string, string, ...any)) legs {
 	subject := "instance/" + ing.Name
 	devs := effectiveDevices(ing, profiles)
 	byPurpose := map[string][]string{}
@@ -355,11 +330,11 @@ func legAddresses(ing resolve.Resource, profiles map[key]resolve.Resource, needS
 		nic := strings.TrimPrefix(k, legKey)
 		purposes := strings.FieldsFunc(v, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' })
 		if len(purposes) == 0 {
-			add(Error, subject, "%s is %q: a leg is serves, mesh, public or discovery (a NIC can have several, separated by commas)", k, v)
+			add(finding.Error, "a leg is not a known one", subject, "%s is %q: a leg is serves, mesh, public or discovery (a NIC can have several, separated by commas)", k, v)
 		}
 		for _, p := range purposes {
 			if !legPurposes[p] {
-				add(Error, subject, "%s is %q: a leg is serves, mesh, public or discovery (a NIC can have several, separated by commas)", k, v)
+				add(finding.Error, "a leg is not a known one", subject, "%s is %q: a leg is serves, mesh, public or discovery (a NIC can have several, separated by commas)", k, v)
 				continue
 			}
 			byPurpose[p] = append(byPurpose[p], nic)
@@ -371,22 +346,22 @@ func legAddresses(ing resolve.Resource, profiles map[key]resolve.Resource, needS
 		switch len(nics) {
 		case 0:
 			if required {
-				add(Error, subject, "no NIC is stamped %s<nic>: %s (%s)", legKey, purpose, why)
+				add(finding.Error, "no NIC carries a needed leg", subject, "no NIC is stamped %s<nic>: %s (%s)", legKey, purpose, why)
 			}
 			return "", ""
 		case 1:
 			dev, ok := devs[nics[0]]
 			if !ok || dev["type"] != "nic" {
-				add(Error, subject, "%s%s names a device that is not a NIC of this instance", legKey, nics[0])
+				add(finding.Error, "a leg names no NIC", subject, "%s%s names a device that is not a NIC of this instance", legKey, nics[0])
 				return "", ""
 			}
 			a := staticAddress(dev)
 			if a == "" {
-				add(Error, subject, "the %s leg (%s) has no static ipv4.address: the join needs a fixed address to render", purpose, nics[0])
+				add(finding.Error, "a leg has no static address", subject, "the %s leg (%s) has no static ipv4.address: the join needs a fixed address to render", purpose, nics[0])
 			}
 			return nics[0], a
 		default:
-			add(Error, subject, "%d NICs are marked %s (%s): the join cannot tell which address to use", len(nics), purpose, strings.Join(nics, ", "))
+			add(finding.Error, "several NICs carry one leg", subject, "%d NICs are marked %s (%s): the join cannot tell which address to use", len(nics), purpose, strings.Join(nics, ", "))
 			return "", ""
 		}
 	}
@@ -410,14 +385,14 @@ func legAddresses(ing resolve.Resource, profiles map[key]resolve.Resource, needS
 	sort.Strings(lg.sources)
 	// With a mesh helper a missing mesh leg is already an error above; this one is for a site that has neither leg to give the ACLs an address.
 	if len(lg.sources) == 0 && !needMesh {
-		add(Error, subject, "no NIC is stamped %s<nic>: mesh or public: the apps' ACLs admit the address the ingress helper reaches them from, and that has to be one of those legs", legKey)
+		add(finding.Error, "no NIC carries a needed leg", subject, "no NIC is stamped %s<nic>: mesh or public: the apps' ACLs admit the address the ingress helper reaches them from, and that has to be one of those legs", legKey)
 	}
 	return lg
 }
 
 // publicLegFindings checks that the public leg is not just a word: that a proxy device on the host connects to its address, and with nat, so the ingress
 // helper sees the client's address and not the relay's (measured on Incus 7.5.1, docs/public-exposure.md). Warnings: the devices may be applied later.
-func publicLegFindings(subject string, devs map[string]map[string]string, nic, addr string, add func(Severity, string, string, ...any)) {
+func publicLegFindings(subject string, devs map[string]map[string]string, nic, addr string, add func(finding.Severity, string, string, string, ...any)) {
 	carrying, natted := 0, 0
 	for _, dev := range devs {
 		if dev["type"] != "proxy" || dev["bind"] == "container" || dev["bind"] == "instance" || connectHost(dev["connect"]) != addr {
@@ -431,9 +406,9 @@ func publicLegFindings(subject string, devs map[string]map[string]string, nic, a
 	}
 	switch {
 	case carrying == 0:
-		add(Warning, subject, "the public leg (%s, %s) has no proxy device on the host that connects to it, so nothing carries the host's public address to this helper (docs/public-exposure.md)", nic, addr)
+		add(finding.Warning, "the public leg has no proxy device", subject, "the public leg (%s, %s) has no proxy device on the host that connects to it, so nothing carries the host's public address to this helper (docs/public-exposure.md)", nic, addr)
 	case natted < carrying:
-		add(Warning, subject, "%d of the %d proxy device(s) that carry traffic to the public leg (%s, %s) do not have nat on, so the helper sees the relay, not the client, as the source address (docs/public-exposure.md)", carrying-natted, carrying, nic, addr)
+		add(finding.Warning, "a proxy device to the public leg has no nat", subject, "%d of the %d proxy device(s) that carry traffic to the public leg (%s, %s) do not have nat on, so the helper sees the relay, not the client, as the source address (docs/public-exposure.md)", carrying-natted, carrying, nic, addr)
 	}
 }
 
@@ -452,31 +427,31 @@ func connectHost(connect string) string {
 
 // resolvePublish joins one publish to its instance, its offer and the NIC the offer listens on.
 func resolvePublish(p resolve.Resource, instances map[key]resolve.Resource, offers map[key]map[string]Offer, profiles map[key]resolve.Resource,
-	networks map[string]resolve.Resource, add func(Severity, string, string, ...any)) (Published, bool) {
+	networks map[string]resolve.Resource, add func(finding.Severity, string, string, string, ...any)) (Published, bool) {
 	subject := "publish/" + p.Name
 	k := key{projectOf(p), p.Instance}
 	inst, ok := instances[k]
 	if !ok {
-		add(Error, subject, "names instance %q (project %s), which no file given declares", p.Instance, k.project)
+		add(finding.Error, "a publish names an instance that is not declared", subject, "names instance %q (project %s), which no file given declares", p.Instance, k.project)
 		return Published{}, false
 	}
 	have := offers[k]
 	off, ok := have[p.Offer]
 	if !ok {
 		if len(have) == 0 {
-			add(Error, subject, "instance %s makes no offer (no %s<offer>.port and .proto in its config)", inst.Name, offerKey)
+			add(finding.Error, "an instance makes no offer", subject, "instance %s makes no offer (no %s<offer>.port and .proto in its config)", inst.Name, offerKey)
 		} else {
 			names := make([]string, 0, len(have))
 			for n := range have {
 				names = append(names, n)
 			}
 			sort.Strings(names)
-			add(Error, subject, "instance %s makes no offer %q (it makes: %s)", inst.Name, p.Offer, strings.Join(names, ", "))
+			add(finding.Error, "an instance does not make the offer", subject, "instance %s makes no offer %q (it makes: %s)", inst.Name, p.Offer, strings.Join(names, ", "))
 		}
 		return Published{}, false
 	}
 	if off.Proto != protoHTTP {
-		add(Error, subject, "offer %s/%s speaks %q: only http can be published (a proxy route and a sign-on rule are for web traffic)", inst.Name, off.Name, off.Proto)
+		add(finding.Error, "an offer is not http", subject, "offer %s/%s speaks %q: only http can be published (a proxy route and a sign-on rule are for web traffic)", inst.Name, off.Name, off.Proto)
 		return Published{}, false
 	}
 
@@ -492,34 +467,34 @@ func resolvePublish(p resolve.Resource, instances map[key]resolve.Resource, offe
 		sort.Strings(nics)
 		switch len(nics) {
 		case 0:
-			add(Error, subject, "instance %s has no NIC the join can see (a profile that is not in the files given cannot be read)", inst.Name)
+			add(finding.Error, "an instance has no NIC the join can see", subject, "instance %s has no NIC the join can see (a profile that is not in the files given cannot be read)", inst.Name)
 			return Published{}, false
 		case 1:
 			nic = nics[0]
 		default:
-			add(Error, subject, "instance %s has %d NICs (%s): name the one the offer listens on with %s%s.listen", inst.Name, len(nics), strings.Join(nics, ", "), offerKey, off.Name)
+			add(finding.Error, "an instance has several NICs and the offer names none", subject, "instance %s has %d NICs (%s): name the one the offer listens on with %s%s.listen", inst.Name, len(nics), strings.Join(nics, ", "), offerKey, off.Name)
 			return Published{}, false
 		}
 	}
 	dev, ok := devs[nic]
 	if !ok || dev["type"] != "nic" {
-		add(Error, subject, "offer %s/%s listens on %q, which is not a NIC of the instance", inst.Name, off.Name, nic)
+		add(finding.Error, "the offer listens on something that is not a NIC", subject, "offer %s/%s listens on %q, which is not a NIC of the instance", inst.Name, off.Name, nic)
 		return Published{}, false
 	}
 	pub := Published{Project: k.project, Instance: inst.Name, Offer: off, Allow: p.Allow}
 	pub.Address = staticAddress(dev)
 	if pub.Address == "" {
-		add(Error, subject, "NIC %s of %s has no static ipv4.address: the proxy reaches an app by address (names do not resolve across bridges) and the ACL names it, so it must not take one from DHCP", nic, inst.Name)
+		add(finding.Error, "a NIC has no static address", subject, "NIC %s of %s has no static ipv4.address: the proxy reaches an app by address (names do not resolve across bridges) and the ACL names it, so it must not take one from DHCP", nic, inst.Name)
 		return Published{}, false
 	}
 	pub.Network = dev["network"]
 	if pub.Network == "" {
-		add(Error, subject, "NIC %s of %s is not on a managed network (it is bridged to %q): no ACL can restrict who reaches it", nic, inst.Name, dev["parent"])
+		add(finding.Error, "a NIC is not on a managed network", subject, "NIC %s of %s is not on a managed network (it is bridged to %q): no ACL can restrict who reaches it", nic, inst.Name, dev["parent"])
 		return Published{}, false
 	}
 	nw, ok := networks[pub.Network]
 	if !ok {
-		add(Warning, subject, "network %s is not declared in the files given, so the ACL that should restrict it cannot be shown", pub.Network)
+		add(finding.Warning, "the network is not declared", subject, "network %s is not declared in the files given, so the ACL that should restrict it cannot be shown", pub.Network)
 		return pub, true
 	}
 	var acls []string
@@ -530,12 +505,12 @@ func resolvePublish(p resolve.Resource, instances map[key]resolve.Resource, offe
 	}
 	switch len(acls) {
 	case 0:
-		add(Error, subject, "network %s has no ACL attached (security.acls): any other bridge could reach %s", pub.Network, inst.Name)
+		add(finding.Error, "the network has no ACL", subject, "network %s has no ACL attached (security.acls): any other bridge could reach %s", pub.Network, inst.Name)
 		return Published{}, false
 	case 1:
 		pub.ACL = acls[0]
 	default:
-		add(Error, subject, "network %s has %d ACLs attached (%s): the join does not choose which one carries the rule", pub.Network, len(acls), strings.Join(acls, ", "))
+		add(finding.Error, "the network has several ACLs", subject, "network %s has %d ACLs attached (%s): the join does not choose which one carries the rule", pub.Network, len(acls), strings.Join(acls, ", "))
 		return Published{}, false
 	}
 	return pub, true
@@ -550,17 +525,4 @@ func matcherName(label string) string {
 		}
 		return '_'
 	}, label)
-}
-
-// sortFindings puts errors first, then orders by subject and message, so the same input always prints the same report.
-func sortFindings(fs []Finding) {
-	sort.SliceStable(fs, func(i, j int) bool {
-		if fs[i].Severity != fs[j].Severity {
-			return fs[i].Severity == Error
-		}
-		if fs[i].Subject != fs[j].Subject {
-			return fs[i].Subject < fs[j].Subject
-		}
-		return fs[i].Message < fs[j].Message
-	})
 }

@@ -8,6 +8,7 @@ import (
 
 	incus "github.com/lxc/incus/v7/client"
 
+	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/incusapi"
 )
 
@@ -136,7 +137,7 @@ func planOne(server incus.InstanceServer, r Resource, opts PlanOptions) (Planned
 	}
 	if err == nil {
 		if note := opts.projectNotes[r.Name]; note != "" {
-			p.Warnings = append(p.Warnings, note)
+			p.Findings = append(p.Findings, finding.Warnf(reasonMixedProjects, "", "%s", note))
 		}
 	}
 	return p, err

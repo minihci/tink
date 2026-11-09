@@ -11,6 +11,7 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
 
+	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/incusapi"
 	"github.com/minihci/tink/internal/instance"
 	"github.com/minihci/tink/internal/ownership"
@@ -200,8 +201,8 @@ func declaredACLs(resources []Resource) map[string]bool {
 // aclReferenceWarnings is the plan finding for an ACL a resource names that the stack does not declare and the server does not have. Naming one that
 // exists already is normal and silent; naming one that exists nowhere means Incus refuses the change, which plan can say before apply. A server that
 // cannot be asked (403, a dropped connection) is reported as unverified and never as missing, the same rule as every other lookup.
-func aclReferenceWarnings(server incus.InstanceServer, r Resource, declared map[string]bool) []string {
-	var out []string
+func aclReferenceWarnings(server incus.InstanceServer, r Resource, declared map[string]bool) []finding.Finding {
+	var out []finding.Finding
 	checked := map[string]bool{}
 	for _, ref := range r.aclRefs() {
 		if declared[ref.name] || checked[ref.name] {
@@ -211,9 +212,9 @@ func aclReferenceWarnings(server incus.InstanceServer, r Resource, declared map[
 		_, _, found, err := incusapi.LookupNetworkACL(server, ref.name)
 		switch {
 		case err != nil:
-			out = append(out, fmt.Sprintf("%s names the network ACL %q, which this stack does not declare, and the server could not be asked whether it exists: %v", ref.where, ref.name, err))
+			out = append(out, finding.Warnf(reasonACLUnchecked, "", "%s names the network ACL %q, which this stack does not declare, and the server could not be asked whether it exists: %v", ref.where, ref.name, err))
 		case !found:
-			out = append(out, fmt.Sprintf("%s names the network ACL %q, which this stack does not declare and the server does not have: Incus will refuse to apply it until the ACL exists (declare a kind: network-acl for it)", ref.where, ref.name))
+			out = append(out, finding.Warnf(reasonACLMissing, "", "%s names the network ACL %q, which this stack does not declare and the server does not have: Incus will refuse to apply it until the ACL exists (declare a kind: network-acl for it)", ref.where, ref.name))
 		}
 	}
 	return out

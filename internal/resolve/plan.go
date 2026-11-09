@@ -13,6 +13,7 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 
 	"github.com/minihci/tink/internal/backupext"
+	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/incusapi"
 	"github.com/minihci/tink/internal/secrets"
 )
@@ -41,13 +42,10 @@ type PlannedResource struct {
 	Resource Resource
 	Action   Action
 	Changes  []string
-	// Drift: confirmed image drift. Blocked: why apply will not converge this
-	// resource. Warnings: things that could not be verified or were ignored.
-	Drift    []string
-	Blocked  []string
-	Warnings []string
-	// Notes: facts about what apply will do that are not problems, such as a file a mount hides from the instance's first start. Informational only.
-	Notes []string
+	// Findings is everything noticed about the resource that is not a change to make: what blocks apply from converging it (an error), what could not be
+	// verified or was ignored (a warning), a fact worth reading that is not a problem (a note), and confirmed image drift (a warning with the reason
+	// ReasonImageDrift). In the order they were raised. Blocked, Warnings, Notes and Drift select from it.
+	Findings []finding.Finding
 	// Extras: for an instance, profile, storage volume, network or project that exists and was planned WithExtras, what it carries that the stack
 	// does not declare. Informational only: it never changes the action, and nothing is removed because of it. Nil when not asked for, or for
 	// any other kind.
@@ -62,6 +60,29 @@ type PlannedResource struct {
 	liveRead bool
 	// liveContent is a file's content as the plan read it, for the guards of a derived file (derivedfile.go). Unexported: it can hold anything.
 	liveContent string
+}
+
+// Blocked is the findings that stop apply converging the resource: the errors.
+func (p PlannedResource) Blocked() []finding.Finding { return p.severity(finding.Error, false) }
+
+// Warnings is the warnings other than image drift: things that could not be verified or were ignored.
+func (p PlannedResource) Warnings() []finding.Finding { return p.severity(finding.Warning, false) }
+
+// Notes is the facts about what apply will do that are not problems, such as a file a mount hides from the instance's first start. Informational only.
+func (p PlannedResource) Notes() []finding.Finding { return p.severity(finding.Note, false) }
+
+// Drift is the confirmed image drift: the warnings with the reason ReasonImageDrift.
+func (p PlannedResource) Drift() []finding.Finding { return p.severity(finding.Warning, true) }
+
+// severity selects the findings of one severity in the order they were raised; for a warning, drift says whether to take the image drift or all the others.
+func (p PlannedResource) severity(sev finding.Severity, drift bool) []finding.Finding {
+	var out []finding.Finding
+	for _, f := range p.Findings {
+		if f.Severity == sev && (sev != finding.Warning || (f.Reason == ReasonImageDrift) == drift) {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // Plan computes what would happen for each resource without touching
@@ -138,11 +159,15 @@ func planKind(server incus.InstanceServer, r Resource, opts PlanOptions) (Planne
 func planKindBody(server incus.InstanceServer, r Resource, opts PlanOptions) (PlannedResource, error) {
 	// A secret that cannot be resolved blocks the WHOLE resource, never part of it.
 	if len(r.SecretProblems) > 0 {
-		return PlannedResource{Resource: r, Action: ActionBlocked, Blocked: r.SecretProblems}, nil
+		p := PlannedResource{Resource: r, Action: ActionBlocked}
+		for _, problem := range r.SecretProblems {
+			p.Findings = append(p.Findings, finding.Errorf(reasonSecretUnresolved, "", "%s", problem))
+		}
+		return p, nil
 	}
 	if unexpandedSecretRef(r) {
-		return PlannedResource{Resource: r, Action: ActionBlocked, Blocked: []string{
-			"holds a ${secret:...} reference that was never expanded (this is a tink bug: refusing to apply the literal text as a value)"}}, nil
+		return PlannedResource{Resource: r, Action: ActionBlocked, Findings: []finding.Finding{finding.Errorf(reasonSecretUnexpanded, "",
+			"holds a ${secret:...} reference that was never expanded (this is a tink bug: refusing to apply the literal text as a value)")}}, nil
 	}
 	s := scopedServer(server, r)
 	venv := volumeEnv{targets: opts.targets, stack: opts.stack, helperReads: opts.helperReads, helperLabel: opts.helperLabel, helperRemotes: opts.helperRemotes}
@@ -158,7 +183,7 @@ func planKindBody(server incus.InstanceServer, r Resource, opts PlanOptions) (Pl
 		if err != nil {
 			return p, err
 		}
-		p.Warnings = append(p.Warnings, aclReferenceWarnings(s, r, opts.acls)...)
+		p.Findings = append(p.Findings, aclReferenceWarnings(s, r, opts.acls)...)
 		return withOtherExtras(s, r, venv, opts, p, nil)
 	case KindNetworkACL:
 		return planNetworkACL(s, r)
@@ -167,7 +192,7 @@ func planKindBody(server incus.InstanceServer, r Resource, opts PlanOptions) (Pl
 		if err != nil {
 			return p, err
 		}
-		p.Warnings = append(p.Warnings, aclReferenceWarnings(s, r, opts.acls)...)
+		p.Findings = append(p.Findings, aclReferenceWarnings(s, r, opts.acls)...)
 		return withOtherExtras(s, r, venv, opts, p, nil)
 	case KindStorageVolume:
 		p, err := planStorageVolume(s, r, venv)
@@ -180,11 +205,11 @@ func planKindBody(server incus.InstanceServer, r Resource, opts PlanOptions) (Pl
 		if err != nil {
 			return p, err
 		}
-		p.Warnings = append(p.Warnings, ociNICWarnings(r, opts.imageRemotes(), opts.profiles)...)
-		p.Warnings = append(p.Warnings, natProxyWarnings(r, opts.profiles)...)
-		p.Warnings = append(p.Warnings, opts.listenerNotes[r.Name]...)
-		p.Warnings = append(p.Warnings, rootDiskWarnings(s, r, opts.profiles)...)
-		p.Warnings = append(p.Warnings, aclReferenceWarnings(s, r, opts.acls)...)
+		p.Findings = append(p.Findings, ociNICWarnings(r, opts.imageRemotes(), opts.profiles)...)
+		p.Findings = append(p.Findings, natProxyWarnings(r, opts.profiles)...)
+		p.Findings = append(p.Findings, opts.listenerWarnings[r.Name]...)
+		p.Findings = append(p.Findings, rootDiskWarnings(s, r, opts.profiles)...)
+		p.Findings = append(p.Findings, aclReferenceWarnings(s, r, opts.acls)...)
 		return p, nil
 	case KindFile:
 		return planPlacedFile(s, r)
@@ -259,15 +284,15 @@ func planStorageVolume(server incus.InstanceServer, r Resource, env volumeEnv) (
 	if why := env.helperCannotRead(); why != "" {
 		policy := backupext.Get().Keys().Policy
 		if want, _, err := volumeBackupConfig(r, env); err == nil && want[policy] != "" && (current == nil || current.Config[policy] != want[policy]) {
-			return PlannedResource{Resource: r, Action: ActionBlocked, Blocked: []string{why}}, nil
+			return PlannedResource{Resource: r, Action: ActionBlocked, Findings: []finding.Finding{finding.Errorf(reasonHelperCannotRead, "", "%s", why)}}, nil
 		}
 	}
 	p := decideVolume(r, current, env)
 	if current != nil {
 		p = observed(p, current.Config)
 	}
-	p.Warnings = append(p.Warnings, backupWarnings(r, env.targets)...)
-	p.Warnings = append(p.Warnings, env.helperRemoteWarnings(r)...)
+	p.Findings = append(p.Findings, backupWarnings(r, env.targets)...)
+	p.Findings = append(p.Findings, env.helperRemoteWarnings(r)...)
 	return p, nil
 }
 
@@ -315,7 +340,7 @@ func planIncus(r Resource) (PlannedResource, error) {
 	// with paths on the machine tink runs on. Under --remote it would act on whatever server the CLI happens
 	// to point at, not the one tink was told to manage, so it is blocked, not guessed at.
 	if incusapi.IsRemote() {
-		return PlannedResource{Resource: r, Action: ActionBlocked, Blocked: []string{fmt.Sprintf(
+		return PlannedResource{Resource: r, Action: ActionBlocked, Findings: []finding.Finding{finding.Errorf(reasonIncusOnRemote, "",
 			"kind: incus runs the local `incus` CLI (with local paths), which is not the remote %q tink is pointed at (--remote or $TINK_REMOTE): run this stack on the host, without a remote", incusapi.Remote())}}, nil
 	}
 	if err := exec.Command("incus", r.Check...).Run(); err != nil {
