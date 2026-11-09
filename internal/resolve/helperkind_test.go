@@ -13,6 +13,7 @@ import (
 
 	"github.com/minihci/tink/internal/helper"
 	"github.com/minihci/tink/internal/instant"
+	"github.com/minihci/tink/internal/observe"
 )
 
 // helperKindServer is a server that lists instances: GetInstancesAllProjects for helper.Find, and GetInstance in the project UseProject chose.
@@ -137,7 +138,7 @@ func TestPlanHelperWarnsWhenItIsNotWellButStillChangesNothing(t *testing.T) {
 		t.Errorf("silent: %+v", p)
 	}
 	failing := goodStatus()
-	failing.Failing = []helper.Failing{{Volume: "identity-data", Target: "offsite", Count: 3, Since: instant.At(helperNow.Add(-time.Hour))}}
+	failing.States = []observe.Record{{What: observe.WhatBackup, Resource: "identity-data", Target: "offsite", State: observe.Failing, Reason: "r", Failures: 3, Since: instant.At(helperNow.Add(-time.Hour))}}
 	srv = &helperKindServer{instances: []api.Instance{helperInstance(t, "tink-helper", "helper", "Running", failing)}}
 	p, _ = planHelper(srv, helperRes(nil), helperNow, PlanOptions{})
 	if p.Action != ActionNone || !strings.Contains(joined(details(p.Warnings())), "degraded") {

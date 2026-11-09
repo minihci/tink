@@ -8,6 +8,8 @@ import (
 
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
+
+	"github.com/minihci/tink/internal/observe"
 )
 
 // Found is a helper instance, as listed.
@@ -153,11 +155,11 @@ func Evaluate(f Found, now time.Time) Report {
 			return r
 		}
 	}
-	if len(st.Skipped) > 0 {
-		degrade("%d volume(s) skipped: %s", len(st.Skipped), skipList(st.Skipped))
+	if skipped := st.Backup(observe.Skipped); len(skipped) > 0 {
+		degrade("%d volume(s) skipped: %s", len(skipped), skipList(skipped))
 	}
-	if len(st.Failing) > 0 {
-		degrade("%d copy(ies) failing: %s", len(st.Failing), failList(st.Failing))
+	if failing := st.Backup(observe.Failing); len(failing) > 0 {
+		degrade("%d copy(ies) failing: %s", len(failing), failList(failing))
 	}
 	if st.Draining {
 		degrade("draining: it is not starting new work (an upgrade is in progress, or one did not finish: remove /data/jobs/DRAIN)")
@@ -182,18 +184,18 @@ func (r *Report) CheckTrust(certs []api.Certificate) {
 	r.Reasons = append(r.Reasons, fmt.Sprintf("its certificate (%s) is not in the host's trust store: it was revoked, or never enrolled (tink helper install --reissue enrols it again)", TrustName))
 }
 
-func skipList(s []Skip) string {
+func skipList(s []observe.Record) string {
 	parts := make([]string, len(s))
 	for i, x := range s {
-		parts[i] = fmt.Sprintf("%s (%s)", x.Volume, x.Reason)
+		parts[i] = fmt.Sprintf("%s (%s)", x.Resource, x.Reason)
 	}
 	return strings.Join(parts, ", ")
 }
 
-func failList(f []Failing) string {
+func failList(f []observe.Record) string {
 	parts := make([]string, len(f))
 	for i, x := range f {
-		parts[i] = fmt.Sprintf("%s -> %s (%dx)", x.Volume, x.Target, x.Count)
+		parts[i] = fmt.Sprintf("%s -> %s (%dx)", x.Resource, x.Target, x.Failures)
 	}
 	return strings.Join(parts, ", ")
 }

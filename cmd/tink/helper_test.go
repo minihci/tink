@@ -18,6 +18,7 @@ import (
 	"github.com/minihci/tink/internal/helper"
 	"github.com/minihci/tink/internal/instant"
 	"github.com/minihci/tink/internal/jobs"
+	"github.com/minihci/tink/internal/observe"
 	"github.com/minihci/tink/internal/resolve"
 )
 
@@ -75,7 +76,9 @@ func exitCode(t *testing.T, err error) int {
 }
 
 func TestStatusCheckSpeaksInExitCodesAMonitorCanUse(t *testing.T) {
-	skipped := goodStatus(func(s *helper.Status) { s.Skipped = []helper.Skip{{Volume: "lib", Reason: "policy of protocol 2"}} })
+	skipped := goodStatus(func(s *helper.Status) {
+		s.States = []observe.Record{{What: observe.WhatBackup, Resource: "lib", State: observe.Skipped, Reason: "policy of protocol 2"}}
+	})
 	stale := goodStatus(func(s *helper.Status) { s.WrittenAt = instant.At(helperNow.Add(-40 * time.Minute)) })
 	for _, tc := range []struct {
 		name string
@@ -149,7 +152,7 @@ func TestStatusFiltersAndTheWorstHelperDecidesTheCode(t *testing.T) {
 
 func TestStatusWithoutCheckPrintsDetailsAndExitsZero(t *testing.T) {
 	st := goodStatus(func(s *helper.Status) {
-		s.Failing = []helper.Failing{{Volume: "lib", Target: "nas", Count: 3, Since: instant.At(helperNow.Add(-time.Hour)), FailedAt: instant.At(helperNow.Add(-time.Minute))}}
+		s.States = []observe.Record{{What: observe.WhatBackup, Resource: "lib", Target: "nas", State: observe.Failing, Reason: "r", Failures: 3, Since: instant.At(helperNow.Add(-time.Hour)), FailedAt: instant.At(helperNow.Add(-time.Minute))}}
 		s.LastJob = &helper.LastJob{ID: "20261007T110000Z-abc", State: "failed", FinishedAt: instant.At(helperNow.Add(-5 * time.Minute))}
 		s.Remotes = []helper.Remote{{Name: "host"}, {Name: "nas2"}}
 	})
@@ -165,6 +168,44 @@ func TestStatusWithoutCheckPrintsDetailsAndExitsZero(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("the details must contain %q:\n%s", want, out)
 		}
+	}
+}
+
+// `tink helper status` prints the states the daemon keeps and the recent events, and a skipped volume says since when.
+func TestStatusPrintsTheStatesAndTheRecentEvents(t *testing.T) {
+	st := goodStatus(func(s *helper.Status) {
+		s.States = []observe.Record{
+			{What: "backup", Resource: "lib", State: "skipped", Reason: "policy of protocol 2", Since: instant.At(helperNow.Add(-3 * time.Hour))},
+			{What: "derived", Resource: "ingress-routes", Site: "home", State: "converged", Since: instant.At(helperNow.Add(-26 * time.Hour))},
+			{What: "dns", State: "blocked", Reason: "the apply was refused", Since: instant.At(helperNow.Add(-10 * time.Minute))},
+		}
+		s.Events = []observe.Event{
+			{Event: "healed", What: "derived", Resource: "ingress-routes", Site: "home", At: instant.At(helperNow.Add(-2 * time.Hour))},
+			{Event: "restarted", What: "derived", Resource: "ingress-routes", Site: "home", At: instant.At(helperNow.Add(-2 * time.Hour))},
+		}
+	})
+	out, err := statusRun(t, instancesServer{all: []api.Instance{helperInstance("tink-helper", "helper", "Running", st)}}, "", "", false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"skipped:     lib: policy of protocol 2, since 2026-10-07 09:00 UTC (3h ago)",
+		"derived/ingress-routes (home): converged, since 2026-10-06 10:00 UTC (26h ago)",
+		"dns (the unnamed site): blocked (the apply was refused), since 2026-10-07 11:50 UTC (10m ago)",
+		"healed derived/ingress-routes (home), 2026-10-07 10:00 UTC (2h ago)",
+		"restarted derived/ingress-routes (home), 2026-10-07 10:00 UTC (2h ago)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the details must contain %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "states:      none") || strings.Contains(out, "events:      none") {
+		t.Errorf("it says none when there are some:\n%s", out)
+	}
+
+	empty, err := statusRun(t, instancesServer{all: []api.Instance{helperInstance("tink-helper", "helper", "Running", goodStatus(func(*helper.Status) {}))}}, "", "", false, false)
+	if err != nil || !strings.Contains(empty, "states:      none") || !strings.Contains(empty, "events:      none") {
+		t.Errorf("%v\n%s", err, empty)
 	}
 }
 
@@ -185,7 +226,9 @@ func TestAJobWithNoFinishTimeIsNotAgedFromTheYearOne(t *testing.T) {
 }
 
 func TestStatusJSONCarriesTheJudgementAndTheDocument(t *testing.T) {
-	st := goodStatus(func(s *helper.Status) { s.Skipped = []helper.Skip{{Volume: "lib", Reason: "x"}} })
+	st := goodStatus(func(s *helper.Status) {
+		s.States = []observe.Record{{What: observe.WhatBackup, Resource: "lib", State: observe.Skipped, Reason: "x"}}
+	})
 	out, err := statusRun(t, instancesServer{all: []api.Instance{helperInstance("p", "h", "Running", st)}}, "", "", true, true)
 	if exitCode(t, err) != 1 {
 		t.Errorf("--json with --check still sets the exit code: %v", err)
@@ -194,7 +237,7 @@ func TestStatusJSONCarriesTheJudgementAndTheDocument(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &got); err != nil || len(got) != 1 {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if got[0].Health != "degraded" || got[0].Code != 1 || got[0].Project != "p" || got[0].Status == nil || got[0].Status.Skipped[0].Volume != "lib" {
+	if got[0].Health != "degraded" || got[0].Code != 1 || got[0].Project != "p" || got[0].Status == nil || got[0].Status.States[0].Resource != "lib" {
 		t.Errorf("%+v", got[0])
 	}
 }
@@ -343,7 +386,9 @@ func TestPlanEndsWithANoteAboutAHelperThatIsNotWellAndSaysNothingOtherwise(t *te
 	if got := note(instancesServer{all: []api.Instance{helperInstance("p", "h", "Running", goodStatus(nil))}}); got != "" {
 		t.Errorf("a healthy helper, nothing to say: %q", got)
 	}
-	skipped := goodStatus(func(s *helper.Status) { s.Skipped = []helper.Skip{{Volume: "lib", Reason: "policy of protocol 2"}} })
+	skipped := goodStatus(func(s *helper.Status) {
+		s.States = []observe.Record{{What: observe.WhatBackup, Resource: "lib", State: observe.Skipped, Reason: "policy of protocol 2"}}
+	})
 	got := note(instancesServer{all: []api.Instance{helperInstance("p", "h", "Running", skipped)}})
 	for _, want := range []string{"note: the helper is degraded: p/h", "lib (policy of protocol 2)", "tink helper status"} {
 		if !strings.Contains(got, want) {

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -15,45 +14,53 @@ import (
 	"github.com/minihci/tink/internal/helper"
 	"github.com/minihci/tink/internal/instant"
 	"github.com/minihci/tink/internal/jobs"
+	"github.com/minihci/tink/internal/observe"
 )
 
-// Live is what the workers learn that the status document reports: the scheduler's view of the volumes. The workers write it as they go; the status worker reads it and publishes only what changed.
+// Live is what the workers learn that the status document reports. The workers write it as they go; the status worker reads it and publishes only what
+// changed. What it holds is the states (the clock's, and the failing copies, which carry the time their failures began) and the list of what the daemon did.
 type Live struct {
-	mu      sync.Mutex
-	known   bool // the scheduler has completed a pass, so skipped and failing are facts and not "not looked yet"
-	skipped []helper.Skip
-	failing []helper.Failing
-	// reconciles are what the reconciler last found, by what it keeps and the site.
-	reconciles []helper.Reconcile
+	// clock says how long each state has been true. The reconciler's passes and the scheduler's look at the volumes both report to it, and a stored
+	// document seeds it (Seed).
+	clock observe.Clock
+
+	mu    sync.Mutex
+	known bool // the scheduler has completed a pass, so skipped and failing are facts and not "not looked yet"
+	// failing are the copies that have failed since their last success. Each one's Since is the failing-since stamp on the volume, which is the real
+	// onset and needs no clock.
+	failing []observe.Record
+	events  []observe.Event
 }
 
-// setReconcile records what the reconciler found. An entry that finds the same state and reason keeps the Since it had, so the status document does not
-// change (and is not rewritten) when a pass finds what the last one did.
-func (l *Live) setReconcile(r helper.Reconcile) {
+// Seed loads what a stored document said before this daemon (re)started: its states, for the clock, and its events, which this daemon carries on. It is
+// called before the first pass. A document that could not be read is not passed, and the Live starts empty.
+func (l *Live) Seed(st helper.Status) {
+	l.clock.Seed(st.States)
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	for i, old := range l.reconciles {
-		if old.What == r.What && old.Site == r.Site {
-			if old.State == r.State && old.Reason == r.Reason {
-				return
-			}
-			l.reconciles[i] = r
-			return
-		}
+	l.events = observe.KnownEvents(st.Events)
+}
+
+// addEvents appends to the list of what the daemon did, which keeps only the most recent observe.MaxEvents.
+func (l *Live) addEvents(ev ...observe.Event) {
+	if len(ev) == 0 {
+		return
 	}
-	l.reconciles = append(l.reconciles, r)
-}
-
-func (l *Live) reconcilesSnapshot() []helper.Reconcile {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return append([]helper.Reconcile(nil), l.reconciles...)
+	l.events = observe.Append(l.events, ev...)
 }
 
-func (l *Live) setBackup(skipped []helper.Skip, failing []helper.Failing) {
+// setBackup records what a look at the volumes found: the volumes it will not copy, which the clock dates, and the copies that are failing, which date
+// themselves.
+func (l *Live) setBackup(skipped []observe.Result, failing []observe.Record, now time.Time) {
+	for _, r := range skipped {
+		l.clock.Observe(r, now)
+	}
+	l.clock.EndPass(observe.WhatBackup)
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.skipped, l.failing, l.known = skipped, failing, true
+	l.failing, l.known = failing, true
 }
 
 // backupKnown says whether the scheduler has looked at the volumes at least once.
@@ -63,50 +70,56 @@ func (l *Live) backupKnown() bool {
 	return l.known
 }
 
-func (l *Live) snapshot() (skipped []helper.Skip, failing []helper.Failing) {
+// snapshot is the states and the events as they stand: the clock's and the failing copies, in the document's order.
+func (l *Live) snapshot() (states []observe.Record, events []observe.Event) {
+	states = l.clock.States()
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return append([]helper.Skip(nil), l.skipped...), append([]helper.Failing(nil), l.failing...)
+	states = append(states, l.failing...)
+	observe.SortRecords(states)
+	return states, append([]observe.Event(nil), l.events...)
 }
 
 // maxReason keeps a skip reason to a line. The reasons that come from tink's own parsing of a policy are short; this is a bound,
 // not a rule.
 const maxReason = 160
 
-// skipsFrom turns what a look at the volumes could not do into the reasons the status document carries. A policy that does not
+// skipsFrom turns what a look at the volumes could not do into the results the status document carries as states. A policy that does not
 // parse is explained by tink's own message (it names a field or a protocol, never a credential). Anything that came from Incus
 // itself gets a fixed phrase: its error text can echo a credential, and a config value is the wrong place for one.
-func skipsFrom(discover, assess map[string]error) []helper.Skip {
-	var out []helper.Skip
+func skipsFrom(discover, assess map[string]error) []observe.Result {
+	var out []observe.Result
+	skip := func(what, reason string) {
+		out = append(out, observe.Result{What: observe.WhatBackup, Resource: what, State: observe.Skipped, Reason: reason})
+	}
 	for what, err := range discover {
 		reason := truncate(err.Error(), maxReason)
 		if strings.HasPrefix(what, "pool ") {
 			reason = "the pool could not be listed"
 		}
-		out = append(out, helper.Skip{Volume: what, Reason: reason})
+		skip(what, reason)
 	}
 	for what := range assess {
 		reason := "the volume could not be read"
 		if strings.Contains(what, " -> ") {
 			reason = "the copy's schedule could not be read"
 		}
-		out = append(out, helper.Skip{Volume: what, Reason: reason})
+		skip(what, reason)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Volume < out[j].Volume })
 	return out
 }
 
-func failingFrom(in []backuprun.FailingCopy) []helper.Failing {
-	out := make([]helper.Failing, len(in))
+// reasonCopyFailing is the fixed phrase of a copy that has failed since its last success; how many times and when are fields of its record.
+const reasonCopyFailing = "the copy has failed since its last success"
+
+// failingFrom turns the copies that are failing into state records. A record's Since is the onset the volume carries (backupmeta's failing-since), not a
+// time the daemon noticed it, so the word means the same thing here as in the reconcile states.
+func failingFrom(in []backuprun.FailingCopy) []observe.Record {
+	out := make([]observe.Record, len(in))
 	for i, f := range in {
-		out[i] = helper.Failing{Volume: f.Volume, Target: f.Target, Count: f.Count, Since: instant.At(f.Since), FailedAt: instant.At(f.FailedAt)}
+		out[i] = observe.Record{What: observe.WhatBackup, Resource: f.Volume, Target: f.Target, State: observe.Failing, Reason: reasonCopyFailing,
+			Since: instant.At(f.Since), FailedAt: instant.At(f.FailedAt), Failures: f.Count}
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Volume != out[j].Volume {
-			return out[i].Volume < out[j].Volume
-		}
-		return out[i].Target < out[j].Target
-	})
 	return out
 }
 
@@ -146,15 +159,14 @@ func (o StatusOptions) interval() time.Duration {
 
 // buildStatus is the document as it stands now.
 func buildStatus(o StatusOptions, live *Live, started, now time.Time) helper.Status {
-	skipped, failing := live.snapshot()
+	states, events := live.snapshot()
 	s := helper.Status{
 		Version:     o.Version,
 		JobProto:    jobs.Proto,
 		PolicyProto: backupmeta.PolicyProto,
 		StartedAt:   instant.At(started),
-		Skipped:     skipped,
-		Failing:     failing,
-		Reconciles:  live.reconcilesSnapshot(),
+		States:      states,
+		Events:      events,
 	}
 	zone := o.Zone
 	if zone == nil {

@@ -18,6 +18,7 @@ import (
 	"github.com/minihci/tink/internal/helper"
 	"github.com/minihci/tink/internal/instant"
 	"github.com/minihci/tink/internal/jobs"
+	"github.com/minihci/tink/internal/observe"
 	"github.com/minihci/tink/internal/volbackup"
 )
 
@@ -115,7 +116,9 @@ func TestAHelperThatCannotTakeItRunsHereAndSaysWhy(t *testing.T) {
 }
 
 func TestADegradedHelperStillTakesARun(t *testing.T) {
-	st := goodStatus(func(s *helper.Status) { s.Failing = []helper.Failing{{Volume: "docs", Target: "nas", Count: 3}} })
+	st := goodStatus(func(s *helper.Status) {
+		s.States = []observe.Record{{What: observe.WhatBackup, Resource: "docs", Target: "nas", State: observe.Failing, Reason: "r", Failures: 3}}
+	})
 	srv := serverWith(t, []api.Instance{helperInstance("p", "helper", "Running", st)}, policyOf(t, nasCopy()))
 	if h, note, err := prepareHandoff(srv, libItems(), nil, false, helperNow); h == nil || note != "" || err != nil {
 		t.Errorf("a failing copy is when a run by hand is most wanted: %+v %q %v", h, note, err)

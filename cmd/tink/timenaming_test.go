@@ -18,6 +18,7 @@ import (
 	"github.com/minihci/tink/internal/daemon"
 	"github.com/minihci/tink/internal/helper"
 	"github.com/minihci/tink/internal/instant"
+	"github.com/minihci/tink/internal/observe"
 )
 
 // The glossary's "Time words": an instant is `<past-participle>-at`, and a bare `at`, `time` or `tick` is not a key or the last part of one.
@@ -266,11 +267,15 @@ func jsonKeys(t *testing.T, doc []byte) []string {
 func TestTheDocumentsTinkWritesHaveNoUnderscoreKeys(t *testing.T) {
 	when := instant.At(time.Date(2026, 11, 1, 9, 30, 0, 0, time.UTC))
 	status := helper.Status{Proto: helper.StatusProto, Version: "v1", JobProto: 2, PolicyProto: 1, TZ: "UTC", StartedAt: when, WrittenAt: when,
-		Heartbeat: instant.Duration(10 * time.Minute), Skipped: []helper.Skip{{Volume: "lib", Reason: "x"}},
-		Failing: []helper.Failing{{Volume: "lib", Target: "t", Count: 2, Since: when, FailedAt: when}},
+		Heartbeat: instant.Duration(10 * time.Minute),
+		States: []observe.Record{
+			{What: "backup", Resource: "lib", State: "skipped", Reason: "x", Since: when},
+			{What: "backup", Resource: "lib", Target: "t", State: "failing", Reason: "r", Since: when, FailedAt: when, Failures: 2},
+			{What: "derived", Resource: "ingress-routes", Site: "s", State: "failing", Reason: "r", Since: when},
+		},
+		Events:  []observe.Event{{Event: "healed", What: "derived", Resource: "ingress-routes", Site: "s", At: when}},
 		LastJob: &helper.LastJob{ID: "j", State: "failed", FinishedAt: when}, Running: 1, Queued: 2, Draining: true,
-		Reconciles: []helper.Reconcile{{What: "dns", Site: "s", State: "failing", Reason: "r", Since: when}},
-		Remotes:    []helper.Remote{{Name: "host", Addr: "https://192.0.2.10:8443", Project: "default"}}}
+		Remotes: []helper.Remote{{Name: "host", Addr: "https://192.0.2.10:8443", Project: "default"}}}
 	stored, err := helper.Encode(status)
 	if err != nil {
 		t.Fatal(err)
@@ -295,7 +300,7 @@ func TestTheDocumentsTinkWritesHaveNoUnderscoreKeys(t *testing.T) {
 		doc  []byte
 		want []string // keys the document must carry, at any depth
 	}{
-		{"the status document", []byte(stored), []string{"job-proto", "policy-proto", "last-job", "running-jobs", "queued-jobs", "written-at", "heartbeat", "failed-at"}},
+		{"the status document", []byte(stored), []string{"job-proto", "policy-proto", "last-job", "running-jobs", "queued-jobs", "written-at", "heartbeat", "failed-at", "failures", "states", "events"}},
 		{"tink helper status --json", printed.Bytes(), []string{"instance-state", "exit-code", "status-volume", "status", "last-job", "job-proto"}},
 		{"the backup run summary", summary, []string{"restore-point", "other-servers"}},
 		{"the backup-run job's arguments", args, []string{"dry-run"}},

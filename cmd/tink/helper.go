@@ -15,6 +15,7 @@ import (
 	"github.com/minihci/tink/internal/backuprun"
 	"github.com/minihci/tink/internal/helper"
 	"github.com/minihci/tink/internal/incusapi"
+	"github.com/minihci/tink/internal/observe"
 	"github.com/minihci/tink/internal/resolve"
 	"github.com/minihci/tink/internal/volbackup"
 )
@@ -426,11 +427,17 @@ func printHelperDetails(out io.Writer, r helper.Report, now time.Time) {
 	if !st.WrittenAt.IsZero() {
 		fmt.Fprintf(out, "  last heard:  %s ago (it writes at least every %s)\n", roundAge(now.Sub(st.WrittenAt.Time)), roundAge(st.Heartbeat.D()))
 	}
-	fmt.Fprintf(out, "  skipped:     %s\n", listOrNone(len(st.Skipped), func(i int) string { return fmt.Sprintf("%s: %s", st.Skipped[i].Volume, st.Skipped[i].Reason) }))
-	fmt.Fprintf(out, "  failing:     %s\n", listOrNone(len(st.Failing), func(i int) string {
-		f := st.Failing[i]
-		return fmt.Sprintf("%s -> %s, %d in a row since %s, the last %s ago", f.Volume, f.Target, f.Count, f.Since.Format("2006-01-02 15:04 MST"), roundAge(now.Sub(f.FailedAt.Time)))
+	skipped, failing := st.Backup(observe.Skipped), st.Backup(observe.Failing)
+	fmt.Fprintf(out, "  skipped:     %s\n", listOrNone(len(skipped), func(i int) string {
+		x := skipped[i]
+		return fmt.Sprintf("%s: %s%s", x.Resource, x.Reason, sinceText(x, now))
 	}))
+	fmt.Fprintf(out, "  failing:     %s\n", listOrNone(len(failing), func(i int) string {
+		f := failing[i]
+		return fmt.Sprintf("%s -> %s, %d in a row since %s, the last %s ago", f.Resource, f.Target, f.Failures, f.Since.Format("2006-01-02 15:04 MST"), roundAge(now.Sub(f.FailedAt.Time)))
+	}))
+	printStates(out, st, now)
+	printEvents(out, st, now)
 	if j := st.LastJob; j != nil && j.FinishedAt.IsZero() {
 		// A job that says nothing about when it finished (a document from before the time words) must not be aged from the year 1.
 		fmt.Fprintf(out, "  last job:    %s %s, finish time not recorded\n", j.ID, j.State)
@@ -475,5 +482,53 @@ func roundAge(d time.Duration) string {
 		return fmt.Sprintf("%dh", int(d.Hours()))
 	default:
 		return fmt.Sprintf("%dd", int(d.Hours()/24))
+	}
+}
+
+// sinceText is ", since 2026-11-01 09:00 UTC (2h ago)" for a state that says when it began, and nothing for one that does not (a document that
+// predates the clock must not be aged from the year 1).
+func sinceText(r observe.Record, now time.Time) string {
+	if r.Since.IsZero() {
+		return ""
+	}
+	return fmt.Sprintf(", since %s (%s ago)", r.Since.Format("2006-01-02 15:04 MST"), roundAge(now.Sub(r.Since.Time)))
+}
+
+// printStates prints the states the daemon keeps besides the volumes' copies, which the skipped and failing lines above already say: one line each, what it
+// is, for which site, the state, the fixed reason when it is not converged, and since when.
+func printStates(out io.Writer, st *helper.Status, now time.Time) {
+	var rest []observe.Record
+	for _, r := range st.States {
+		if r.What != observe.WhatBackup {
+			rest = append(rest, r)
+		}
+	}
+	if len(rest) == 0 {
+		fmt.Fprintf(out, "  states:      none\n")
+		return
+	}
+	fmt.Fprintf(out, "  states:\n")
+	for _, r := range rest {
+		line := fmt.Sprintf("%s (%s): %s", r.Name(), observe.SiteName(r.Site), r.State)
+		if r.Reason != "" {
+			line += " (" + r.Reason + ")"
+		}
+		fmt.Fprintf(out, "    %s%s\n", line, sinceText(r, now))
+	}
+}
+
+// printEvents prints what the daemon did lately, the oldest first: a fixed word, what it was done to, and when.
+func printEvents(out io.Writer, st *helper.Status, now time.Time) {
+	if len(st.Events) == 0 {
+		fmt.Fprintf(out, "  events:      none\n")
+		return
+	}
+	fmt.Fprintf(out, "  events:\n")
+	for _, e := range st.Events {
+		when := "at an unknown time"
+		if !e.At.IsZero() {
+			when = fmt.Sprintf("%s (%s ago)", e.At.Format("2006-01-02 15:04 MST"), roundAge(now.Sub(e.At.Time)))
+		}
+		fmt.Fprintf(out, "    %s %s (%s), %s\n", e.Event, observe.Name(e.What, e.Resource, ""), observe.SiteName(e.Site), when)
 	}
 }

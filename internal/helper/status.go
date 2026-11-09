@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/minihci/tink/internal/instant"
+	"github.com/minihci/tink/internal/observe"
 	"github.com/minihci/tink/internal/ownership"
 )
 
@@ -30,7 +31,8 @@ const (
 	WrittenAtField, HeartbeatField = "written-at", "heartbeat"
 	// StatusProto is the version of the document. A reader refuses a newer one rather than guessing, and does nothing special for an older
 	// one: it is judged by what it says, and a document that does not say when it was written is never read as healthy (Evaluate).
-	StatusProto = 2
+	// 3 replaced the three lists (skipped, failing, reconciles) with one, States.
+	StatusProto = 3
 
 	// DefaultHeartbeat is how often the helper writes when nothing has changed.
 	DefaultHeartbeat = 10 * time.Minute
@@ -58,12 +60,15 @@ type Status struct {
 	WrittenAt instant.Time     `json:"written-at,omitzero"`
 	Heartbeat instant.Duration `json:"heartbeat,omitzero"`
 
-	// Skipped are volumes the helper will not copy, and why: a policy of a protocol it does not read, one that does not parse, a
-	// pool it cannot list. A volume that stops being copied for one of these must not do it silently.
-	Skipped []Skip `json:"skipped,omitempty"`
-	// Failing are copies that have failed since their last success.
-	Failing []Failing `json:"failing,omitempty"`
-	LastJob *LastJob  `json:"last-job,omitempty"`
+	// States is what the daemon found and since when, one record for each thing it keeps or watches (observe.Record): a derived file that is converged
+	// or blocked, a volume it will not copy (a policy of a protocol it does not read, one that does not parse, a pool it cannot list), a copy that has
+	// failed since its last success. It is the one list a reader iterates: health judges the backup records today (Evaluate), and what is said of the
+	// others is read by `plan` and `tink helper status`. Since is when a state began, not when it was last looked at.
+	States  []observe.Record `json:"states,omitempty"`
+	LastJob *LastJob         `json:"last-job,omitempty"`
+	// Events are the last few things the daemon did, newest last: a file it put back (healed) and an instance it restarted. A fixed set of words and no
+	// content, at most observe.MaxEvents.
+	Events []observe.Event `json:"events,omitempty"`
 
 	// Running and Queued are the jobs in the job directory right now, and Draining says the helper is not starting any: an upgrade
 	// waits for Running to reach zero.
@@ -71,25 +76,10 @@ type Status struct {
 	Queued   int  `json:"queued-jobs,omitempty"`
 	Draining bool `json:"draining,omitempty"`
 
-	// Reconciles say what the daemon's reconciler last found for each thing it keeps in step with the server, one entry per site. A person reads it to know
-	// whether the site's derived state is converged (`plan` says so in a line). Nil means the daemon does not reconcile, and an older one never wrote it.
-	Reconciles []Reconcile `json:"reconciles,omitempty"`
-
 	// Remotes are the Incus servers the helper can reach by name: its own host, and any added with `tink helper remote add`. A copy
 	// to a remote backup target is made through one of these, so a policy naming a remote that is not here fails on every attempt.
 	// Nil means the helper did not say (an older one, or its configuration could not be read); an empty list says it has none.
 	Remotes []Remote `json:"remotes"`
-}
-
-// Reconcile is what the reconciler last found for one thing it keeps in step with the server. State and Reason are short fixed words and never error
-// text. Since is when this state began, not when it was last checked: a reconcile that finds the same thing again changes nothing, so the status
-// document is not rewritten on every pass (a write costs an event and some Incus CPU).
-type Reconcile struct {
-	What   string       `json:"what"`           // what is kept: "dns"
-	Site   string       `json:"site,omitempty"` // "" is the unnamed site
-	State  string       `json:"state"`          // converged, blocked, skipped, failing
-	Reason string       `json:"reason,omitempty"`
-	Since  instant.Time `json:"since,omitzero"`
 }
 
 // Remote is one entry of the helper's Incus client configuration. It holds no credential: those are on the helper's config volume.
@@ -99,20 +89,17 @@ type Remote struct {
 	Project string `json:"project,omitempty"`
 }
 
-// Skip is a volume the helper leaves alone, and why.
-type Skip struct {
-	Volume string `json:"volume"`
-	Reason string `json:"reason"`
-}
-
-// Failing is a copy that is failing: how many attempts in a row, when the first of them failed, and when the latest did. Since is when
-// the run of failures began and stays through the retries; FailedAt is the last attempt and moves with each one.
-type Failing struct {
-	Volume   string       `json:"volume"`
-	Target   string       `json:"target"`
-	Count    int          `json:"count"`
-	Since    instant.Time `json:"since,omitzero"`
-	FailedAt instant.Time `json:"failed-at,omitzero"`
+// Backup returns the records of the volumes' copies that are in the given state, in the document's order. These are the ones health judges (Evaluate): a
+// volume the helper will not copy is a record with the what "backup" and the state skipped (the resource is the volume), and a copy that is failing is one
+// with the state failing, its target, the time of its latest failure and how many failures in a row.
+func (s Status) Backup(state string) []observe.Record {
+	var out []observe.Record
+	for _, r := range s.States {
+		if r.What == observe.WhatBackup && r.State == state {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // LastJob is the most recent finished job.
