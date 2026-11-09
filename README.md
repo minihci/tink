@@ -134,6 +134,7 @@ internal/imageconfig/ an OCI image's own ENTRYPOINT and CMD, read from its regis
 internal/compose/   tink import - a compose file in, a stack out (docs/import.md)
 internal/prepare/    the one preparation `plan` and `plan apply` share: load, secrets, connect, qualify images, build the levels, in that order
 internal/resolve/    tink plan / tink plan apply - see docs/resolver-architecture.md
+internal/applied/    the record of what tink applied to an object (user.tink.intent.applied): its document, what plan and apply remove because of it; imports only ownership - see docs/ownership.md
 internal/ownership/  the ownership stamps (user.tink.intent.stack and .resource): their keys, an object's address, and what an object's config says about whose it is; imports nothing here - see docs/ownership.md
 internal/observe/    the one record of what the daemon found (a Result, the stored state record, the events) and the one clock for how long it has been true, seeded from the stored status document; imports only instant and finding
 internal/finding/    the one shape for "something was noticed" (severity, reason, subject, detail), used by the join, the Headscale projection, the backup checks and plan; imports nothing here
