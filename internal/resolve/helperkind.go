@@ -132,10 +132,10 @@ func planHelper(server incus.InstanceServer, r Resource, now time.Time, opts Pla
 	if found.APIRoute() == helper.APIViaProxy {
 		p.Findings = append(p.Findings, finding.Notef(reasonHelperProxyAPI, "", "it reaches the host's API through a proxy device: a restricted project must allow proxy devices (a helper installed with `tink helper install --api-via network`, the default where the bridge allows it, has none)"))
 	}
-	if rep.Health != helper.Healthy {
-		for _, reason := range rep.Details() {
-			p.Findings = append(p.Findings, finding.Warnf(reasonHelperHealth, "", "the daemon helper is %s: %s", rep.Health.String(), reason))
-		}
+	// One warning for each finding that judges the helper, with its reason and its subject, and its detail for a person under the health. A plan warns
+	// about a helper that is down as it does about one that is degraded: it changes nothing either way, so it never blocks.
+	for _, f := range rep.Findings {
+		p.Findings = append(p.Findings, finding.Warnf(f.Reason, f.Subject, "the daemon helper is %s: %s", rep.Health, f.Detail))
 	}
 	if rep.Status != nil && rep.Status.Remotes != nil {
 		have := map[string]bool{}

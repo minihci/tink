@@ -125,6 +125,46 @@ func TestADegradedHelperStillTakesARun(t *testing.T) {
 	}
 }
 
+// The hand-off refuses only a helper that is down (and the other things it has always refused: no document, a job protocol it cannot speak, a drain). A
+// document the health work now calls degraded (a blocked or failing reconcile, a failed last job) changes `--check` and `plan` and nothing here: the
+// decision is the one a healthy helper gets, and the volumes named are the same.
+func TestTheNewDegradedCasesDoNotChangeTheHandoffDecision(t *testing.T) {
+	healthy := serverWith(t, []api.Instance{helperInstance("p", "helper", "Running", goodStatus(nil))}, policyOf(t, nasCopy()))
+	base, baseNote, baseErr := prepareHandoff(healthy, libItems(), nil, false, helperNow)
+	if base == nil || baseNote != "" || baseErr != nil {
+		t.Fatalf("a healthy helper takes the run: %+v %q %v", base, baseNote, baseErr)
+	}
+	for _, tc := range healthJudgementCases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := serverWith(t, []api.Instance{helperInstance("p", "helper", "Running", goodStatus(tc.mut))}, policyOf(t, nasCopy()))
+			if r := judgeHelpers(srv, mustFind(t, srv), helperNow)[0]; (r.Health == helper.Degraded) != (tc.code == 1) {
+				t.Fatalf("the case is not what it says: %s", r.Summary())
+			}
+			h, note, err := prepareHandoff(srv, libItems(), nil, false, helperNow)
+			if h == nil || note != "" || err != nil || strings.Join(h.Names, ",") != strings.Join(base.Names, ",") || h.Found.Label() != "p/helper" {
+				t.Errorf("%+v %q %v", h, note, err)
+			}
+			if _, _, err := prepareHandoff(srv, libItems(), nil, true, helperNow); err != nil {
+				t.Errorf("--helper takes it too: %v", err)
+			}
+		})
+	}
+	// and a helper that is down for a reason of the outside part is still refused, whatever else its document says
+	down := serverWith(t, []api.Instance{helperInstance("p", "helper", "Stopped", goodStatus(healthJudgementCases[0].mut))}, policyOf(t, nasCopy()))
+	if h, note, err := prepareHandoff(down, libItems(), nil, false, helperNow); h != nil || err != nil || !strings.Contains(note, "stopped") {
+		t.Errorf("%+v %q %v", h, note, err)
+	}
+}
+
+func mustFind(t *testing.T, srv incus.InstanceServer) []helper.Found {
+	t.Helper()
+	found, err := helper.Find(srv)
+	if err != nil || len(found) != 1 {
+		t.Fatalf("%v %v", found, err)
+	}
+	return found
+}
+
 func TestAPolicyThatIsNotWhatTheStackDeclaresIsRefused(t *testing.T) {
 	inst := []api.Instance{helperInstance("p", "helper", "Running", goodStatus(nil))}
 	for name, cfg := range map[string]map[string]string{

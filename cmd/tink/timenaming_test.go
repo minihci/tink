@@ -302,7 +302,7 @@ func TestTheDocumentsTinkWritesHaveNoUnderscoreKeys(t *testing.T) {
 		want []string // keys the document must carry, at any depth
 	}{
 		{"the status document", []byte(stored), []string{"job-proto", "policy-proto", "last-job", "running-jobs", "queued-jobs", "written-at", "heartbeat", "failed-at", "failures", "states", "events"}},
-		{"tink helper status --json", printed.Bytes(), []string{"instance-state", "exit-code", "status-volume", "status", "last-job", "job-proto"}},
+		{"tink helper status --json", printed.Bytes(), []string{"instance-state", "exit-code", "status-volume", "status", "last-job", "job-proto", "findings", "severity", "reason", "subject", "detail"}},
 		{"the backup run summary", summary, []string{"restore-point", "other-servers"}},
 		{"the backup-run job's arguments", args, []string{"dry-run"}},
 	}
