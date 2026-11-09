@@ -36,6 +36,10 @@ const ServerStackName = "server"
 // of another site are left out before their stamps are read, so a stamp of another site that cannot be read does not stop this one, and the number of
 // helpers and publishes that were left out is kept (Stack.Elsewhere) to be said by Build.
 //
+// An instance that is a copy of another, or that has no resource stamp yet (ownership.Classify), is read WITHOUT its stamps: a copy carries the publish, site and
+// derive stamps of the original, and counting them twice would make the join report the name as published by two instances. One finding says that the
+// stamps were ignored (Stack.Ignored; stamps.go). Its facts (role, legs, offers) are a person's and are read as they are.
+//
 // Build and the renderers are unchanged: the result is a []Stack like the file-based one, with every resource in its place.
 func FromServer(server incus.InstanceServer, site string) ([]Stack, error) {
 	return readServer(server, false, site)
@@ -77,6 +81,11 @@ func Overlay(base, over []Stack) []Stack {
 	out := make([]Stack, 0, len(base)+len(over))
 	for _, s := range base {
 		kept := Stack{Name: s.Name}
+		for _, ig := range s.Ignored {
+			if !declared[id{resolve.KindInstance, ig.Project, ig.Instance}] { // an instance the overlay declares is the overlay's word: what the server held of it is gone
+				kept.Ignored = append(kept.Ignored, ig)
+			}
+		}
 		for _, r := range s.Resources {
 			if taken[idOf(r)] {
 				continue
@@ -126,8 +135,16 @@ func readServer(server incus.InstanceServer, platformOnly bool, site string) ([]
 
 	var rs []resolve.Resource
 	var bad []StampProblem
+	var ignored []IgnoredStamps
 	elsewhere := map[string]Left{}
 	for _, in := range insts {
+		// the stamps of a copy, or of an instance with no resource stamp yet, are not read: everything below sees the instance without them
+		cfg, ig := readableStamps(in)
+		// said for the site the stamps were in: an instance of another site is not this view's business
+		if ig != nil && memberOf(in.Config, hasPublishStamp(in.Config) || hasDeriveStamp(in.Config), site) && !(platformOnly && strings.TrimSpace(in.Config[roleKey]) == "") {
+			ignored = append(ignored, *ig)
+		}
+		in.Config = cfg
 		if platformOnly && strings.TrimSpace(in.Config[roleKey]) == "" {
 			continue
 		}
@@ -179,7 +196,7 @@ func readServer(server incus.InstanceServer, platformOnly bool, site string) ([]
 		}
 		rs = append(rs, resolve.Resource{Kind: resolve.KindNetwork, Name: n.Name, Config: copyStrings(n.Config)})
 	}
-	st := Stack{Name: ServerStackName, Resources: rs}
+	st := Stack{Name: ServerStackName, Resources: rs, Ignored: ignored}
 	if len(elsewhere) > 0 {
 		st.Elsewhere = elsewhere
 	}

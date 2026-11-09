@@ -3,6 +3,7 @@ package join
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -60,10 +61,13 @@ type StampedFile struct {
 // DerivedFromServer reads the stamps of the derived files (resolve.DeriveStampPrefix) from the instances of one site. A stamp that cannot be read is never
 // skipped or repaired: it is returned as a problem beside the files that could be read, and the caller blocks that file and keeps the others (they are
 // independent, unlike the publish stamps, which together make one rendering).
-func DerivedFromServer(server incus.InstanceServer, site string) ([]StampedFile, []StampProblem, error) {
+//
+// The stamps of an instance that is a copy of another, or that has no resource stamp yet, are not read (readableStamps): a copy of an instance that carries a
+// derived file would have the file written, and be restarted, beside the original. The third result is one finding for each such instance.
+func DerivedFromServer(server incus.InstanceServer, site string) ([]StampedFile, []StampProblem, []finding.Finding, error) {
 	insts, err := server.GetInstancesAllProjects(api.InstanceTypeAny)
 	if err != nil {
-		return nil, nil, fmt.Errorf("listing the instances of every project: %w", err)
+		return nil, nil, nil, fmt.Errorf("listing the instances of every project: %w", err)
 	}
 	sort.Slice(insts, func(i, j int) bool {
 		if insts[i].Project != insts[j].Project {
@@ -73,7 +77,13 @@ func DerivedFromServer(server incus.InstanceServer, site string) ([]StampedFile,
 	})
 	var files []StampedFile
 	var bad []StampProblem
+	var notes []finding.Finding
 	for _, in := range insts {
+		cfg, ig := readableStamps(in)
+		if ig != nil && hasDeriveStamp(in.Config) && memberOf(in.Config, true, site) {
+			notes = append(notes, ig.Finding) // said for the site the stamps were in: an instance of another site is not this view's business
+		}
+		in.Config = cfg
 		if !hasDeriveStamp(in.Config) || !memberOf(in.Config, true, site) {
 			continue
 		}
@@ -93,7 +103,7 @@ func DerivedFromServer(server incus.InstanceServer, site string) ([]StampedFile,
 			files = append(files, StampedFile{DerivedFile: f, Status: in.Status})
 		}
 	}
-	return files, bad, nil
+	return files, bad, notes, nil
 }
 
 // ReconcileDerived reads one site from the server and makes each of its stamped derived files equal to the join's rendering of what the site publishes:
@@ -113,7 +123,7 @@ func DerivedFromServer(server incus.InstanceServer, site string) ([]StampedFile,
 // A missing file is blocked for a region file, which is the person's file with a region in it and has no skeleton to create, and created for the mesh view,
 // which is a whole file that tink owns, as `plan` and `join apply dns` create theirs. The directory it goes in must be there: a write into a missing one is failing.
 func ReconcileDerived(server incus.InstanceServer, f Files, r Restarter, site string) []DerivedOutcome {
-	files, problems, err := DerivedFromServer(server, site)
+	files, problems, ignored, err := DerivedFromServer(server, site)
 	if err != nil {
 		return []DerivedOutcome{{Site: site, State: DerivedFailing, Reason: "the server could not be read", Err: err}}
 	}
@@ -124,7 +134,7 @@ func ReconcileDerived(server incus.InstanceServer, f Files, r Restarter, site st
 	}
 	if len(files) == 0 {
 		if len(out) == 0 {
-			out = append(out, DerivedOutcome{Site: site, State: DerivedSkipped})
+			out = append(out, DerivedOutcome{Site: site, State: DerivedSkipped, Findings: addMissing(nil, ignored)})
 		}
 		return out
 	}
@@ -155,6 +165,7 @@ func ReconcileDerived(server incus.InstanceServer, f Files, r Restarter, site st
 	for _, fi := range res.Findings {
 		findings = append(findings, fi.String())
 	}
+	findings = addMissing(findings, ignored) // the join says each instance whose stamps were ignored; this says it too if the join was not asked about it
 	if res.Errors() > 0 {
 		return blockAll("the join has errors", errors.New("the join has errors"), findings)
 	}
@@ -166,6 +177,17 @@ func ReconcileDerived(server incus.InstanceServer, f Files, r Restarter, site st
 		out = append(out, o)
 	}
 	return out
+}
+
+// addMissing appends the findings that are not in lines yet, as the lines a log prints.
+func addMissing(lines []string, fs []finding.Finding) []string {
+	for _, f := range fs {
+		s := f.String()
+		if !slices.Contains(lines, s) {
+			lines = append(lines, s)
+		}
+	}
+	return lines
 }
 
 // reconcileDerivedFile does one stamped file. The caller has checked that the join has no error.
