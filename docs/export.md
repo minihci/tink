@@ -25,7 +25,7 @@ An Incus instance carries about twenty-five config keys for every one a person s
 | `environment.HOME=/root`, `environment.TERM=xterm` | left out: set by Incus at creation |
 | `ephemeral` | `ephemeral: true` |
 | the instance's own `devices`, `profiles`, every other `config` key | kept (`root` comes from the profile and is not the instance's) |
-| `user.tink.intent.stack` (the ownership stamp, on the project, a volume or the instance) | never written, for any kind: it says which stack made the object, which a stack does not declare, and `validate` refuses it in `config:` ([ownership.md](ownership.md)) |
+| `user.tink.intent.stack` and `user.tink.intent.resource` (the ownership stamps, on the project, a volume or the instance) | never written, for any kind: they say which stack made the object and what it was made for, which a stack does not declare, and `validate` refuses them in `config:` ([ownership.md](ownership.md)) |
 | `user.tink.outcome.run.command` | not config: written as a `# created by:` comment |
 | every other key under `user.tink.intent.` or `user.tink.outcome.` (an exec's `trigger-hash`, the helper's marker, status and pointer keys, a volume's copy and verification stamps) | never written, for any kind: they record what tink derived or what ran on this server, which no stack declares ([glossary](glossary.md#key-classes)) |
 | the facts (`user.tink.role`, `user.tink.leg.<nic>`, `user.tink.offer.<name>.*`, `user.tink.dns.zone`) | kept: a person set them |
