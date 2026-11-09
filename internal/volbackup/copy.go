@@ -14,6 +14,7 @@ import (
 	"github.com/minihci/tink/internal/backupmeta"
 	"github.com/minihci/tink/internal/incusapi"
 	"github.com/minihci/tink/internal/instant"
+	"github.com/minihci/tink/internal/ownership"
 )
 
 // Target is where copies of a volume go: a storage pool on THIS server (a second disk, or the
@@ -164,9 +165,9 @@ func copyTo(server incus.InstanceServer, v Volume, t Target, opts CopyOptions) (
 	if err := copyIntoRestorePoint(dst, s, v, t, res, src.ContentType, inProgress); err != nil {
 		return res, err
 	}
-	// PolicyKey describes the volume this was copied FROM; a restore point must not carry it, or a scheduler that lists
-	// volumes would copy the copy.
-	if err := ensureMarkers(dst, t.pool(), res.Volume, markers, []string{backupmeta.MarkerPartialOf, backupmeta.MarkerPartialStartedAt, backupmeta.PolicyKey}); err != nil {
+	// What the snapshot carried from the volume it was copied FROM is dropped, except the markers: the policy describes that volume (a scheduler that
+	// lists volumes would copy the copy), and its stamps record what happened to it.
+	if err := ensureMarkers(dst, t.pool(), res.Volume, markers); err != nil {
 		return res, err
 	}
 
@@ -296,8 +297,9 @@ func tidyAfterCopy(dst incus.InstanceServer, v Volume, t Target, opts CopyOption
 }
 
 // ensureMarkers makes sure the restore point carries its markers: Incus may not apply the config
-// given on a copy from a snapshot, and the markers are what lets pruning and restore trust the volume.
-func ensureMarkers(s incus.InstanceServer, pool, name string, want map[string]string, remove []string) error {
+// given on a copy from a snapshot, and the markers are what lets pruning and restore trust the volume. It also removes what a copy does not keep
+// (dropOnCopy), which takes the in-progress mark with it, and nothing it was just told to set.
+func ensureMarkers(s incus.InstanceServer, pool, name string, want map[string]string) error {
 	return incusapi.RetryOnConflict(func() error {
 		vol, etag, err := s.GetStoragePoolVolume(pool, "custom", name)
 		if err != nil {
@@ -307,11 +309,13 @@ func ensureMarkers(s incus.InstanceServer, pool, name string, want map[string]st
 		if put.Config == nil {
 			put.Config = map[string]string{}
 		}
+		for k := range put.Config {
+			if dropOnCopy(k) {
+				delete(put.Config, k)
+			}
+		}
 		for k, val := range want {
 			put.Config[k] = val
-		}
-		for _, k := range remove {
-			delete(put.Config, k)
 		}
 		if err := s.UpdateStoragePoolVolume(pool, "custom", name, put, etag); err != nil {
 			return fmt.Errorf("marking the new restore point %s/%s: %w", pool, name, err)
@@ -508,21 +512,18 @@ func copyFromTarget(s, into incus.InstanceServer, v Volume, t Target, rp Restore
 		}
 		return fmt.Errorf("copying %s/%s to %s/%s: %w%s", t.where(), rp.Volume, v.pool(), newName, err, note)
 	}
-	return scrubMarkers(into, v.pool(), newName)
+	return scrubCopied(into, v.pool(), newName)
 }
 
-// scrubMarkers removes the copy markers, and the copy policy, from a volume made from a restore point.
-func scrubMarkers(s incus.InstanceServer, pool, name string) error {
-	return scrubConfig(s, pool, name, func(k string) bool {
-		return strings.HasPrefix(k, "user.tink.backup.copy-") || k == backupmeta.PolicyKey
-	})
-}
+// dropOnCopy says that a config key of a volume must not travel to a volume tink makes from it (ownership.DroppedOnCopy): what happened to the volume
+// it was copied from (its outcomes: the copy markers and stamps, the verification stamps), the copy policy, which says what is to happen to that volume
+// (a copy that inherited it would be scheduled for backup in its turn), and the record of what was applied to it. The owner stamp and the resource
+// stamp are kept, so a copy reads as a copy.
+func dropOnCopy(k string) bool { return ownership.DroppedOnCopy(k, backupmeta.PolicyKey) }
 
-// scrubPolicy removes the copy policy from a volume made by copying another volume, or one of its snapshots: the
-// policy says what is to happen to the volume it was written on, and a copy that inherited it would be scheduled for
-// backup in its turn.
-func scrubPolicy(s incus.InstanceServer, pool, name string) error {
-	return scrubConfig(s, pool, name, func(k string) bool { return k == backupmeta.PolicyKey })
+// scrubCopied removes what a copy does not keep (dropOnCopy) from a volume made from a restore point, or from a volume or one of its snapshots.
+func scrubCopied(s incus.InstanceServer, pool, name string) error {
+	return scrubConfig(s, pool, name, dropOnCopy)
 }
 
 func scrubConfig(s incus.InstanceServer, pool, name string, drop func(string) bool) error {

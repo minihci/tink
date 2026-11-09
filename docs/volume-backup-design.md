@@ -196,7 +196,7 @@ Something has to run `copy --refresh` on `schedule`. The natural home is
 `tink daemon`, which already runs a periodic loop for ingress reconciliation; or a
 `tink backup run` one-shot driven by cron, like `ingress reconcile` is today. Either
 way tink stays stateless: it reads each target's live state to decide what is due, and
-records outcomes as `user.tink.backup.*` volume config keys, the same precedent as
+records outcomes as `user.tink.outcome.backup.*` volume config keys, the same precedent as
 `user.tink.ingress.*` (see [Verify](#verify)).
 
 *Built both ways:* `tink backup run --due` for cron or a timer, and `tink daemon run --jobs DIR` as a scheduler ([daemon-jobs.md](daemon-jobs.md)). The
@@ -241,7 +241,7 @@ tink backup verify <volume> [--from <target>]
 2. Optionally run a user-declared check inside a disposable instance with the scratch
    volume mounted read-only (e.g. `pg_controldata`, a file count, a checksum manifest).
 3. Delete the scratch volume. Stamp the *source* volume with
-   `user.tink.backup.verified-at` / `user.tink.backup.verified-from`.
+   `user.tink.outcome.backup.verified-at` / `user.tink.outcome.backup.verified-from`.
    Every instant a stamp holds is written the glossary's way ([Time words](glossary.md#time-words)): RFC 3339, UTC, whole seconds, and named
    `<past-participle>-at`. The per-target stamps on the source volume are `copy.<target>.copied-at` (the last success) and, while a copy is
    failing, `failed-at` (the last attempt), `failing-since` (when the run of failures began) and `failures` (how many in a row).
@@ -300,7 +300,7 @@ Ordered so each step is useful alone, and the Incus-supported path comes first.
      consistent content but deletes the target's own snapshots. A mirror cannot keep longer history than its source and propagates
      deletion or damage into the backup. So each run copies a fresh snapshot into a **new, separately named volume** and tink prunes by
      `retain`. Cost: a full copy per run.
-   - **Markers** on every restore point (`user.tink.backup.copy-of` = `project/pool/volume`, `copied-at`, `copy-target`, `copy-snapshot`; an in-progress copy carries `copy-partial-of` and `copy-partial-started-at` instead) are what pruning
+   - **Markers** on every restore point (`user.tink.outcome.backup.copy-of` = `project/pool/volume`, `copied-at`, `copy-target`, `copy-snapshot`; an in-progress copy carries `copy-partial-of` and `copy-partial-started-at` instead) are what pruning
      and restore trust; a volume without the marker for exactly that volume is never listed, pruned or restored from.
    - **Restoring from a target does not require the source volume**, because that is the case it exists for; `verify` then cannot record
      the result and says so.
@@ -316,7 +316,7 @@ Ordered so each step is useful alone, and the Incus-supported path comes first.
      Restoring a restore point *into* a TrueNAS pool works too (a copy from a volume, not from a snapshot).
    - Why: the bug is `pool.dataset.update` failing when sent `user_properties` for a dataset that has `comments`/`managedby`. Incus
      only does that after cloning a snapshot **within one TrueNAS pool**. Tink never does: copies between pools are not clones, and
-     `UpdateVolume` touches TrueNAS only for `size`/`truenas.use_refquota`, everything else (including the `user.tink.backup.*`
+     `UpdateVolume` touches TrueNAS only for `size`/`truenas.use_refquota`, everything else (including the `user.tink.outcome.backup.*`
      markers) lives in Incus's own database (read in the Incus 7.4 driver; confirmed live on 7.5.1).
    - **What does fail on stock 25.10:** the local, tier-1 `tink backup restore VOLUME --snapshot S` of a volume that *lives* on a TrueNAS
      pool, because restoring a snapshot into the same pool is exactly that clone. This is the upstream bug, not tink; the error is

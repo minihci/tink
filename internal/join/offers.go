@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/minihci/tink/internal/ownership"
 	"github.com/minihci/tink/internal/resolve"
 )
 
@@ -14,9 +15,9 @@ import (
 // app PROVIDES, never who may use it: that is a publish's allow list.
 const (
 	roleKey    = resolve.RoleKey
-	offerKey   = "user.tink.offer."
-	legKey     = "user.tink.leg."
-	zoneKey    = "user.tink.dns.zone"
+	offerKey   = ownership.OfferPrefix
+	legKey     = ownership.LegPrefix
+	zoneKey    = ownership.DNSZoneKey
 	protoHTTP  = "http"
 	maxPortNum = 65535
 )

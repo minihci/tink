@@ -394,7 +394,7 @@ An instance with image drift is only converged by apply if its YAML
 says on_image_change: rebuild; see docs/image-updates.md.
 
 Every object apply creates for a stack that has a name (a kind: stack document)
-carries the stack's name in user.tink.stack from the creation request on. One that
+carries the stack's name in user.tink.intent.stack from the creation request on. One that
 existed before is not touched; "tink plan" says how many declared objects have no
 stamp. --adopt (or "ownership: adopt-on-apply" in the kind: stack document) stamps
 them first, in one pass that writes that one key and nothing else: no instance is
@@ -431,7 +431,7 @@ restarted, whatever its restart: says. See docs/ownership.md.`, resolve.DefaultF
 			return err
 		},
 	}
-	cmd.Flags().BoolVar(&adopt, "adopt", false, "first stamp the declared objects that exist and have no ownership stamp (user.tink.stack) with the stack's name, writing that one key and restarting nothing; the stack must have a name")
+	cmd.Flags().BoolVar(&adopt, "adopt", false, "first stamp the declared objects that exist and have no ownership stamp (user.tink.intent.stack) with the stack's name, writing that one key and restarting nothing; the stack must have a name")
 	return cmd
 }
 
@@ -584,9 +584,9 @@ its own host.`,
 	cmd.Flags().BoolVar(&reconcileDerived, "reconcile-derived", false, "also keep every stamped derived file (the proxy's routes, the sign-on helper's rules, the dns records, the mesh view) in step with the published names, woken by Incus events; not with --reconcile-dns (off by default; see docs/helper.md)")
 	cmd.Flags().StringSliceVar(&reconcileSites, "reconcile-site", nil, "the site --reconcile-dns or --reconcile-derived keeps; repeat for more (default: the unnamed site)")
 	cmd.Flags().DurationVar(&reconcileResync, "reconcile-resync", 5*time.Minute, "the longest --reconcile-dns or --reconcile-derived goes between full passes, whatever the events say")
-	cmd.Flags().StringVar(&statusVolume, "status-volume", "", "publish a status document on this custom volume's config (user.tink.helper.status), so `tink helper status` and `plan` can see this daemon; the helper's instance points at the volume (user.tink.helper.status-volume), and the helper holds no right to edit an instance")
+	cmd.Flags().StringVar(&statusVolume, "status-volume", "", "publish a status document on this custom volume's config (user.tink.outcome.helper.status), so `tink helper status` and `plan` can see this daemon; the helper's instance points at the volume (user.tink.outcome.helper.status-volume), and the helper holds no right to edit an instance")
 	cmd.Flags().StringVar(&statusPool, "status-pool", "default", "the storage pool of --status-volume")
-	cmd.Flags().StringVar(&statusInstance, "status-instance", "", "publish a status document on this instance's own config instead (user.tink.helper.status): the way helpers installed before the status volume do; not with --status-volume")
+	cmd.Flags().StringVar(&statusInstance, "status-instance", "", "publish a status document on this instance's own config instead (user.tink.outcome.helper.status): the way helpers installed before the status volume do; not with --status-volume")
 	cmd.Flags().StringVar(&statusProject, "status-project", "", "the project of --status-volume, or of --status-instance (default: the connection's own)")
 	cmd.Flags().DurationVar(&statusHeartbeat, "status-heartbeat", helper.DefaultHeartbeat, "how often the status document is written when nothing in it has changed")
 	return cmd

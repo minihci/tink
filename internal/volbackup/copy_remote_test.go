@@ -433,7 +433,7 @@ func TestRestoreFromARemoteScrubsMarkersAndNeedsNoSourceVolume(t *testing.T) {
 		t.Errorf("restore from a remote must relay too: %v", got)
 	}
 	for k := range local.vols["default/lib-recovered"].Config {
-		if strings.HasPrefix(k, "user.tink.backup.copy-") {
+		if strings.HasPrefix(k, "user.tink.outcome.backup.copy-") {
 			t.Errorf("the restored volume must not look like a restore point, found %s", k)
 		}
 	}

@@ -87,7 +87,7 @@ func fromServer(t *testing.T, f *serverFake) Result {
 // from the files renders. The expected text is the hand-written golden files, not output of this code.
 func TestTheServersStampsJoinToTheSamePiecesAsTheFiles(t *testing.T) {
 	f := serverOf(t, load(t))
-	if _, ok := f.whoami(t).Config["user.tink.publish.whoami-admin"]; !ok {
+	if _, ok := f.whoami(t).Config["user.tink.intent.publish.whoami-admin"]; !ok {
 		t.Fatalf("plan did not stamp the publish onto the instance: %v", f.whoami(t).Config)
 	}
 	res := fromServer(t, f)
@@ -131,7 +131,7 @@ func TestFromServerReadsTheStoredConfigAndDevicesNotTheExpandedOnes(t *testing.T
 	f := serverOf(t, load(t))
 	// what a real listing also carries: the expanded view, which already holds the profile's devices
 	w := f.whoami(t)
-	w.ExpandedConfig = map[string]string{"user.tink.publish.expanded": "garbage"}
+	w.ExpandedConfig = map[string]string{"user.tink.intent.publish.expanded": "garbage"}
 	w.ExpandedDevices = map[string]map[string]string{"eth9": {"type": "nic", "network": "nowhere"}}
 	if res := fromServer(t, f); len(res.Findings) != 0 || res.DNS != golden(t, "dns") {
 		t.Errorf("the expanded view leaked into the join: %v", res.Findings)
@@ -143,14 +143,14 @@ func TestAStampThatCannotBeReadIsAnErrorNamingTheInstanceAndNothingIsJoined(t *t
 	cases := []struct {
 		name, key, value, want string
 	}{
-		{"not JSON", "user.tink.publish.whoami", `family`, "not a JSON object"},
-		{"empty", "user.tink.publish.whoami", ``, "not a JSON object"},
-		{"a field it should not have", "user.tink.publish.whoami", `{"allow":["family"],"offer":"web","instance":"other"}`, `"instance" is not a field`},
-		{"no allow", "user.tink.publish.whoami", `{"offer":"web"}`, `no "allow"`},
-		{"nobody may open it", "user.tink.publish.whoami", `{"allow":[],"offer":"web"}`, "needs allow"},
-		{"a typed subject", "user.tink.publish.whoami", `{"allow":["group:family"],"offer":"web"}`, "plain group names"},
-		{"a label that is not a host label", "user.tink.publish.Who_Am_I", `{"allow":["family"],"offer":"web"}`, "host label"},
-		{"an offer that is not a name", "user.tink.publish.whoami", `{"allow":["family"],"offer":"Web!"}`, "is not an offer name"},
+		{"not JSON", "user.tink.intent.publish.whoami", `family`, "not a JSON object"},
+		{"empty", "user.tink.intent.publish.whoami", ``, "not a JSON object"},
+		{"a field it should not have", "user.tink.intent.publish.whoami", `{"allow":["family"],"offer":"web","instance":"other"}`, `"instance" is not a field`},
+		{"no allow", "user.tink.intent.publish.whoami", `{"offer":"web"}`, `no "allow"`},
+		{"nobody may open it", "user.tink.intent.publish.whoami", `{"allow":[],"offer":"web"}`, "needs allow"},
+		{"a typed subject", "user.tink.intent.publish.whoami", `{"allow":["group:family"],"offer":"web"}`, "plain group names"},
+		{"a label that is not a host label", "user.tink.intent.publish.Who_Am_I", `{"allow":["family"],"offer":"web"}`, "host label"},
+		{"an offer that is not a name", "user.tink.intent.publish.whoami", `{"allow":["family"],"offer":"Web!"}`, "is not an offer name"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -191,15 +191,15 @@ func TestEveryBadStampIsReportedNotOnlyTheFirstAndAGoodOneDoesNotRescueThem(t *t
 	for k, v := range f.whoami(t).Config {
 		cfg[k] = v
 	}
-	cfg["user.tink.publish.zzz"] = `{"allow":"family","offer":"web"}`
-	cfg["user.tink.publish.aaa"] = `nope`
+	cfg["user.tink.intent.publish.zzz"] = `{"allow":"family","offer":"web"}`
+	cfg["user.tink.intent.publish.aaa"] = `nope`
 	f.whoami(t).Config = cfg // the two good stamps are still there
 	_, err := FromServer(f, "")
 	var se *StampError
 	if !errors.As(err, &se) || len(se.Problems) != 2 {
 		t.Fatalf("err = %v", err)
 	}
-	if se.Problems[0].Key != "user.tink.publish.aaa" || se.Problems[1].Key != "user.tink.publish.zzz" {
+	if se.Problems[0].Key != "user.tink.intent.publish.aaa" || se.Problems[1].Key != "user.tink.intent.publish.zzz" {
 		t.Errorf("problems are not in a stable order: %+v", se.Problems)
 	}
 }
@@ -208,7 +208,7 @@ func TestTwoInstancesStampingOneNameIsTheJoinsOwnDuplicateError(t *testing.T) {
 	f := serverOf(t, load(t))
 	for i := range f.instances {
 		if f.instances[i].Name == "sso" {
-			cfg := map[string]string{"user.tink.publish.whoami": `{"allow":["family"],"offer":"web"}`}
+			cfg := map[string]string{"user.tink.intent.publish.whoami": `{"allow":["family"],"offer":"web"}`}
 			for k, v := range f.instances[i].Config {
 				cfg[k] = v
 			}
@@ -295,7 +295,7 @@ func TestAStampBelongsToTheInstanceAndProjectThatCarryIt(t *testing.T) {
 	f.instances = append(f.instances, api.Instance{Name: "whoami", Project: "other", InstancePut: api.InstancePut{
 		Config: map[string]string{
 			"user.tink.offer.web.port": "8080", "user.tink.offer.web.proto": "http",
-			"user.tink.publish.other-site": `{"allow":["kids"],"offer":"web"}`,
+			"user.tink.intent.publish.other-site": `{"allow":["kids"],"offer":"web"}`,
 		},
 		Devices: map[string]map[string]string{"eth0": {"type": "nic", "network": "canary0", "ipv4.address": "198.51.100.11"}},
 	}})

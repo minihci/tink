@@ -73,10 +73,14 @@ func (e Extras) Describe() string {
 	return line
 }
 
-// tinkOwnKeyPrefixes are config keys tink itself writes as state, not as something a person declared: the helper's status document, the
-// record of the command `tink run` was given, the hash a `kind: exec` with triggers stores to know it already ran, the ownership stamp, and the stamps of `kind: publish` and of a derived `kind: file`
-// (a stamp the stack derives is declared, and one it no longer derives is a planned removal, so neither is an extra). They are never "extras".
-var tinkOwnKeyPrefixes = []string{"user.tink.helper.", "user.tink.run.", "user.tink.exec.", PublishStampPrefix, DeriveStampPrefix, SiteKey, ownership.Key}
+// notAnExtra says that a config key is never reported as something the stack does not declare, whatever kind of object carries it: Incus's own state
+// (volatile.*) and the keys tink itself writes, which are intent (the owner stamp, the stamps of a publish, a site and a derived file: one the stack
+// derives is declared, and one it no longer derives is a planned removal, so neither is an extra) and outcomes (a copy's stamps, an exec's hash, the helper's
+// status). A fact that is on the object and not declared (user.tink.role set by hand) is reported, like any other key a person set. The class of a key
+// is read from its prefix, in internal/ownership.
+func notAnExtra(k string) bool {
+	return strings.HasPrefix(k, "volatile.") || ownership.WrittenByTink(k)
+}
 
 // undeclaredExtras compares the live instance, already reduced to what a person set (see instanceExtras), with the declared one.
 func undeclaredExtras(live, declared Resource) Extras {
@@ -86,15 +90,9 @@ func undeclaredExtras(live, declared Resource) Extras {
 			e.Devices = append(e.Devices, fmt.Sprintf("%s (%s)", name, dev["type"]))
 		}
 	}
-KeyLoop:
 	for k := range live.Config {
-		if _, ok := declared.Config[k]; ok {
+		if _, ok := declared.Config[k]; ok || notAnExtra(k) {
 			continue
-		}
-		for _, p := range tinkOwnKeyPrefixes {
-			if strings.HasPrefix(k, p) {
-				continue KeyLoop
-			}
 		}
 		e.Config = append(e.Config, k)
 	}
@@ -176,11 +174,6 @@ func (o PlanOptions) WithExtras() PlanOptions {
 	return o
 }
 
-// otherExtraPrefixes are config keys that are never a person's on a profile, a volume, a network or a project: Incus's own state, and tink's
-// own (a volume's backup policy and copy markers, its stack pointer). An instance has its own, narrower list (tinkOwnKeyPrefixes), because
-// it is reduced the way `tink export` does it.
-var otherExtraPrefixes = []string{"volatile.", "user.tink."}
-
 // projectFeatureDefaults are the values Incus gives a project's features.* keys when it creates one: it writes every one of them, so a
 // project that declares only some of them still carries the rest, and listing those would be listing what nobody set. Only a value that is
 // not the default counts as something a person did.
@@ -196,15 +189,9 @@ var projectFeatureDefaults = map[string]string{
 // undeclaredConfig returns the names of the keys in live that declared does not have, sorted, leaving out those skip says are not a person's.
 func undeclaredConfig(live, declared map[string]string, skip func(k, v string) bool) []string {
 	var keys []string
-KeyLoop:
 	for k, v := range live {
-		if _, ok := declared[k]; ok {
+		if _, ok := declared[k]; ok || notAnExtra(k) {
 			continue
-		}
-		for _, p := range otherExtraPrefixes {
-			if strings.HasPrefix(k, p) {
-				continue KeyLoop
-			}
 		}
 		if skip != nil && skip(k, v) {
 			continue

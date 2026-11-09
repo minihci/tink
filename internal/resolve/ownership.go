@@ -10,7 +10,7 @@ import (
 
 // Ownership stamps, phase 1 (issue #127; the design is #133, the notes docs/ownership.md).
 //
-// Every object tink CREATES for a named stack carries `user.tink.stack: <stack name>` from the creation request on (createOne, createInstance). An
+// Every object tink CREATES for a named stack carries `user.tink.intent.stack: <stack name>` from the creation request on (createOne, createInstance). An
 // object that was there already is not touched by an ordinary apply: whose it is is a separate dimension of its plan (StampState), read from the
 // object as the plan read it, that is never a change line, never an action and never an exit status. `tink plan` says in one line how many declared
 // objects have no stamp; `tink plan apply --adopt` (or `ownership: adopt-on-apply` on the `kind: stack`) stamps them in one narrow pass (adopt.go) that
@@ -67,19 +67,60 @@ func withoutOwnershipKey(config map[string]string) map[string]string {
 	return out
 }
 
-// validateStampKey refuses the stamp in a declaration, for every kind that has a config or an image's properties: tink writes the key itself, from the
-// stack's name, so a second source for it could only disagree. To take over an object that already exists, adopt it.
-func validateStampKey(r Resource) error {
+// withoutTinkState returns a copy of config without the keys tink wrote itself (intent and outcomes, internal/ownership), which are state and not
+// something a stack declares: the ownership stamp, above all.
+func withoutTinkState(config map[string]string) map[string]string {
+	out := make(map[string]string, len(config))
+	for k, v := range config {
+		if !ownership.WrittenByTink(k) {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// validateStateKeys refuses, for every kind that has a config or an image's properties, any key that tink writes itself: intent (what it derives from
+// the stack: the owner stamp, the publish, site and derive stamps, the copy policy) and outcome (what ran: a copy's stamps, an exec's hash, the helper's
+// marker). A second source for such a key could only disagree with the first. Facts (user.tink.role and the rest of the short list in internal/ownership)
+// are a person's, and pass. To take over an object that already exists, adopt it.
+func validateStateKeys(r Resource) error {
 	for _, m := range []struct {
 		field string
 		keys  map[string]string
 	}{{"config", r.Config}, {"properties", r.Properties}} {
-		if _, ok := m.keys[ownership.Key]; ok {
-			return fmt.Errorf("%s %q: %s.%s is written by tink itself, from the stack's name (the kind: stack document): it records which stack an object belongs to, so it cannot be declared "+
-				"(an object that was made before stamps is stamped by `tink plan apply --adopt`)", r.Kind, r.Name, m.field, ownership.Key)
+		for _, k := range sortedKeys(m.keys) {
+			if ownership.WrittenByTink(k) {
+				return stateKeyError(r, m.field, k)
+			}
 		}
 	}
 	return nil
+}
+
+// stateKeyError says why k may not be declared, and where the declaration it comes from lives where there is one: the stamps of a publish, of a derived
+// file and of a site are written from a document of the stack (instances and network ACLs), and the owner stamp from the stack's name.
+func stateKeyError(r Resource, field, k string) error {
+	if field == "config" && (r.Kind == KindInstance || r.Kind == KindNetworkACL) {
+		switch {
+		case r.Kind == KindInstance && k == SiteKey:
+			return fmt.Errorf("resource %q: config %s is the site stamp, which tink owns: it writes it from `site:` on the stack's kind: stack document (on the instances that state a role or are published) and removes it where the stack no longer derives it, so declare the site and not the key", r.Name, k)
+		case strings.HasPrefix(k, DeriveStampPrefix) && r.Kind == KindNetworkACL:
+			return fmt.Errorf("resource %q: config %s is under %s, which tink owns: it writes that key from derive_ingress: true and removes it when the stack no longer derives the rules, so declare derive_ingress and not the key", r.Name, k, DeriveStampPrefix)
+		case strings.HasPrefix(k, DeriveStampPrefix):
+			return fmt.Errorf("resource %q: config %s is under %s, which tink owns: it writes those keys from the kind: file documents of the stack that say derive: and removes the ones no file derives, so declare the file and not the key", r.Name, k, DeriveStampPrefix)
+		case strings.HasPrefix(k, PublishStampPrefix) && r.Kind == KindInstance:
+			return fmt.Errorf("resource %q: config %s is under %s, which tink owns: it writes those keys from the kind: publish documents of the stack and removes the ones no publish derives, so declare the publish and not the key", r.Name, k, PublishStampPrefix)
+		}
+	}
+	if k == ownership.Key {
+		return fmt.Errorf("%s %q: %s.%s is written by tink itself, from the stack's name (the kind: stack document): it records which stack an object belongs to, so it cannot be declared "+
+			"(an object that was made before stamps is stamped by `tink plan apply --adopt`)", r.Kind, r.Name, field, k)
+	}
+	what := "from the stack's declaration"
+	if ownership.ClassOf(k) == ownership.Outcome {
+		what = "to record what ran"
+	}
+	return fmt.Errorf("%s %q: %s.%s is written by tink itself, %s (every key under %s or %s is): it cannot be declared", r.Kind, r.Name, field, k, what, ownership.IntentPrefix, ownership.OutcomePrefix)
 }
 
 // Ownership modes of a `kind: stack` (its `ownership:` field).

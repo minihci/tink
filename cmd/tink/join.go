@@ -38,7 +38,7 @@ and says which groups may use it. The helpers state the rest of what the join ne
 helper, user.tink.leg.<nic>: serves|mesh|discovery on the ingress helper's NICs. docs/join.md has a complete example.
 
 join itself only prints. Given files it reads those files and nothing else (no server, no credential, no secret). With --from-server it reads the
-SERVER instead and the files not at all: the instances, profiles and networks as they are, and the publishes as the stamps (user.tink.publish.<name>)
+SERVER instead and the files not at all: the instances, profiles and networks as they are, and the publishes as the stamps (user.tink.intent.publish.<name>)
 that "tink plan apply" wrote onto the instances. That is what the daemon helper will read. It is read-only either way. Writing a rendering to the
 helper that serves it is "tink join apply" (only dns so far). The output is for comparing with the pieces that are written by hand today, and --only
 prints one section alone so a diff is easy:

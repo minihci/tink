@@ -311,9 +311,9 @@ func TestJoinFromServer_AStampThatCannotBeReadPrintsNothingAndNamesTheInstance(t
 	s := newJoinServer(t)
 	for i := range s.instances {
 		if s.instances[i].Name == "whoami" {
-			cfg := map[string]string{"user.tink.publish.whoami": `{"allow":["family"]`}
+			cfg := map[string]string{"user.tink.intent.publish.whoami": `{"allow":["family"]`}
 			for k, v := range s.instances[i].Config {
-				if k != "user.tink.publish.whoami" {
+				if k != "user.tink.intent.publish.whoami" {
 					cfg[k] = v
 				}
 			}
@@ -327,7 +327,7 @@ func TestJoinFromServer_AStampThatCannotBeReadPrintsNothingAndNamesTheInstance(t
 	if out != "" {
 		t.Errorf("stdout = %q: a failed join must print no rendering", out)
 	}
-	if !strings.Contains(errw, "error: instance/whoami: (project canary) user.tink.publish.whoami:") {
+	if !strings.Contains(errw, "error: instance/whoami: (project canary) user.tink.intent.publish.whoami:") {
 		t.Errorf("stderr = %q", errw)
 	}
 }
@@ -363,7 +363,7 @@ func TestJoinApplyFromServer_ABadStampOrSectionWritesNothing(t *testing.T) {
 	if err := runJoinApplyFromServer(&out, &errw, s, f, "caddy", "", join.ApplyOptions{}); err == nil || !strings.Contains(err.Error(), "only dns is built") {
 		t.Errorf("caddy: %v", err)
 	}
-	s.instances[0].Config = map[string]string{"user.tink.publish.x": "nope"}
+	s.instances[0].Config = map[string]string{"user.tink.intent.publish.x": "nope"}
 	if err := runJoinApplyFromServer(&out, &errw, s, f, "dns", "", join.ApplyOptions{}); err == nil || !strings.Contains(err.Error(), "nothing was rendered") {
 		t.Errorf("bad stamp: %v", err)
 	}

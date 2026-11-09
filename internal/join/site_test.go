@@ -250,7 +250,7 @@ func TestAStampThatCannotBeReadStopsItsOwnSiteAndNoOther(t *testing.T) {
 			for k, v := range in.Config {
 				cfg[k] = v
 			}
-			cfg["user.tink.publish.broken"] = "not json"
+			cfg["user.tink.intent.publish.broken"] = "not json"
 			in.Config = cfg
 		}
 	}

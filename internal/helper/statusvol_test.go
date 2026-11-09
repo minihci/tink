@@ -31,7 +31,7 @@ func TestParseStatusVolume(t *testing.T) {
 	if StatusVolumeRef("fast", StatusVolumeName("helper")) != "fast/helper-status" {
 		t.Error("the pointer is POOL/<instance>-status")
 	}
-	if StatusVolumeKey != "user.tink.helper.status-volume" {
+	if StatusVolumeKey != "user.tink.outcome.helper.status-volume" {
 		t.Errorf("the pointer key sits beside the marker: %s", StatusVolumeKey)
 	}
 }

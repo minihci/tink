@@ -258,7 +258,7 @@ Running the README's one-line install for Uptime Kuma (`louislam/uptime-kuma:2`)
 - **It says what it is doing**: lines are printed as they happen (an image pull into a new project is a silent minute otherwise), including `creating volume` / `reusing volume`.
 - **A missing project says how to make one.** `run` still does not create projects; it names `incus project create NAME -c features.profiles=false` (the project's own profiles start empty, so the
   default profile is shared).
-- **It leaves a trace**: `user.tink.run.command` holds the command line (secret-looking values masked). Incus otherwise keeps nothing that says how an instance came to be, and
+- **It leaves a trace**: `user.tink.outcome.run.command` holds the command line (secret-looking values masked). Incus otherwise keeps nothing that says how an instance came to be, and
   [`tink export`](../../docs/export.md) shows it as a comment in the stack file it writes.
 
 - **`--user` and the escape hatch** (`--incus-config`, `--incus-device`), built from the gap analysis ([docs/docker-gap-analysis.md](../../docs/docker-gap-analysis.md)). The long names are deliberate: Docker uses

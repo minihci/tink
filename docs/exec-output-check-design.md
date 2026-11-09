@@ -9,7 +9,7 @@ tink can place a policy file in a Headscale instance (`kind: file`) and the inst
 A `kind: exec` must declare exactly one of two guards **[code]**:
 
 - **`check`**: a command whose exit status says whether the work is already done. The code documents this as the preferred guard, because it "re-derives 'already done' from live reality every time and so self-heals" **[code: resource.go]**.
-- **`triggers`**: literal strings, hashed and remembered on the instance as `user.tink.exec.<name>.trigger-hash`. It exists for effects that leave nothing live to inspect (a signal) **[code]**.
+- **`triggers`**: literal strings, hashed and remembered on the instance as `user.tink.outcome.exec.<name>.trigger-hash`. It exists for effects that leave nothing live to inspect (a signal) **[code]**.
 
 Neither fits. A `check` is a command that exits 0 or not, and the Headscale image has no shell or `diff` to compare two things with **[lab]**. `triggers` are literal strings in the YAML, so the policy's content would have to be copied into them by hand, and a remembered hash is blind to the case that matters most: someone setting a different policy by hand.
 

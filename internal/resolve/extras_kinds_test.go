@@ -163,3 +163,42 @@ func TestPlanSaysWhatAProjectKeepsAndNotTheFeatureFlagsIncusFilledIn(t *testing.
 		t.Errorf("Extras = %+v", p.Extras)
 	}
 }
+
+// The class of a key decides what an extras report says, and it is the same for every kind: an undeclared fact (a role set by hand) is reported, so it is
+// noticed; intent and outcomes (the keys tink wrote) never are.
+func TestEveryKindReportsAnUndeclaredFactAndNeverTheKeysTinkWrote(t *testing.T) {
+	live := func() map[string]string {
+		return map[string]string{
+			"user.tink.role":                              "ingress", // a fact, set by hand
+			"user.tink.intent.stack":                      "lab",
+			"user.tink.intent.publish.web":                "{}",
+			"user.tink.outcome.backup.copy.nas.copied-at": "x",
+			"user.tink.outcome.helper.status":             "{}",
+			"volatile.idmap.last":                         "[]",
+		}
+	}
+	want := []string{"user.tink.role"}
+	for _, c := range []struct {
+		r Resource
+		s *kindsServer
+	}{
+		{Resource{Kind: KindProfile, Name: "p"}, &kindsServer{profile: &api.Profile{Name: "p", ProfilePut: api.ProfilePut{Config: live()}}}},
+		{Resource{Kind: KindStorageVolume, Name: "v", Backup: &backupmeta.VolumeBackup{None: "regenerable"}}, &kindsServer{volume: &api.StorageVolume{Name: "v", StorageVolumePut: api.StorageVolumePut{Config: live()}}}},
+		{Resource{Kind: KindNetwork, Name: "n"}, &kindsServer{network: &api.Network{Name: "n", Managed: true, Type: "bridge", Status: "Created", NetworkPut: api.NetworkPut{Config: live()}}}},
+		{Resource{Kind: KindProject, Name: "p"}, &kindsServer{project: &api.Project{Name: "p", ProjectPut: api.ProjectPut{Config: live()}}}},
+	} {
+		p := planExtrasOf(t, c.s, c.r)
+		if p.Extras == nil || !reflect.DeepEqual(p.Extras.Config, want) {
+			t.Errorf("%s: Extras = %+v, want %v", c.r.Kind, p.Extras, want)
+		}
+	}
+	// an instance is read the way export reads it, and then compared the same way
+	e := undeclaredExtras(Resource{Config: live()}, Resource{})
+	if !reflect.DeepEqual(e.Config, want) {
+		t.Errorf("instance: Config = %v, want %v", e.Config, want)
+	}
+	// a fact the stack declares is no extra
+	if e := undeclaredExtras(Resource{Config: live()}, Resource{Config: map[string]string{"user.tink.role": "ingress"}}); !e.Empty() {
+		t.Errorf("a declared fact is not an extra: %+v", e)
+	}
+}

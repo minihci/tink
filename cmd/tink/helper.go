@@ -180,8 +180,8 @@ func newHelperStatusCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Say whether the helper is well, from what it publishes about itself",
-		Long: `status finds the helper (an instance marked with user.tink.helper, in any project) and reads the status document it keeps
-(user.tink.helper.status) on the volume its instance points at (user.tink.helper.status-volume), or, for a helper installed before there
+		Long: `status finds the helper (an instance marked with user.tink.outcome.helper, in any project) and reads the status document it keeps
+(user.tink.outcome.helper.status) on the volume its instance points at (user.tink.outcome.helper.status-volume), or, for a helper installed before there
 was one, on its own instance config. That works when the helper has stopped, which is the case that matters: the last thing it said is
 still there, going stale. A status volume that cannot be read makes the helper degraded, with that as the reason.
 
@@ -225,7 +225,7 @@ func runHelperStatus(out io.Writer, server incus.InstanceServer, instance, proje
 		}
 	}
 	if len(found) == 0 {
-		what := "no helper instance found (an instance with user.tink.helper set, in any project)"
+		what := "no helper instance found (an instance with user.tink.outcome.helper set, in any project)"
 		if instance != "" || project != "" {
 			what = "no helper instance found matching the --instance and --project given"
 		}

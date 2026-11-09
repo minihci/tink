@@ -71,7 +71,7 @@ func validateStackDefaults(r Resource) error {
 	}
 	if in := d.Instance; in != nil {
 		probe := Resource{Kind: KindInstance, Name: "defaults.instance", Config: in.Config, Devices: in.Devices}
-		for _, check := range []func(Resource) error{validateSecretRefs, validateOwnedConfig} {
+		for _, check := range []func(Resource) error{validateSecretRefs, validateStateKeys} {
 			if err := check(probe); err != nil {
 				return wrap("instance", err)
 			}

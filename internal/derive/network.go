@@ -249,7 +249,7 @@ func hasOffer(r resolve.Resource) bool {
 	return false
 }
 
-const offerKey = "user.tink.offer."
+const offerKey = ownership.OfferPrefix
 
 // world is what the server already holds that a new bridge and address must stay clear of.
 type world struct {

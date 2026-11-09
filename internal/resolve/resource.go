@@ -277,7 +277,7 @@ type Resource struct {
 	// why it's scoped to only this one field rather than reopening the
 	// package doc comment's stateless claim generally: a sha256 of
 	// Triggers joined by "\x00" is
-	// stored as a user.tink.exec.<Name>.trigger-hash config key on
+	// stored as a user.tink.outcome.exec.<Name>.trigger-hash config key on
 	// Instance itself (through the same Incus API every other resource
 	// here already reads/writes, not a new artifact on disk) and compared
 	// on the next plan/apply. A zero-exit Check is preferred wherever one

@@ -15,7 +15,7 @@ import (
 const ServerStackName = "server"
 
 // FromServer reads, from the live server, the same view of the site that Build is given from stack files, so the join can run without the files. It is how
-// the daemon helper will run it: the declarations are the `user.tink.publish.<name>` stamps that `plan apply` wrote onto the instances (resolve/publishstamp.go),
+// the daemon helper will run it: the declarations are the `user.tink.intent.publish.<name>` stamps that `plan apply` wrote onto the instances (resolve/publishstamp.go),
 // and everything else Build reads is already on the server.
 //
 // What it reads, all of it read-only (no write method is called):
@@ -31,7 +31,7 @@ const ServerStackName = "server"
 // held to (the same rules, resolve.ValidatePublish) is never skipped and never repaired: FromServer returns a *StampError naming every such stamp and its
 // instance, and no stacks. A name that is half-read would be half-rendered, and the join's whole stance is that a partial rendering looks like a complete one.
 //
-// It reads ONE SITE (site.go): the helpers and the publishes whose instances carry user.tink.site: SITE, or, for the unnamed site "", carry none. Instances
+// It reads ONE SITE (site.go): the helpers and the publishes whose instances carry user.tink.intent.site: SITE, or, for the unnamed site "", carry none. Instances
 // of another site are left out before their stamps are read, so a stamp of another site that cannot be read does not stop this one, and the number of
 // helpers and publishes that were left out is kept (Stack.Elsewhere) to be said by Build.
 //

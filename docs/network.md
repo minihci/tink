@@ -95,7 +95,7 @@ Whatever the stack writes itself wins: a `kind: network` or `kind: network-acl` 
 
 **Nothing is remembered but on the objects.** Once the bridge exists its address is read back from the server and never chosen again, and an instance that already has an address on the server keeps it, so a second plan says no changes. Several stacks get different subnets.
 
-**Refusals.** A network of that name that belongs to another stack (its `user.tink.stack` stamp), that Incus does not manage, or that has no IPv4 address; a pool with no free subnet; a subnet with no free static address. Each says what to change.
+**Refusals.** A network of that name that belongs to another stack (its `user.tink.intent.stack` stamp), that Incus does not manage, or that has no IPv4 address; a pool with no free subnet; a subnet with no free static address. Each says what to change.
 
 **Limits.**
 - tink cannot see the host's own routes or the LAN's range. A pool that overlaps them is the person's to move (`network_pool`).

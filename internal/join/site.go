@@ -12,7 +12,7 @@ import (
 // whatever it is given as ONE site and requires exactly one dns, ingress and sso helper in it, so a caller that holds more than one site cuts the view down
 // to one before it calls Build. This file is that cut, for the two sources of a view:
 //
-//   - stack files: ForSite, which looks at the user.tink.site stamp that loading a stack with `site:` put on its helpers and published instances;
+//   - stack files: ForSite, which looks at the user.tink.intent.site stamp that loading a stack with `site:` put on its helpers and published instances;
 //   - the server: FromServer and PlatformFromServer take the site, and leave everything of another site unread, a publish stamp included, so a stamp of
 //     another site that cannot be read does not stop this one.
 //

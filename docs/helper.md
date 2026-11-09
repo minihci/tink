@@ -71,7 +71,7 @@ host that cannot pull the helper image.
 
 With no flag, a **release build** installs `ghcr:minihci/tink-helper:<its own version>`: the same binary, built by the same workflow from the same
 tag. A development build has no image that matches it, and says so: give `--image` for the published one, or `--binary` to run the build you have. The instance records the image's fingerprint (an OCI
-image's digest) on itself, `user.tink.helper.image-fingerprint`, because a tag can move and a fingerprint cannot.
+image's digest) on itself, `user.tink.outcome.helper.image-fingerprint`, because a tag can move and a fingerprint cannot.
 
 It creates, in a project of its own (`tink-helper`): an OCI app container named `helper` that runs `tink daemon run --remote host ...`; two volumes,
 `tink-helper-config` (its Incus client configuration, mounted where the client looks for it) and `tink-helper-data` (its jobs); a third volume, `<name>-status`
@@ -401,7 +401,7 @@ tink daemon run --jobs /var/lib/tink/jobs --reconcile-derived [--reconcile-site 
 ## The status document
 
 A daemon started with `--status-volume NAME` (and `--status-pool`, default `default`, and `--status-project` if the volume is not in the connection's
-project) publishes what it is doing on that custom volume's config, under `user.tink.helper.status`:
+project) publishes what it is doing on that custom volume's config, under `user.tink.outcome.helper.status`:
 
 ```
 tink daemon run --jobs /var/lib/tink/jobs --status-volume helper-status --status-pool default --status-project tink-helper
@@ -411,8 +411,8 @@ This is what `tink helper install` sets up. The helper's **instance**, which `in
 
 | Key on the helper's instance | |
 |---|---|
-| `user.tink.helper` | the marker: this instance is a helper, and the job protocol it speaks |
-| `user.tink.helper.status-volume` | the pointer: `POOL/VOLUME`, where its status document is. The volume is in the instance's own project |
+| `user.tink.outcome.helper` | the marker: this instance is a helper, and the job protocol it speaks |
+| `user.tink.outcome.helper.status-volume` | the pointer: `POOL/VOLUME`, where its status document is. The volume is in the instance's own project |
 
 `tink helper status`, `plan`, `kind: helper` and the rest find the helper by the marker, follow the pointer, and read the document from the volume. They see the
 same document wherever it was kept; nothing downstream of that read knows the difference.
@@ -441,9 +441,9 @@ phrases, and the detail stays in the job's log.
 **When it is written.** When something in it changes, and every `--status-heartbeat` (default 10 minutes) when nothing has. Every write is
 one lifecycle event in the log of anything listening and about 90 ms of the Incus daemon's CPU, so it is not written on every tick. The daemon
 offers it to the publisher every 10 seconds; the publisher compares and usually does nothing. With `--status-instance` it also marks the instance with
-`user.tink.helper` on the first write, so a daemon started by hand is found by the commands below as well. With `--status-volume` it does not: the
+`user.tink.outcome.helper` on the first write, so a daemon started by hand is found by the commands below as well. With `--status-volume` it does not: the
 marker and the pointer are `install`'s, because the helper holds no right to write its instance. A daemon started by hand with `--status-volume` is found
-once its instance carries both (`incus config set INSTANCE user.tink.helper=2 user.tink.helper.status-volume=POOL/VOLUME`; the marker's value is the job protocol, which is 2).
+once its instance carries both (`incus config set INSTANCE user.tink.outcome.helper=2 user.tink.outcome.helper.status-volume=POOL/VOLUME`; the marker's value is the job protocol, which is 2).
 
 **A document that does not say when it was written is not healthy.** The staleness test needs `written-at` and `heartbeat`. A document without either (written by another
 version, edited by hand, or damaged) cannot be shown to be fresh, so the helper is judged **degraded**, with the reason `its status document has no write time (written-at)` (or
@@ -470,7 +470,7 @@ itself is ignored once the instance points at a volume, so a stale one cannot st
 tink helper status [--check] [--json] [--instance NAME] [--project P]
 ```
 
-Finds the helper (any instance marked `user.tink.helper`, in any project), reads its document (from the volume the instance points at, or from the
+Finds the helper (any instance marked `user.tink.outcome.helper`, in any project), reads its document (from the volume the instance points at, or from the
 instance for an older helper), and judges it from that and from the state of its instance:
 
 | | |
@@ -484,7 +484,7 @@ details and exits 0 whatever it found (unless it could not look). `--json` print
 
 ```
 $ tink helper status --check
-degraded: tink-helper/helper: 1 volume(s) skipped: tenant/lib (user.tink.backup.policy was written for protocol 2; this tink speaks 1)
+degraded: tink-helper/helper: 1 volume(s) skipped: tenant/lib (user.tink.intent.backup.policy was written for protocol 2; this tink speaks 1)
 $ echo $?
 1
 ```

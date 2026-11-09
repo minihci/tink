@@ -234,7 +234,7 @@ func TargetFrom(r resolve.Resource) volbackup.Target {
 // Orphan is a volume that carries a copy policy, and so is being copied, but that the stack does not declare.
 type Orphan struct {
 	Volume volbackup.Volume
-	// Owned is true when the volume points back at this stack (its user.tink.stack names it): it is certain to be this
+	// Owned is true when the volume points back at this stack (its user.tink.intent.stack names it): it is certain to be this
 	// stack's to let go. False means it points at no stack at all and only sits where this stack's volumes sit.
 	Owned bool
 }

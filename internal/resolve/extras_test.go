@@ -52,7 +52,7 @@ func TestUndeclaredExtras_AKeyTheStackDeclaresIsNeverAnExtraWhateverItsValue(t *
 
 func TestUndeclaredExtras_TinksOwnStateIsNotAnExtra(t *testing.T) {
 	live := Resource{Config: map[string]string{
-		"user.tink.helper.status": "{...}", "user.tink.run.command": "tink run ...", "user.tink.exec.restart-app.trigger-hash": "abc",
+		"user.tink.outcome.helper.status": "{...}", "user.tink.outcome.run.command": "tink run ...", "user.tink.outcome.exec.restart-app.trigger-hash": "abc",
 		"user.tink.example.key": "x.example.com",
 	}}
 	declared := Resource{}

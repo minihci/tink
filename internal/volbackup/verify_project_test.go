@@ -426,7 +426,7 @@ func TestVerifyFromATargetRestoresIntoTheCheckProject(t *testing.T) {
 				t.Fatalf("the scratch volume was not made and removed in the check project: deleted %v", f.deletedVols)
 			}
 			for k := range cfg {
-				if strings.HasPrefix(k, "user.tink.backup.copy-") || k == backupmeta.PolicyKey {
+				if strings.HasPrefix(k, "user.tink.outcome.backup.copy-") || k == backupmeta.PolicyKey {
 					t.Errorf("the scratch volume still carries %s", k)
 				}
 			}

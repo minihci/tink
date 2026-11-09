@@ -146,7 +146,7 @@ func TestTheInstanceFormStillPatchesTheInstanceAndMarksIt(t *testing.T) {
 	if _, err := p.Publish(helper.Status{JobProto: jobs.Proto}); err != nil {
 		t.Fatal(err)
 	}
-	if len(srv.patches) != 1 || !strings.HasPrefix(srv.patches[0], "PATCH /1.0/instances/helper?project=tink-helper ") || !strings.Contains(srv.patches[0], fmt.Sprintf(`"user.tink.helper":"%d"`, jobs.Proto)) {
+	if len(srv.patches) != 1 || !strings.HasPrefix(srv.patches[0], "PATCH /1.0/instances/helper?project=tink-helper ") || !strings.Contains(srv.patches[0], fmt.Sprintf(`"user.tink.outcome.helper":"%d"`, jobs.Proto)) {
 		t.Errorf("unchanged for helpers installed before the status volume: %v", srv.patches)
 	}
 	if len(srv.puts) != 0 {

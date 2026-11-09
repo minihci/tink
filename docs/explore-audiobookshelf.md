@@ -33,6 +33,6 @@ someone's first evening would go. Install command, from the project's `docker-co
   reflex. Suggest: understand `:ro` (-> `readonly=true`), accept `:rw`, reject anything else with a message.
 - **N6. Dry-run output order is random** (map iteration): `volume2, volume3, proxy0, volume0, volume1`. Sort the lines.
 - **N7. Nothing records which stack file made an instance** after `plan apply`: the rebuilt instance has no `user.tink.*` key at all (the `run` stamp is gone with the old instance;
-  `plan apply` writes none). `kind: stack` exists for volumes (`user.tink.stack`); instances could carry it too, which would also let `plan` say "this instance belongs to no stack".
+  `plan apply` writes none). `kind: stack` exists for volumes (`user.tink.intent.stack`); instances could carry it too, which would also let `plan` say "this instance belongs to no stack".
 - **N8. Good, and worth keeping:** `export` needed no special handling for a non-Docker-Hub registry, mixed bind and managed volumes, or a port mapped to 80; the first
   `plan` after `apply` was clean; and the secret/pinning machinery from round two was not even exercised, because this app takes no secrets.

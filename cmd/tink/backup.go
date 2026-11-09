@@ -242,7 +242,7 @@ func newBackupForgetCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "forget [PROJECT/]VOLUME... [flags]",
 		Short: "Stop copying a volume: clear the copy policy that apply put on it",
-		Long: `forget removes the copy policy (user.tink.backup.policy) from each volume, so the daemon's scheduler stops
+		Long: `forget removes the copy policy (user.tink.intent.backup.policy) from each volume, so the daemon's scheduler stops
 copying it. Nothing else changes: the volume's data, its restore points on the targets, and the record of past
 copies are left exactly as they are.
 

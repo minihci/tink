@@ -7,7 +7,7 @@ import (
 	"github.com/lxc/incus/v7/shared/api"
 )
 
-const aclStampKey = "user.tink.derive.ingress"
+const aclStampKey = "user.tink.intent.derive.ingress"
 const aclStampValue = `{"render":"acl"}`
 
 func derivingACL() Resource {
@@ -24,7 +24,7 @@ func TestAnACLStampIsTheMarkerAndReadsBackStrictly(t *testing.T) {
 	}
 	cases := []struct{ name, key, value, want string }{
 		{"a direction ACLs do not derive", DeriveStampPrefix + "egress", aclStampValue, "not a direction"},
-		{"a key outside the prefix", "user.tink.publish.x", aclStampValue, "not a derived stamp"},
+		{"a key outside the prefix", "user.tink.intent.publish.x", aclStampValue, "not a derived stamp"},
 		{"not an object", aclStampKey, `"acl"`, "not a JSON object"},
 		{"an unknown field", aclStampKey, `{"render":"acl","path":"/a"}`, `"path" is not a field`},
 		{"no render", aclStampKey, `{}`, `no "render"`},
@@ -97,7 +97,7 @@ func TestDroppingDeriveIngressRemovesTheStampAndNothingElse(t *testing.T) {
 	r := Resource{Kind: KindNetworkACL, Name: "svc-in"} // no longer derives
 	live := liveACL(held(ruleHA), nil)
 	live.Config = api.ConfigMap{
-		aclStampKey: aclStampValue, "user.tink.stack": "lab", "user.keep": "me", "user.tink.derive": "x", // the last two are not under the prefix
+		aclStampKey: aclStampValue, "user.tink.intent.stack": "lab", "user.keep": "me", "user.tink.derive": "x", // the stack stamp is never taken back, the last two are not under the prefix
 	}
 	s := &aclServer{acls: map[string]*api.NetworkACL{"svc-in": live}}
 
@@ -115,7 +115,7 @@ func TestDroppingDeriveIngressRemovesTheStampAndNothingElse(t *testing.T) {
 	if _, ok := cfg[aclStampKey]; ok {
 		t.Errorf("the stamp is still there: %v", cfg)
 	}
-	if cfg["user.tink.stack"] != "lab" || cfg["user.keep"] != "me" || cfg["user.tink.derive"] != "x" {
+	if cfg["user.tink.intent.stack"] != "lab" || cfg["user.keep"] != "me" || cfg["user.tink.derive"] != "x" {
 		t.Errorf("something else was removed: %v", cfg)
 	}
 	if got := s.acls["svc-in"].Ingress; len(got) != 1 {
@@ -125,7 +125,7 @@ func TestDroppingDeriveIngressRemovesTheStampAndNothingElse(t *testing.T) {
 
 func TestAStackThatDeclaresAnACLStampKeyDoesNotLoad(t *testing.T) {
 	path := t.TempDir() + "/tink.yaml"
-	if err := writeFile(path, "kind: network-acl\nname: svc-in\nderive_ingress: true\nconfig:\n  user.tink.derive.ingress: '{}'\n"); err != nil {
+	if err := writeFile(path, "kind: network-acl\nname: svc-in\nderive_ingress: true\nconfig:\n  user.tink.intent.derive.ingress: '{}'\n"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := LoadFile(path); err == nil || !strings.Contains(err.Error(), "which tink owns") || !strings.Contains(err.Error(), "derive_ingress") {
@@ -150,7 +150,7 @@ func TestCreatingAnACLThatDerivesStampsItFromBirth(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := s.created[0].Config
-	if cfg[aclStampKey] != aclStampValue || cfg["user.tink.stack"] != "lab" {
+	if cfg[aclStampKey] != aclStampValue || cfg["user.tink.intent.stack"] != "lab" {
 		t.Errorf("created with %v", cfg)
 	}
 }
