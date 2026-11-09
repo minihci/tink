@@ -30,7 +30,7 @@ const (
 	// WrittenAtField and HeartbeatField are the document's names for when it was written and how often, as a health reason says them.
 	WrittenAtField, HeartbeatField = "written-at", "heartbeat"
 	// StatusProto is the version of the document. A reader refuses a newer one rather than guessing, and does nothing special for an older
-	// one: it is judged by what it says, and a document that does not say when it was written is never read as healthy (Evaluate).
+	// one: it is judged by what it says, and a document that does not say when it was written is never read as healthy (JudgeStatus).
 	// 3 replaced the three lists (skipped, failing, reconciles) with one, States.
 	StatusProto = 3
 
@@ -56,14 +56,14 @@ type Status struct {
 
 	StartedAt instant.Time `json:"started-at,omitzero"`
 	// WrittenAt is when this was written; Heartbeat is how often it is written when nothing changes, so a reader can tell stale
-	// from quiet without knowing the helper's configuration. A document without a WrittenAt cannot be judged fresh (Evaluate).
+	// from quiet without knowing the helper's configuration. A document without a WrittenAt cannot be judged fresh (JudgeStatus).
 	WrittenAt instant.Time     `json:"written-at,omitzero"`
 	Heartbeat instant.Duration `json:"heartbeat,omitzero"`
 
 	// States is what the daemon found and since when, one record for each thing it keeps or watches (observe.Record): a derived file that is converged
 	// or blocked, a volume it will not copy (a policy of a protocol it does not read, one that does not parse, a pool it cannot list), a copy that has
-	// failed since its last success. It is the one list a reader iterates: health judges the backup records today (Evaluate), and what is said of the
-	// others is read by `plan` and `tink helper status`. Since is when a state began, not when it was last looked at.
+	// failed since its last success. It is the one list a reader iterates: health judges every one of them (JudgeStatus: a skipped volume, a failing copy, a reconcile that is blocked or failing), and `plan`
+	// and `tink helper status` read them too. Since is when a state began, not when it was last looked at.
 	States  []observe.Record `json:"states,omitempty"`
 	LastJob *LastJob         `json:"last-job,omitempty"`
 	// Events are the last few things the daemon did, newest last: a file it put back (healed) and an instance it restarted. A fixed set of words and no
@@ -89,7 +89,7 @@ type Remote struct {
 	Project string `json:"project,omitempty"`
 }
 
-// Backup returns the records of the volumes' copies that are in the given state, in the document's order. These are the ones health judges (Evaluate): a
+// Backup returns the records of the volumes' copies that are in the given state, in the document's order. These are the ones of the volumes, which health judges one finding at a time (JudgeStatus): a
 // volume the helper will not copy is a record with the what "backup" and the state skipped (the resource is the volume), and a copy that is failing is one
 // with the state failing, its target, the time of its latest failure and how many failures in a row.
 func (s Status) Backup(state string) []observe.Record {

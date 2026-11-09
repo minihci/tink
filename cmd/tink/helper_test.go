@@ -87,7 +87,7 @@ func TestStatusCheckSpeaksInExitCodesAMonitorCanUse(t *testing.T) {
 		line string
 	}{
 		{"healthy", helperInstance("tink-helper", "helper", "Running", goodStatus(nil)), 0, "healthy: tink-helper/helper"},
-		{"degraded: a volume is skipped", helperInstance("tink-helper", "helper", "Running", skipped), 1, "degraded: tink-helper/helper: 1 volume(s) skipped: lib (policy of protocol 2)"},
+		{"degraded: a volume is skipped", helperInstance("tink-helper", "helper", "Running", skipped), 1, "degraded: tink-helper/helper: lib is skipped: policy of protocol 2"},
 		{"down: stale", helperInstance("tink-helper", "helper", "Running", stale), 2, "down: tink-helper/helper: stale: last heard from 40m ago"},
 		{"down: stopped", helperInstance("tink-helper", "helper", "Stopped", goodStatus(nil)), 2, "down: tink-helper/helper: the instance is stopped"},
 	} {
@@ -161,7 +161,7 @@ func TestStatusWithoutCheckPrintsDetailsAndExitsZero(t *testing.T) {
 		t.Fatalf("a degraded helper is not an error without --check: %v", err)
 	}
 	for _, want := range []string{
-		"helper tink-helper/helper: degraded", "1 copy(ies) failing", "version:     v1", "copy policies up to protocol 1",
+		"helper tink-helper/helper: degraded", "the copy of lib to nas is failing, 3 in a row", "the last job (20261007T110000Z-abc) failed 5m ago", "version:     v1", "copy policies up to protocol 1",
 		"last heard:  2m ago (it writes at least every 10m)", "skipped:     none", "lib -> nas, 3 in a row since 2026-10-07 11:00 UTC, the last 1m ago",
 		"20261007T110000Z-abc failed, 5m ago", "remotes:     host; nas2",
 	} {
@@ -390,7 +390,7 @@ func TestPlanEndsWithANoteAboutAHelperThatIsNotWellAndSaysNothingOtherwise(t *te
 		s.States = []observe.Record{{What: observe.WhatBackup, Resource: "lib", State: observe.Skipped, Reason: "policy of protocol 2"}}
 	})
 	got := note(instancesServer{all: []api.Instance{helperInstance("p", "h", "Running", skipped)}})
-	for _, want := range []string{"note: the helper is degraded: p/h", "lib (policy of protocol 2)", "tink helper status"} {
+	for _, want := range []string{"note: the helper is degraded: p/h", "lib is skipped: policy of protocol 2", "tink helper status"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("%q not in %q", want, got)
 		}
@@ -533,5 +533,103 @@ func TestPlanPrintsNotesAfterWarnings(t *testing.T) {
 		"      note: file/ha-yaml: not placed before the first start, because /media is a mounted host directory (device media); it is written right after the start, so the app may read its config first\n"
 	if out.String() != want {
 		t.Errorf("got:\n%s\nwant:\n%s", out.String(), want)
+	}
+}
+
+// healthJudgementCases are the documents the health work added a verdict for: the cases that are degraded now and were not, and two that are not
+// problems (a skipped reconcile and a cancelled job). Each says what `status --check` must exit with and the reason of the finding.
+var healthJudgementCases = []struct {
+	name   string
+	mut    func(*helper.Status)
+	code   int
+	reason string
+}{
+	{"a blocked derived file", func(s *helper.Status) {
+		s.States = []observe.Record{{What: "derived", Resource: "ingress-routes", Site: "home", State: observe.Blocked, Reason: "a derived-file stamp cannot be read", Since: instant.At(helperNow.Add(-time.Hour))}}
+	}, 1, helper.ReasonDerivedBlocked},
+	{"a failing dns reconcile", func(s *helper.Status) {
+		s.States = []observe.Record{{What: "dns", Site: "home", State: observe.Failing, Reason: "the server could not be reached", Since: instant.At(helperNow.Add(-time.Hour))}}
+	}, 1, helper.ReasonDNSFailing},
+	{"a failed last job", func(s *helper.Status) {
+		s.LastJob = &helper.LastJob{ID: "j1", State: "failed", FinishedAt: instant.At(helperNow.Add(-5 * time.Minute))}
+	}, 1, helper.ReasonJobFailed},
+	{"a skipped derived file is not a problem", func(s *helper.Status) {
+		s.States = []observe.Record{{What: "derived", Resource: "ingress-routes", Site: "home", State: observe.Skipped, Reason: "the instance is not running", Since: instant.At(helperNow.Add(-time.Hour))}}
+	}, 0, ""},
+	{"a cancelled last job is not a problem", func(s *helper.Status) {
+		s.LastJob = &helper.LastJob{ID: "j2", State: "cancelled", FinishedAt: instant.At(helperNow.Add(-5 * time.Minute))}
+	}, 0, ""},
+	{"a job that succeeded after a failed one", func(s *helper.Status) {
+		s.LastJob = &helper.LastJob{ID: "j3", State: "succeeded", FinishedAt: instant.At(helperNow.Add(-time.Minute))}
+	}, 0, ""},
+}
+
+func TestStatusCheckExitsOneForEachNewDegradedCaseAndZeroForTheOthers(t *testing.T) {
+	for _, tc := range healthJudgementCases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := instancesServer{all: []api.Instance{helperInstance("tink-helper", "helper", "Running", goodStatus(tc.mut))}}
+			out, err := statusRun(t, srv, "", "", true, false)
+			if got := exitCode(t, err); got != tc.code {
+				t.Errorf("exit code = %d, want %d (%s)", got, tc.code, out)
+			}
+			if tc.code == 0 && strings.TrimSpace(out) != "healthy: tink-helper/helper" {
+				t.Errorf("%q", out)
+			}
+			if tc.code == 1 && !strings.HasPrefix(out, "degraded: tink-helper/helper: ") {
+				t.Errorf("%q", out)
+			}
+		})
+	}
+}
+
+func TestStatusShowsTheReasonAndTheDetailAndJSONHasBoth(t *testing.T) {
+	st := goodStatus(func(s *helper.Status) {
+		s.States = []observe.Record{{What: observe.WhatBackup, Resource: "lib", Target: "nas", State: observe.Failing, Reason: "r", Failures: 7, Since: instant.At(helperNow.Add(-time.Hour)), FailedAt: instant.At(helperNow.Add(-time.Minute))}}
+	})
+	srv := instancesServer{all: []api.Instance{helperInstance("tink-helper", "helper", "Running", st)}}
+
+	out, err := statusRun(t, srv, "", "", false, false)
+	if err != nil || !strings.Contains(out, "  - the copy of lib to nas is failing, 7 in a row [a copy is failing]\n") {
+		t.Errorf("the details give the detail and the reason: %v\n%s", err, out)
+	}
+
+	out, err = statusRun(t, srv, "", "", false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var list []struct {
+		Findings []map[string]string `json:"findings"`
+		Reasons  json.RawMessage     `json:"reasons"`
+	}
+	if err := json.Unmarshal([]byte(out), &list); err != nil || len(list) != 1 || len(list[0].Findings) != 1 {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	want := map[string]string{"severity": "warning", "reason": helper.ReasonCopyFailing, "subject": "backup/lib", "detail": "the copy of lib to nas is failing, 7 in a row"}
+	for k, v := range want {
+		if list[0].Findings[0][k] != v {
+			t.Errorf("findings[0][%q] = %q, want %q", k, list[0].Findings[0][k], v)
+		}
+	}
+	if list[0].Reasons != nil {
+		t.Errorf("the list of strings is replaced by the findings: %s", list[0].Reasons)
+	}
+}
+
+// The note that ends `plan` and `plan apply` is said for each new degraded case, with its detail, and not for the cases that are no problem.
+func TestPlanEndsWithANoteForEachNewDegradedCase(t *testing.T) {
+	for _, tc := range healthJudgementCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			noteHelper(&out, instancesServer{all: []api.Instance{helperInstance("p", "h", "Running", goodStatus(tc.mut))}}, helperNow, nil)
+			if tc.code == 0 {
+				if out.Len() != 0 {
+					t.Errorf("nothing to say: %q", out.String())
+				}
+				return
+			}
+			if !strings.Contains(out.String(), "note: the helper is degraded: p/h: ") || !strings.Contains(out.String(), "tink helper status") {
+				t.Errorf("%q", out.String())
+			}
+		})
 	}
 }

@@ -40,7 +40,6 @@ const (
 	reasonHelperNoTimezone     = "the helper has no timezone"
 	reasonHelperRemoteToAdd    = "the helper will lack a remote"
 	reasonHelperRemoteMissing  = "the helper has no remote the stack needs"
-	reasonHelperHealth         = "the daemon helper is not healthy"
 	reasonHelperState          = "the daemon helper's state"
 	reasonHelperVersion        = "the daemon helper's version"
 	reasonHelperProxyAPI       = "the helper reaches the API through a proxy device"

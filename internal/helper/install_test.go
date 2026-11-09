@@ -734,7 +734,7 @@ func TestCheckTrustCatchesARevocationAtOnceInsteadOfAfterTheHeartbeatsGoStale(t 
 	f.Config[MarkerKey+".remote"] = "https://127.0.0.1:8443"
 	r := Evaluate(f, t0)
 	if r.Health != Healthy {
-		t.Fatalf("its last document is fresh: %v", r.Reasons)
+		t.Fatalf("its last document is fresh: %v", r.Details())
 	}
 	r.CheckTrust([]api.Certificate{cert("someone-else", 1)})
 	if r.Health != Down || !strings.Contains(r.Summary(), "not in the host's trust store") || !strings.Contains(r.Summary(), "--reissue") {

@@ -165,14 +165,14 @@ func TestEvaluateJudgesTheHelperFromWhatItSaidAndWhatItsInstanceIs(t *testing.T)
 		{"quiet for a little: one late heartbeat is not an alarm", found("Running", fresh(func(s *Status) { s.WrittenAt = instant.At(now.Add(-20 * time.Minute)) })), Healthy, ""},
 		{"quiet for more than 2.5 heartbeats", found("Running", fresh(func(s *Status) { s.WrittenAt = instant.At(now.Add(-26 * time.Minute)) })), Down, "stale: last heard from 26m ago"},
 		{"running, nothing published yet", found("Running", nil), Degraded, "has not published"},
-		{"a skipped volume", found("Running", fresh(func(s *Status) { s.States = []observe.Record{skipped("tenant/lib", "policy of a newer protocol")} })), Degraded, "tenant/lib (policy of a newer protocol)"},
-		{"a failing copy", found("Running", fresh(func(s *Status) { s.States = []observe.Record{failingCopy("lib", "nas", 3, time.Time{})} })), Degraded, "lib -> nas (3x)"},
+		{"a skipped volume", found("Running", fresh(func(s *Status) { s.States = []observe.Record{skipped("tenant/lib", "policy of a newer protocol")} })), Degraded, "tenant/lib is skipped: policy of a newer protocol"},
+		{"a failing copy", found("Running", fresh(func(s *Status) { s.States = []observe.Record{failingCopy("lib", "nas", 3, time.Time{})} })), Degraded, "the copy of lib to nas is failing, 3 in a row"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			r := Evaluate(tc.f, now)
 			if r.Health != tc.want {
-				t.Fatalf("health = %s, want %s (%v)", r.Health, tc.want, r.Reasons)
+				t.Fatalf("health = %s, want %s (%v)", r.Health, tc.want, r.Details())
 			}
 			if tc.reason != "" && !strings.Contains(r.Summary(), tc.reason) {
 				t.Errorf("summary = %q, want it to contain %q", r.Summary(), tc.reason)
@@ -192,7 +192,7 @@ func TestADocumentWithNoWriteTimeIsNeverHealthy(t *testing.T) {
 		reason string
 	}{
 		"no write time":              {found("Running", fresh(noTime)), Degraded, "no write time (written-at)"},
-		"no write time and failing":  {found("Running", fresh(func(s *Status) { noTime(s); s.States = []observe.Record{failingCopy("lib", "nas", 1, time.Time{})} })), Degraded, "copy(ies) failing"},
+		"no write time and failing":  {found("Running", fresh(func(s *Status) { noTime(s); s.States = []observe.Record{failingCopy("lib", "nas", 1, time.Time{})} })), Degraded, "the copy of lib to nas is failing"},
 		"no heartbeat":               {found("Running", fresh(noBeat)), Degraded, "no heartbeat"},
 		"no write time, and stopped": {found("Stopped", fresh(noTime)), Down, "the instance is stopped"},
 	} {
@@ -295,14 +295,14 @@ func TestADrainingHelperIsDegradedAndSaysHowToEndIt(t *testing.T) {
 	}
 }
 
-// The states of what the daemon keeps (a derived file that is blocked, say) are carried in the document and read by `plan` and `tink helper status`;
-// judging them is the health work's, so a standing reconcile state does not change what Evaluate says about the helper. The volumes' copies still do.
-func TestHealthJudgesTheBackupStatesAndNotYetTheReconcileStates(t *testing.T) {
+// The states of what the daemon keeps (a derived file that is blocked, say) are judged like the volumes' copies: a blocked or failing one makes the helper
+// degraded. This replaced a test that said they were not judged yet; it is changed on purpose, by the health work.
+func TestHealthJudgesTheReconcileStatesAsWellAsTheBackupStates(t *testing.T) {
 	reconcileOnly := fresh(func(s *Status) {
 		s.States = []observe.Record{{What: "derived", Resource: "ingress-routes", Site: "home", State: observe.Blocked, Reason: "the file is not there", Since: instant.At(t0.Add(-time.Hour))}}
 	})
-	if r := Evaluate(found("Running", reconcileOnly), t0); r.Health != Healthy {
-		t.Errorf("a blocked derived file: %s %v", r.Health, r.Reasons)
+	if r := Evaluate(found("Running", reconcileOnly), t0); r.Health != Degraded || !strings.Contains(r.Summary(), "derived/ingress-routes (home) is blocked: the file is not there") {
+		t.Errorf("a blocked derived file: %s %v", r.Health, r.Details())
 	}
 	both := fresh(func(s *Status) {
 		s.States = []observe.Record{
@@ -311,7 +311,8 @@ func TestHealthJudgesTheBackupStatesAndNotYetTheReconcileStates(t *testing.T) {
 		}
 	})
 	r := Evaluate(found("Running", both), t0)
-	if r.Health != Degraded || !strings.Contains(r.Summary(), "1 volume(s) skipped: lib (policy of a newer protocol)") || !strings.Contains(r.Summary(), "1 copy(ies) failing: lib -> nas (2x)") {
+	if r.Health != Degraded || !strings.Contains(r.Summary(), "lib is skipped: policy of a newer protocol") || !strings.Contains(r.Summary(), "the copy of lib to nas is failing, 2 in a row") ||
+		!strings.Contains(r.Summary(), "derived/ingress-routes (the unnamed site) is failing: r") {
 		t.Errorf("%s: %s", r.Health, r.Summary())
 	}
 }

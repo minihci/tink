@@ -295,3 +295,54 @@ func TestAMalformedHelperIsRejectedAtLoad(t *testing.T) {
 		})
 	}
 }
+
+// A kind: helper document warns for each finding that judges the helper, with the reason and the subject the finding has and the detail for a person under
+// the health. A reconcile that is skipped and a job that was cancelled say nothing.
+func TestPlanHelperWarnsForEachNewDegradedCase(t *testing.T) {
+	at := instant.At(helperNow.Add(-time.Hour))
+	for _, tc := range []struct {
+		name   string
+		mut    func(*helper.Status)
+		reason string
+		detail string
+	}{
+		{"a blocked derived file", func(s *helper.Status) {
+			s.States = []observe.Record{{What: "derived", Resource: "ingress-routes", Site: "home", State: observe.Blocked, Reason: "a derived-file stamp cannot be read", Since: at}}
+		}, helper.ReasonDerivedBlocked, "the daemon helper is degraded: derived/ingress-routes (home) is blocked: a derived-file stamp cannot be read"},
+		{"a failing dns reconcile", func(s *helper.Status) {
+			s.States = []observe.Record{{What: "dns", Site: "home", State: observe.Failing, Reason: "the server could not be reached", Since: at}}
+		}, helper.ReasonDNSFailing, "the daemon helper is degraded: dns (home) is failing: the server could not be reached"},
+		{"a failed last job", func(s *helper.Status) {
+			s.LastJob = &helper.LastJob{ID: "j1", State: "failed", FinishedAt: instant.At(helperNow.Add(-5 * time.Minute))}
+		}, helper.ReasonJobFailed, "the daemon helper is degraded: the last job (j1) failed 5m ago"},
+		{"a skipped derived file", func(s *helper.Status) {
+			s.States = []observe.Record{{What: "derived", Resource: "ingress-routes", Site: "home", State: observe.Skipped, Reason: "the instance is not running", Since: at}}
+		}, "", ""},
+		{"a cancelled last job", func(s *helper.Status) {
+			s.LastJob = &helper.LastJob{ID: "j2", State: "cancelled", FinishedAt: instant.At(helperNow.Add(-5 * time.Minute))}
+		}, "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := goodStatus()
+			tc.mut(&st)
+			srv := &helperKindServer{instances: []api.Instance{helperInstance(t, "tink-helper", "helper", "Running", st)}}
+			p, err := planHelper(srv, helperRes(nil), helperNow, PlanOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if p.Action != ActionNone || len(p.Blocked()) != 0 {
+				t.Errorf("a plan changes nothing and never blocks for a helper's health: %+v", p)
+			}
+			w := p.Warnings()
+			if tc.reason == "" {
+				if len(w) != 0 {
+					t.Errorf("no problem, and %v", w)
+				}
+				return
+			}
+			if len(w) != 1 || w[0].Reason != tc.reason || w[0].Detail != tc.detail || w[0].Subject == "" {
+				t.Errorf("%+v", w)
+			}
+		})
+	}
+}

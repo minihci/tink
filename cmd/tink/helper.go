@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/minihci/tink/internal/backuprun"
+	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/helper"
 	"github.com/minihci/tink/internal/incusapi"
 	"github.com/minihci/tink/internal/observe"
@@ -380,22 +381,41 @@ func nameList(names []string, max int) string {
 }
 
 type helperJSON struct {
-	Project string   `json:"project"`
-	Name    string   `json:"name"`
-	State   string   `json:"instance-state"`
-	Health  string   `json:"health"`
-	Code    int      `json:"exit-code"`
-	Reasons []string `json:"reasons,omitempty"`
+	Project string `json:"project"`
+	Name    string `json:"name"`
+	State   string `json:"instance-state"`
+	Health  string `json:"health"`
+	Code    int    `json:"exit-code"`
+	// Findings are what judged the helper: a warning for each reason it is degraded and an error for each reason it is down, with the fixed reason, the
+	// thing it is about, and the detail for a person.
+	Findings []helperFindingJSON `json:"findings,omitempty"`
 	// StatusVolume is POOL/VOLUME when the helper's status document is on a volume its instance points at; absent for one that keeps it
 	// on the instance.
 	StatusVolume string         `json:"status-volume,omitempty"`
 	Status       *helper.Status `json:"status,omitempty"`
 }
 
+// helperFindingJSON is a finding as `tink helper status --json` prints it. The reason is the fixed phrase that names the kind of problem, safe to send
+// outside the site; the detail is for a person and may name volumes and files.
+type helperFindingJSON struct {
+	Severity string `json:"severity"`
+	Reason   string `json:"reason"`
+	Subject  string `json:"subject,omitempty"`
+	Detail   string `json:"detail"`
+}
+
+func helperFindingsJSON(fs []finding.Finding) []helperFindingJSON {
+	var out []helperFindingJSON
+	for _, f := range fs {
+		out = append(out, helperFindingJSON{Severity: f.Severity.String(), Reason: f.Reason, Subject: f.Subject, Detail: f.Detail})
+	}
+	return out
+}
+
 func printHelperJSON(out io.Writer, reports []helper.Report) error {
 	list := make([]helperJSON, len(reports))
 	for i, r := range reports {
-		list[i] = helperJSON{Project: r.Found.Project, Name: r.Found.Name, State: r.Found.State, Health: r.Health.String(), Code: int(r.Health), Reasons: r.Reasons, StatusVolume: r.Found.StatusVolume, Status: r.Status}
+		list[i] = helperJSON{Project: r.Found.Project, Name: r.Found.Name, State: r.Found.State, Health: r.Health.String(), Code: int(r.Health), Findings: helperFindingsJSON(r.Findings), StatusVolume: r.Found.StatusVolume, Status: r.Status}
 	}
 	b, err := json.MarshalIndent(list, "", "  ")
 	if err != nil {
@@ -407,8 +427,8 @@ func printHelperJSON(out io.Writer, reports []helper.Report) error {
 
 func printHelperDetails(out io.Writer, r helper.Report, now time.Time) {
 	fmt.Fprintf(out, "helper %s: %s\n", r.Found.Label(), r.Health)
-	for _, why := range r.Reasons {
-		fmt.Fprintf(out, "  - %s\n", why)
+	for _, f := range r.Findings {
+		fmt.Fprintf(out, "  - %s [%s]\n", f.Detail, f.Reason)
 	}
 	fmt.Fprintf(out, "  instance:    %s\n", r.Found.State)
 	if r.Found.StatusVolume != "" {
