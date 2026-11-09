@@ -29,7 +29,8 @@ import (
 //     stamped).
 //
 // The write itself is shared with the one an ordinary apply makes to keep the stamps current (stampObject): on an object this stack already owns, that is
-// the resource stamp alone, written when it is missing. It is the same narrow write and restarts nothing for the same reason.
+// the resource stamp, when it is missing, and the applied record (applied.go), when it is missing or out of date (upkeepJob). It is the same narrow write and
+// restarts nothing for the same reason.
 //
 // The kinds that are create-only elsewhere (a project, an image) get their stamp the same way, by a narrow update that changes that key and nothing
 // else; an image's write echoes its `profiles`, because Incus resets them to ["default"] when a write leaves them out.
@@ -137,27 +138,22 @@ type adoptOutcome struct {
 	skipped   string // set when the object is one tink will not stamp, and why
 }
 
-// stampJob is one stamp-only write: which keys to write, and which objects to write them on, by what Classify says of them as they are read.
+// stampJob is one stamp-only write: what to write on an object, decided from what Classify says of it and the config it was read with. decide returns
+// the keys to write, or nil when the object is not one this job claims.
 type stampJob struct {
-	write  map[string]string
-	claims func(ownership.State) bool
+	decide func(was ownership.State, live map[string]string) map[string]string
 }
 
-// adoptJob claims an object that carries no stamp and one that is a copy: both stamps, the owner and the address the object really has.
+// adoptJob claims an object that carries no stamp and one that is a copy: both stamps, the owner and the address the object really has. Nothing else:
+// the applied record is not an adopt-time special case, the next ordinary apply writes it.
 func adoptJob(r Resource, stack string) stampJob {
-	return stampJob{
-		write:  map[string]string{ownership.Key: stack, ownership.ResourceKey: addressOf(r)},
-		claims: func(s ownership.State) bool { return s == ownership.Unstamped || s == ownership.Copy },
-	}
-}
-
-// resourceJob is what an ordinary apply does to keep the stamps current on an object this stack already owns: it writes the resource stamp that an
-// unbound object lacks, and nothing else.
-func resourceJob(r Resource) stampJob {
-	return stampJob{
-		write:  map[string]string{ownership.ResourceKey: addressOf(r)},
-		claims: func(s ownership.State) bool { return s == ownership.Unbound },
-	}
+	write := map[string]string{ownership.Key: stack, ownership.ResourceKey: addressOf(r)}
+	return stampJob{decide: func(was ownership.State, _ map[string]string) map[string]string {
+		if was == ownership.Unstamped || was == ownership.Copy {
+			return write
+		}
+		return nil
+	}}
 }
 
 // stampObject reads one declared object and, if it exists and the job claims it, writes the stamps. Every kind reads its object with the lookup that tells
@@ -178,9 +174,11 @@ func stampOnce(server incus.InstanceServer, r Resource, stack string, job stampJ
 	s := scopedServer(server, r)
 	address := addressOf(r)
 	var was ownership.State
+	var write map[string]string
 	claimed := func(config map[string]string) bool {
 		was, _ = ownership.Classify(config, stack, address)
-		return job.claims(was)
+		write = job.decide(was, config)
+		return write != nil
 	}
 	done := func(out adoptOutcome) adoptOutcome {
 		out.stamped, out.copy = true, was == ownership.Copy
@@ -194,7 +192,7 @@ func stampOnce(server incus.InstanceServer, r Resource, stack string, job stampJ
 		}
 		// A PATCH of the keys, on the unscoped connection with the project in the request: not the read-and-write of the whole instance that
 		// converging does, and nothing that touches the instance's state.
-		if err := incusapi.PatchInstanceConfig(server, r.Project, r.Name, job.write); err != nil {
+		if err := incusapi.PatchInstanceConfig(server, r.Project, r.Name, write); err != nil {
 			return adoptOutcome{}, err
 		}
 		return done(adoptOutcome{runningVM: cur.Type == string(api.InstanceTypeVM) && cur.StatusCode == api.Running}), nil
@@ -204,7 +202,7 @@ func stampOnce(server incus.InstanceServer, r Resource, stack string, job stampJ
 			return adoptOutcome{}, err
 		}
 		put := cur.Writable()
-		put.Config = withStamps(put.Config, job.write)
+		put.Config = withStamps(put.Config, write)
 		return done(adoptOutcome{}), s.UpdateProfile(r.Name, put, etag)
 	case KindStorageVolume:
 		pool := r.Pool
@@ -215,14 +213,14 @@ func stampOnce(server incus.InstanceServer, r Resource, stack string, job stampJ
 		if err != nil || !found || !claimed(cur.Config) {
 			return adoptOutcome{}, err
 		}
-		return done(adoptOutcome{}), incusapi.MergeVolumeConfig(server, r.Project, pool, r.Name, job.write)
+		return done(adoptOutcome{}), incusapi.MergeVolumeConfig(server, r.Project, pool, r.Name, write)
 	case KindProject:
 		cur, etag, found, err := incusapi.LookupProject(s, r.Name)
 		if err != nil || !found || !claimed(cur.Config) {
 			return adoptOutcome{}, err
 		}
 		put := cur.Writable()
-		put.Config = withStamps(put.Config, job.write)
+		put.Config = withStamps(put.Config, write)
 		return done(adoptOutcome{}), s.UpdateProject(r.Name, put, etag)
 	case KindNetwork:
 		cur, etag, found, err := incusapi.LookupNetwork(s, r.Name)
@@ -241,7 +239,7 @@ func stampOnce(server incus.InstanceServer, r Resource, stack string, job stampJ
 			return adoptOutcome{}, nil
 		}
 		put := cur.Writable()
-		put.Config = withStamps(put.Config, job.write)
+		put.Config = withStamps(put.Config, write)
 		return done(adoptOutcome{}), s.UpdateNetwork(r.Name, put, etag)
 	case KindNetworkACL:
 		cur, etag, found, err := incusapi.LookupNetworkACL(s, r.Name)
@@ -249,7 +247,7 @@ func stampOnce(server incus.InstanceServer, r Resource, stack string, job stampJ
 			return adoptOutcome{}, err
 		}
 		put := cur.Writable()
-		put.Config = withStamps(put.Config, job.write)
+		put.Config = withStamps(put.Config, write)
 		return done(adoptOutcome{}), s.UpdateNetworkACL(r.Name, put, etag)
 	case KindImage:
 		alias, _, found, err := incusapi.LookupImageAlias(s, r.Alias)
@@ -262,7 +260,7 @@ func stampOnce(server incus.InstanceServer, r Resource, stack string, job stampJ
 		}
 		// Writable() is the whole of what an image PUT carries, profiles included: leaving them out would reset them to ["default"]
 		put := cur.Writable()
-		put.Properties = withStamps(put.Properties, job.write)
+		put.Properties = withStamps(put.Properties, write)
 		return done(adoptOutcome{}), s.UpdateImage(cur.Fingerprint, put, etag)
 	}
 	return adoptOutcome{}, nil

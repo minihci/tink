@@ -53,8 +53,9 @@ no such limit.
 
 ## What it cannot see
 
-- A key or device that was **removed from the YAML** but is still on the instance looks the same as one added by hand, and is listed. What it cannot do is
-  tell you that tink once applied it, or remove it: that needs tink to remember what it applied, which is a separate design (#138).
+- A key or device that was **removed from the YAML** and that tink applied before is not listed here: it is a planned removal in the plan itself, because the
+  object carries a record of what tink applied ([ownership.md](ownership.md#the-applied-record)). One that tink did not apply, or that sits on an object with no
+  record yet (an object made before the record, until an ordinary apply writes it), looks the same as one added by hand, and is listed.
 - An instance with no stack file at all.
 - Network ACLs and the other kinds (files, execs, images, backup targets) are not compared in this direction. An ACL's rules are converged rule by rule, not left in place.
 

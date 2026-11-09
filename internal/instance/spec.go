@@ -51,6 +51,12 @@ type Spec struct {
 	// taken back when nothing derives it any more (the stamps of `kind: publish`, resolve/publishstamp.go). Empty for anything else.
 	OwnedConfigPrefixes []string
 
+	// StaleApplied, when set, is asked what the instance carries that tink applied before and the declaration no longer has: the config keys and the
+	// device names to take back, decided from the instance as ApplyConfig has just read it (so a write redone after a 412 asks again). ApplyConfig removes
+	// them in the same PUT that sets Config and Devices, and nothing else: a key or a device that is not named here is left alone, as it always was. The
+	// applied record itself travels in Config (resolve/applied.go). Nil removes nothing.
+	StaleApplied func(config map[string]string, devices map[string]map[string]string) (keys, deviceNames []string)
+
 	// OpTimeout bounds each call Create and ApplyConfig make to change the server: past it the call is abandoned, not cancelled, and the error wraps
 	// incusapi.ErrTimeout (see incusapi.Bounded for what that does and does not mean). Zero is no bound, as `tink run` and the helper have always had it;
 	// the resolver sets it.

@@ -8,6 +8,7 @@ import (
 
 	"github.com/lxc/incus/v7/shared/api"
 
+	"github.com/minihci/tink/internal/applied"
 	"github.com/minihci/tink/internal/backupext"
 	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/ownership"
@@ -187,6 +188,7 @@ func decideVolume(r Resource, current *api.StorageVolume, env volumeEnv) Planned
 			changes = append(changes, fmt.Sprintf("config.%s: removed (the declaration no longer has one)", k))
 		}
 	}
+	changes = append(changes, staleChanges(r, env.stack, applied.State{Config: current.Config})...)
 	if len(changes) > 0 {
 		return PlannedResource{Resource: r, Action: ActionUpdate, Changes: changes, Findings: warnings}
 	}

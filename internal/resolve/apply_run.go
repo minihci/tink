@@ -169,18 +169,26 @@ func applyOne(server incus.InstanceServer, r Resource, opts PlanOptions, note fu
 		}
 	}
 	// Keeping the stamps current on an object this stack already owns: an unbound one (it has the owner stamp and no resource stamp yet) gets the
-	// resource stamp. With a real change to make it goes in the same call (below); otherwise it is a stamp-only write (adopt.go), and a stamp is
-	// not a change, so the object is still "no changes" and nothing is restarted for it, whatever its restart: says.
+	// resource stamp, and one that has no applied record, or an out-of-date one, gets the record (applied.go). With a real change to make they go in
+	// the same call (below); otherwise it is a stamp-only write (adopt.go), and a stamp is not a change, so the object is still "no changes" and nothing
+	// is restarted for it, whatever its restart: says.
 	unbound := plan.Ownership.State == ownership.Unbound
+	recordDue := plan.Ownership.Record != RecordNone && plan.Ownership.Record != RecordCurrent
 	switch plan.Action {
 	case ActionNone:
 		note("%s/%s: no changes", r.Kind, r.Name)
-		if unbound {
+		if unbound || recordDue {
+			record, _, _ := appliedRecordFor(r, opts.stack)
 			limit := opLimit(opts.opTimeout, false)
-			if _, err := incusapi.Bounded(limit, "writing the resource stamp of "+stampLabel(r), func() (adoptOutcome, error) { return stampObject(server, r, opts.stack, resourceJob(r)) }); err != nil {
-				return outConverged, fmt.Errorf("writing the resource stamp: %w", err)
+			if _, err := incusapi.Bounded(limit, "writing the stamps of "+stampLabel(r), func() (adoptOutcome, error) { return stampObject(server, r, opts.stack, upkeepJob(r, record)) }); err != nil {
+				return outConverged, fmt.Errorf("writing the stamps: %w", err)
 			}
-			note("%s/%s: wrote its resource stamp %s (a stamp is not a change; nothing was restarted)", r.Kind, r.Name, addressOf(r))
+			if unbound {
+				note("%s/%s: wrote its resource stamp %s (a stamp is not a change; nothing was restarted)", r.Kind, r.Name, addressOf(r))
+			}
+			if record != "" && (unbound || recordDue) {
+				note("%s/%s: wrote its applied record (a stamp is not a change; nothing was restarted)", r.Kind, r.Name)
+			}
 		}
 		fileNotes()
 		return outConverged, nil
@@ -208,9 +216,7 @@ func applyOne(server incus.InstanceServer, r Resource, opts PlanOptions, note fu
 		}
 		return outChanged, nil
 	case ActionUpdate:
-		if unbound {
-			r.Config = withResourceStamp(r.Config, r)
-		}
+		r = ownedConfig(r, plan.Ownership.State, opts.stack)
 		if err := updateOne(server, r, volumeEnv{targets: opts.targets, stack: opts.stack, opTimeout: opts.opTimeout, helperAuthz: opts.helperAuthz}); err != nil {
 			return outConverged, err
 		}
@@ -226,23 +232,19 @@ func applyOne(server incus.InstanceServer, r Resource, opts PlanOptions, note fu
 		fileNotes()
 		return outChanged, nil
 	case ActionRebuild:
+		r = ownedConfig(r, plan.Ownership.State, opts.stack)
 		ctx := opts.context()
 		if err := lockRebuild(ctx); err != nil {
 			return outConverged, err
 		}
 		defer unlockRebuild()
-		ops := incusRebuildOps{server: scopedServer(server, r), env: opts.env, opTimeout: opts.opTimeout}
+		ops := incusRebuildOps{server: scopedServer(server, r), env: opts.env, opTimeout: opts.opTimeout, stack: opts.stack}
 		if err := runRebuild(ctx, ops, r, time.Now, note); err != nil {
 			return outConverged, err
 		}
 		return outChanged, nil
 	}
 	return outConverged, nil
-}
-
-// withResourceStamp is config with the resource stamp of r added, as a new map: the object is being updated anyway, and the stamp goes in that write.
-func withResourceStamp(config map[string]string, r Resource) map[string]string {
-	return withStamps(config, map[string]string{ownership.ResourceKey: addressOf(r)})
 }
 
 // changesEnvironment reports whether any planned change is to an environment.* config key.

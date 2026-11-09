@@ -11,10 +11,10 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
 
+	"github.com/minihci/tink/internal/applied"
 	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/incusapi"
 	"github.com/minihci/tink/internal/instance"
-	"github.com/minihci/tink/internal/ownership"
 )
 
 // A kind: network-acl resource declares an Incus NETWORK ACL: a named list of firewall rules that a network (`security.acls` in its config) or an
@@ -220,7 +220,7 @@ func aclReferenceWarnings(server incus.InstanceServer, r Resource, declared map[
 	return out
 }
 
-func planNetworkACL(server incus.InstanceServer, r Resource) (PlannedResource, error) {
+func planNetworkACL(server incus.InstanceServer, r Resource, stack string) (PlannedResource, error) {
 	current, _, found, err := incusapi.LookupNetworkACL(server, r.Name)
 	if err != nil {
 		return PlannedResource{}, fmt.Errorf("reading the live network ACL: %w", err)
@@ -241,6 +241,7 @@ func planNetworkACL(server incus.InstanceServer, r Resource) (PlannedResource, e
 	if r.Egress != nil {
 		changes = append(changes, diffACLRules("egress", aclRules(current.Egress), aclRules(r.Egress))...)
 	}
+	changes = append(changes, staleChanges(r, stack, applied.State{Config: current.Config, Ingress: ruleList(current.Ingress), Egress: ruleList(current.Egress)})...)
 	if len(changes) == 0 {
 		return observed(PlannedResource{Resource: r, Action: ActionNone}, current.Config), nil
 	}
@@ -255,20 +256,21 @@ func createNetworkACL(server incus.InstanceServer, r Resource, stack string) err
 			Description: r.Description,
 			Ingress:     aclRules(r.Ingress),
 			Egress:      aclRules(r.Egress),
-			Config:      ownership.With(r.Config, stack, addressOf(r)),
+			Config:      stampedConfig(r.Config, r, stack),
 		},
 	})
 }
 
 // updateNetworkACL writes what the stack declares onto the live ACL: the description if it names one, the declared config keys merged into the live
 // ones (as for a network), and each declared rule list in place of the live one. A direction the stack does not declare is sent back as it is.
-func updateNetworkACL(server incus.InstanceServer, r Resource) error {
+func updateNetworkACL(server incus.InstanceServer, r Resource, stack string) error {
 	return incusapi.RetryOnConflict(func() error {
 		current, etag, err := server.GetNetworkACL(r.Name)
 		if err != nil {
 			return err
 		}
 		put := current.Writable()
+		stale, _ := staleFor(r, stack, applied.State{Config: current.Config, Ingress: ruleList(current.Ingress), Egress: ruleList(current.Egress)})
 		if r.Description != "" {
 			put.Description = r.Description
 		}
@@ -281,11 +283,16 @@ func updateNetworkACL(server incus.InstanceServer, r Resource) error {
 		for _, k := range instance.StaleOwnedKeys(current.Config, r.Config, ownedConfigPrefixes) {
 			delete(put.Config, k)
 		}
+		removeStale(stale, put.Config, nil)
 		if r.Ingress != nil {
 			put.Ingress = aclRules(r.Ingress)
+		} else if len(stale.Ingress) > 0 { // a direction the stack no longer gives: what it applied there is taken back, what was added by hand stays
+			put.Ingress = withoutRules(aclRules(current.Ingress), stale.Ingress)
 		}
 		if r.Egress != nil {
 			put.Egress = aclRules(r.Egress)
+		} else if len(stale.Egress) > 0 {
+			put.Egress = withoutRules(aclRules(current.Egress), stale.Egress)
 		}
 		return server.UpdateNetworkACL(r.Name, put, etag)
 	})

@@ -12,6 +12,7 @@ import (
 
 	incus "github.com/lxc/incus/v7/client"
 
+	"github.com/minihci/tink/internal/applied"
 	"github.com/minihci/tink/internal/backupext"
 	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/incusapi"
@@ -179,16 +180,16 @@ func planKindBody(server incus.InstanceServer, r Resource, opts PlanOptions) (Pl
 		p, err := planProject(s, r)
 		return withOtherExtras(s, r, venv, opts, p, err)
 	case KindNetwork:
-		p, err := planNetwork(s, r)
+		p, err := planNetwork(s, r, opts.stack)
 		if err != nil {
 			return p, err
 		}
 		p.Findings = append(p.Findings, aclReferenceWarnings(s, r, opts.acls)...)
 		return withOtherExtras(s, r, venv, opts, p, nil)
 	case KindNetworkACL:
-		return planNetworkACL(s, r)
+		return planNetworkACL(s, r, opts.stack)
 	case KindProfile:
-		p, err := planProfile(s, r)
+		p, err := planProfile(s, r, opts.stack)
 		if err != nil {
 			return p, err
 		}
@@ -254,7 +255,7 @@ func planProject(server incus.InstanceServer, r Resource) (PlannedResource, erro
 	return observed(PlannedResource{Resource: r, Action: ActionNone}, current.Config), nil
 }
 
-func planProfile(server incus.InstanceServer, r Resource) (PlannedResource, error) {
+func planProfile(server incus.InstanceServer, r Resource, stack string) (PlannedResource, error) {
 	current, _, found, err := incusapi.LookupProfile(server, r.Name)
 	if err != nil {
 		return PlannedResource{}, fmt.Errorf("reading the live profile: %w", err)
@@ -264,6 +265,7 @@ func planProfile(server incus.InstanceServer, r Resource) (PlannedResource, erro
 	}
 	changes := diffConfig(current.Config, r.Config, nil)
 	changes = append(changes, diffDevices(current.Devices, r.Devices)...)
+	changes = append(changes, staleChanges(r, stack, applied.State{Config: current.Config, Devices: current.Devices})...)
 	if len(changes) == 0 {
 		return observed(PlannedResource{Resource: r, Action: ActionNone}, current.Config), nil
 	}

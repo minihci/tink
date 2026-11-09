@@ -1,6 +1,6 @@
 # Ownership stamps
 
-**Status: phase 1 ("Write") is built and was run live on a disposable Incus 7.5.1 server (2026-10-20); phases 2 and 3 are not built. The resource stamp (#309, the second stamp below) is built, unit-tested against fakes, and run live on a disposable Incus 7.5.1 server (2026-11-09, L-2026-11-09b): see [Run live](#run-live).** The design is issue #133 (the whole of it: the rules, the removal that is not built, the open questions); this page records what exists. Phase 1 is #127.
+**The applied record (#312, the third intent key below) is built, unit-tested against fakes, and run live on a disposable Incus 7.5.1 server on 2026-11-09 (L-2026-11-09f; see [Run live](#the-applied-record)).** **Status: phase 1 ("Write") is built and was run live on a disposable Incus 7.5.1 server (2026-10-20); phases 2 and 3 are not built. The resource stamp (#309, the second stamp below) is built, unit-tested against fakes, and run live on a disposable Incus 7.5.1 server (2026-11-09, L-2026-11-09b): see [Run live](#run-live).** The design is issue #133 (the whole of it: the rules, the removal that is not built, the open questions); this page records what exists. Phase 1 is #127.
 
 An ownership stamp is one config key, `user.tink.intent.stack`, whose value is the name the stack gives itself with a `kind: stack` document. It answers "which stack made this object?" from the object, without a state file, the way a volume's backup policy already lives on the volume. It is a record, not a lock: nothing in phase 1 decides what may be removed, and tink still never deletes an object. It is one of tink's *intent* keys (written from the declaration, under `user.tink.intent.`); what an intent key is, and the facts and outcomes beside it, is defined once, in the [glossary](glossary.md#key-classes) and `internal/ownership`.
 
@@ -57,8 +57,62 @@ The stamps are a **dimension** of a plan, outside the diff of every kind:
   ```
 
   A stack whose existing objects are all stamped for themselves, or that has none yet, prints no line; a stack with no name prints one line saying so instead. The create of a storage volume does not list the stamps, because they are not part of what a declaration converges to. A restore point of a declared volume is not counted as a copy: it carries its source's stamps on purpose, and is known by its markers.
-- an ordinary `plan apply` **keeps the stamps current on objects this stack already owns**, and only those: an *unbound* object (this stack's owner stamp, no resource stamp) gets its resource stamp written. When the object has a real change to apply, the stamp goes in the same write; otherwise it is a stamp-only write, the narrow one `--adopt` uses, and the object still reads "no changes". It restarts nothing, whatever the instance's `restart:` says, and a test with a recording server fails if it does. It never claims an object that is *unstamped*, a *copy* or *elsewhere*;
+- an ordinary `plan apply` **keeps the stamps current on objects this stack already owns**, and only those: an *unbound* object (this stack's owner stamp, no resource stamp) gets its resource stamp written. When the object has a real change to apply, the stamp goes in the same write; otherwise it is a stamp-only write, the narrow one `--adopt` uses, and the object still reads "no changes". (From #312 it also writes the [applied record](#the-applied-record) that way, when the object has none or an out-of-date one.) It restarts nothing, whatever the instance's `restart:` says, and a test with a recording server fails if it does. It never claims an object that is *unstamped*, a *copy* or *elsewhere*;
 - an object stamped by **another** stack is, in phase 1, treated as it was before: nothing is blocked and nothing is taken over. A volume says so in a warning. Blocking this, and `--adopt-from`, are phase 2 and are not built.
+
+## The applied record
+
+The owner and resource stamps say whose an object is. A third intent key, `user.tink.intent.applied`, says **what tink applied to it**: the config keys it set (with their values), the devices it gave (as whole blocks), the profile list of an instance, and the rules of a network ACL, as the stack declared them the last time tink wrote the object. It is one line of JSON with a `proto`; the code is `internal/applied`, a leaf package (it imports only `internal/ownership`) so the resolver and a daemon can both read it and neither imports the other.
+
+**Why.** A declaration only says what an object should have. A key or a device that the stack used to declare and has dropped is, without a record, the same as one a person added by hand: tink cannot tell them apart, so it could not take it back. With the record it can, exactly, and the repository is the truth for what it declared. A later healing pass has what it needs to compare live state against.
+
+**What is written, and when.** It is written **in the same call as the config it describes**, so after an ordinary apply the record and the config cannot disagree, and a disagreement means a hand edit:
+
+| Kind | Where the record goes |
+|---|---|
+| profile, storage volume, network, network ACL | the creation request, and the update's own write |
+| instance | the one PUT that `ApplyConfig` makes (creation first makes the instance with the two stamps, then sets config, devices and the record in that PUT), and every later update |
+| project, image | nothing: they are create-only, so there is nothing `apply` could change. They get a record when `apply` can change them |
+
+An ordinary `plan apply` on an object this stack owns (`here`, or `unbound`, whose resource stamp is written at the same time) that has no record, or an out-of-date one, writes it: in the same write as a real change, or alone through the narrow stamp-only write otherwise, which restarts nothing, whatever `restart:` says (a test with a recording server fails if it does). It never writes a record on an object that is unstamped, a copy or another stack's. `--adopt` writes the two stamps only; there is no adopt-time special case, the next ordinary apply writes the record. A stack with no name owns nothing and records nothing.
+
+**What is in it, and what is not.** The keys a person declares in `config:` (facts such as `user.tink.role` included) with their values; each device as the block that was applied; the declared `profiles:` of an instance; both rule lists of an ACL, including the ingress rules the derive stage filled in. Left out, because another pass owns them: the other intent stamps (owner, resource, publish, site, derive, backup policy), outcomes, the snapshot keys a volume's `backup:` block writes (the backup capability owns them, and `backup: none` deliberately leaves a schedule alone), and a volume's creation-only `initial.*` keys, which Incus reads once. A recorded profile list is for a later healing pass: nothing takes a profile off an instance, because `apply` never changes an instance's profiles.
+
+**Secrets and size.** The record never holds a value that must not be copied, and it is never a snapshot. A key whose value held a `${secret:}` reference, a key whose name looks like a secret (`secrets.SensitiveKey`), a device with such a field, and any value over **2 KiB** (cloud-init user data and long environment values are the realistic ones) are listed **by name only**: they are still tink's, so removing one works, but their values are never stored and never put back. `plan` says in a note which values were too large. A record over **32 KiB** is cut to names (no values, profiles or rules), with a warning; one that is too long even then is not written, with a warning, and nothing is removed because of it. The limits are tink's: Incus has no limit of its own below the whole request body (1 MiB, shared by everything in one write) [lab, Incus 7.5.1, 2026-11-09, L-2026-11-09d: the request body of a whole update is limited to 1 MiB, there is no smaller limit on one value, and values are stored as sent apart from this].
+
+**An empty value is not recorded.** Incus does not store an empty config value: a key declared `""` is absent from the object after the write [lab, Incus 7.5.1, 2026-11-09, L-2026-11-09d: the request body of a whole update is limited to 1 MiB, there is no smaller limit on one value, and values are stored as sent apart from this]. So the record never lists one, and its absence is neither drift (`plan` already read it so) nor a hand removal, nor a stale key.
+
+**Removal.** Keys and devices that the record lists, the object still has and the declaration no longer gives are a planned removal, shown by `plan` as change lines and made by `plan apply`, **by default**:
+
+```
+instance/app: would update
+    config.limits.cpu: "2" -> (unset) (applied by this stack before, no longer declared)
+    device.scratch: removed (type=disk path=/scratch source=tmp; applied by this stack before, no longer declared)
+```
+
+One function, `applied.StaleApplied`, decides them, and `plan` and `apply` both ask it (through `staleFor`), the way they both ask `instance.StaleOwnedKeys` for the intent keys, so the two cannot disagree. Everything else about it is conservative:
+
+- **Only what the record lists.** A key or device added by hand is not in the record and is never removed; `plan --extras` still reports it, and a key that is a planned removal is not also reported as left alone. A first apply on an object with no record removes nothing: it writes the record, and the next one can use it.
+- **Only where it is true.** The record is trusted only on an object whose resource stamp matches (`here`). On a copy, an unbound object, an unstamped one and another stack's it is ignored, in `plan` and in `apply`, so a copy of an object cannot cause a removal on the original or the other way round.
+- **Never tink's or Incus's own keys.** `StaleApplied` never returns a key under `user.tink.intent.`, `user.tink.outcome.` or `volatile.`, even from a record that lists one.
+- **A secret-named key that is removed is reported without its value** (`(value hidden) -> (unset)`).
+- **A network ACL** replaces a direction it declares as a whole, as before. A direction it no longer declares at all loses the rules the record lists there, and a rule added by hand stays.
+- **A bridge that instances use** counts a removed key as a change to it: it needs `allow_disruption: true` like any other, except an ACL attachment (`security.acls`), for the reason given for the same exception on a set.
+- **A record that cannot be read** (not JSON, or another protocol) is treated as absent, said in one fixed phrase in `plan`'s grouped line, and replaced by the next apply; nothing is removed because of it.
+
+**Display.** The record is a derived stamp, so it is never a change line and never an exit status, and `plan` never prints its value. Where a declared object that is `here` has no record, or one that this declaration changes, `plan` ends with one more grouped line each, which says only that:
+
+```
+applied record: 2 declared objects have no record of what was applied yet: instance/app, profile/base; `tink plan apply` writes it, in the same write as any change and otherwise alone, and restarts none
+applied record: 1 declared object whose record of what was applied is changed by this declaration (a derived stamp: its value is not shown): instance/web; `tink plan apply` writes the new one and restarts none for it
+applied record: the applied record cannot be read on 1 declared object: profile/base; it is treated as absent, so nothing is removed because of it, and `tink plan apply` writes a new one and restarts none for it
+```
+
+**By class.** It is under `user.tink.intent.`, so by its prefix it is refused in `config:` and `properties:`, dropped by `tink export`, never listed as an extra, never taken back by the owned-prefix removal, and dropped from tink's own volume copies (the owner and resource stamps stay; the record of the volume it was copied from is not true of the copy).
+
+**Run live** (L-2026-11-09f), on a disposable Incus 7.5.1 server over `--remote`, with the tink of this change and, for the object without a record, the tink of `main` before it: applying a stack wrote the record in the same call (config keys with their values, devices as whole blocks); a key whose name looks like a secret was listed by name only and its value appeared nowhere in the record; an empty-valued key was neither on the object nor in the record; a second plan said no changes; a key and a device added by hand were reported as extras and left alone. Dropping a config key, a device and a profile key from the YAML was shown by `plan` as removals "applied by this stack before, no longer declared", and `apply` removed exactly those: the hand-added key and device stayed, the instance's process id was unchanged, and the record was rewritten. An instance made by `main` (no record) was planned with the line that says `plan apply` writes it and restarts none, and an ordinary apply wrote it with the process id unchanged; dropping a key from its declaration afterwards removed that key. A copy of an instance that carried a record listing a key and a device was declared with less: `plan` showed no removals for it (they were reported as extras, with the ownership line for a copy), and `apply` changed none of them.
+
+**Not run live:** the record on a network, a network ACL and a storage volume (fakes only); the size rule (a value over 2 KiB, a record over 32 KiB); a stack applied through `--adopt`; the rebuild path; and anything reading the record in the daemon (not built).
 
 ## Adopting
 
@@ -86,13 +140,13 @@ A running **virtual machine** can be stamped live, but Incus marks it as needing
 ## The stamps cannot be declared or exported
 
 - `validate` (the load of any stack file) refuses `user.tink.intent.stack` and `user.tink.intent.resource` (every key under `user.tink.intent.` is refused, by its prefix) in `config:` of every kind that has one, and in an image's `properties:`; for the owner stamp it names `--adopt` as the way to take an object that was made earlier.
-- `tink export` never writes either, for the project, the volumes or the instance it exports, so an exported stack can be applied under any name; its self-check still reads "no changes".
+- `tink export` never writes either (nor the applied record), for the project, the volumes or the instance it exports, so an exported stack can be applied under any name; its self-check still reads "no changes".
 - `plan --extras` does not list either among what a stack leaves undeclared.
 - The network disruption guard does not count the owner stamp, as it does not count ACL keys: a stamp alone never blocks a bridge that instances use.
 
 ## Where the code is
 
-`internal/ownership` is the keys, `Address`, the classification (`Classify`: unknown, unstamped, here, elsewhere, copy, unbound) and `With` (a copy of a config carrying both stamps); it imports nothing of tink's, so the daemon can import it without `resolve`. The resolver's part is `internal/resolve/ownership.go` (the plan dimension, the lines, validation) and `adopt.go` (the stamp-only write, used by `--adopt` and by an ordinary apply). The readers that act only on `here` are `backuprun.Discover` and `join` (`stamps.go`). `backupmeta.StackKey` is the same constant.
+`internal/applied` is the applied record (the document, `Build`, `Encode`, `Parse`, `Trusted` and `StaleApplied`); the resolver's part is `internal/resolve/applied.go` (what each kind records, `stampedConfig` on a creation, `staleFor` and the plan lines, `upkeepJob`), `instance.Spec.StaleApplied` for the instance's one PUT, and the display in `ownership.go`. `internal/ownership` is the keys, `Address`, the classification (`Classify`: unknown, unstamped, here, elsewhere, copy, unbound) and `With` (a copy of a config carrying both stamps); it imports nothing of tink's, so the daemon can import it without `resolve`. The resolver's part is `internal/resolve/ownership.go` (the plan dimension, the lines, validation) and `adopt.go` (the stamp-only write, used by `--adopt` and by an ordinary apply). The readers that act only on `here` are `backuprun.Discover` and `join` (`stamps.go`). `backupmeta.StackKey` is the same constant.
 
 ## Run live
 

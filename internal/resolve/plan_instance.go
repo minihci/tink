@@ -10,6 +10,7 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
 
+	"github.com/minihci/tink/internal/applied"
 	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/incusapi"
 )
@@ -194,6 +195,11 @@ func planInstance(server incus.InstanceServer, r Resource, opts PlanOptions) (Pl
 		sort.Strings(changes)
 	}
 	changes = append(changes, diffDevices(current.Devices, r.Devices)...)
+	// What the stack applied before and no longer declares (applied.go) is taken back, and only that.
+	if stale := staleChanges(r, opts.stack, applied.State{Config: current.Config, Devices: current.Devices}); len(stale) > 0 {
+		changes = append(changes, stale...)
+		sort.Strings(changes)
+	}
 	if r.Ephemeral && !current.Ephemeral {
 		changes = append(changes, "ephemeral: false -> true")
 	}
@@ -217,6 +223,8 @@ func planInstance(server incus.InstanceServer, r Resource, opts PlanOptions) (Pl
 	p := observed(decideInstance(r, changes, chk, pre, missingProfileBlockers(current, r)...), current.Config)
 	if opts.extras {
 		ex := instanceExtras(server, env, current, r, opts.Offline)
+		st, _ := staleFor(r, opts.stack, applied.State{Config: current.Config, Devices: current.Devices})
+		ex = ex.withoutStale(st)
 		p.Extras = &ex
 	}
 	return p, nil

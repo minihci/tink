@@ -92,7 +92,7 @@ Every key under `user.tink.` is one of three kinds, and the kind is the prefix, 
 | Class | Prefix | Written by | Examples |
 |---|---|---|---|
 | fact | none: the short list below | a person, in `config:` | `user.tink.role`, `user.tink.leg.<nic>`, `user.tink.offer.<name>.*`, `user.tink.dns.zone` |
-| intent | `user.tink.intent.` | tink, from the declaration, by `plan apply` | `intent.stack` (the owner), `intent.resource` (the address it was made for), `intent.site`, `intent.publish.<name>`, `intent.derive.<file>`, `intent.backup.policy`; named and not yet written: `intent.applied` |
+| intent | `user.tink.intent.` | tink, from the declaration, by `plan apply` | `intent.stack` (the owner), `intent.resource` (the address it was made for), `intent.site`, `intent.publish.<name>`, `intent.derive.<file>`, `intent.backup.policy`, `intent.applied` (what was applied to the object: [ownership.md](ownership.md#the-applied-record)) |
 | outcome | `user.tink.outcome.` | whatever ran an operation | `outcome.backup.copy.<target>.copied-at`, `outcome.backup.verified-at`, `outcome.exec.<id>.trigger-hash`, `outcome.helper` (the marker), `outcome.helper.status`, `outcome.run.command` |
 
 What each consumer does with the class:
@@ -101,7 +101,7 @@ What each consumer does with the class:
 - **`tink export`** keeps facts and drops intent and outcomes (a publish and the site are still written back as their document and field).
 - **Validation** refuses an intent or outcome key in `config:` or `properties:` of every kind.
 - **tink's own volume copies** (a restore point, a restored volume, a verification's scratch volume) drop the outcomes, the copy policy and the applied record, and keep the owner and resource stamps, so a copy reads as a copy.
-- **Removal:** tink owns the whole `user.tink.intent.` prefix on an instance and a network ACL: an intent key the stack no longer derives is a planned removal. The owner, resource and applied keys are never derived into a config and never taken back. Nothing outside the prefix is ever removed.
+- **Removal:** tink owns the whole `user.tink.intent.` prefix on an instance and a network ACL: an intent key the stack no longer derives is a planned removal. The owner, resource and applied keys are never derived into a config and never taken back. Outside the prefix, only what the applied record lists is ever removed: a config key or a device that this stack applied before and no longer declares, on an object whose resource stamp matches; anything added by hand is never removed ([the applied record](ownership.md#the-applied-record)).
 
 `cmd/tink/keynamespace_test.go` fails if tink's source writes a `user.tink.*` literal that is none of the three, so a new key cannot be added without choosing its class. The old names, and how to fix a host that has them, are on [the removal page](removals/stamp-and-key-names.md).
 

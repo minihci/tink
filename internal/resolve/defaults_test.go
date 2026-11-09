@@ -18,7 +18,7 @@ func loadStackText(t *testing.T, text string) []Resource {
 	return rs
 }
 
-func applied(t *testing.T, text string) []Resource {
+func withDefaults(t *testing.T, text string) []Resource {
 	t.Helper()
 	out, err := ApplyDefaults(loadStackText(t, text))
 	if err != nil {
@@ -53,7 +53,7 @@ defaults:
 // Each kind that has a section receives it: an instance its config keys and its NIC name, a volume its backup block. A device of another type, a
 // resource of another kind and a document that is not in the graph are left as they were.
 func TestDefaultsAreFilledIntoEachKind(t *testing.T) {
-	rs := applied(t, defaultsHeader+`kind: instance
+	rs := withDefaults(t, defaultsHeader+`kind: instance
 name: app
 image: docker-oci:library/alpine:3
 devices:
@@ -102,7 +102,7 @@ content: hi
 
 // A value a resource sets always wins, one key at a time for config and devices, and as a whole for a backup block.
 func TestAValueTheResourceSetsWins(t *testing.T) {
-	rs := applied(t, defaultsHeader+`kind: instance
+	rs := withDefaults(t, defaultsHeader+`kind: instance
 name: app
 image: docker-oci:library/alpine:3
 config:
@@ -138,7 +138,7 @@ backup:
 
 // A key the resource sets to the empty string is set: the default does not fill it.
 func TestAnEmptyValueIsStillAValue(t *testing.T) {
-	rs := applied(t, defaultsHeader+"kind: instance\nname: app\nimage: docker-oci:library/alpine:3\nconfig:\n  limits.memory: \"\"\n")
+	rs := withDefaults(t, defaultsHeader+"kind: instance\nname: app\nimage: docker-oci:library/alpine:3\nconfig:\n  limits.memory: \"\"\n")
 	if got := find(t, rs, "app").Config["limits.memory"]; got != "" {
 		t.Errorf("limits.memory = %q, want the empty string the instance wrote", got)
 	}
@@ -168,7 +168,7 @@ func TestNoDefaultsLeavesTheStackUntouched(t *testing.T) {
 		}
 	}
 	// and so does a stack that declares an empty section, or one for a kind it does not have
-	out = applied(t, "kind: stack\nname: site\ndefaults:\n  storage-volume: {}\n---\nkind: instance\nname: app\nimage: docker-oci:library/alpine:3\n")
+	out = withDefaults(t, "kind: stack\nname: site\ndefaults:\n  storage-volume: {}\n---\nkind: instance\nname: app\nimage: docker-oci:library/alpine:3\n")
 	if app := find(t, out, "app"); app.Config != nil || app.Devices != nil {
 		t.Errorf("an empty section fills nothing: %+v", app)
 	}
@@ -220,7 +220,7 @@ name: v2
 
 // Defaults never change the shape of the graph: the levels of a stack are what they are with every default written out on the resources.
 func TestDefaultsDoNotChangeTheGraph(t *testing.T) {
-	rs := applied(t, defaultsHeader+`kind: network
+	rs := withDefaults(t, defaultsHeader+`kind: network
 name: tink0
 ---
 kind: instance

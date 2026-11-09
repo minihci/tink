@@ -75,7 +75,7 @@ func TestAnACLStampConvergesAndASecondPlanSaysNoChanges(t *testing.T) {
 	live := liveACL(nil, nil)
 	s := &aclServer{acls: map[string]*api.NetworkACL{"svc-in": live}}
 
-	p, err := planNetworkACL(s, want)
+	p, err := planNetworkACL(s, want, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestAnACLStampConvergesAndASecondPlanSaysNoChanges(t *testing.T) {
 	if s.acls["svc-in"].Config[aclStampKey] != aclStampValue {
 		t.Errorf("config after apply = %v", s.acls["svc-in"].Config)
 	}
-	if p, err = planNetworkACL(s, want); err != nil || p.Action != ActionNone || len(p.Changes) != 0 {
+	if p, err = planNetworkACL(s, want, ""); err != nil || p.Action != ActionNone || len(p.Changes) != 0 {
 		t.Errorf("a second plan: %+v, %v", p, err)
 	}
 }
@@ -101,7 +101,7 @@ func TestDroppingDeriveIngressRemovesTheStampAndNothingElse(t *testing.T) {
 	}
 	s := &aclServer{acls: map[string]*api.NetworkACL{"svc-in": live}}
 
-	p, err := planNetworkACL(s, r)
+	p, err := planNetworkACL(s, r, "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -484,7 +484,7 @@ func TestPlanNetworkACL(t *testing.T) {
 			if c.live != nil {
 				s.acls = map[string]*api.NetworkACL{"svc-in": c.live}
 			}
-			p, err := planNetworkACL(s, c.declared)
+			p, err := planNetworkACL(s, c.declared, "")
 			if err != nil {
 				t.Fatalf("planNetworkACL() error = %v", err)
 			}
@@ -502,7 +502,7 @@ func TestPlanNetworkACL(t *testing.T) {
 }
 
 func TestPlanNetworkACL_ForbiddenIsNotAbsent(t *testing.T) {
-	p, err := planNetworkACL(&aclServer{err: errForbidden}, aclResource(nil))
+	p, err := planNetworkACL(&aclServer{err: errForbidden}, aclResource(nil), "")
 	if err == nil {
 		t.Fatalf("a 403 must be an error, never read as 'the ACL is absent' (got action %v)", p.Action)
 	}
@@ -512,8 +512,8 @@ func TestPlanNetworkACL_TwoRunsAgree(t *testing.T) {
 	// The same plan twice against the same server says the same thing: reading an ACL changes nothing.
 	s := &aclServer{acls: map[string]*api.NetworkACL{"svc-in": liveACL(held(ruleHA), nil)}}
 	r := aclResource([]api.NetworkACLRule{ruleHA, ruleMQTT})
-	first, _ := planNetworkACL(s, r)
-	second, _ := planNetworkACL(s, r)
+	first, _ := planNetworkACL(s, r, "")
+	second, _ := planNetworkACL(s, r, "")
 	if !reflect.DeepEqual(first, second) {
 		t.Errorf("plans differ between runs:\n%+v\n%+v", first, second)
 	}
@@ -595,7 +595,7 @@ func TestApplyOne_NetworkACLIsIdempotent(t *testing.T) {
 	if out := apply(r); out != outChanged || len(s.created) != 1 {
 		t.Fatalf("first apply = %v with %d creates; want outChanged and 1", out, len(s.created))
 	}
-	if p, _ := planNetworkACL(s, r); p.Action != ActionNone {
+	if p, _ := planNetworkACL(s, r, ""); p.Action != ActionNone {
 		t.Fatalf("plan after create = %v %v, want no changes", p.Action, p.Changes)
 	}
 	if out := apply(r); out != outConverged || len(s.created) != 1 || len(s.updated) != 0 {
@@ -682,7 +682,7 @@ func TestPlanNetwork_AttachingAnACLToABridgeInUseIsNotDisruption(t *testing.T) {
 		"security.acls":                       "svc-in",
 		"security.acls.default.egress.action": "allow",
 	})
-	p, err := planNetwork(&netServer{live: live}, r)
+	p, err := planNetwork(&netServer{live: live}, r, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -701,7 +701,7 @@ func TestPlanNetwork_AttachingAnACLToABridgeInUseIsNotDisruption(t *testing.T) {
 func TestPlanNetwork_ChangingAnAttachedACLListOnABridgeInUseIsNotDisruption(t *testing.T) {
 	live := liveBridge(map[string]string{"security.acls": "a", "security.acls.default.ingress.action": "reject"}, "/1.0/instances/ha")
 	r := netResource(map[string]string{"security.acls": "a,b", "security.acls.default.ingress.action": "drop", "security.acls.default.ingress.logged": "true"})
-	p, _ := planNetwork(&netServer{live: live}, r)
+	p, _ := planNetwork(&netServer{live: live}, r, "")
 	if p.Action != ActionUpdate || len(p.Warnings()) != 0 {
 		t.Fatalf("action %v warnings %v (%v), want a plain update", p.Action, details(p.Warnings()), details(p.Blocked()))
 	}
@@ -710,7 +710,7 @@ func TestPlanNetwork_ChangingAnAttachedACLListOnABridgeInUseIsNotDisruption(t *t
 func TestPlanNetwork_AnACLKeyDoesNotLetADisruptiveKeyThrough(t *testing.T) {
 	live := liveBridge(map[string]string{"ipv4.nat": "true"}, "/1.0/instances/mosquitto")
 	r := netResource(map[string]string{"ipv4.nat": "false", "security.acls": "svc-in"})
-	p, _ := planNetwork(&netServer{live: live}, r)
+	p, _ := planNetwork(&netServer{live: live}, r, "")
 	if p.Action != ActionBlocked {
 		t.Fatalf("action = %v, want ActionBlocked: the NAT change is still disruption, whatever else is in the same edit", p.Action)
 	}
@@ -719,7 +719,7 @@ func TestPlanNetwork_AnACLKeyDoesNotLetADisruptiveKeyThrough(t *testing.T) {
 	}
 	// With the consent the resource gives, the warning is about the instances, and the update goes through.
 	r.AllowDisruption = true
-	if p, _ = planNetwork(&netServer{live: live}, r); p.Action != ActionUpdate || len(p.Warnings()) != 1 {
+	if p, _ = planNetwork(&netServer{live: live}, r, ""); p.Action != ActionUpdate || len(p.Warnings()) != 1 {
 		t.Errorf("with allow_disruption: action %v warnings %v", p.Action, details(p.Warnings()))
 	}
 }

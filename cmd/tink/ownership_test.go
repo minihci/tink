@@ -9,6 +9,7 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
 
+	"github.com/minihci/tink/internal/applied"
 	"github.com/minihci/tink/internal/ownership"
 	"github.com/minihci/tink/internal/prepare"
 	"github.com/minihci/tink/internal/resolve"
@@ -20,6 +21,13 @@ type planServer struct {
 	stamp string // what the profile and the instance carry, or "" for nothing
 	// resource is what they carry as their resource stamp: "" for none, "own" for the address each really has, anything else as it is
 	resource string
+	// record is whether they also carry the applied record that ownershipStack applies (internal/applied)
+	record bool
+}
+
+func appliedText(config map[string]string, profiles []string) string {
+	rec, _ := applied.Build(applied.Input{Config: config, Profiles: profiles, Withhold: func(string) bool { return false }})
+	return applied.Encode(rec)
 }
 
 func (s *planServer) resourceFor(address string) map[string]string {
@@ -51,6 +59,9 @@ func (s *planServer) GetProfile(name string) (*api.Profile, string, error) {
 	}
 	cfg := s.resourceFor("profile/default/base")
 	cfg["user.note"] = "x"
+	if s.record {
+		cfg[ownership.AppliedKey] = appliedText(map[string]string{"user.note": "x"}, nil)
+	}
 	return &api.Profile{Name: name, ProfilePut: api.ProfilePut{Config: cfg}}, "", nil
 }
 
@@ -60,6 +71,9 @@ func (s *planServer) GetInstance(name string) (*api.Instance, string, error) {
 	}
 	cfg := s.resourceFor("instance/default/app")
 	cfg["environment.A"] = "b"
+	if s.record {
+		cfg[ownership.AppliedKey] = appliedText(map[string]string{"environment.A": "b"}, []string{"default", "base"})
+	}
 	return &api.Instance{Name: name, Type: "container", Status: "Running", StatusCode: api.Running,
 		InstancePut: api.InstancePut{Config: cfg, Profiles: []string{"default", "base"}}}, "", nil
 }
@@ -123,10 +137,16 @@ level 1:
 		t.Errorf("ownership line:\n%q\nwant:\n%q", line, want)
 	}
 
-	// once the objects are stamped the output is the old output, to the byte
-	out, err = runPlan(t, &planServer{stamp: "lab", resource: "own"}, ownershipStack(true))
+	// once the objects are stamped, and carry the record of what was applied, the output is the old output, to the byte
+	out, err = runPlan(t, &planServer{stamp: "lab", resource: "own", record: true}, ownershipStack(true))
 	if err != nil || out != before {
 		t.Errorf("stamped here: err %v, output:\n%s", err, out)
+	}
+	// stamped here and no record yet: the levels read as before and one grouped line says the record will be written, and it is not a change
+	out, err = runPlan(t, &planServer{stamp: "lab", resource: "own"}, ownershipStack(true))
+	wantRecord := "applied record: 2 declared objects have no record of what was applied yet: instance/app, profile/base; `tink plan apply` writes it, in the same write as any change and otherwise alone, and restarts none\n"
+	if err != nil || out != before+wantRecord {
+		t.Errorf("stamped here, no record: err %v, output:\n%s", err, out)
 	}
 	// stamped by another stack: today's output (only a volume says anything), and no line
 	out, err = runPlan(t, &planServer{stamp: "other", resource: "own"}, ownershipStack(true))

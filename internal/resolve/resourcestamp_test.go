@@ -121,8 +121,15 @@ func TestAnOrdinaryApplyWritesAMissingResourceStampAndRestartsNothing(t *testing
 					t.Errorf("%s was changed by the stamp: %q", k, got[k])
 				}
 			}
-			if len(got) != len(bag)+2 {
-				t.Errorf("more than the resource stamp was written: %v", got)
+			want := len(bag) + 2
+			if rec, _, ok := appliedRecordFor(r, "lab"); ok {
+				want++ // the applied record is written with it (#312), and is the one this declaration applies
+				if got[ownership.AppliedKey] != rec {
+					t.Errorf("the applied record is %q, want %q", got[ownership.AppliedKey], rec)
+				}
+			}
+			if len(got) != want {
+				t.Errorf("more than the stamps was written: %v", got)
 			}
 			if len(f.stateChanges) != 0 {
 				t.Errorf("a stamp restarted something: %v", f.stateChanges)
@@ -159,6 +166,9 @@ func TestAnOrdinaryApplyPutsAMissingResourceStampInTheWriteOfARealChange(t *test
 			got := f.configOf(kind)
 			if got["user.note"] != "new" || got[ownership.ResourceKey] != addressOf(r) || got[ownership.Key] != "lab" {
 				t.Errorf("the object carries %v, want the change, the owner stamp and the resource stamp", got)
+			}
+			if rec, _, _ := appliedRecordFor(r, "lab"); got[ownership.AppliedKey] != rec || rec == "" {
+				t.Errorf("the applied record is %q, want %q, in the same write", got[ownership.AppliedKey], rec)
 			}
 			if len(f.patches) != 0 {
 				t.Errorf("the stamp was written by a call of its own beside the update: %v", f.patches)
