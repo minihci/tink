@@ -147,7 +147,7 @@ func TestAStatusVolumeThatCannotBeReadDegradesTheHelperAndNothingElse(t *testing
 			}
 			r := Evaluate(bad, t0)
 			if r.Health != tc.want {
-				t.Fatalf("health = %s (%v), want %s: unreadable is never healthy", r.Health, r.Reasons, tc.want)
+				t.Fatalf("health = %s (%v), want %s: unreadable is never healthy", r.Health, r.Details(), tc.want)
 			}
 			if !strings.Contains(r.Summary(), tc.text) {
 				t.Errorf("summary = %q, want it to contain %q", r.Summary(), tc.text)

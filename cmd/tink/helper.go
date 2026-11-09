@@ -395,7 +395,7 @@ type helperJSON struct {
 func printHelperJSON(out io.Writer, reports []helper.Report) error {
 	list := make([]helperJSON, len(reports))
 	for i, r := range reports {
-		list[i] = helperJSON{Project: r.Found.Project, Name: r.Found.Name, State: r.Found.State, Health: r.Health.String(), Code: int(r.Health), Reasons: r.Reasons, StatusVolume: r.Found.StatusVolume, Status: r.Status}
+		list[i] = helperJSON{Project: r.Found.Project, Name: r.Found.Name, State: r.Found.State, Health: r.Health.String(), Code: int(r.Health), Reasons: r.Details(), StatusVolume: r.Found.StatusVolume, Status: r.Status}
 	}
 	b, err := json.MarshalIndent(list, "", "  ")
 	if err != nil {
@@ -407,7 +407,7 @@ func printHelperJSON(out io.Writer, reports []helper.Report) error {
 
 func printHelperDetails(out io.Writer, r helper.Report, now time.Time) {
 	fmt.Fprintf(out, "helper %s: %s\n", r.Found.Label(), r.Health)
-	for _, why := range r.Reasons {
+	for _, why := range r.Details() {
 		fmt.Fprintf(out, "  - %s\n", why)
 	}
 	fmt.Fprintf(out, "  instance:    %s\n", r.Found.State)

@@ -133,7 +133,7 @@ func planHelper(server incus.InstanceServer, r Resource, now time.Time, opts Pla
 		p.Findings = append(p.Findings, finding.Notef(reasonHelperProxyAPI, "", "it reaches the host's API through a proxy device: a restricted project must allow proxy devices (a helper installed with `tink helper install --api-via network`, the default where the bridge allows it, has none)"))
 	}
 	if rep.Health != helper.Healthy {
-		for _, reason := range rep.Reasons {
+		for _, reason := range rep.Details() {
 			p.Findings = append(p.Findings, finding.Warnf(reasonHelperHealth, "", "the daemon helper is %s: %s", rep.Health.String(), reason))
 		}
 	}

@@ -16,6 +16,7 @@ import (
 
 	"github.com/minihci/tink/internal/backuprun"
 	"github.com/minihci/tink/internal/daemon"
+	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/helper"
 	"github.com/minihci/tink/internal/instant"
 	"github.com/minihci/tink/internal/observe"
@@ -281,7 +282,7 @@ func TestTheDocumentsTinkWritesHaveNoUnderscoreKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	var printed bytes.Buffer
-	report := helper.Report{Health: helper.Degraded, Found: helper.Found{Project: "p", Name: "h", State: "Running", StatusVolume: "default/helper-status"}, Status: &status, Reasons: []string{"r"}}
+	report := helper.Report{Health: helper.Degraded, Found: helper.Found{Project: "p", Name: "h", State: "Running", StatusVolume: "default/helper-status"}, Status: &status, Findings: []finding.Finding{finding.Warnf("a reason", "instance/default/h", "r")}}
 	if err := printHelperJSON(&printed, []helper.Report{report}); err != nil {
 		t.Fatal(err)
 	}

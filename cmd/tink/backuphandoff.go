@@ -104,7 +104,7 @@ func prepareHandoff(server incus.InstanceServer, items []backuprun.Item, names [
 func helperCannotTake(r helper.Report) string {
 	switch {
 	case r.Health == helper.Down:
-		return strings.Join(r.Reasons, "; ")
+		return strings.Join(r.Details(), "; ")
 	case r.Status == nil && r.Found.StatusProblem != "":
 		return fmt.Sprintf("its status volume %s cannot be read (%s), so it cannot be seen to be well", r.Found.StatusVolume, r.Found.StatusProblem)
 	case r.Status == nil:

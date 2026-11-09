@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/jobs"
 	"github.com/minihci/tink/internal/observe"
 )
@@ -22,43 +23,66 @@ import (
 // A failed last job is always a problem, even when the copy it was about is also listed as failing: one simple rule, and the next finished job (any
 // state) replaces it in the document, which is what clears it.
 //
-// It returns the health those lines add up to, and the lines.
-func JudgeStatus(st Status, now time.Time) (Health, []string) {
-	var health Health
-	var reasons []string
-	degrade := func(format string, args ...any) {
-		health = Degraded
-		reasons = append(reasons, fmt.Sprintf(format, args...))
-	}
+// It returns the health those findings add up to (HealthOf), and the findings. Each is a warning, which is what degraded is: a document alone cannot say
+// the helper is down, because that is a matter of the time since it was written, and the instance. The subject of a finding is what the document calls
+// the thing ("backup/lib", "derived/ingress-routes"), and empty for a finding about the document or the helper as a whole: JudgeStatus does not know
+// which instance the document came from, so Evaluate names it.
+func JudgeStatus(st Status, now time.Time) (Health, []finding.Finding) {
+	var fs []finding.Finding
 
 	switch hb := st.Heartbeat.D(); {
 	case st.WrittenAt.IsZero():
-		degrade("its status document has no write time (%s), so it cannot be shown to be fresh", WrittenAtField)
+		fs = append(fs, finding.Warnf(ReasonNoWriteTime, "", "its status document has no write time (%s), so it cannot be shown to be fresh", WrittenAtField))
 	case hb <= 0:
-		degrade("its status document has no heartbeat (%s), so it cannot be told from a helper that has stopped", HeartbeatField)
+		fs = append(fs, finding.Warnf(ReasonNoHeartbeat, "", "its status document has no heartbeat (%s), so it cannot be told from a helper that has stopped", HeartbeatField))
 	}
-	if skipped := st.Backup(observe.Skipped); len(skipped) > 0 {
-		degrade("%d volume(s) skipped: %s", len(skipped), skipList(skipped))
+	for _, rec := range st.Backup(observe.Skipped) {
+		fs = append(fs, finding.Warnf(ReasonVolumeSkipped, subjectOf(rec), "%s is skipped: %s", rec.Resource, rec.Reason))
 	}
-	if failing := st.Backup(observe.Failing); len(failing) > 0 {
-		degrade("%d copy(ies) failing: %s", len(failing), failList(failing))
+	for _, rec := range st.Backup(observe.Failing) {
+		fs = append(fs, finding.Warnf(ReasonCopyFailing, subjectOf(rec), "the copy of %s to %s is failing, %d in a row", rec.Resource, rec.Target, rec.Failures))
 	}
 	for _, rec := range st.States {
 		if rec.What == observe.WhatBackup {
 			continue
 		}
-		switch rec.State {
-		case observe.Blocked, observe.Failing:
-			degrade("%s", reconcileLine(rec))
+		if reason := reconcileReason(rec); reason != "" {
+			fs = append(fs, finding.Warnf(reason, subjectOf(rec), "%s", reconcileLine(rec)))
 		}
 	}
 	if j := st.LastJob; j != nil && j.State == string(jobs.Failed) {
-		degrade("the last job (%s) failed%s", j.ID, ago(j.FinishedAt.Time, now))
+		fs = append(fs, finding.Warnf(ReasonJobFailed, "", "the last job (%s) failed%s", j.ID, ago(j.FinishedAt.Time, now)))
 	}
 	if st.Draining {
-		degrade("draining: it is not starting new work (an upgrade is in progress, or one did not finish: remove /data/jobs/DRAIN)")
+		fs = append(fs, finding.Warnf(ReasonDraining, "", "draining: it is not starting new work (an upgrade is in progress, or one did not finish: remove /data/jobs/DRAIN)"))
 	}
-	return health, reasons
+	return HealthOf(fs), fs
+}
+
+// subjectOf is the record's thing in the form the document gives it: what, then which ("backup/lib", "derived/ingress-routes"). The other end of a copy is
+// the detail's to say.
+func subjectOf(r observe.Record) string { return observe.Name(r.What, r.Resource, "") }
+
+// reconcileReason is the fixed phrase for a reconcile state that is a problem, and "" for one that is not: blocked and failing are, converged and
+// skipped are not.
+func reconcileReason(r observe.Record) string {
+	blocked := r.State == observe.Blocked
+	if !blocked && r.State != observe.Failing {
+		return ""
+	}
+	switch {
+	case r.What == "derived" && blocked:
+		return ReasonDerivedBlocked
+	case r.What == "derived":
+		return ReasonDerivedFailing
+	case r.What == "dns" && blocked:
+		return ReasonDNSBlocked
+	case r.What == "dns":
+		return ReasonDNSFailing
+	case blocked:
+		return ReasonReconcileBlocked
+	}
+	return ReasonReconcileFailing
 }
 
 // reconcileLine says one reconcile state that is blocked or failing: what it keeps, for which site, and the fixed reason the daemon gave.

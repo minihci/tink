@@ -87,7 +87,7 @@ func TestStatusCheckSpeaksInExitCodesAMonitorCanUse(t *testing.T) {
 		line string
 	}{
 		{"healthy", helperInstance("tink-helper", "helper", "Running", goodStatus(nil)), 0, "healthy: tink-helper/helper"},
-		{"degraded: a volume is skipped", helperInstance("tink-helper", "helper", "Running", skipped), 1, "degraded: tink-helper/helper: 1 volume(s) skipped: lib (policy of protocol 2)"},
+		{"degraded: a volume is skipped", helperInstance("tink-helper", "helper", "Running", skipped), 1, "degraded: tink-helper/helper: lib is skipped: policy of protocol 2"},
 		{"down: stale", helperInstance("tink-helper", "helper", "Running", stale), 2, "down: tink-helper/helper: stale: last heard from 40m ago"},
 		{"down: stopped", helperInstance("tink-helper", "helper", "Stopped", goodStatus(nil)), 2, "down: tink-helper/helper: the instance is stopped"},
 	} {
@@ -161,7 +161,7 @@ func TestStatusWithoutCheckPrintsDetailsAndExitsZero(t *testing.T) {
 		t.Fatalf("a degraded helper is not an error without --check: %v", err)
 	}
 	for _, want := range []string{
-		"helper tink-helper/helper: degraded", "1 copy(ies) failing", "version:     v1", "copy policies up to protocol 1",
+		"helper tink-helper/helper: degraded", "the copy of lib to nas is failing, 3 in a row", "the last job (20261007T110000Z-abc) failed 5m ago", "version:     v1", "copy policies up to protocol 1",
 		"last heard:  2m ago (it writes at least every 10m)", "skipped:     none", "lib -> nas, 3 in a row since 2026-10-07 11:00 UTC, the last 1m ago",
 		"20261007T110000Z-abc failed, 5m ago", "remotes:     host; nas2",
 	} {
@@ -390,7 +390,7 @@ func TestPlanEndsWithANoteAboutAHelperThatIsNotWellAndSaysNothingOtherwise(t *te
 		s.States = []observe.Record{{What: observe.WhatBackup, Resource: "lib", State: observe.Skipped, Reason: "policy of protocol 2"}}
 	})
 	got := note(instancesServer{all: []api.Instance{helperInstance("p", "h", "Running", skipped)}})
-	for _, want := range []string{"note: the helper is degraded: p/h", "lib (policy of protocol 2)", "tink helper status"} {
+	for _, want := range []string{"note: the helper is degraded: p/h", "lib is skipped: policy of protocol 2", "tink helper status"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("%q not in %q", want, got)
 		}

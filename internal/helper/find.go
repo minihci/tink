@@ -9,7 +9,8 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
 
-	"github.com/minihci/tink/internal/observe"
+	"github.com/minihci/tink/internal/finding"
+	"github.com/minihci/tink/internal/ownership"
 )
 
 // Found is a helper instance, as listed.
@@ -76,20 +77,56 @@ func (h Health) String() string {
 	}
 }
 
-// Report is the judgement of one helper, with the lines that justify it.
+// Report is the judgement of one helper, with the findings that justify it. Degraded is what warning findings add up to and Down what error findings do
+// (HealthOf), so the health and the findings cannot disagree.
 type Report struct {
-	Health  Health
-	Found   Found
-	Status  *Status
-	Reasons []string
+	Health   Health
+	Found    Found
+	Status   *Status
+	Findings []finding.Finding
+}
+
+// HealthOf is the health a list of findings adds up to: Down when any is an error, else Degraded when any is a warning, else Healthy. A note says
+// something is worth reading and is not a problem.
+func HealthOf(fs []finding.Finding) Health {
+	switch {
+	case finding.HasErrors(fs):
+		return Down
+	case finding.Count(fs, finding.Warning) > 0:
+		return Degraded
+	}
+	return Healthy
+}
+
+// add puts findings on the report and raises its health to what they say.
+func (r *Report) add(fs ...finding.Finding) {
+	r.Findings = append(r.Findings, fs...)
+	if h := HealthOf(fs); h > r.Health {
+		r.Health = h
+	}
+}
+
+// Details are the findings' details, one line each, in the order they were raised: what `status --check` joins and what a person reads. The reasons
+// are not in them (a finding's reason is its key, and its detail says it in words).
+func (r Report) Details() []string {
+	out := make([]string, len(r.Findings))
+	for i, f := range r.Findings {
+		out[i] = f.Detail
+	}
+	return out
 }
 
 // Summary is the one line `status --check` prints.
 func (r Report) Summary() string {
-	if len(r.Reasons) == 0 {
+	if len(r.Findings) == 0 {
 		return fmt.Sprintf("%s: %s", r.Health, r.Found.Label())
 	}
-	return fmt.Sprintf("%s: %s: %s", r.Health, r.Found.Label(), strings.Join(r.Reasons, "; "))
+	return fmt.Sprintf("%s: %s: %s", r.Health, r.Found.Label(), strings.Join(r.Details(), "; "))
+}
+
+// Subject is how a finding about the helper's instance names it, in tink's form.
+func (f Found) Subject() string {
+	return ownership.Address(ownership.KindInstance, f.Project, "", f.Name)
 }
 
 // Evaluate judges a helper from what it published and the state of its instance. It is two parts. The outside part needs the server's answer and
@@ -102,21 +139,12 @@ func (r Report) Summary() string {
 // not be read, with that said as the reason.
 func Evaluate(f Found, now time.Time) Report {
 	r := Report{Found: f}
-	down := func(format string, args ...any) {
-		r.Health = Down
-		r.Reasons = append(r.Reasons, fmt.Sprintf(format, args...))
-	}
-	degrade := func(format string, args ...any) {
-		if r.Health < Degraded {
-			r.Health = Degraded
-		}
-		r.Reasons = append(r.Reasons, fmt.Sprintf(format, args...))
-	}
+	subject := f.Subject()
 
 	// A status volume that could not be read comes first: whatever the instance's state, the document cannot be judged, and saying
 	// nothing about it would read as "no status yet" or, worse, as well.
 	if f.StatusProblem != "" {
-		degrade("cannot read its status volume %s: %s", f.StatusVolume, f.StatusProblem)
+		r.add(finding.Warnf(ReasonStatusVolumeUnreadable, subject, "cannot read its status volume %s: %s", f.StatusVolume, f.StatusProblem))
 	}
 
 	text, published := f.Config[StatusKey]
@@ -124,7 +152,7 @@ func Evaluate(f Found, now time.Time) Report {
 	if published {
 		var err error
 		if st, err = Parse(text); err != nil {
-			degrade("cannot read its status: %v", err)
+			r.add(finding.Warnf(ReasonStatusUnreadable, subject, "cannot read its status: %v", err))
 			published = false
 		} else {
 			r.Status = &st
@@ -132,15 +160,16 @@ func Evaluate(f Found, now time.Time) Report {
 	}
 
 	if f.State != "Running" {
-		down("the instance is %s", strings.ToLower(f.State))
+		detail := fmt.Sprintf("the instance is %s", strings.ToLower(f.State))
 		if r.Status != nil && !st.WrittenAt.IsZero() {
-			r.Reasons[len(r.Reasons)-1] += fmt.Sprintf(" (last heard from %s ago)", age(now.Sub(st.WrittenAt.Time)))
+			detail += fmt.Sprintf(" (last heard from %s ago)", age(now.Sub(st.WrittenAt.Time)))
 		}
+		r.add(finding.Errorf(ReasonNotRunning, subject, "%s", detail))
 		return r
 	}
 	if r.Status == nil {
-		if !published && len(r.Reasons) == 0 {
-			degrade("it is running but has not published a status document (it has just started, or it is a helper that does not publish one)")
+		if !published && len(r.Findings) == 0 {
+			r.add(finding.Warnf(ReasonNoStatus, subject, "it is running but has not published a status document (it has just started, or it is a helper that does not publish one)"))
 		}
 		return r
 	}
@@ -149,16 +178,19 @@ func Evaluate(f Found, now time.Time) Report {
 	// not say when it was written or how often is JudgeStatus's to call degraded, and is not called stale here.
 	if hb := st.Heartbeat.D(); !st.WrittenAt.IsZero() && hb > 0 {
 		if silent := now.Sub(st.WrittenAt.Time); silent > hb*staleNumerator/staleDenominator {
-			down("stale: last heard from %s ago, and it publishes at least every %s", age(silent), age(hb))
+			r.add(finding.Errorf(ReasonStale, subject, "stale: last heard from %s ago, and it publishes at least every %s", age(silent), age(hb)))
 			return r
 		}
 	}
 
-	health, reasons := JudgeStatus(st, now)
-	if health > r.Health {
-		r.Health = health
+	// The document does not know which instance it came from: a finding about the document itself is about the helper's instance.
+	_, fs := JudgeStatus(st, now)
+	for i := range fs {
+		if fs[i].Subject == "" {
+			fs[i].Subject = subject
+		}
 	}
-	r.Reasons = append(r.Reasons, reasons...)
+	r.add(fs...)
 	return r
 }
 
@@ -175,24 +207,7 @@ func (r *Report) CheckTrust(certs []api.Certificate) {
 			return
 		}
 	}
-	r.Health = Down
-	r.Reasons = append(r.Reasons, fmt.Sprintf("its certificate (%s) is not in the host's trust store: it was revoked, or never enrolled (tink helper install --reissue enrols it again)", TrustName))
-}
-
-func skipList(s []observe.Record) string {
-	parts := make([]string, len(s))
-	for i, x := range s {
-		parts[i] = fmt.Sprintf("%s (%s)", x.Resource, x.Reason)
-	}
-	return strings.Join(parts, ", ")
-}
-
-func failList(f []observe.Record) string {
-	parts := make([]string, len(f))
-	for i, x := range f {
-		parts[i] = fmt.Sprintf("%s -> %s (%dx)", x.Resource, x.Target, x.Failures)
-	}
-	return strings.Join(parts, ", ")
+	r.add(finding.Errorf(ReasonCertificateNotTrusted, r.Found.Subject(), "its certificate (%s) is not in the host's trust store: it was revoked, or never enrolled (tink helper install --reissue enrols it again)", TrustName))
 }
 
 // age is a duration short enough to read in a line: "42s", "7m", "3h", "2d".

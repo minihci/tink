@@ -5,13 +5,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lxc/incus/v7/shared/api"
+
+	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/instant"
 	"github.com/minihci/tink/internal/observe"
 )
 
 // equivalenceCases are every verdict Evaluate gave before it was split into the part that needs the instance and the part that reads only the
 // status document. Each case records the health and the one line `status --check` printed, as written down from the unsplit function. The
-// split must not change one of them.
+// split did not change one of them. Afterwards the reasons became findings, and the wording of the skipped-volume and failing-copy lines changed on
+// purpose (one finding for each volume and copy, not one line for all of them): the line of those five cases was rewritten then, and the health of
+// every case is still the one written down first.
 func equivalenceCases() []struct {
 	name   string
 	f      Found
@@ -50,17 +55,17 @@ func equivalenceCases() []struct {
 		{"no write time", found("Running", fresh(noTime)), Degraded, "degraded: tink-helper/helper: its status document has no write time (written-at), so it cannot be shown to be fresh"},
 		{"no heartbeat", found("Running", fresh(func(s *Status) { s.Heartbeat = 0 })), Degraded, "degraded: tink-helper/helper: its status document has no heartbeat (heartbeat), so it cannot be told from a helper that has stopped"},
 		{"no heartbeat and a write time that would be stale", found("Running", fresh(func(s *Status) { s.Heartbeat = 0; s.WrittenAt = instant.At(t0.Add(-5 * time.Hour)) })), Degraded, "degraded: tink-helper/helper: its status document has no heartbeat (heartbeat), so it cannot be told from a helper that has stopped"},
-		{"no write time and failing", found("Running", fresh(func(s *Status) { noTime(s); s.States = []observe.Record{failingCopy("lib", "nas", 1, time.Time{})} })), Degraded, "degraded: tink-helper/helper: its status document has no write time (written-at), so it cannot be shown to be fresh; 1 copy(ies) failing: lib -> nas (1x)"},
-		{"a skipped volume", found("Running", fresh(func(s *Status) { s.States = []observe.Record{skipped("tenant/lib", "policy of a newer protocol")} })), Degraded, "degraded: tink-helper/helper: 1 volume(s) skipped: tenant/lib (policy of a newer protocol)"},
-		{"a failing copy", found("Running", fresh(func(s *Status) { s.States = []observe.Record{failingCopy("lib", "nas", 3, time.Time{})} })), Degraded, "degraded: tink-helper/helper: 1 copy(ies) failing: lib -> nas (3x)"},
+		{"no write time and failing", found("Running", fresh(func(s *Status) { noTime(s); s.States = []observe.Record{failingCopy("lib", "nas", 1, time.Time{})} })), Degraded, "degraded: tink-helper/helper: its status document has no write time (written-at), so it cannot be shown to be fresh; the copy of lib to nas is failing, 1 in a row"},
+		{"a skipped volume", found("Running", fresh(func(s *Status) { s.States = []observe.Record{skipped("tenant/lib", "policy of a newer protocol")} })), Degraded, "degraded: tink-helper/helper: tenant/lib is skipped: policy of a newer protocol"},
+		{"a failing copy", found("Running", fresh(func(s *Status) { s.States = []observe.Record{failingCopy("lib", "nas", 3, time.Time{})} })), Degraded, "degraded: tink-helper/helper: the copy of lib to nas is failing, 3 in a row"},
 		{"skipped, failing and draining", found("Running", fresh(func(s *Status) {
 			s.States = []observe.Record{skipped("a", "x"), skipped("b", "y"), failingCopy("a", "nas", 2, time.Time{}), failingCopy("b", "off", 1, time.Time{})}
 			s.Draining = true
-		})), Degraded, "degraded: tink-helper/helper: 2 volume(s) skipped: a (x), b (y); 2 copy(ies) failing: a -> nas (2x), b -> off (1x); draining: it is not starting new work (an upgrade is in progress, or one did not finish: remove /data/jobs/DRAIN)"},
+		})), Degraded, "degraded: tink-helper/helper: a is skipped: x; b is skipped: y; the copy of a to nas is failing, 2 in a row; the copy of b to off is failing, 1 in a row; draining: it is not starting new work (an upgrade is in progress, or one did not finish: remove /data/jobs/DRAIN)"},
 		{"draining", found("Running", fresh(func(s *Status) { s.Draining = true })), Degraded, "degraded: tink-helper/helper: draining: it is not starting new work (an upgrade is in progress, or one did not finish: remove /data/jobs/DRAIN)"},
 		{"a status volume that cannot be read, running, document on the volume absent", withProblem(found("Running", nil)), Degraded, "degraded: tink-helper/helper: cannot read its status volume default/helper-status: not authorized"},
 		{"a status volume that cannot be read, stopped", withProblem(found("Stopped", nil)), Down, "down: tink-helper/helper: cannot read its status volume default/helper-status: not authorized; the instance is stopped"},
-		{"a status volume that cannot be read, and a failing copy in a document that was read", withProblem(found("Running", fresh(func(s *Status) { s.States = []observe.Record{failingCopy("lib", "nas", 1, time.Time{})} }))), Degraded, "degraded: tink-helper/helper: cannot read its status volume default/helper-status: not authorized; 1 copy(ies) failing: lib -> nas (1x)"},
+		{"a status volume that cannot be read, and a failing copy in a document that was read", withProblem(found("Running", fresh(func(s *Status) { s.States = []observe.Record{failingCopy("lib", "nas", 1, time.Time{})} }))), Degraded, "degraded: tink-helper/helper: cannot read its status volume default/helper-status: not authorized; the copy of lib to nas is failing, 1 in a row"},
 	}
 }
 
@@ -87,9 +92,15 @@ func TestJudgeStatusSaysWhatEvaluateSaysAboutTheDocument(t *testing.T) {
 			continue
 		}
 		t.Run(tc.name, func(t *testing.T) {
-			health, reasons := JudgeStatus(*r.Status, t0)
-			if health != r.Health || strings.Join(reasons, "; ") != strings.Join(r.Reasons, "; ") {
-				t.Errorf("JudgeStatus = %s %q, Evaluate = %s %q", health, reasons, r.Health, r.Reasons)
+			health, fs := JudgeStatus(*r.Status, t0)
+			if health != r.Health || len(fs) != len(r.Findings) {
+				t.Fatalf("JudgeStatus = %s %v, Evaluate = %s %v", health, fs, r.Health, r.Findings)
+			}
+			for i, f := range fs {
+				// the document does not know its instance: Evaluate names it on a finding that has no subject of its own
+				if want := r.Findings[i]; f.Reason != want.Reason || f.Detail != want.Detail || f.Severity != want.Severity || (f.Subject != "" && f.Subject != want.Subject) {
+					t.Errorf("finding %d: JudgeStatus %+v, Evaluate %+v", i, f, want)
+				}
 			}
 		})
 	}
@@ -121,13 +132,13 @@ func TestABlockedOrFailingReconcileDegradesAndASkippedOrConvergedOneDoesNot(t *t
 		t.Run(tc.name, func(t *testing.T) {
 			r := judged(t, func(s *Status) { s.States = []observe.Record{tc.rec} })
 			if r.Health != tc.health {
-				t.Fatalf("health = %s, want %s (%v)", r.Health, tc.health, r.Reasons)
+				t.Fatalf("health = %s, want %s (%v)", r.Health, tc.health, r.Details())
 			}
 			if tc.line != "" && !strings.Contains(r.Summary(), tc.line) {
 				t.Errorf("summary = %q, want it to contain %q", r.Summary(), tc.line)
 			}
-			if tc.health == Healthy && len(r.Reasons) != 0 {
-				t.Errorf("nothing to say, said %v", r.Reasons)
+			if tc.health == Healthy && len(r.Details()) != 0 {
+				t.Errorf("nothing to say, said %v", r.Details())
 			}
 		})
 	}
@@ -143,16 +154,16 @@ func TestAFailedLastJobDegradesAndTheNextFinishedJobClearsIt(t *testing.T) {
 	}
 	// the next finished job takes its place in the document, whatever its state (the daemon keeps the newest finished one)
 	for _, state := range []string{"succeeded", "cancelled"} {
-		if r := judged(t, job("j8", state, time.Minute)); r.Health != Healthy || len(r.Reasons) != 0 {
-			t.Errorf("a later %s job clears it: %s %v", state, r.Health, r.Reasons)
+		if r := judged(t, job("j8", state, time.Minute)); r.Health != Healthy || len(r.Details()) != 0 {
+			t.Errorf("a later %s job clears it: %s %v", state, r.Health, r.Details())
 		}
 	}
 	// a cancelled job does not count by itself, and neither does having no job
 	if r := judged(t, job("j9", "cancelled", time.Minute)); r.Health != Healthy {
-		t.Errorf("cancelled: %s %v", r.Health, r.Reasons)
+		t.Errorf("cancelled: %s %v", r.Health, r.Details())
 	}
 	if r := judged(t, nil); r.Health != Healthy {
-		t.Errorf("no job: %s %v", r.Health, r.Reasons)
+		t.Errorf("no job: %s %v", r.Health, r.Details())
 	}
 	// a document that does not say when the job finished is not aged from the year 1
 	r = judged(t, func(s *Status) { s.LastJob = &LastJob{ID: "j1", State: "failed"} })
@@ -168,7 +179,7 @@ func TestAFailedJobIsSaidEvenWhenTheFailingCopyAlreadySaysIt(t *testing.T) {
 		s.States = []observe.Record{failingCopy("lib", "nas", 1, t0.Add(-time.Hour))}
 		s.LastJob = &LastJob{ID: "j2", State: "failed", FinishedAt: instant.At(t0.Add(-time.Minute))}
 	})
-	if r.Health != Degraded || !strings.Contains(r.Summary(), "1 copy(ies) failing") || !strings.Contains(r.Summary(), "the last job (j2) failed") {
+	if r.Health != Degraded || !strings.Contains(r.Summary(), "the copy of lib to nas is failing") || !strings.Contains(r.Summary(), "the last job (j2) failed") {
 		t.Errorf("%s", r.Summary())
 	}
 }
@@ -181,5 +192,86 @@ func TestAFailedJobDoesNotHideAStaleHelper(t *testing.T) {
 	})), t0)
 	if r.Health != Down || !strings.Contains(r.Summary(), "stale") {
 		t.Errorf("%s", r.Summary())
+	}
+}
+
+func TestEveryFindingHasAFixedReasonAndTheSeverityOfTheHealthItGives(t *testing.T) {
+	known := map[string]bool{}
+	for _, r := range []string{ReasonNotRunning, ReasonStale, ReasonCertificateNotTrusted, ReasonStatusVolumeUnreadable, ReasonStatusUnreadable, ReasonNoStatus,
+		ReasonNoWriteTime, ReasonNoHeartbeat, ReasonVolumeSkipped, ReasonCopyFailing, ReasonDerivedBlocked, ReasonDerivedFailing, ReasonDNSBlocked, ReasonDNSFailing,
+		ReasonReconcileBlocked, ReasonReconcileFailing, ReasonJobFailed, ReasonDraining} {
+		known[r] = true
+	}
+	for _, tc := range equivalenceCases() {
+		r := Evaluate(tc.f, t0)
+		if HealthOf(r.Findings) != r.Health {
+			t.Errorf("%s: the health is %s and its findings say %s", tc.name, r.Health, HealthOf(r.Findings))
+		}
+		for _, f := range r.Findings {
+			if !known[f.Reason] {
+				t.Errorf("%s: the reason %q is not one of the fixed phrases", tc.name, f.Reason)
+			}
+			if f.Severity == finding.Note || f.Subject == "" || f.Detail == "" {
+				t.Errorf("%s: %+v", tc.name, f)
+			}
+			if (f.Severity == finding.Error) != (f.Reason == ReasonNotRunning || f.Reason == ReasonStale) {
+				t.Errorf("%s: down is an error and degraded a warning: %+v", tc.name, f)
+			}
+		}
+	}
+}
+
+func TestEachKindOfProblemHasItsReasonItsSubjectAndADetailForAPerson(t *testing.T) {
+	r := judged(t, func(s *Status) {
+		s.States = []observe.Record{
+			skipped("tenant/lib", "policy of a newer protocol"), failingCopy("lib", "nas", 7, t0.Add(-time.Hour)),
+			reconcile("derived", "ingress-routes", observe.Blocked), reconcile("dns", "", observe.Failing), reconcile("other", "x", observe.Blocked),
+		}
+		s.LastJob = &LastJob{ID: "j3", State: "failed", FinishedAt: instant.At(t0.Add(-time.Minute))}
+		s.Draining = true
+	})
+	want := []struct{ reason, subject, detail string }{
+		{ReasonVolumeSkipped, "backup/tenant/lib", "tenant/lib is skipped: policy of a newer protocol"},
+		{ReasonCopyFailing, "backup/lib", "the copy of lib to nas is failing, 7 in a row"},
+		{ReasonDerivedBlocked, "derived/ingress-routes", "derived/ingress-routes (home) is blocked: a fixed phrase"},
+		{ReasonDNSFailing, "dns", "dns (home) is failing: a fixed phrase"},
+		{ReasonReconcileBlocked, "other/x", "other/x (home) is blocked: a fixed phrase"},
+		{ReasonJobFailed, "instance/tink-helper/helper", "the last job (j3) failed 1m ago"},
+		{ReasonDraining, "instance/tink-helper/helper", "draining: it is not starting new work"},
+	}
+	if len(r.Findings) != len(want) {
+		t.Fatalf("%d findings, want %d: %v", len(r.Findings), len(want), r.Findings)
+	}
+	for i, w := range want {
+		f := r.Findings[i]
+		if f.Severity != finding.Warning || f.Reason != w.reason || f.Subject != w.subject || !strings.Contains(f.Detail, w.detail) {
+			t.Errorf("finding %d = %+v, want a warning with reason %q, subject %q, detail containing %q", i, f, w.reason, w.subject, w.detail)
+		}
+	}
+	// the reason names the kind and never the thing: two different volumes share it
+	a := judged(t, func(s *Status) { s.States = []observe.Record{failingCopy("one", "nas", 1, t0)} })
+	b := judged(t, func(s *Status) { s.States = []observe.Record{failingCopy("two", "off", 9, t0)} })
+	if a.Findings[0].Reason != b.Findings[0].Reason || a.Findings[0].Detail == b.Findings[0].Detail {
+		t.Errorf("%+v %+v", a.Findings[0], b.Findings[0])
+	}
+}
+
+func TestWhatNeedsTheServerIsAnErrorAndTheCertificateIsOneToo(t *testing.T) {
+	stopped := Evaluate(found("Stopped", fresh(nil)), t0)
+	stale := Evaluate(found("Running", fresh(func(s *Status) { s.WrittenAt = instant.At(t0.Add(-time.Hour)) })), t0)
+	for name, tc := range map[string]struct {
+		r      Report
+		reason string
+	}{"stopped": {stopped, ReasonNotRunning}, "stale": {stale, ReasonStale}} {
+		if len(tc.r.Findings) != 1 || tc.r.Findings[0].Severity != finding.Error || tc.r.Findings[0].Reason != tc.reason || tc.r.Health != Down {
+			t.Errorf("%s: %+v", name, tc.r)
+		}
+	}
+	f := found("Running", fresh(nil))
+	f.Config[MarkerKey+".remote"] = "https://192.0.2.10:8443"
+	r := Evaluate(f, t0)
+	r.CheckTrust([]api.Certificate{})
+	if r.Health != Down || len(r.Findings) != 1 || r.Findings[0].Severity != finding.Error || r.Findings[0].Reason != ReasonCertificateNotTrusted {
+		t.Errorf("%+v", r)
 	}
 }
