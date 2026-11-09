@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/minihci/tink/internal/backupmeta"
+	"github.com/minihci/tink/internal/ownership"
 	"github.com/minihci/tink/internal/resolve"
 	"github.com/minihci/tink/internal/volbackup"
 )
@@ -248,5 +249,63 @@ func TestUndeclaredRejectsTwoStackNamesAndSaysNothingForAnUnnamedStackWithNoVolu
 	}
 	if _, err := Undeclared(&stub{listErr: errors.New("incus is down")}, []resolve.Resource{declared("lib", "", "")}); err == nil {
 		t.Error("a listing that fails is an error, not 'nothing undeclared'")
+	}
+}
+
+// A copy of a volume (incus storage volume copy) carries the copy policy and both stamps of the original, so it looks managed. The scheduler skips it, and
+// a volume of this stack's that has no resource stamp yet, with the fixed reasons; the original is still scheduled.
+func TestDiscoverSchedulesTheOriginalAndSkipsACopyAndAnUnboundVolume(t *testing.T) {
+	pol := policyFor(t, "nas")
+	own := func(project, pool, name string) map[string]string {
+		return map[string]string{
+			backupmeta.PolicyKey: pol, ownership.Key: "lab",
+			ownership.ResourceKey: ownership.Address(ownership.KindStorageVolume, project, pool, name),
+		}
+	}
+	copyOfLib := own("", "default", "lib") // what `incus storage volume copy lib lib-copy` carries: the original's stamps
+	s := &stub{listed: []volbackup.ListedVolume{
+		listed("", "default", "lib", own("", "default", "lib")),
+		listed("", "default", "lib-copy", copyOfLib),
+		listed("tenant", "default", "lib", copyOfLib), // the same name in another project is another object
+		listed("", "default", "old", map[string]string{backupmeta.PolicyKey: pol, ownership.Key: "lab"}),
+		listed("", "default", "by-hand", map[string]string{backupmeta.PolicyKey: pol}), // no owner stamp at all: scheduled as before
+	}}
+	items, problems, err := Discover(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"by-hand", "lib"}; !reflect.DeepEqual(labels(items), want) {
+		t.Errorf("items = %v, want %v: only a volume whose stamps are its own (and one that no stack stamped) is scheduled", labels(items), want)
+	}
+	for _, name := range []string{"lib-copy", "tenant/lib"} {
+		if err := problems[name]; err == nil || err.Error() != ReasonCopy {
+			t.Errorf("%s: skipped with %v, want the fixed reason for a copy", name, err)
+		}
+	}
+	if err := problems["old"]; err == nil || err.Error() != ReasonUnbound {
+		t.Errorf("old: skipped with %v, want the fixed reason for a volume with no resource stamp yet", err)
+	}
+	if len(problems) != 3 {
+		t.Errorf("problems = %v, want exactly the two copies and the unbound volume", problems)
+	}
+}
+
+// The reasons are the same for every volume and carry no name: they go into the helper's status document as they are.
+func TestTheSkipReasonsAreFixedPhrases(t *testing.T) {
+	if ReasonCopy != "its stamps were made for another object (a copy?)" || ReasonUnbound != "it has no resource stamp yet (plan apply writes it)" {
+		t.Errorf("the reasons changed: %q, %q", ReasonCopy, ReasonUnbound)
+	}
+	var err error = &SkipError{Reason: ReasonCopy}
+	if err.Error() != ReasonCopy {
+		t.Errorf("a skip error says exactly its reason: %q", err.Error())
+	}
+}
+
+// Unapplied says why a declared volume is left alone, so a run handed to the helper does not pretend it has no policy.
+func TestUnappliedSaysWhyTheHelperLeavesADeclaredVolumeAlone(t *testing.T) {
+	declared := []Item{{Volume: volbackup.Volume{Pool: "default", Name: "old"}, Label: "old", Copies: []Copy{{Target: volbackup.Target{Name: "nas"}}}}}
+	out := Unapplied(declared, nil, map[string]error{"old": &SkipError{Reason: ReasonUnbound}})
+	if len(out) != 1 || !strings.Contains(out[0], ReasonUnbound) || strings.Contains(out[0], "cannot be read") {
+		t.Errorf("unapplied = %q", out)
 	}
 }

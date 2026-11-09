@@ -1,6 +1,7 @@
 package backuprun
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -26,6 +27,11 @@ func Unapplied(declared, applied []Item, problems map[string]error) []string {
 		switch {
 		case !ok:
 			if err, bad := problems[d.Label]; bad {
+				var skip *SkipError
+				if errors.As(err, &skip) {
+					out = append(out, fmt.Sprintf("%s: the helper leaves the volume alone: %s", d.Label, skip.Reason))
+					continue
+				}
 				out = append(out, fmt.Sprintf("%s: its copy policy cannot be read: %v", d.Label, err))
 			} else {
 				out = append(out, fmt.Sprintf("%s: the volume carries no copy policy", d.Label))
