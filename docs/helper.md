@@ -440,6 +440,9 @@ phrases, and the detail stays in the job's log.
 
 ### The states list
 
+**Status: built (#310); unit-tested against fakes, and run live on a disposable Incus 7.5.1 server over `--remote` on 2026-11-09 (L-2026-11-09b).** With `tink daemon run --reconcile-derived` against a platform of five helper instances and one published app, publishing its status on an instance: the document was protocol 3 with one `converged` state for the derived file; a route hand-edited inside the derived region was put back within one pass, with a `healed` and a `restarted` event carrying their time and the state's `since` unchanged; with the proxy instance stopped, the state became `skipped` ("the instance is not running") with a `since` of its own; and after two daemon restarts the state, its `since` and both events were unchanged. Not run live: the stored document being unreadable at start (fakes only), the daemon running as a helper instance under a narrowed certificate (reading its own document there is not checked), and `tink helper status` printing the states and events (the document was read directly).
+
+
 `states` replaced three lists (`skipped`, `failing`, `reconciles`) that had two shapes, so that health and a notifier iterate one thing (what to do about a helper that still publishes the old document: [the removal page](removals/status-states-list.md)). Each record says what
 was found and since when:
 
