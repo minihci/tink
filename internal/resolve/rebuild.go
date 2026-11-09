@@ -275,6 +275,8 @@ type incusRebuildOps struct {
 	env    *imageEnv
 	// opTimeout, when set, replaces the deadlines (opbounds.go); a field so a test can use a short one.
 	opTimeout time.Duration
+	// stack is the stack's name, for the applied record the rebuild's config write carries (applied.go).
+	stack string
 }
 
 func (o incusRebuildOps) limit(slow bool) time.Duration { return opLimit(o.opTimeout, slow) }
@@ -415,5 +417,5 @@ func (o incusRebuildOps) Rebuild(name, fingerprint string) error {
 }
 
 func (o incusRebuildOps) ApplyConfig(r Resource) error {
-	return instance.ApplyConfig(o.server, &instance.Spec{Name: r.Name, Config: r.Config, Devices: r.Devices, OwnedConfigPrefixes: ownedConfigPrefixes, OpTimeout: o.limit(false)})
+	return instance.ApplyConfig(o.server, &instance.Spec{Name: r.Name, Config: r.Config, Devices: r.Devices, OwnedConfigPrefixes: ownedConfigPrefixes, OpTimeout: o.limit(false), StaleApplied: staleAppliedOf(r, o.stack)})
 }

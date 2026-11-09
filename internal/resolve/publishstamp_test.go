@@ -423,7 +423,7 @@ func TestUpdatingTheInstanceSetsTheStampsAndTakesBackOnlyTheStaleOnes(t *testing
 		"volatile.base_image":              "abc",
 	}
 	s := &stampServer{inst: liveWhoami(live)}
-	if err := updateInstance(s, r, 0); err != nil {
+	if err := updateInstance(s, r, 0, ""); err != nil {
 		t.Fatal(err)
 	}
 	if s.updated == nil {

@@ -169,14 +169,14 @@ func TestLevels_NICOnANetworkTheStackDoesNotDeclareStaysLenient(t *testing.T) {
 }
 
 func TestPlanNetwork_NotFoundCreates(t *testing.T) {
-	p, err := planNetwork(&netServer{}, netResource(map[string]string{"ipv4.address": "203.0.113.1/24"}))
+	p, err := planNetwork(&netServer{}, netResource(map[string]string{"ipv4.address": "203.0.113.1/24"}), "")
 	if err != nil || p.Action != ActionCreate {
 		t.Fatalf("planNetwork() = %v, %v; want ActionCreate", p.Action, err)
 	}
 }
 
 func TestPlanNetwork_ForbiddenIsNotAbsent(t *testing.T) {
-	p, err := planNetwork(&netServer{err: errForbidden}, netResource(nil))
+	p, err := planNetwork(&netServer{err: errForbidden}, netResource(nil), "")
 	if err == nil {
 		t.Fatalf("a 403 must be an error, never read as 'the network is absent' (got action %v)", p.Action)
 	}
@@ -184,7 +184,7 @@ func TestPlanNetwork_ForbiddenIsNotAbsent(t *testing.T) {
 
 func TestPlanNetwork_ExtraLiveKeysAreNotDrift(t *testing.T) {
 	live := liveBridge(map[string]string{"ipv4.address": "203.0.113.1/24", "ipv4.nat": "true", "ipv6.address": "none", "volatile.network.ipv4.address": "203.0.113.1"})
-	p, err := planNetwork(&netServer{live: live}, netResource(map[string]string{"ipv4.address": "203.0.113.1/24", "ipv4.nat": "true"}))
+	p, err := planNetwork(&netServer{live: live}, netResource(map[string]string{"ipv4.address": "203.0.113.1/24", "ipv4.nat": "true"}), "")
 	if err != nil || p.Action != ActionNone {
 		t.Fatalf("planNetwork() = %v (%v), %v; want ActionNone", p.Action, p.Changes, err)
 	}
@@ -192,7 +192,7 @@ func TestPlanNetwork_ExtraLiveKeysAreNotDrift(t *testing.T) {
 
 func TestPlanNetwork_AutoMatchesTheAddressIncusPicked(t *testing.T) {
 	live := liveBridge(map[string]string{"ipv4.address": "10.77.1.1/24", "ipv6.address": "fd42:1:2:3::1/64"})
-	p, err := planNetwork(&netServer{live: live}, netResource(map[string]string{"ipv4.address": "auto", "ipv6.address": "auto"}))
+	p, err := planNetwork(&netServer{live: live}, netResource(map[string]string{"ipv4.address": "auto", "ipv6.address": "auto"}), "")
 	if err != nil || p.Action != ActionNone {
 		t.Fatalf("planNetwork() = %v (%v), %v; want ActionNone, auto must accept the generated address", p.Action, p.Changes, err)
 	}
@@ -200,7 +200,7 @@ func TestPlanNetwork_AutoMatchesTheAddressIncusPicked(t *testing.T) {
 
 func TestPlanNetwork_AutoIsWantedWhenTheNetworkHasNoAddress(t *testing.T) {
 	live := liveBridge(map[string]string{"ipv6.address": "none"})
-	p, _ := planNetwork(&netServer{live: live}, netResource(map[string]string{"ipv6.address": "auto"}))
+	p, _ := planNetwork(&netServer{live: live}, netResource(map[string]string{"ipv6.address": "auto"}), "")
 	if p.Action != ActionUpdate || len(p.Changes) != 1 {
 		t.Fatalf("a network with ipv6 'none' asked for 'auto' must plan an update, got %v %v", p.Action, p.Changes)
 	}
@@ -208,7 +208,7 @@ func TestPlanNetwork_AutoIsWantedWhenTheNetworkHasNoAddress(t *testing.T) {
 
 func TestPlanNetwork_DifferenceOnAnUnusedBridgeUpdates(t *testing.T) {
 	live := liveBridge(map[string]string{"ipv4.nat": "true"})
-	p, _ := planNetwork(&netServer{live: live}, netResource(map[string]string{"ipv4.nat": "false"}))
+	p, _ := planNetwork(&netServer{live: live}, netResource(map[string]string{"ipv4.nat": "false"}), "")
 	if p.Action != ActionUpdate {
 		t.Fatalf("action = %v, want ActionUpdate", p.Action)
 	}
@@ -226,7 +226,7 @@ func TestPlanNetwork_DifferenceOnABridgeInUseIsBlockedAndNamesTheInstances(t *te
 		"/1.0/instances/ha?project=ha-eval",
 		"/1.0/profiles/default?project=ha-eval", // not an instance: not counted
 	)
-	p, _ := planNetwork(&netServer{live: live}, netResource(map[string]string{"ipv4.nat": "false"}))
+	p, _ := planNetwork(&netServer{live: live}, netResource(map[string]string{"ipv4.nat": "false"}), "")
 	if p.Action != ActionBlocked {
 		t.Fatalf("action = %v, want ActionBlocked", p.Action)
 	}
@@ -245,7 +245,7 @@ func TestPlanNetwork_AllowDisruptionAppliesAndWarns(t *testing.T) {
 	live := liveBridge(map[string]string{"ipv4.nat": "true"}, "/1.0/instances/mosquitto")
 	r := netResource(map[string]string{"ipv4.nat": "false"})
 	r.AllowDisruption = true
-	p, _ := planNetwork(&netServer{live: live}, r)
+	p, _ := planNetwork(&netServer{live: live}, r, "")
 	if p.Action != ActionUpdate {
 		t.Fatalf("action = %v, want ActionUpdate", p.Action)
 	}
@@ -258,7 +258,7 @@ func TestPlanNetwork_DescriptionOnlyChangeIsNeverBlocked(t *testing.T) {
 	live := liveBridge(map[string]string{"ipv4.nat": "true"}, "/1.0/instances/mosquitto")
 	r := netResource(map[string]string{"ipv4.nat": "true"})
 	r.Description = "the service bridge"
-	p, _ := planNetwork(&netServer{live: live}, r)
+	p, _ := planNetwork(&netServer{live: live}, r, "")
 	if p.Action != ActionUpdate || len(p.Warnings()) != 0 {
 		t.Fatalf("a description change on a bridge in use is harmless: action %v warnings %v", p.Action, details(p.Warnings()))
 	}
@@ -278,7 +278,7 @@ func TestPlanNetwork_RefusesWhatItDoesNotOwn(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			live := c.live
-			p, err := planNetwork(&netServer{live: &live}, netResource(map[string]string{"ipv4.nat": "true"}))
+			p, err := planNetwork(&netServer{live: &live}, netResource(map[string]string{"ipv4.nat": "true"}), "")
 			if err != nil || p.Action != ActionBlocked {
 				t.Fatalf("planNetwork() = %v, %v; want ActionBlocked", p.Action, err)
 			}

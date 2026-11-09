@@ -24,6 +24,7 @@ var allowedInternalImports = map[string]string{
 	"remote":    "ring 0: the remotes tink may talk to",
 	"secrets":   "ring 0: ${secret:NAME} expansion and redaction",
 	"instance":  "ring 1: the instance engine (create, apply config, start, qualify) that applying an instance IS; it imports only ring 0. The docker-run half, internal/dockerrun, is deliberately not on this list (#216)",
+	"applied":   "ring 0: the record of what tink applied to an object (user.tink.intent.applied), importing only ownership; the daemon reads the same record (#312)",
 	"ownership": "ring 0: the stamp key and its classification (user.tink.intent.stack), importing nothing of tink's",
 	"finding":   "ring 0: the one shape for \"something was noticed\" (severity, reason, subject, detail), importing nothing of tink's",
 	"backupext": "the seam for backup: the declaration types and the Backup interface, importing nothing of tink's",

@@ -45,6 +45,9 @@ type StampState struct {
 	// RestorePoint says that the object is one of tink's own restore points (or a copy in progress), which carries its source's stamps by design and is not
 	// counted as a copy. It is read from the markers the backup capability registers.
 	RestorePoint bool
+	// Record is the applied record the object carries, judged against the one this declaration would write (applied.go): RecordNone unless the object is
+	// stamped here and its kind has a record. Like State it is never a change line, an action or an exit status.
+	Record RecordState
 }
 
 // addressOf is the address (ownership.Address) of the Incus object r declares: what its resource stamp holds. An image is found by its alias, so that is
@@ -68,6 +71,9 @@ func observed(p PlannedResource, config map[string]string) PlannedResource {
 func (p PlannedResource) withOwnership(stack string) PlannedResource {
 	if stack != "" && p.liveRead && stampedKind(p.Resource.Kind) {
 		p.Ownership.State, p.Ownership.Owner = ownership.Classify(p.live, stack, addressOf(p.Resource))
+		if p.Action != ActionBlocked { // a blocked resource is not written, so there is nothing to say about its record
+			p.Ownership.Record = recordState(p.Resource, stack, p.Ownership.State, p.live)
+		}
 		if p.Ownership.State == ownership.Copy && p.Resource.Kind == KindStorageVolume {
 			for _, marker := range backupext.Get().Keys().RestorePointMarkers {
 				if _, ok := p.live[marker]; ok {
@@ -77,7 +83,7 @@ func (p PlannedResource) withOwnership(stack string) PlannedResource {
 		}
 	}
 	p.live, p.liveRead = nil, false
-	return p
+	return p.withRecordNotes(stack)
 }
 
 // withoutOwnershipKey returns config without the ownership stamp.
@@ -189,6 +195,10 @@ type OwnershipReport struct {
 	unstamped []string
 	copies    []string // carry this stack's stamps, made for another object
 	unbound   []string // carry this stack's stamp and no resource stamp yet
+
+	recordMissing    []string // stamped here, no applied record yet
+	recordChanged    []string // stamped here, an applied record that this declaration changes
+	recordUnreadable []string // stamped here, an applied record that cannot be read
 }
 
 // NewOwnershipReport starts a report for a stack. adopting says the apply that follows is going to claim what has no stamp and what is a copy (--adopt,
@@ -216,6 +226,14 @@ func (o *OwnershipReport) Add(p PlannedResource) {
 		}
 	case ownership.Unbound:
 		o.unbound = append(o.unbound, stampLabel(r))
+	}
+	switch p.Ownership.Record {
+	case RecordMissing:
+		o.recordMissing = append(o.recordMissing, stampLabel(r))
+	case RecordChanged:
+		o.recordChanged = append(o.recordChanged, stampLabel(r))
+	case RecordUnreadable:
+		o.recordUnreadable = append(o.recordUnreadable, stampLabel(r))
 	}
 }
 
@@ -294,6 +312,23 @@ func (o *OwnershipReport) Lines() []string {
 			have = "has"
 		}
 		out = append(out, fmt.Sprintf("ownership: %d declared %s %s no resource stamp yet: %s; `tink plan apply` writes it and restarts none", n, noun, have, list))
+	}
+	// The applied record is a derived stamp: it says what the declaration applied, so only that it is missing or changed is said, never its value.
+	if n := len(o.recordMissing); n > 0 {
+		list, noun, _ := listed(o.recordMissing)
+		have := "have"
+		if n == 1 {
+			have = "has"
+		}
+		out = append(out, fmt.Sprintf("applied record: %d declared %s %s no record of what was applied yet: %s; `tink plan apply` writes it, in the same write as any change and otherwise alone, and restarts none", n, noun, have, list))
+	}
+	if n := len(o.recordChanged); n > 0 {
+		list, noun, _ := listed(o.recordChanged)
+		out = append(out, fmt.Sprintf("applied record: %d declared %s whose record of what was applied is changed by this declaration (a derived stamp: its value is not shown): %s; `tink plan apply` writes the new one and restarts none for it", n, noun, list))
+	}
+	if n := len(o.recordUnreadable); n > 0 {
+		list, noun, _ := listed(o.recordUnreadable)
+		out = append(out, fmt.Sprintf("applied record: %s on %d declared %s: %s; it is treated as absent, so nothing is removed because of it, and `tink plan apply` writes a new one and restarts none for it", reasonRecordUnreadable, n, noun, list))
 	}
 	return out
 }

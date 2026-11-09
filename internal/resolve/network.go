@@ -10,9 +10,9 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
 
+	"github.com/minihci/tink/internal/applied"
 	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/incusapi"
-	"github.com/minihci/tink/internal/ownership"
 )
 
 // A kind: network resource declares an Incus MANAGED BRIDGE: the thing an instance's NIC names with `network:`. Until now a stack could name a bridge
@@ -128,7 +128,7 @@ func networkInstances(usedBy []string) []string {
 	return out
 }
 
-func planNetwork(server incus.InstanceServer, r Resource) (PlannedResource, error) {
+func planNetwork(server incus.InstanceServer, r Resource, stack string) (PlannedResource, error) {
 	current, _, found, err := incusapi.LookupNetwork(server, r.Name)
 	if err != nil {
 		return PlannedResource{}, fmt.Errorf("reading the live network: %w", err)
@@ -156,6 +156,15 @@ func planNetwork(server incus.InstanceServer, r Resource) (PlannedResource, erro
 	// ownership stamp, which is a user.* key Incus does not apply to the bridge at all (ownership.go). The stamp is not in the desired config
 	// today; the exemption is here so that it can never be what blocks a bridge that instances use.
 	configChanged := len(diffConfig(current.Config, withoutOwnershipKey(withoutACLKeys(wanted)), nil)) > 0
+	// What the stack applied before and no longer declares is taken back, and taking a key off a bridge is as much a change to it as setting one (an
+	// ACL attachment excepted, for the reason isACLKey gives).
+	stale, _ := staleFor(r, stack, applied.State{Config: current.Config})
+	for _, k := range stale.Keys {
+		if !isACLKey(k) {
+			configChanged = true
+		}
+	}
+	changes = append(changes, staleChanges(r, stack, applied.State{Config: current.Config})...)
 	if r.Description != "" && r.Description != current.Description {
 		changes = append(changes, fmt.Sprintf("description: %q -> %q", current.Description, r.Description))
 	}
@@ -181,11 +190,11 @@ func createNetwork(server incus.InstanceServer, r Resource, stack string) error 
 	return server.CreateNetwork(api.NetworksPost{
 		Name:       r.Name,
 		Type:       "bridge",
-		NetworkPut: api.NetworkPut{Config: ownership.With(r.Config, stack, addressOf(r)), Description: r.Description},
+		NetworkPut: api.NetworkPut{Config: stampedConfig(r.Config, r, stack), Description: r.Description},
 	})
 }
 
-func updateNetwork(server incus.InstanceServer, r Resource) error {
+func updateNetwork(server incus.InstanceServer, r Resource, stack string) error {
 	return incusapi.RetryOnConflict(func() error {
 		current, etag, err := server.GetNetwork(r.Name)
 		if err != nil {
@@ -195,9 +204,11 @@ func updateNetwork(server incus.InstanceServer, r Resource) error {
 		if put.Config == nil {
 			put.Config = map[string]string{}
 		}
+		stale, _ := staleFor(r, stack, applied.State{Config: current.Config})
 		for k, v := range networkWanted(current.Config, r.Config) {
 			put.Config[k] = v
 		}
+		removeStale(stale, put.Config, nil)
 		if r.Description != "" {
 			put.Description = r.Description
 		}

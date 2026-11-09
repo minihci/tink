@@ -281,6 +281,8 @@ const (
 	stampedElsewh = "stamped elsewhere"
 	stampedCopy   = "stamped for another object"
 	unbound       = "stamped without a resource"
+	// hereNoRecord is an object stamped here that carries no applied record yet (#312): stampedHere carries the one its declaration applies
+	hereNoRecord = "stamped here, no applied record"
 )
 
 // stampFor is the config an object in the given state carries, on top of base; address is the address the object really has.
@@ -290,7 +292,7 @@ func stampFor(state string, base map[string]string, address string) map[string]s
 		out[k] = v
 	}
 	switch state {
-	case stampedHere:
+	case stampedHere, hereNoRecord:
 		out[ownership.Key], out[ownership.ResourceKey] = "lab", address
 	case stampedElsewh:
 		out[ownership.Key], out[ownership.ResourceKey] = "other", address
@@ -310,6 +312,9 @@ func (f *ownFake) seed(kind Kind, state string) Resource {
 	}
 	r := stampedResource(kind)
 	cfg := stampFor(state, r.Config, addressOf(r))
+	if rec, _, ok := appliedRecordFor(r, "lab"); ok && state == stampedHere {
+		cfg[ownership.AppliedKey] = rec
+	}
 	switch kind {
 	case KindProject:
 		f.projects["p"] = &api.Project{Name: "p", ProjectPut: api.ProjectPut{Config: cfg}}
@@ -679,7 +684,7 @@ func TestAdoptStampsABridgeInUseAndItIsNotBlocked(t *testing.T) {
 	// the guard itself exempts the key, should it ever reach the desired config
 	live := liveBridge(map[string]string{"ipv4.nat": "true"}, "/1.0/instances/web")
 	desired := Resource{Kind: KindNetwork, Name: "svc", Config: map[string]string{"ipv4.nat": "true", ownership.Key: "lab"}}
-	if p, _ := planNetwork(&netServer{live: live}, desired); p.Action == ActionBlocked {
+	if p, _ := planNetwork(&netServer{live: live}, desired, ""); p.Action == ActionBlocked {
 		t.Errorf("the stamp alone blocked a bridge in use: %v", details(p.Blocked()))
 	}
 }

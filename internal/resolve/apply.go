@@ -17,6 +17,7 @@ import (
 	"github.com/lxc/incus/v7/shared/archive"
 	yaml "go.yaml.in/yaml/v4"
 
+	"github.com/minihci/tink/internal/applied"
 	"github.com/minihci/tink/internal/incusapi"
 	"github.com/minihci/tink/internal/instance"
 	"github.com/minihci/tink/internal/ownership"
@@ -46,7 +47,7 @@ func createOne(server incus.InstanceServer, r Resource, env volumeEnv) error {
 		return bound(false, func() error {
 			return scopedServer(server, r).CreateProfile(api.ProfilesPost{
 				Name:       r.Name,
-				ProfilePut: api.ProfilePut{Config: ownership.With(r.Config, env.stack, addressOf(r)), Devices: r.Devices},
+				ProfilePut: api.ProfilePut{Config: stampedConfig(r.Config, r, env.stack), Devices: r.Devices},
 			})
 		})
 	case KindStorageVolume:
@@ -58,7 +59,7 @@ func createOne(server incus.InstanceServer, r Resource, env volumeEnv) error {
 		if err != nil {
 			return err
 		}
-		config = ownership.With(config, env.stack, addressOf(r))
+		config = stampedConfig(config, r, env.stack)
 		return bound(false, func() error {
 			return scopedServer(server, r).CreateStoragePoolVolume(pool, api.StorageVolumesPost{
 				StorageVolumePut: api.StorageVolumePut{Config: config},
@@ -194,10 +195,16 @@ func createImage(server incus.InstanceServer, r Resource, env volumeEnv) error {
 // Each step has its own deadline (opbounds.go), and a step that is abandoned ends the creation there: the later steps are not run on top of work whose
 // state is unknown. Creating is the slow one (the server may fetch the image first); the rest are quick.
 func createInstance(server incus.InstanceServer, r Resource, env volumeEnv) error {
+	// the applied record goes in the one write that carries the config (ApplyConfig's PUT), not in the creation request, which carries none of it: a
+	// crash between the two calls must not leave a record of config that was never applied
+	config := r.Config
+	if rec, _, ok := appliedRecordFor(r, env.stack); ok {
+		config = withStamps(config, map[string]string{ownership.AppliedKey: rec})
+	}
 	spec := &instance.Spec{
 		Name:     r.Name,
 		Image:    r.Image,
-		Config:   r.Config,
+		Config:   config,
 		Devices:  r.Devices,
 		Profiles: r.Profiles,
 		VM:       r.VM,
@@ -246,8 +253,8 @@ func createInstance(server incus.InstanceServer, r Resource, env volumeEnv) erro
 // makes for you.
 //
 // limit is the deadline of each call to the server (zero: none); a call abandoned at it ends the update there.
-func updateInstance(server incus.InstanceServer, r Resource, limit time.Duration) error {
-	spec := &instance.Spec{Name: r.Name, Config: r.Config, Devices: r.Devices, Ephemeral: r.Ephemeral, OwnedConfigPrefixes: ownedConfigPrefixes, OpTimeout: limit}
+func updateInstance(server incus.InstanceServer, r Resource, limit time.Duration, stack string) error {
+	spec := &instance.Spec{Name: r.Name, Config: r.Config, Devices: r.Devices, Ephemeral: r.Ephemeral, OwnedConfigPrefixes: ownedConfigPrefixes, OpTimeout: limit, StaleApplied: staleAppliedOf(r, stack)}
 	if err := instance.ApplyConfig(server, spec); err != nil {
 		return err
 	}
@@ -276,7 +283,7 @@ func updateOne(server incus.InstanceServer, r Resource, env volumeEnv) error {
 		// the narrowing is a server-wide write, so it takes the unscoped server
 		return incusapi.BoundedDo(env.limit(false), fmt.Sprintf("updating %s/%s", r.Kind, r.Name), func() error { return narrowHelper(server, r, env.helperAuthz) })
 	case KindInstance:
-		return updateInstance(s, r, env.limit(false))
+		return updateInstance(s, r, env.limit(false), env.stack)
 	case KindFile:
 		// Pushing is the same operation whether the file is new or just
 		// changed -- CreateInstanceFile overwrites either way.
@@ -289,9 +296,9 @@ func updateOne(server incus.InstanceServer, r Resource, env volumeEnv) error {
 func updateInPlace(s incus.InstanceServer, r Resource, env volumeEnv) error {
 	switch r.Kind {
 	case KindNetwork:
-		return updateNetwork(s, r)
+		return updateNetwork(s, r, env.stack)
 	case KindNetworkACL:
-		return updateNetworkACL(s, r)
+		return updateNetworkACL(s, r, env.stack)
 	case KindProfile:
 		return incusapi.RetryOnConflict(func() error {
 			current, etag, err := s.GetProfile(r.Name)
@@ -302,15 +309,17 @@ func updateInPlace(s incus.InstanceServer, r Resource, env volumeEnv) error {
 			if put.Config == nil {
 				put.Config = map[string]string{}
 			}
-			for k, v := range r.Config {
-				put.Config[k] = v
-			}
 			if put.Devices == nil {
 				put.Devices = api.DevicesMap{}
+			}
+			stale, _ := staleFor(r, env.stack, applied.State{Config: current.Config, Devices: current.Devices})
+			for k, v := range r.Config {
+				put.Config[k] = v
 			}
 			for name, dev := range r.Devices {
 				put.Devices[name] = dev
 			}
+			removeStale(stale, put.Config, put.Devices)
 			return s.UpdateProfile(r.Name, put, etag)
 		})
 	case KindStorageVolume:
@@ -332,9 +341,11 @@ func updateInPlace(s incus.InstanceServer, r Resource, env volumeEnv) error {
 				return err
 			}
 			splitCreationOnly(set) // how a volume was made is not changed afterwards (decideVolume warns about it)
+			stale, _ := staleFor(r, env.stack, applied.State{Config: current.Config})
 			for k, v := range set {
 				put.Config[k] = v
 			}
+			removeStale(stale, put.Config, nil)
 			for _, k := range remove {
 				delete(put.Config, k)
 			}

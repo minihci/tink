@@ -2,12 +2,14 @@ package resolve
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
 
+	"github.com/minihci/tink/internal/applied"
 	"github.com/minihci/tink/internal/incusapi"
 	"github.com/minihci/tink/internal/ownership"
 )
@@ -71,6 +73,34 @@ func (e Extras) Describe() string {
 		line += " [environment.* and oci.* not compared with the image]"
 	}
 	return line
+}
+
+// withoutStale takes out of the report what is a planned removal: a key or a device that the applied record says this stack applied and no longer
+// declares is taken back by the next apply, and "left alone" would be untrue of it. What was added by hand is not in the record, and stays reported.
+func (e Extras) withoutStale(st applied.Stale) Extras {
+	if st.Empty() {
+		return e
+	}
+	gone := map[string]bool{}
+	for _, k := range st.Keys {
+		gone[k] = true
+	}
+	var config []string
+	for _, k := range e.Config {
+		if !gone[k] {
+			config = append(config, k)
+		}
+	}
+	e.Config = config
+	var devices []string
+	for _, d := range e.Devices {
+		name, _, _ := strings.Cut(d, " (")
+		if !slices.Contains(st.Devices, name) {
+			devices = append(devices, d)
+		}
+	}
+	e.Devices = devices
+	return e
 }
 
 // notAnExtra says that a config key is never reported as something the stack does not declare, whatever kind of object carries it: Incus's own state
@@ -217,7 +247,8 @@ func undeclaredDevices(live, declared map[string]map[string]string) []string {
 // otherExtras reads the live profile, storage volume, network or project that r declares and reports what it carries that r does not. It
 // returns nil when there is nothing to compare: the object does not exist (a stack not yet applied has no extras), or it is a network tink
 // would not touch anyway (planNetwork blocks it). server is already scoped to r's project. env is only used for a volume, whose declared config
-// is more than r.Config: the snapshot keys its backup block derives (volumeBackupConfig).
+// is more than r.Config: the snapshot keys its backup block derives (volumeBackupConfig); and for the stack's name, which says whether the applied record of
+// the object is one to use (what it lists and the declaration no longer has is a removal, not an extra).
 func otherExtras(server incus.InstanceServer, r Resource, env volumeEnv) (*Extras, error) {
 	var e Extras
 	switch r.Kind {
@@ -228,6 +259,8 @@ func otherExtras(server incus.InstanceServer, r Resource, env volumeEnv) (*Extra
 		}
 		e.Config = undeclaredConfig(cur.Config, r.Config, nil)
 		e.Devices = undeclaredDevices(cur.Devices, r.Devices)
+		st, _ := staleFor(r, env.stack, applied.State{Config: cur.Config, Devices: cur.Devices})
+		e = e.withoutStale(st)
 	case KindStorageVolume:
 		pool := r.Pool
 		if pool == "" {
@@ -242,12 +275,16 @@ func otherExtras(server incus.InstanceServer, r Resource, env volumeEnv) (*Extra
 			return nil, nil // the plan is blocked for it already
 		}
 		e.Config = undeclaredConfig(cur.Config, declared, nil)
+		st, _ := staleFor(r, env.stack, applied.State{Config: cur.Config})
+		e = e.withoutStale(st)
 	case KindNetwork:
 		cur, _, found, err := incusapi.LookupNetwork(server, r.Name)
 		if err != nil || !found || !cur.Managed || cur.Type != "bridge" {
 			return nil, err
 		}
 		e.Config = undeclaredConfig(cur.Config, r.Config, nil)
+		st, _ := staleFor(r, env.stack, applied.State{Config: cur.Config})
+		e = e.withoutStale(st)
 	case KindProject:
 		cur, _, found, err := incusapi.LookupProject(server, r.Name)
 		if err != nil || !found {
