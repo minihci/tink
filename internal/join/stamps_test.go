@@ -7,6 +7,7 @@ import (
 	"github.com/lxc/incus/v7/shared/api"
 
 	"github.com/minihci/tink/internal/finding"
+	"github.com/minihci/tink/internal/observe"
 	"github.com/minihci/tink/internal/ownership"
 	"github.com/minihci/tink/internal/resolve"
 )
@@ -168,7 +169,7 @@ func TestACopyOfAnInstanceThatCarriesADerivedFileIsNotWrittenToOrRestarted(t *te
 
 	outs := reconcileDerived(f, files, rs)
 	o := one(t, outs, "ingress-routes")
-	if o.State != DerivedChanged {
+	if o.State != observe.Converged || !o.Wrote {
 		t.Fatalf("the original's file was not kept: %+v", o)
 	}
 	if len(outs) != 1 {
@@ -181,13 +182,13 @@ func TestACopyOfAnInstanceThatCarriesADerivedFileIsNotWrittenToOrRestarted(t *te
 		t.Error("the copy's file was written")
 	}
 	said := 0
-	for _, line := range o.Findings {
-		if strings.Contains(line, "instance/ingress-copy") && strings.Contains(line, "ignored") {
+	for _, fi := range o.Detail {
+		if line := fi.String(); strings.Contains(line, "instance/ingress-copy") && strings.Contains(line, "ignored") {
 			said++
 		}
 	}
 	if said != 1 {
-		t.Errorf("the copy is reported once, not %d times: %v", said, o.Findings)
+		t.Errorf("the copy is reported once, not %d times: %v", said, o.Detail)
 	}
 	// and the read on its own says the same, once
 	ds, bad, ignored, err := DerivedFromServer(f, "")
@@ -207,7 +208,7 @@ func TestAPassWhoseOnlyDerivedStampIsACopysSaysSo(t *testing.T) {
 		}
 	}
 	outs := reconcileDerived(f, platformFiles(), &fakeRestarter{})
-	if len(outs) != 1 || outs[0].State != DerivedSkipped || len(outs[0].Findings) != 1 {
+	if len(outs) != 1 || outs[0].State != observe.Skipped || len(outs[0].Detail) != 1 {
 		t.Errorf("outcomes = %+v, want skipped with the copy's finding", outs)
 	}
 }
