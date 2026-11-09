@@ -459,7 +459,7 @@ func (in *Installer) waitForReport(opts InstallOptions, since time.Time) error {
 		if err == nil {
 			for _, f := range found {
 				if f.Project == opts.Project && f.Name == opts.Name {
-					if r := Evaluate(f, in.now()); r.Status != nil && !r.Status.Tick.Before(since) {
+					if r := Evaluate(f, in.now()); r.Status != nil && !r.Status.WrittenAt.Before(since) {
 						in.say("%s", r.Summary())
 						return nil
 					}

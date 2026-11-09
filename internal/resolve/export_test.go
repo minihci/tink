@@ -216,7 +216,7 @@ func writeFile(path, content string) error { return os.WriteFile(path, []byte(co
 // A volume's settings (size, initial.uid...) are written back as config: and the file loads; --user made them matter (found live: a stack rebuilt from
 // an export had root-owned volumes and the app could not open its database).
 func TestAVolumeWithConfigExportsAsAFileTinkCanLoad(t *testing.T) {
-	s := &exportServer{inst: kumaInstance(), volCfg: map[string]string{"size": "1GiB", "initial.uid": "1000", "volatile.idmap.last": "[]", "user.tink.backup.copy.nas.at": "2026-10-09T00:00:00Z", "user.tink.stack": "s"}}
+	s := &exportServer{inst: kumaInstance(), volCfg: map[string]string{"size": "1GiB", "initial.uid": "1000", "volatile.idmap.last": "[]", "user.tink.backup.copy.nas.copied-at": "2026-10-09T00:00:00Z", "user.tink.stack": "s"}}
 	res, err := Export(s, ExportOptions{Project: "tink-play", Instances: []string{"kuma-play"}, Offline: true})
 	if err != nil {
 		t.Fatal(err)

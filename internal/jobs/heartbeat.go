@@ -5,16 +5,18 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"time"
+
+	"github.com/minihci/tink/internal/instant"
 )
 
 // Heartbeat is what the helper's loop writes every tick, so anything that can read the jobs directory (and, in
 // time, `plan` and `status`) can tell a live helper from one that stopped, even when its logs are gone. The file
 // lives in the jobs directory itself, beside the jobs and ignored as one: it is a file, and jobs are directories.
 type Heartbeat struct {
-	Time    time.Time `json:"time"`
-	PID     int       `json:"pid"`
-	Version string    `json:"version,omitempty"`
+	// WrittenAt is when this was written.
+	WrittenAt instant.Time `json:"written-at"`
+	PID       int          `json:"pid"`
+	Version   string       `json:"version,omitempty"`
 	// Zone is the time zone schedules are evaluated in.
 	Zone string `json:"zone,omitempty"`
 }

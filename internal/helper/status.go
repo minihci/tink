@@ -14,6 +14,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/minihci/tink/internal/instant"
 )
 
 const (
@@ -23,8 +25,11 @@ const (
 	// MarkerKey marks an instance as a helper and says which job protocol it speaks. `helper install` sets it, so a helper is
 	// found even before it has ever published anything.
 	MarkerKey = "user.tink.helper"
-	// StatusProto is the version of the document. A reader refuses a newer one rather than guessing.
-	StatusProto = 1
+	// WrittenAtField and HeartbeatField are the document's names for when it was written and how often, as a health reason says them.
+	WrittenAtField, HeartbeatField = "written-at", "heartbeat"
+	// StatusProto is the version of the document. A reader refuses a newer one rather than guessing, and does nothing special for an older
+	// one: it is judged by what it says, and a document that does not say when it was written is never read as healthy (Evaluate).
+	StatusProto = 2
 
 	// DefaultHeartbeat is how often the helper writes when nothing has changed.
 	DefaultHeartbeat = 10 * time.Minute
@@ -46,11 +51,11 @@ type Status struct {
 	PolicyProto int    `json:"policy_proto,omitempty"`
 	TZ          string `json:"tz,omitempty"`
 
-	Started time.Time `json:"started,omitzero"`
-	// Tick is when this was written; HeartbeatSeconds is how often it is written when nothing changes, so a reader can tell stale
-	// from quiet without knowing the helper's configuration.
-	Tick             time.Time `json:"tick,omitzero"`
-	HeartbeatSeconds int       `json:"heartbeat_seconds,omitempty"`
+	StartedAt instant.Time `json:"started-at,omitzero"`
+	// WrittenAt is when this was written; Heartbeat is how often it is written when nothing changes, so a reader can tell stale
+	// from quiet without knowing the helper's configuration. A document without a WrittenAt cannot be judged fresh (Evaluate).
+	WrittenAt instant.Time     `json:"written-at,omitzero"`
+	Heartbeat instant.Duration `json:"heartbeat,omitzero"`
 
 	// Skipped are volumes the helper will not copy, and why: a policy of a protocol it does not read, one that does not parse, a
 	// pool it cannot list. A volume that stops being copied for one of these must not do it silently.
@@ -79,11 +84,11 @@ type Status struct {
 // text. Since is when this state began, not when it was last checked: a reconcile that finds the same thing again changes nothing, so the status
 // document is not rewritten on every pass (a write costs an event and some Incus CPU).
 type Reconcile struct {
-	What   string    `json:"what"`           // what is kept: "dns"
-	Site   string    `json:"site,omitempty"` // "" is the unnamed site
-	State  string    `json:"state"`          // converged, blocked, skipped, failing
-	Reason string    `json:"reason,omitempty"`
-	Since  time.Time `json:"since,omitzero"`
+	What   string       `json:"what"`           // what is kept: "dns"
+	Site   string       `json:"site,omitempty"` // "" is the unnamed site
+	State  string       `json:"state"`          // converged, blocked, skipped, failing
+	Reason string       `json:"reason,omitempty"`
+	Since  instant.Time `json:"since,omitzero"`
 }
 
 // Remote is one entry of the helper's Incus client configuration. It holds no credential: those are on the helper's config volume.
@@ -99,19 +104,21 @@ type Skip struct {
 	Reason string `json:"reason"`
 }
 
-// Failing is a copy that is failing: how many attempts in a row, and since when.
+// Failing is a copy that is failing: how many attempts in a row, when the first of them failed, and when the latest did. Since is when
+// the run of failures began and stays through the retries; FailedAt is the last attempt and moves with each one.
 type Failing struct {
-	Volume string    `json:"volume"`
-	Target string    `json:"target"`
-	Count  int       `json:"count"`
-	Since  time.Time `json:"since,omitzero"`
+	Volume   string       `json:"volume"`
+	Target   string       `json:"target"`
+	Count    int          `json:"count"`
+	Since    instant.Time `json:"since,omitzero"`
+	FailedAt instant.Time `json:"failed-at,omitzero"`
 }
 
 // LastJob is the most recent finished job.
 type LastJob struct {
-	ID       string    `json:"id"`
-	State    string    `json:"state"`
-	Finished time.Time `json:"finished,omitzero"`
+	ID         string       `json:"id"`
+	State      string       `json:"state"`
+	FinishedAt instant.Time `json:"finished-at,omitzero"`
 }
 
 // Encode is the one-line text that is stored.
@@ -142,9 +149,9 @@ func Parse(text string) (Status, error) {
 }
 
 // changeKey is what decides whether a write is worth an event: the document without the things that change every time it is
-// written (the tick).
+// written (the write time).
 func changeKey(s Status) string {
-	s.Tick = time.Time{}
+	s.WrittenAt = instant.Time{}
 	text, _ := Encode(s)
 	return text
 }

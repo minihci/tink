@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/minihci/tink/internal/backuprun"
+	"github.com/minihci/tink/internal/instant"
 	"github.com/minihci/tink/internal/jobs"
 	"github.com/minihci/tink/internal/secrets"
 )
@@ -135,7 +136,7 @@ func sortedKeys(m map[string]error) []string {
 func (h *Helper) Tick(state *SchedulerState) int {
 	h.tickLooked.Store(false)
 	now := h.now()
-	if err := h.Store.Beat(jobs.Heartbeat{Time: now.UTC(), PID: pid(), Version: h.Version, Zone: now.Location().String()}); err != nil {
+	if err := h.Store.Beat(jobs.Heartbeat{WrittenAt: instant.At(now), PID: pid(), Version: h.Version, Zone: now.Location().String()}); err != nil {
 		h.logf("writing the heartbeat: %v", err)
 	}
 	state.begin()

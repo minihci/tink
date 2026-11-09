@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"filippo.io/age"
+
+	"github.com/minihci/tink/internal/instant"
 )
 
 // IdentityPath is where the age identity (the private key) is looked for: an explicit path (a
@@ -77,7 +79,7 @@ func GenerateIdentity(path string) (publicKey string, err error) {
 	}
 	defer f.Close()
 	pub := id.Recipient().String()
-	if _, err := fmt.Fprintf(f, "# created: %s\n# public key: %s\n%s\n", time.Now().UTC().Format(time.RFC3339), pub, id.String()); err != nil {
+	if _, err := fmt.Fprintf(f, "# created: %s\n# public key: %s\n%s\n", instant.Format(time.Now()), pub, id.String()); err != nil {
 		return "", err
 	}
 	return pub, nil

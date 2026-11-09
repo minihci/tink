@@ -68,7 +68,7 @@ func TestCopyIsDue(t *testing.T) {
 		if last == "" {
 			return nil
 		}
-		return map[string]string{CopyStampAt("nas"): at(last).Format(time.RFC3339)}
+		return map[string]string{CopiedAt("nas"): at(last).Format(time.RFC3339)}
 	}
 	tests := []struct {
 		name, last, now string
@@ -87,7 +87,7 @@ func TestCopyIsDue(t *testing.T) {
 		}
 	}
 	// a stamp tink did not write is as good as none
-	if due, _ := CopyIsDue("0 4 * * *", map[string]string{CopyStampAt("nas"): "yesterday-ish"}, "nas", at("2026-10-06 12:00")); !due {
+	if due, _ := CopyIsDue("0 4 * * *", map[string]string{CopiedAt("nas"): "yesterday-ish"}, "nas", at("2026-10-06 12:00")); !due {
 		t.Error("an unreadable stamp must not suppress a copy")
 	}
 }
@@ -107,17 +107,17 @@ func TestCopyDueBacksOffAfterFailures(t *testing.T) {
 		"never run, failed 2 minutes ago: backing off": {daily, failCfg("t", t10.Add(-2*time.Minute), "1", nil), t10, false, "backing off after 1 failed"},
 		"never run, failed 6 minutes ago: retry":       {daily, failCfg("t", t10.Add(-6*time.Minute), "1", nil), t10, true, ""},
 		"due by schedule, failed twice 10 minutes ago: wait for 10m then due": {daily,
-			failCfg("t", t10.Add(-10*time.Minute), "2", map[string]string{CopyStampAt("t"): lastOK.Format(time.RFC3339)}), t10, true, ""},
+			failCfg("t", t10.Add(-10*time.Minute), "2", map[string]string{CopiedAt("t"): lastOK.Format(time.RFC3339)}), t10, true, ""},
 		"due by schedule, failed twice 9 minutes ago: still backing off": {daily,
-			failCfg("t", t10.Add(-9*time.Minute), "2", map[string]string{CopyStampAt("t"): lastOK.Format(time.RFC3339)}), t10, false, "backing off after 2 failed"},
+			failCfg("t", t10.Add(-9*time.Minute), "2", map[string]string{CopiedAt("t"): lastOK.Format(time.RFC3339)}), t10, false, "backing off after 2 failed"},
 		"not due by schedule: the schedule is the reason, not the failure": {daily,
-			failCfg("t", t10.Add(-time.Hour), "7", map[string]string{CopyStampAt("t"): t10.Add(-2 * time.Hour).Format(time.RFC3339)}), t10, false, "not yet due"},
+			failCfg("t", t10.Add(-time.Hour), "7", map[string]string{CopiedAt("t"): t10.Add(-2 * time.Hour).Format(time.RFC3339)}), t10, false, "not yet due"},
 		"a stale failure older than a success is ignored": {daily,
-			failCfg("t", lastOK.Add(-time.Hour), "9", map[string]string{CopyStampAt("t"): lastOK.Format(time.RFC3339)}), t10, true, ""},
+			failCfg("t", lastOK.Add(-time.Hour), "9", map[string]string{CopiedAt("t"): lastOK.Format(time.RFC3339)}), t10, true, ""},
 		"many failures are capped at the schedule's interval: hourly, 10 failures, 30 min after": {"@hourly",
-			failCfg("t", t10.Add(-30*time.Minute), "10", map[string]string{CopyStampAt("t"): t10.Add(-3 * time.Hour).Format(time.RFC3339)}), t10, false, "backing off"},
+			failCfg("t", t10.Add(-30*time.Minute), "10", map[string]string{CopiedAt("t"): t10.Add(-3 * time.Hour).Format(time.RFC3339)}), t10, false, "backing off"},
 		"...and an hour after it is due again": {"@hourly",
-			failCfg("t", t10.Add(-time.Hour), "10", map[string]string{CopyStampAt("t"): t10.Add(-3 * time.Hour).Format(time.RFC3339)}), t10, true, ""},
+			failCfg("t", t10.Add(-time.Hour), "10", map[string]string{CopiedAt("t"): t10.Add(-3 * time.Hour).Format(time.RFC3339)}), t10, true, ""},
 	} {
 		d, err := CopyDue(tc.schedule, tc.cfg, "t", tc.now)
 		if err != nil {
@@ -145,7 +145,7 @@ func TestCopyDueReasonsUseOneZoneAndNameIt(t *testing.T) {
 		t.Errorf("backoff reason = %q, want the retry time in MDT", d.Reason)
 	}
 	// not yet due: last success 06:46 UTC (00:46 MDT), next @hourly is 01:00 MDT
-	d, _ = CopyDue("@hourly", map[string]string{CopyStampAt("t"): "2026-10-07T06:46:00Z"}, "t", now)
+	d, _ = CopyDue("@hourly", map[string]string{CopiedAt("t"): "2026-10-07T06:46:00Z"}, "t", now)
 	if !strings.Contains(d.Reason, "01:00 MDT") {
 		t.Errorf("schedule reason = %q, want the next run in MDT", d.Reason)
 	}

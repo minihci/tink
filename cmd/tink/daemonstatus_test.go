@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +16,7 @@ import (
 	"github.com/lxc/incus/v7/shared/api"
 
 	"github.com/minihci/tink/internal/helper"
+	"github.com/minihci/tink/internal/jobs"
 )
 
 func TestStatusTargetRefusesTwoPlacesAndAPoolForNoVolume(t *testing.T) {
@@ -140,10 +143,10 @@ func TestTheInstanceFormStillPatchesTheInstanceAndMarksIt(t *testing.T) {
 	if p == nil || p.NoMarker {
 		t.Fatalf("%+v", p)
 	}
-	if _, err := p.Publish(helper.Status{JobProto: 1}); err != nil {
+	if _, err := p.Publish(helper.Status{JobProto: jobs.Proto}); err != nil {
 		t.Fatal(err)
 	}
-	if len(srv.patches) != 1 || !strings.HasPrefix(srv.patches[0], "PATCH /1.0/instances/helper?project=tink-helper ") || !strings.Contains(srv.patches[0], `"user.tink.helper":"1"`) {
+	if len(srv.patches) != 1 || !strings.HasPrefix(srv.patches[0], "PATCH /1.0/instances/helper?project=tink-helper ") || !strings.Contains(srv.patches[0], fmt.Sprintf(`"user.tink.helper":"%d"`, jobs.Proto)) {
 		t.Errorf("unchanged for helpers installed before the status volume: %v", srv.patches)
 	}
 	if len(srv.puts) != 0 {
@@ -207,7 +210,7 @@ func TestHelperStatusReadsTheVolumeAndSaysWhereAndSaysWhenItCannot(t *testing.T)
 }
 
 func TestAHelperWhoseStatusVolumeCannotBeReadCannotTakeABackupRun(t *testing.T) {
-	f := helper.Found{Project: "p", Name: "helper", State: "Running", Config: map[string]string{helper.MarkerKey: "1"},
+	f := helper.Found{Project: "p", Name: "helper", State: "Running", Config: map[string]string{helper.MarkerKey: strconv.Itoa(jobs.Proto)},
 		StatusVolume: "default/helper-status", StatusProblem: "not authorized"}
 	r := helper.Evaluate(f, helperNow)
 	why := helperCannotTake(r)

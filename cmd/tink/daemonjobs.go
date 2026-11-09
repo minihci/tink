@@ -74,7 +74,7 @@ func newDaemonJobsCmd() *cobra.Command {
 				return nil
 			}
 			if hb, err := store.LastBeat(); err == nil {
-				fmt.Fprintf(out, "daemon: last heartbeat %s ago (pid %d, tink %s, schedules in %s)\n\n", time.Since(hb.Time).Round(time.Second), hb.PID, hb.Version, hb.Zone)
+				fmt.Fprintf(out, "daemon: last heartbeat %s ago (pid %d, tink %s, schedules in %s)\n\n", time.Since(hb.WrittenAt.Time).Round(time.Second), hb.PID, hb.Version, hb.Zone)
 			} else if os.IsNotExist(err) {
 				fmt.Fprintf(out, "daemon: no heartbeat in %s: it has never run here, or is not running\n\n", jobsDir)
 			}
@@ -121,7 +121,7 @@ func printJobList(out io.Writer, list []jobs.Status) error {
 		if len(msg) > 70 {
 			msg = msg[:70] + "..."
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", st.ID, st.State, st.Kind, st.Origin, jobAge(st.Created), msg)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", st.ID, st.State, st.Kind, st.Origin, jobAge(st.CreatedAt.Time), msg)
 	}
 	return w.Flush()
 }

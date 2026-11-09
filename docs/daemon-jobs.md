@@ -47,13 +47,14 @@ A job is a directory under `--jobs`:
 ```
 <id>/request.json   what to do (proto, kind, origin, arguments)
 <id>/READY          created LAST: nothing is read before it exists
-<id>/status.json    queued | running | succeeded | failed | cancelled, times, the error, and a summary of what was done
+<id>/status.json    queued | running | succeeded | failed | cancelled, `created-at`, `started-at` and `finished-at`, the error, and a summary of what was done
 <id>/log            what `tink backup run` printed (secrets scrubbed, at most 1 MiB)
 <id>/cancel         create it to ask the job to stop
 ```
 
 `READY` exists because the Incus file API writes files in place: a reader can see a half-written file. A job is read only once `READY` says its writer has
-finished, and it is written after the whole request. `proto` (now 1) is the version of this layout, and what a client and the daemon must agree on.
+finished, and it is written after the whole request. `proto` (now 2) is the version of this layout, and what a client and the daemon must agree on. Every instant in these files (`created-at` in the request, and `created-at`,
+`started-at` and `finished-at` in the status) is an RFC 3339 UTC instant to the whole second, and a duration is a Go duration string ([Time words](glossary.md#time-words)).
 
 A job works from the volumes' policies, found when the job runs. Nothing but the request is sent with it, so what a job does cannot differ from what the volumes
 say, and a checkout of a branch with a shortened `retain` cannot prune real restore points: a policy only changes when `tink plan apply` writes it. To run one
@@ -75,7 +76,7 @@ carries one is **refused** (the job fails and says so), not run as an ordinary j
 ## Staying alive
 
 Each worker is **isolated and supervised**: one that crashes or panics is logged and restarted (after 5 seconds, doubling to a minute), and does not stop the
-others. The scheduler writes a **heartbeat** (`<jobs>/heartbeat`: time, pid, tink version, time zone) every tick, which `daemon jobs` shows, so a daemon that
+others. The scheduler writes a **heartbeat** (`<jobs>/heartbeat`: `written-at`, pid, tink version, time zone) every tick, which `daemon jobs` shows, so a daemon that
 stopped can be told from one with nothing to do even when its logs are gone. A helper also publishes a **status document** on a volume of its own (older helpers: on their instance), which is
 what `tink plan` and `tink helper status` read ([helper.md](helper.md#the-status-document)); the heartbeat file is the daemon's own liveness, on the machine
 that has the directory.

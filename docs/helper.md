@@ -426,12 +426,12 @@ was read, **keeping every other key as it was**; if the volume changed in betwee
 
 | Field | Meaning |
 |---|---|
-| `version`, `tz`, `started` | which tink, which time zone schedules run in, since when |
+| `version`, `tz`, `started-at` | which tink, which time zone schedules run in, and when it started |
 | `job_proto`, `policy_proto` | the job-directory protocol it speaks, and the **newest copy-policy protocol it can read** |
-| `tick`, `heartbeat_seconds` | when it was written, and how often it is written when nothing changes |
+| `written-at`, `heartbeat` | when it was written (an RFC 3339 UTC instant to the whole second), and how often it is written when nothing changes (a Go duration string, `10m0s`) |
 | `skipped` | volumes it will **not** copy, and why: a policy of a protocol it does not read, one that does not parse, a pool it cannot list, a volume it cannot read |
-| `failing` | copies that have failed since their last success: volume, target, how many in a row, since when |
-| `last_job` | the newest finished job: id, state, when |
+| `failing` | copies that have failed since their last success: `volume`, `target`, `count` (how many in a row), `since` (when the run of failures began, which stays through the retries) and `failed-at` (when the latest attempt failed, which moves with each) |
+| `last_job` | the newest finished job: `id`, `state`, `finished-at` |
 | `reconciles` | with `--reconcile-dns`: one entry per site kept, `what` (`dns`), `site`, `state` (`converged`, `blocked`, `skipped`, `failing`), a fixed `reason` when it is not converged, and `since`, when that state began (so a pass that finds the same thing writes nothing new) |
 | `remotes` | the Incus servers the helper can reach by name: `host`, and any added with `tink helper remote add` (name, address, project; no credential). Absent from an older helper, which is why a missing list is not read as "none" |
 
@@ -443,7 +443,12 @@ one lifecycle event in the log of anything listening and about 90 ms of the Incu
 offers it to the publisher every 10 seconds; the publisher compares and usually does nothing. With `--status-instance` it also marks the instance with
 `user.tink.helper` on the first write, so a daemon started by hand is found by the commands below as well. With `--status-volume` it does not: the
 marker and the pointer are `install`'s, because the helper holds no right to write its instance. A daemon started by hand with `--status-volume` is found
-once its instance carries both (`incus config set INSTANCE user.tink.helper=1 user.tink.helper.status-volume=POOL/VOLUME`).
+once its instance carries both (`incus config set INSTANCE user.tink.helper=2 user.tink.helper.status-volume=POOL/VOLUME`; the marker's value is the job protocol, which is 2).
+
+**A document that does not say when it was written is not healthy.** The staleness test needs `written-at` and `heartbeat`. A document without either (written by another
+version, edited by hand, or damaged) cannot be shown to be fresh, so the helper is judged **degraded**, with the reason `its status document has no write time (written-at)` (or
+`no heartbeat`), and never healthy: a helper that had stopped would otherwise read as well for ever. There is no version logic in this: `status` protocol 2 is the document
+described above, a reader refuses a newer protocol, and an older document is judged by what it says like any other.
 
 **Why config on a volume.** Reading it costs no event (reading a file out of an instance does), and it is still there when the helper has
 stopped, which is the case that matters. That would also be true of the instance's own config; it is on a volume because of what the write needs.

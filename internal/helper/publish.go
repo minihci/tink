@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/minihci/tink/internal/instant"
 )
 
 // Publisher writes the status document, but only when it is worth an event: when something in it changed, or when the heartbeat is
@@ -44,7 +46,7 @@ func (p *Publisher) now() time.Time {
 	return time.Now()
 }
 
-// Publish stamps s (its protocol, its tick and its heartbeat) and writes it if it differs from the last one written or the
+// Publish stamps s (its protocol, its write time and its heartbeat) and writes it if it differs from the last one written or the
 // heartbeat is due. It reports whether it wrote. A failed write is returned and is not remembered as done, so the next call tries
 // again; the first successful write also marks the instance as a helper (MarkerKey), so a helper started by hand is found too (unless
 // NoMarker: with the document on a volume, the instance is marked by whoever made it).
@@ -53,8 +55,8 @@ func (p *Publisher) Publish(s Status) (wrote bool, err error) {
 	defer p.mu.Unlock()
 	now := p.now()
 	s.Proto = StatusProto
-	s.Tick = now.UTC()
-	s.HeartbeatSeconds = int(p.heartbeat() / time.Second)
+	s.WrittenAt = instant.At(now)
+	s.Heartbeat = instant.Duration(p.heartbeat())
 
 	key := changeKey(s)
 	if !p.failed && p.lastKey == key && now.Sub(p.lastWrite) < p.heartbeat() {

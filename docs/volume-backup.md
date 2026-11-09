@@ -101,7 +101,7 @@ For each volume that declares `copies` (or only the named ones), and each of its
 1. takes a **snapshot** of the volume: a consistent point in time (`tink-copy-<UTC time>`, with a 24h expiry as a safety
    net, and removed again when the copy is done);
 2. copies **that snapshot** into a **new volume** on the target pool, `VOLUME-bk-<UTC time>`: a *restore point*;
-3. stamps the source volume (`user.tink.backup.copy.<target>.at` and `.volume`);
+3. stamps the source volume (`user.tink.backup.copy.<target>.copied-at` and `.volume`; `copied-at` is when the copy succeeded, as an RFC 3339 UTC instant to the whole second);
 4. **prunes** that volume's restore points older than the copy's `retain`, always keeping the newest.
 
 A target is either another **storage pool on this server** (another disk, or the Incus `truenas` driver) or an **Incus remote**
@@ -188,7 +188,7 @@ the marker for the volume in question: a volume tink did not make, a lookalike n
 cannot read is never touched. **Pruning goes further: only points made by the server doing the pruning**, and "never the newest" means the
 newest of that server's own.
 
-**A copy that never finished.** A copy is marked **in progress** (`user.tink.backup.copy-partial-of` and `-at`, a *different* key from a restore
+**A copy that never finished.** A copy is marked **in progress** (`user.tink.backup.copy-partial-of` and `copy-partial-started-at`, a *different* key from a restore
 point's) from the moment its volume is created on the target, and the mark is swapped for the restore point's markers only when the copy has completed. So
 a copy that is cut off, or whose tink was killed, or whose host lost power, is **never** listed, restored from, verified or counted as the newest backup. It
 is not deleted at once either, because tink cannot tell a dead copy from one still running: on a later run, `backup run` removes volumes that carry this tink's
@@ -203,8 +203,9 @@ refused as "already running" and is not counted as a failed copy. This guard is 
 run on the server are different processes, and nothing yet stops both copying the same volume at the same moment (it is wasteful, not unsafe:
 each makes its own restore point).
 
-**When a copy fails.** The source volume is marked with when the last attempt failed and how many in a row
-(`user.tink.backup.copy.<target>.fail.at` and `.fail.n`); a success removes both. **No reason is stored**: errors from Incus and its
+**When a copy fails.** The source volume is marked with when the last attempt failed (`failed-at`, which moves with every attempt), when the
+run of failures began (`failing-since`, set by the first failure and kept through the retries) and how many attempts in a row have failed
+(`failures`), all under `user.tink.backup.copy.<target>.`; a success removes all three. **No reason is stored**: errors from Incus and its
 drivers can echo credentials, and a volume's config is the wrong place for that, so the reason is only in the output of the run that
 failed. `plan` says the copy is failing (or "has never succeeded"). With `--due`, a failing copy is **not retried every time the command
 is called**: it waits `5 minutes x 2^(failures-1)`, but never longer than the copy's own schedule interval (an hourly copy retries at
@@ -358,7 +359,7 @@ own. Incus takes a root disk from the creation request, as `incus init --storage
 request's devices together with the profiles'). Covered by tests against a fake server that refuses an instance with no root disk as Incus does, and **run against a real
 Incus 7.5.1 server on 2026-10-17**: a verify in a project whose `default` profile had no root disk printed that the instance got its own on the volume's pool, and the check passed **[lab]**. `tink helper install` makes its instance with the `default` profile too and now sends its root disk the same way.
 
-**The stamp.** A passing verify records `user.tink.backup.verified-at` (UTC), `verified-snapshot` and
+**The stamp.** A passing verify records `user.tink.backup.verified-at` (an RFC 3339 UTC instant), `verified-snapshot` and
 `verified-with` (`check` or `restore`) on the source volume, as ordinary Incus volume config. There is no
 state file of tink's own; `plan` reads these. A failed check leaves the stamp untouched, so a failed
 verification never looks fresh.

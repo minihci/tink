@@ -420,19 +420,19 @@ func printHelperDetails(out io.Writer, r helper.Report, now time.Time) {
 	fmt.Fprintf(out, "  version:     %s\n", orDash(st.Version))
 	fmt.Fprintf(out, "  speaks:      jobs protocol %d; copy policies up to protocol %d; status protocol %d\n", st.JobProto, st.PolicyProto, st.Proto)
 	fmt.Fprintf(out, "  time zone:   %s\n", orDash(st.TZ))
-	if !st.Started.IsZero() {
-		fmt.Fprintf(out, "  started:     %s (%s ago)\n", st.Started.Format("2006-01-02 15:04 MST"), roundAge(now.Sub(st.Started)))
+	if !st.StartedAt.IsZero() {
+		fmt.Fprintf(out, "  started:     %s (%s ago)\n", st.StartedAt.Format("2006-01-02 15:04 MST"), roundAge(now.Sub(st.StartedAt.Time)))
 	}
-	if !st.Tick.IsZero() {
-		fmt.Fprintf(out, "  last heard:  %s ago (it writes at least every %s)\n", roundAge(now.Sub(st.Tick)), roundAge(time.Duration(st.HeartbeatSeconds)*time.Second))
+	if !st.WrittenAt.IsZero() {
+		fmt.Fprintf(out, "  last heard:  %s ago (it writes at least every %s)\n", roundAge(now.Sub(st.WrittenAt.Time)), roundAge(st.Heartbeat.D()))
 	}
 	fmt.Fprintf(out, "  skipped:     %s\n", listOrNone(len(st.Skipped), func(i int) string { return fmt.Sprintf("%s: %s", st.Skipped[i].Volume, st.Skipped[i].Reason) }))
 	fmt.Fprintf(out, "  failing:     %s\n", listOrNone(len(st.Failing), func(i int) string {
 		f := st.Failing[i]
-		return fmt.Sprintf("%s -> %s, %d in a row since %s", f.Volume, f.Target, f.Count, f.Since.Format("2006-01-02 15:04 MST"))
+		return fmt.Sprintf("%s -> %s, %d in a row since %s, the last %s ago", f.Volume, f.Target, f.Count, f.Since.Format("2006-01-02 15:04 MST"), roundAge(now.Sub(f.FailedAt.Time)))
 	}))
 	if j := st.LastJob; j != nil {
-		fmt.Fprintf(out, "  last job:    %s %s, %s ago\n", j.ID, j.State, roundAge(now.Sub(j.Finished)))
+		fmt.Fprintf(out, "  last job:    %s %s, %s ago\n", j.ID, j.State, roundAge(now.Sub(j.FinishedAt.Time)))
 	} else {
 		fmt.Fprintf(out, "  last job:    none finished\n")
 	}

@@ -61,6 +61,24 @@ tink fills gaps; it does not replace what it builds on. It gives a home or self-
 | join | the step that looks across the offers, the publishes and the helpers' own facts and derives what each helper needs to match: dns records, mesh records, proxy routes, sign-on rules, ACL rules. `tink join` prints them, and `tink join apply dns` writes the dns records | yes (print-only; dns can be applied) |
 | leg | why an instance has a NIC where it does: `user.tink.leg.<nic>` is `serves` (LAN clients reach it here), `mesh` (mesh clients reach it here), `public` (the internet reaches it here, through the host's address) or `discovery` (it is not a way in for users); several may be given, separated by commas | yes (read by `tink join`) |
 
+## Time words
+
+One meaning for each word, so a reader of a stamp, a status document or a job file never has to ask which "time" is meant. These are tink's own keys and fields; Incus's and other tools' words (`created_at`, `expires_at`) are mirrored exactly where tink reads or writes them.
+
+| Word | Meaning | Example |
+|---|---|---|
+| `<past-participle>-at` | An instant: the most recent time that thing happened. The verb is named once, in the key | `created-at`, `started-at`, `finished-at`, `failed-at`, `copied-at`, `verified-at`, `written-at` |
+| `at` (alone) | An instant inside an *event* record, where an `event` field beside it names the verb: `{"event": "healed", "at": "..."}` says what `healed-at` says. It is never a key of its own, and never a stamp's last part | the events of a state change |
+| `<present-participle>-since` | When the current state began, in a flat stamp where the state has to be named | `failing-since` |
+| `since` | When the state a record describes began. It appears only on a state (a record with a `state`), never as the time of a last attempt | a reconcile entry; a failing copy's onset |
+| `until` | A future end: a pause, an expiry. Reserved; nothing writes it yet | |
+| duration | A Go duration string (`10m0s`, `36h0m0s`), written as Go's `Duration.String` gives it and read with `time.ParseDuration`. Never a bare number of seconds | `heartbeat: "10m0s"` |
+| calendar cadence | `daily`, `weekly`, `monthly`, and a policy's `every`. These are keywords and not durations, because a month is not a fixed length of time | `verify: weekly` |
+
+A bare `at`, `time` or `tick` is not a key, and not the last part of one, outside an event record; `cmd/tink/timenaming_test.go` fails if one appears in a time-typed JSON field or a stamp key.
+
+**Every stored or exchanged instant is RFC 3339, in UTC, to whole seconds** (`2026-11-01T09:30:00Z`), produced and read by one package (`internal/instant`), whose JSON type `instant.Time` writes the same way and leaves out a zero value. Human output never prints a raw timestamp in prose: it shows local time with the zone's name (`2026-11-01 10:30 CET`) or a relative age (`7m ago`).
+
 ## Proposed: remote access (not built)
 
 These come from a design discussion; there is no design note yet, and the names are open.

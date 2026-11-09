@@ -156,9 +156,9 @@ func TestDueSkipsWhatIsNotDueAndSaysWhy(t *testing.T) {
 	recent := mid.Add(-10 * time.Minute).UTC().Format(time.RFC3339)
 	stale := mid.Add(-3 * time.Hour).UTC().Format(time.RFC3339)
 	s := &stub{live: map[string]map[string]string{
-		"fresh":   {backupmeta.CopyStampAt("t"): recent},
-		"overdue": {backupmeta.CopyStampAt("t"): stale},
-		"failing": {backupmeta.CopyStampAt("t"): stale, backupmeta.CopyFailAt("t"): mid.Add(-time.Minute).UTC().Format(time.RFC3339), backupmeta.CopyFailCount("t"): "2"},
+		"fresh":   {backupmeta.CopiedAt("t"): recent},
+		"overdue": {backupmeta.CopiedAt("t"): stale},
+		"failing": {backupmeta.CopiedAt("t"): stale, backupmeta.FailedAt("t"): mid.Add(-time.Minute).UTC().Format(time.RFC3339), backupmeta.Failures("t"): "2"},
 		"never":   {},
 	}}
 	rep, out, err := run(t, s, []resolve.Resource{vol("fresh", "t"), vol("overdue", "t"), vol("failing", "t"), vol("never", "t"), target("t", "")},
@@ -273,9 +273,9 @@ func TestDueListsWhatARunWouldDoAndChangesNothing(t *testing.T) {
 	stale := mid.Add(-3 * time.Hour).UTC().Format(time.RFC3339)
 	recent := mid.Add(-10 * time.Minute).UTC().Format(time.RFC3339)
 	s := &stub{live: map[string]map[string]string{
-		"overdue": {backupmeta.CopyStampAt("t"): stale},
-		"fresh":   {backupmeta.CopyStampAt("t"): recent},
-		"failing": {backupmeta.CopyStampAt("t"): stale, backupmeta.CopyFailAt("t"): mid.Add(-time.Minute).UTC().Format(time.RFC3339), backupmeta.CopyFailCount("t"): "2"},
+		"overdue": {backupmeta.CopiedAt("t"): stale},
+		"fresh":   {backupmeta.CopiedAt("t"): recent},
+		"failing": {backupmeta.CopiedAt("t"): stale, backupmeta.FailedAt("t"): mid.Add(-time.Minute).UTC().Format(time.RFC3339), backupmeta.Failures("t"): "2"},
 		"never":   {},
 	}, liveErr: map[string]error{"gone": errors.New("volume not found")}}
 	rs := []resolve.Resource{vol("overdue", "t"), vol("fresh", "t"), vol("failing", "t"), vol("never", "t"), vol("gone", "t"), target("t", "")}
@@ -299,9 +299,10 @@ func TestAssessReportsWhatIsDueWhatIsFailingAndWhatCouldNotBeDecided(t *testing.
 	mid := now.Add(30 * time.Minute)
 	stale := mid.Add(-3 * time.Hour).UTC().Format(time.RFC3339)
 	failedAt := mid.Add(-time.Minute).UTC().Format(time.RFC3339)
+	since := mid.Add(-40 * time.Minute).UTC().Format(time.RFC3339)
 	s := &stub{live: map[string]map[string]string{
-		"fresh":   {backupmeta.CopyStampAt("t"): mid.Add(-10 * time.Minute).UTC().Format(time.RFC3339)},
-		"failing": {backupmeta.CopyStampAt("t"): stale, backupmeta.CopyFailAt("t"): failedAt, backupmeta.CopyFailCount("t"): "3"},
+		"fresh":   {backupmeta.CopiedAt("t"): mid.Add(-10 * time.Minute).UTC().Format(time.RFC3339)},
+		"failing": {backupmeta.CopiedAt("t"): stale, backupmeta.FailedAt("t"): failedAt, backupmeta.FailingSince("t"): since, backupmeta.Failures("t"): "3"},
 		"never":   {},
 	}, liveErr: map[string]error{"gone": errors.New("volume not found")}}
 	items, err := FromStack([]resolve.Resource{vol("fresh", "t"), vol("failing", "t"), vol("never", "t"), vol("gone", "t"), target("t", "")})
@@ -313,7 +314,8 @@ func TestAssessReportsWhatIsDueWhatIsFailingAndWhatCouldNotBeDecided(t *testing.
 	if want := []DueCopy{{"never", "t"}}; !reflect.DeepEqual(a.Due, want) {
 		t.Errorf("due = %v, want %v (the failing one is backing off, the fresh one is not due, the unreadable one cannot be decided)", a.Due, want)
 	}
-	if len(a.Failing) != 1 || a.Failing[0].Volume != "failing" || a.Failing[0].Target != "t" || a.Failing[0].Count != 3 || a.Failing[0].Since.IsZero() {
+	if len(a.Failing) != 1 || a.Failing[0].Volume != "failing" || a.Failing[0].Target != "t" || a.Failing[0].Count != 3 ||
+		a.Failing[0].Since.UTC().Format(time.RFC3339) != since || a.Failing[0].FailedAt.UTC().Format(time.RFC3339) != failedAt {
 		t.Errorf("failing = %+v: a copy that failed since its last success, with how many times and since when", a.Failing)
 	}
 	if len(a.Problems) != 1 || a.Problems["gone"] == nil {
@@ -327,8 +329,8 @@ func TestAssessReportsWhatIsDueWhatIsFailingAndWhatCouldNotBeDecided(t *testing.
 func TestAFailureThatALaterSuccessSupersededIsNotFailing(t *testing.T) {
 	// the stamp of the last success is newer than the last failure: the copy is healthy again
 	s := &stub{live: map[string]map[string]string{"v": {
-		backupmeta.CopyFailAt("t"): now.Add(-2 * time.Hour).UTC().Format(time.RFC3339), backupmeta.CopyFailCount("t"): "2",
-		backupmeta.CopyStampAt("t"): now.Add(-time.Hour).UTC().Format(time.RFC3339)}}}
+		backupmeta.FailedAt("t"): now.Add(-2 * time.Hour).UTC().Format(time.RFC3339), backupmeta.Failures("t"): "2",
+		backupmeta.CopiedAt("t"): now.Add(-time.Hour).UTC().Format(time.RFC3339)}}}
 	items, _ := FromStack([]resolve.Resource{vol("v", "t"), target("t", "")})
 	if a := Assess(s, items, now); len(a.Failing) != 0 {
 		t.Errorf("%+v", a.Failing)
@@ -355,7 +357,7 @@ func TestDueWithAnUnreadableScheduleFailsThatCopyOnly(t *testing.T) {
 	bad := vol("a", "t")
 	bad.Backup.Copies[0].Schedule = "whenever"
 	// "a" has been copied before: a copy that never ran is due without its schedule being read at all
-	s := &stub{live: map[string]map[string]string{"a": {backupmeta.CopyStampAt("t"): now.Add(-3 * time.Hour).UTC().Format(time.RFC3339)}, "b": {}}}
+	s := &stub{live: map[string]map[string]string{"a": {backupmeta.CopiedAt("t"): now.Add(-3 * time.Hour).UTC().Format(time.RFC3339)}, "b": {}}}
 	rep, out, err := run(t, s, []resolve.Resource{bad, vol("b", "t"), target("t", "")}, Options{Due: true})
 	if err != nil {
 		t.Fatal(err)

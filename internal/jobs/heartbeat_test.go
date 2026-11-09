@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/minihci/tink/internal/instant"
 )
 
 func TestHeartbeat(t *testing.T) {
@@ -13,14 +15,14 @@ func TestHeartbeat(t *testing.T) {
 	if _, err := s.LastBeat(); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("no heartbeat yet: %v", err)
 	}
-	if err := s.Beat(Heartbeat{Time: t0, PID: 42, Version: "v1", Zone: "UTC"}); err != nil {
+	if err := s.Beat(Heartbeat{WrittenAt: instant.At(t0), PID: 42, Version: "v1", Zone: "UTC"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Beat(Heartbeat{Time: t0.Add(time.Minute), PID: 42, Version: "v1", Zone: "UTC"}); err != nil {
+	if err := s.Beat(Heartbeat{WrittenAt: instant.At(t0.Add(time.Minute)), PID: 42, Version: "v1", Zone: "UTC"}); err != nil {
 		t.Fatal(err)
 	}
 	hb, err := s.LastBeat()
-	if err != nil || !hb.Time.Equal(t0.Add(time.Minute)) || hb.PID != 42 || hb.Zone != "UTC" {
+	if err != nil || !hb.WrittenAt.Equal(t0.Add(time.Minute)) || hb.PID != 42 || hb.Zone != "UTC" {
 		t.Errorf("%v %+v", err, hb)
 	}
 	// the heartbeat file is not a job, and does not get in the way of listing or pruning

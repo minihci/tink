@@ -24,12 +24,14 @@ import (
 	"regexp"
 	"sort"
 	"time"
+
+	"github.com/minihci/tink/internal/instant"
 )
 
 // Proto is the version of this directory protocol: what a client and the helper must agree on. It is a small integer
 // and not the tink version, so a laptop and a server on different tink releases still work together until the
 // protocol itself changes.
-const Proto = 1
+const Proto = 2
 
 // Origins of a request.
 const (
@@ -53,24 +55,24 @@ func (s State) Finished() bool { return s == Succeeded || s == Failed || s == Ca
 
 // Request is request.json.
 type Request struct {
-	Proto   int       `json:"proto"`
-	Kind    string    `json:"kind"`
-	Origin  string    `json:"origin"`
-	Created time.Time `json:"created"`
+	Proto     int          `json:"proto"`
+	Kind      string       `json:"kind"`
+	Origin    string       `json:"origin"`
+	CreatedAt instant.Time `json:"created-at"`
 	// Args are specific to Kind.
 	Args json.RawMessage `json:"args,omitempty"`
 }
 
 // Status is status.json.
 type Status struct {
-	Proto    int       `json:"proto"`
-	ID       string    `json:"id"`
-	Kind     string    `json:"kind,omitempty"`
-	Origin   string    `json:"origin,omitempty"`
-	State    State     `json:"state"`
-	Created  time.Time `json:"created,omitzero"`
-	Started  time.Time `json:"started,omitzero"`
-	Finished time.Time `json:"finished,omitzero"`
+	Proto      int          `json:"proto"`
+	ID         string       `json:"id"`
+	Kind       string       `json:"kind,omitempty"`
+	Origin     string       `json:"origin,omitempty"`
+	State      State        `json:"state"`
+	CreatedAt  instant.Time `json:"created-at,omitzero"`
+	StartedAt  instant.Time `json:"started-at,omitzero"`
+	FinishedAt instant.Time `json:"finished-at,omitzero"`
 	// Error is why a failed job failed, scrubbed of secrets.
 	Error string `json:"error,omitempty"`
 	// Summary is what the job did, specific to Kind.
@@ -117,8 +119,8 @@ func (s Store) fs() FS {
 // with the file API. It returns the new job's id.
 func (s Store) Enqueue(req Request, now time.Time) (string, error) {
 	req.Proto = Proto
-	if req.Created.IsZero() {
-		req.Created = now.UTC()
+	if req.CreatedAt.IsZero() {
+		req.CreatedAt = instant.At(now)
 	}
 	if req.Kind == "" {
 		return "", errors.New("a job needs a kind")
@@ -200,7 +202,7 @@ func (s Store) Status(id string) (Status, error) {
 	if rb, err := f.ReadFile(path.Join(id, "request.json")); err == nil {
 		var r Request
 		if json.Unmarshal(rb, &r) == nil {
-			st.Kind, st.Origin, st.Created = r.Kind, r.Origin, r.Created
+			st.Kind, st.Origin, st.CreatedAt = r.Kind, r.Origin, r.CreatedAt
 		}
 	}
 	return st, nil
@@ -239,8 +241,8 @@ func (s Store) List() ([]Status, error) {
 		out = append(out, st)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
-		if !out[i].Created.Equal(out[j].Created) {
-			return out[i].Created.Before(out[j].Created)
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt.Time) {
+			return out[i].CreatedAt.Before(out[j].CreatedAt.Time)
 		}
 		return out[i].ID < out[j].ID
 	})

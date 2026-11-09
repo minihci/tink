@@ -492,7 +492,8 @@ type DueCopy struct{ Volume, Target string }
 type FailingCopy struct {
 	Volume, Target string
 	Count          int
-	Since          time.Time
+	// Since is when the run of failures began and FailedAt is when the latest attempt failed.
+	Since, FailedAt time.Time
 }
 
 // Assessment is what a look at the volumes' live state finds: the copies that are due, the ones failing, and what could not be
@@ -517,7 +518,7 @@ func Assess(eng Engine, items []Item, now time.Time) Assessment {
 		}
 		for _, c := range it.Copies {
 			if f, ok := backupmeta.FailureOf(live, c.Target.Name); ok {
-				a.Failing = append(a.Failing, FailingCopy{Volume: it.Label, Target: c.Target.Name, Count: f.N, Since: f.At})
+				a.Failing = append(a.Failing, FailingCopy{Volume: it.Label, Target: c.Target.Name, Count: f.N, Since: f.Since, FailedAt: f.FailedAt})
 			}
 			d, derr := backupmeta.CopyDue(c.Schedule, live, c.Target.Name, now)
 			if derr != nil {

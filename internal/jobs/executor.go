@@ -11,6 +11,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/minihci/tink/internal/instant"
 	"github.com/minihci/tink/internal/secrets"
 )
 
@@ -78,7 +79,7 @@ func (e *Executor) Recover() error {
 		if st.State != Running {
 			continue
 		}
-		st.State, st.Finished = Failed, e.now().UTC()
+		st.State, st.FinishedAt = Failed, instant.At(e.now())
 		st.Error = "interrupted: the helper stopped while this job was running"
 		if err := e.Store.writeStatus(st); err != nil {
 			return err
@@ -134,7 +135,7 @@ func (e *Executor) Run(ctx context.Context) error {
 }
 
 func (e *Executor) fail(st Status, msg string) {
-	st.State, st.Finished, st.Error = Failed, e.now().UTC(), e.scrub(msg)
+	st.State, st.FinishedAt, st.Error = Failed, instant.At(e.now()), e.scrub(msg)
 	if err := e.Store.writeStatus(st); err != nil {
 		e.logf("job %s: writing its status: %v", st.ID, err)
 	}
@@ -145,14 +146,14 @@ func (e *Executor) fail(st Status, msg string) {
 func (e *Executor) runJob(parent context.Context, queued Status) {
 	id := queued.ID
 	dir := e.Store.jobDir(id)
-	st := Status{ID: id, Kind: queued.Kind, Origin: queued.Origin, Created: queued.Created, State: Running, Started: e.now().UTC()}
+	st := Status{ID: id, Kind: queued.Kind, Origin: queued.Origin, CreatedAt: queued.CreatedAt, State: Running, StartedAt: instant.At(e.now())}
 
 	req, err := e.Store.readRequest(id)
 	if err != nil {
 		e.fail(st, fmt.Sprintf("unreadable request: %v", err))
 		return
 	}
-	st.Kind, st.Origin, st.Created = req.Kind, req.Origin, req.Created
+	st.Kind, st.Origin, st.CreatedAt = req.Kind, req.Origin, req.CreatedAt
 	if req.Proto != Proto {
 		e.fail(st, fmt.Sprintf("unsupported protocol %d: this helper speaks %d", req.Proto, Proto))
 		return
@@ -163,7 +164,7 @@ func (e *Executor) runJob(parent context.Context, queued Status) {
 		return
 	}
 	if _, err := os.Stat(filepath.Join(dir, "cancel")); err == nil {
-		st.State, st.Finished = Cancelled, e.now().UTC()
+		st.State, st.FinishedAt = Cancelled, instant.At(e.now())
 		_ = e.Store.writeStatus(st)
 		return
 	}
@@ -195,7 +196,7 @@ func (e *Executor) runJob(parent context.Context, queued Status) {
 		_ = rw.Flush()
 	}
 
-	st.Finished = e.now().UTC()
+	st.FinishedAt = instant.At(e.now())
 	wasCancelled := false
 	select {
 	case <-cancelled:
@@ -295,10 +296,10 @@ func (e *Executor) Prune() error {
 }
 
 func finishedAt(st Status) time.Time {
-	if !st.Finished.IsZero() {
-		return st.Finished
+	if !st.FinishedAt.IsZero() {
+		return st.FinishedAt.Time
 	}
-	return st.Created
+	return st.CreatedAt.Time
 }
 
 // boundedWriter writes up to left bytes, then drops the rest after saying so once.

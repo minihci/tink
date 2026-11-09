@@ -8,6 +8,8 @@ import (
 
 	incus "github.com/lxc/incus/v7/client"
 	"github.com/lxc/incus/v7/shared/api"
+
+	"github.com/minihci/tink/internal/instant"
 )
 
 var t0 = time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
@@ -78,7 +80,7 @@ func TestThePublisherStampsTheDocumentAndMarksTheInstanceOnce(t *testing.T) {
 		t.Errorf("the marker rides on the first write only: %v / %v", r.writes[0], r.writes[1])
 	}
 	st, err := Parse(r.writes[1][StatusKey])
-	if err != nil || st.Proto != StatusProto || !st.Tick.Equal(r.now.UTC()) || st.HeartbeatSeconds != 600 {
+	if err != nil || st.Proto != StatusProto || !st.WrittenAt.Equal(r.now.UTC()) || st.Heartbeat.D() != 10*time.Minute {
 		t.Errorf("stamped: %+v %v", st, err)
 	}
 	if strings.Contains(r.writes[0][StatusKey], "\n") {
@@ -110,14 +112,14 @@ func TestParseRefusesWhatItCannotUnderstand(t *testing.T) {
 	for name, tc := range map[string]struct{ in, want string }{
 		"not json":         {"nope", "not a status document"},
 		"no protocol":      {`{"version":"x"}`, "no protocol"},
-		"a newer protocol": {`{"proto":2}`, "protocol 2"},
+		"a newer protocol": {`{"proto":3}`, "protocol 3"},
 	} {
 		if _, err := Parse(tc.in); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
 	// a newer helper may add fields within a protocol: they are ignored, not an error
-	if st, err := Parse(`{"proto":1,"version":"v9","something_new":[1,2,3]}`); err != nil || st.Version != "v9" {
+	if st, err := Parse(`{"proto":2,"version":"v9","something_new":[1,2,3]}`); err != nil || st.Version != "v9" {
 		t.Errorf("%+v %v", st, err)
 	}
 }
@@ -132,7 +134,7 @@ func found(state string, st *Status) Found {
 }
 
 func fresh(mut func(*Status)) *Status {
-	s := &Status{Proto: 1, Tick: t0.Add(-2 * time.Minute), HeartbeatSeconds: 600}
+	s := &Status{Proto: 1, WrittenAt: instant.At(t0.Add(-2 * time.Minute)), Heartbeat: instant.Duration(10 * time.Minute)}
 	if mut != nil {
 		mut(s)
 	}
@@ -150,8 +152,8 @@ func TestEvaluateJudgesTheHelperFromWhatItSaidAndWhatItsInstanceIs(t *testing.T)
 		{"healthy", found("Running", fresh(nil)), Healthy, ""},
 		{"stopped, and says when it was last heard from", found("Stopped", fresh(nil)), Down, "stopped (last heard from 2m ago)"},
 		{"stopped with nothing ever published", found("Stopped", nil), Down, "the instance is stopped"},
-		{"quiet for a little: one late heartbeat is not an alarm", found("Running", fresh(func(s *Status) { s.Tick = now.Add(-20 * time.Minute) })), Healthy, ""},
-		{"quiet for more than 2.5 heartbeats", found("Running", fresh(func(s *Status) { s.Tick = now.Add(-26 * time.Minute) })), Down, "stale: last heard from 26m ago"},
+		{"quiet for a little: one late heartbeat is not an alarm", found("Running", fresh(func(s *Status) { s.WrittenAt = instant.At(now.Add(-20 * time.Minute)) })), Healthy, ""},
+		{"quiet for more than 2.5 heartbeats", found("Running", fresh(func(s *Status) { s.WrittenAt = instant.At(now.Add(-26 * time.Minute)) })), Down, "stale: last heard from 26m ago"},
 		{"running, nothing published yet", found("Running", nil), Degraded, "has not published"},
 		{"a skipped volume", found("Running", fresh(func(s *Status) { s.Skipped = []Skip{{"tenant/lib", "policy of a newer protocol"}} })), Degraded, "tenant/lib (policy of a newer protocol)"},
 		{"a failing copy", found("Running", fresh(func(s *Status) { s.Failing = []Failing{{Volume: "lib", Target: "nas", Count: 3}} })), Degraded, "lib -> nas (3x)"},
@@ -166,6 +168,71 @@ func TestEvaluateJudgesTheHelperFromWhatItSaidAndWhatItsInstanceIs(t *testing.T)
 				t.Errorf("summary = %q, want it to contain %q", r.Summary(), tc.reason)
 			}
 		})
+	}
+}
+
+// A document that does not say when it was written cannot be shown to be fresh, so it is never healthy: whoever wrote it (another version,
+// a hand edit, damage), a helper that has stopped would otherwise be read as well for ever.
+func TestADocumentWithNoWriteTimeIsNeverHealthy(t *testing.T) {
+	noTime := func(s *Status) { s.WrittenAt = instant.Time{} }
+	noBeat := func(s *Status) { s.Heartbeat = 0 }
+	for name, tc := range map[string]struct {
+		f      Found
+		want   Health
+		reason string
+	}{
+		"no write time":              {found("Running", fresh(noTime)), Degraded, "no write time (written-at)"},
+		"no write time and failing":  {found("Running", fresh(func(s *Status) { noTime(s); s.Failing = []Failing{{Volume: "lib", Target: "nas", Count: 1}} })), Degraded, "copy(ies) failing"},
+		"no heartbeat":               {found("Running", fresh(noBeat)), Degraded, "no heartbeat"},
+		"no write time, and stopped": {found("Stopped", fresh(noTime)), Down, "the instance is stopped"},
+	} {
+		r := Evaluate(tc.f, t0)
+		if r.Health != tc.want || !strings.Contains(r.Summary(), tc.reason) {
+			t.Errorf("%s: %s, want %s with %q", name, r.Summary(), tc.want, tc.reason)
+		}
+	}
+	// the same through the text a person could have edited: the write time cut out of a document that was fine
+	text, _ := Encode(*fresh(nil))
+	cut := strings.Replace(text, `"written-at":"2026-10-07T11:58:00Z",`, "", 1)
+	if cut == text {
+		t.Fatalf("the test's document has no write time to remove: %s", text)
+	}
+	f := found("Running", nil)
+	f.Config[StatusKey] = cut
+	if r := Evaluate(f, t0); r.Health == Healthy || !strings.Contains(r.Summary(), "no write time") {
+		t.Errorf("a hand-edited document: %s", r.Summary())
+	}
+	// and a document of the old protocol, which called it "tick", is judged by the same rule and nothing else
+	f.Config[StatusKey] = `{"proto":1,"tick":"2026-10-07T11:58:00Z","heartbeat_seconds":600}`
+	if r := Evaluate(f, t0); r.Health != Degraded || !strings.Contains(r.Summary(), "no write time") {
+		t.Errorf("an older document: %s", r.Summary())
+	}
+}
+
+func TestTheDocumentNamesItsInstantsAndItsHeartbeatTheGlossaryWay(t *testing.T) {
+	st := Status{Proto: StatusProto, StartedAt: instant.At(t0.Add(-time.Hour)), WrittenAt: instant.At(t0), Heartbeat: instant.Duration(10 * time.Minute),
+		Failing: []Failing{{Volume: "lib", Target: "nas", Count: 3, Since: instant.At(t0.Add(-30 * time.Minute)), FailedAt: instant.At(t0.Add(-time.Minute))}},
+		LastJob: &LastJob{ID: "j", State: "failed", FinishedAt: instant.At(t0.Add(-5 * time.Minute))}}
+	text, err := Encode(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`"started-at":"2026-10-07T11:00:00Z"`, `"written-at":"2026-10-07T12:00:00Z"`, `"heartbeat":"10m0s"`,
+		`"since":"2026-10-07T11:30:00Z"`, `"failed-at":"2026-10-07T11:59:00Z"`, `"finished-at":"2026-10-07T11:55:00Z"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the document lacks %s: %s", want, text)
+		}
+	}
+	for _, gone := range []string{`"tick"`, `"started"`, `heartbeat_seconds`, `"finished"`} {
+		if strings.Contains(text, gone) {
+			t.Errorf("the document still says %s: %s", gone, text)
+		}
+	}
+	back, err := Parse(text)
+	if err != nil || !back.WrittenAt.Equal(t0) || back.Heartbeat.D() != 10*time.Minute || !back.Failing[0].Since.Equal(t0.Add(-30*time.Minute)) {
+		t.Errorf("round trip: %+v %v", back, err)
 	}
 }
 

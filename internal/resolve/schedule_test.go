@@ -26,7 +26,7 @@ func TestCopyWarnings(t *testing.T) {
 			Copies:    []backupmeta.BackupCopy{{Target: "nas", Schedule: schedule, Retain: "30d"}},
 		}}
 	}
-	stamp := func(s string) map[string]string { return map[string]string{backupmeta.CopyStampAt("nas"): s} }
+	stamp := func(s string) map[string]string { return map[string]string{backupmeta.CopiedAt("nas"): s} }
 	tests := []struct {
 		name    string
 		r       Resource

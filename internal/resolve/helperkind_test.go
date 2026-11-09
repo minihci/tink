@@ -12,6 +12,7 @@ import (
 	"github.com/lxc/incus/v7/shared/api"
 
 	"github.com/minihci/tink/internal/helper"
+	"github.com/minihci/tink/internal/instant"
 )
 
 // helperKindServer is a server that lists instances: GetInstancesAllProjects for helper.Find, and GetInstance in the project UseProject chose.
@@ -73,7 +74,7 @@ func helperInstance(t *testing.T, project, name, state string, st helper.Status)
 }
 
 func goodStatus() helper.Status {
-	return helper.Status{Proto: 1, Version: "v0.1.4", Tick: helperNow.Add(-2 * time.Minute), HeartbeatSeconds: 600,
+	return helper.Status{Proto: 1, Version: "v0.1.4", WrittenAt: instant.At(helperNow.Add(-2 * time.Minute)), Heartbeat: instant.Duration(10 * time.Minute),
 		Remotes: []helper.Remote{{Name: "host"}, {Name: "vps"}}}
 }
 
@@ -129,14 +130,14 @@ func TestPlanHelperWarnsWhenItIsNotWellButStillChangesNothing(t *testing.T) {
 		t.Errorf("stopped: %+v", p)
 	}
 	silent := goodStatus()
-	silent.Tick = helperNow.Add(-3 * time.Hour)
+	silent.WrittenAt = instant.At(helperNow.Add(-3 * time.Hour))
 	srv := &helperKindServer{instances: []api.Instance{helperInstance(t, "tink-helper", "helper", "Running", silent)}}
 	p, _ = planHelper(srv, helperRes(nil), helperNow, PlanOptions{})
 	if p.Action != ActionNone || !strings.Contains(joined(p.Warnings), "stale") {
 		t.Errorf("silent: %+v", p)
 	}
 	failing := goodStatus()
-	failing.Failing = []helper.Failing{{Volume: "identity-data", Target: "offsite", Count: 3, Since: helperNow.Add(-time.Hour)}}
+	failing.Failing = []helper.Failing{{Volume: "identity-data", Target: "offsite", Count: 3, Since: instant.At(helperNow.Add(-time.Hour))}}
 	srv = &helperKindServer{instances: []api.Instance{helperInstance(t, "tink-helper", "helper", "Running", failing)}}
 	p, _ = planHelper(srv, helperRes(nil), helperNow, PlanOptions{})
 	if p.Action != ActionNone || !strings.Contains(joined(p.Warnings), "degraded") {

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/minihci/tink/internal/backupext"
+	"github.com/minihci/tink/internal/instant"
 )
 
 // The declaration types are the schema of a field of the storage-volume kind, which the converger decodes and carries, so they are declared in
@@ -196,7 +197,7 @@ func VerifyWarning(name string, b *VolumeBackup, current map[string]string, now 
 	if stamp == "" {
 		return fmt.Sprintf("verify: %s is declared but this volume has never been verified -- run `tink backup verify %s`", b.Verify, name)
 	}
-	at, err := time.Parse(time.RFC3339, stamp)
+	at, err := instant.Parse(stamp)
 	if err != nil {
 		return fmt.Sprintf("%s=%q is not a timestamp tink wrote -- run `tink backup verify %s` to replace it", StampVerifiedAt, stamp, name)
 	}
