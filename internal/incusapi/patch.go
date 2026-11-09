@@ -25,3 +25,16 @@ func PatchInstanceConfig(s incus.InstanceServer, project, name string, config ma
 	}
 	return nil
 }
+
+// InstanceConfigKey reads one key of an instance's config, "" when the instance does not carry it: the read that goes with PatchInstanceConfig, for a
+// caller that has to read back what it published.
+func InstanceConfigKey(s incus.InstanceServer, project, name, key string) (string, error) {
+	if project != "" {
+		s = s.UseProject(project)
+	}
+	inst, _, err := s.GetInstance(name)
+	if err != nil {
+		return "", fmt.Errorf("reading instance %s: %w", name, err)
+	}
+	return inst.Config[key], nil
+}

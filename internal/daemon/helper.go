@@ -163,7 +163,7 @@ func (h *Helper) Tick(state *SchedulerState) int {
 	}
 	h.tickLooked.Store(true)
 	if h.Live != nil {
-		h.Live.setBackup(skipsFrom(problems, dueProblems), failingFrom(assessed.Failing))
+		h.Live.setBackup(skipsFrom(problems, dueProblems), failingFrom(assessed.Failing), now)
 	}
 	if len(due) == 0 {
 		return 0

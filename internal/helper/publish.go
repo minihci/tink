@@ -15,6 +15,9 @@ type Publisher struct {
 	// Patch sets keys on whatever holds the document, and nothing else: the helper's own instance config (incusapi.PatchInstanceConfig)
 	// or its status volume's (incusapi.MergeVolumeConfig).
 	Patch func(config map[string]string) error
+	// Read returns the stored text of the document, from the same place Patch writes it (the helper's own instance config, or its status volume's), and
+	// "" when nothing is stored there. It is how a daemon that has just started reads what it said before (Load). Nil means the place cannot be read.
+	Read func() (string, error)
 	// NoMarker leaves the helper marker out of what is written: the document is on a volume, and the marker belongs on the instance,
 	// where `helper install` put it. The helper holds no right to write the instance.
 	NoMarker bool
@@ -76,4 +79,22 @@ func (p *Publisher) Publish(s Status) (wrote bool, err error) {
 	}
 	p.lastKey, p.lastWrite, p.marked, p.failed = key, now, true, false
 	return true, nil
+}
+
+// Load reads the document that is stored now, which is what an earlier life of this daemon last published. It reads the key Publish writes, from the place
+// Publish writes it, so it needs no right that publishing does not already hold. A place with no document is an empty Status and no error; a document that
+// cannot be read (not JSON, no protocol, a newer protocol, a place that cannot be reached) is an error, and the caller starts empty: there is no version
+// handling, and what cannot be read seeds nothing.
+func (p *Publisher) Load() (Status, error) {
+	if p.Read == nil {
+		return Status{}, nil
+	}
+	text, err := p.Read()
+	if err != nil {
+		return Status{}, err
+	}
+	if text == "" {
+		return Status{}, nil
+	}
+	return Parse(text)
 }

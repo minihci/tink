@@ -35,7 +35,8 @@ func (t statusTarget) validate() error {
 
 // publisher is the publisher for the target, or nil when there is none. The volume form writes the one key and carries every other key
 // on the volume through (incusapi.MergeVolumeConfig), and does not write the helper marker: that is on the instance, put there by
-// `helper install`, and the helper holds no right to write an instance. Each write opens its own connection (connect), so a daemon that
+// `helper install`, and the helper holds no right to write an instance. Each write, and the one read at startup (Publisher.Load, which seeds the clock of
+// the states with what the daemon last said), opens its own connection (connect), so a daemon that
 // outlives a restart of Incus publishes again without being restarted.
 func (t statusTarget) publisher(connect func() (incus.InstanceServer, error), heartbeat time.Duration) *helper.Publisher {
 	switch {
@@ -43,6 +44,13 @@ func (t statusTarget) publisher(connect func() (incus.InstanceServer, error), he
 		return &helper.Publisher{
 			Heartbeat: heartbeat,
 			NoMarker:  true,
+			Read: func() (string, error) {
+				server, err := connect()
+				if err != nil {
+					return "", err
+				}
+				return incusapi.VolumeConfigKey(server, t.Project, t.Pool, t.Volume, helper.StatusKey)
+			},
 			Patch: func(config map[string]string) error {
 				server, err := connect()
 				if err != nil {
@@ -54,6 +62,13 @@ func (t statusTarget) publisher(connect func() (incus.InstanceServer, error), he
 	case t.Instance != "":
 		return &helper.Publisher{
 			Heartbeat: heartbeat,
+			Read: func() (string, error) {
+				server, err := connect()
+				if err != nil {
+					return "", err
+				}
+				return incusapi.InstanceConfigKey(server, t.Project, t.Instance, helper.StatusKey)
+			},
 			Patch: func(config map[string]string) error {
 				server, err := connect()
 				if err != nil {

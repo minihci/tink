@@ -239,7 +239,7 @@ The key ends in the file document's name. The value is compact JSON with its key
 - **A join error, or a publish stamp that cannot be read, blocks every file and writes nothing.** A derived-file stamp that cannot be read blocks that file only: the files are independent.
 - **`derive: dns` keeps the zone-file rule** (a published name that is already a record in `/db.<zone>` on the same instance is a clash), and `derive: mesh` keeps the records guard.
 - **A stamped file's instance is in the site of its stack,** like a helper or a published instance: the stack's `site:` is stamped on it, so two sites on one server do not both write the file.
-- Each file's result is one of the fixed words `changed`, `no changes`, `blocked`, `skipped` and `failing`, with a short fixed reason. File content and Incus errors go to the log and never to the status document.
+- Each file's result is one of the fixed words `converged` (a rewrite is `converged` with a `healed` event), `blocked`, `skipped` and `failing`, with a short fixed reason ([the states list](helper.md#the-states-list)). File content and Incus errors go to the log and never to the status document.
 
 ## What is left before `tink join` can go
 

@@ -13,17 +13,8 @@ import (
 
 	"github.com/minihci/tink/internal/finding"
 	"github.com/minihci/tink/internal/instance"
+	"github.com/minihci/tink/internal/observe"
 	"github.com/minihci/tink/internal/resolve"
-)
-
-// What a reconcile of the derived files found and did, for each file. They are fixed words, because the daemon's status document carries them and holds no
-// error text or file content (errors from Incus can echo credentials; the detail stays in the log).
-const (
-	DerivedChanged   = "changed"    // the file differed; it was rewritten and read back
-	DerivedUnchanged = "no changes" // the file already held the rendering; nothing was written
-	DerivedBlocked   = "blocked"    // a refusal stopped it, on purpose; nothing was written
-	DerivedSkipped   = "skipped"    // the site has no stamped derived file, so there is nothing to keep
-	DerivedFailing   = "failing"    // the server or the instance could not be read, written or restarted
 )
 
 // A Restarter restarts an instance, the way a `kind: file` with restart: true does after a push that changed something (resolve.Resource.Restart).
@@ -36,19 +27,6 @@ type IncusRestarter struct{ Server incus.InstanceServer }
 
 func (r IncusRestarter) Restart(project, name string) error {
 	return instance.EnsureRunningWithin(r.Server.UseProject(project), name, 2*time.Minute)
-}
-
-// DerivedOutcome is the result of one reconcile of one derived file of one site. Name is the file document's name, empty for a result that is about the
-// whole site (nothing stamped, or a stamp that cannot be read).
-type DerivedOutcome struct {
-	Site, Name string
-	State      string // one of the Derived* words
-	Reason     string // short and fixed: what to look for in the log; empty when State is changed, no changes or skipped
-	Wrote      bool
-	// Findings, Detail and Err are for a log. They are not for the status document.
-	Findings []string
-	Detail   []string
-	Err      error
 }
 
 // A StampedFile is a derived file as its stamp says it, with the state of the instance it is on, as the list of instances showed it.
@@ -122,49 +100,46 @@ func DerivedFromServer(server incus.InstanceServer, site string) ([]StampedFile,
 //
 // A missing file is blocked for a region file, which is the person's file with a region in it and has no skeleton to create, and created for the mesh view,
 // which is a whole file that tink owns, as `plan` and `join apply dns` create theirs. The directory it goes in must be there: a write into a missing one is failing.
-func ReconcileDerived(server incus.InstanceServer, f Files, r Restarter, site string) []DerivedOutcome {
+//
+// One observe.Result comes back per file (Resource is the file document's name) and one for a result about the whole site (no Resource): nothing stamped,
+// or a server that could not be read.
+func ReconcileDerived(server incus.InstanceServer, f Files, r Restarter, site string) []observe.Result {
 	files, problems, ignored, err := DerivedFromServer(server, site)
 	if err != nil {
-		return []DerivedOutcome{{Site: site, State: DerivedFailing, Reason: "the server could not be read", Err: err}}
+		return []observe.Result{{What: "derived", Site: site, State: observe.Failing, Reason: "the server could not be read", Err: err}}
 	}
-	var out []DerivedOutcome
+	var out []observe.Result
 	for _, p := range problems {
-		out = append(out, DerivedOutcome{Site: site, Name: strings.TrimPrefix(p.Key, resolve.DeriveStampPrefix), State: DerivedBlocked, Reason: "a derived-file stamp cannot be read",
-			Findings: []string{fmt.Sprintf("%s/%s: %s", p.Project, p.Instance, p.Reason)}})
+		name := strings.TrimPrefix(p.Key, resolve.DeriveStampPrefix)
+		out = append(out, observe.Result{What: "derived", Resource: name, Site: site, State: observe.Blocked, Reason: "a derived-file stamp cannot be read",
+			Detail: []finding.Finding{finding.Errorf("a derived-file stamp cannot be read", "derived/"+name, "%s/%s: %s", p.Project, p.Instance, p.Reason)}})
 	}
 	if len(files) == 0 {
 		if len(out) == 0 {
-			out = append(out, DerivedOutcome{Site: site, State: DerivedSkipped, Findings: addMissing(nil, ignored)})
+			out = append(out, observe.Result{What: "derived", Site: site, State: observe.Skipped, Detail: addMissing(nil, ignored)})
 		}
 		return out
 	}
 
-	blockAll := func(reason string, cause error, findings []string) []DerivedOutcome {
+	blockAll := func(reason string, cause error, findings []finding.Finding) []observe.Result {
 		for _, d := range files {
-			out = append(out, DerivedOutcome{Site: site, Name: d.Name, State: DerivedBlocked, Reason: reason, Err: cause, Findings: findings})
+			out = append(out, observe.Result{What: "derived", Resource: d.Name, Site: site, State: observe.Blocked, Reason: reason, Err: cause, Detail: findings})
 		}
 		return out
 	}
 	stacks, err := FromServer(server, site)
 	var se *StampError
 	if errors.As(err, &se) {
-		var fs []string
-		for _, fi := range se.Findings() {
-			fs = append(fs, fi.String())
-		}
-		return blockAll("a publish stamp cannot be read", err, fs)
+		return blockAll("a publish stamp cannot be read", err, se.Findings())
 	}
 	if err != nil {
 		for _, d := range files {
-			out = append(out, DerivedOutcome{Site: site, Name: d.Name, State: DerivedFailing, Reason: "the server could not be read", Err: err})
+			out = append(out, observe.Result{What: "derived", Resource: d.Name, Site: site, State: observe.Failing, Reason: "the server could not be read", Err: err})
 		}
 		return out
 	}
 	res := Build(stacks)
-	var findings []string
-	for _, fi := range res.Findings {
-		findings = append(findings, fi.String())
-	}
+	findings := res.Findings
 	findings = addMissing(findings, ignored) // the join says each instance whose stamps were ignored; this says it too if the join was not asked about it
 	if res.Errors() > 0 {
 		return blockAll("the join has errors", errors.New("the join has errors"), findings)
@@ -172,36 +147,36 @@ func ReconcileDerived(server incus.InstanceServer, f Files, r Restarter, site st
 
 	for _, d := range files {
 		o := reconcileDerivedFile(f, r, res, d)
-		o.Site, o.Name = site, d.Name
-		o.Findings = append(findings[:len(findings):len(findings)], o.Findings...)
+		o.What, o.Site, o.Resource = "derived", site, d.Name
+		o.Detail = append(findings[:len(findings):len(findings)], o.Detail...)
 		out = append(out, o)
 	}
 	return out
 }
 
-// addMissing appends the findings that are not in lines yet, as the lines a log prints.
-func addMissing(lines []string, fs []finding.Finding) []string {
-	for _, f := range fs {
-		s := f.String()
-		if !slices.Contains(lines, s) {
-			lines = append(lines, s)
+// addMissing appends the findings that are not in fs yet (the same text), so a finding the join already said is not said twice.
+func addMissing(fs, more []finding.Finding) []finding.Finding {
+	for _, f := range more {
+		if !slices.ContainsFunc(fs, func(g finding.Finding) bool { return g.String() == f.String() }) {
+			fs = append(fs, f)
 		}
 	}
-	return lines
+	return fs
 }
 
 // reconcileDerivedFile does one stamped file. The caller has checked that the join has no error.
-func reconcileDerivedFile(f Files, r Restarter, res Result, sf StampedFile) DerivedOutcome {
+func reconcileDerivedFile(f Files, r Restarter, res Result, sf StampedFile) observe.Result {
 	d := sf.DerivedFile
-	blocked := func(reason, detail string) DerivedOutcome {
-		return DerivedOutcome{State: DerivedBlocked, Reason: reason, Detail: []string{detail}}
+	subject := "derived/" + d.Name
+	blocked := func(reason, detail string) observe.Result {
+		return observe.Result{State: observe.Blocked, Reason: reason, Detail: []finding.Finding{finding.Errorf(reason, subject, "%s", detail)}}
 	}
-	failing := func(reason string, err error) DerivedOutcome {
-		return DerivedOutcome{State: DerivedFailing, Reason: reason, Err: err}
+	failing := func(reason string, err error) observe.Result {
+		return observe.Result{State: observe.Failing, Reason: reason, Err: err}
 	}
 
 	if sf.Status != "Running" {
-		return DerivedOutcome{State: DerivedSkipped, Reason: "the instance is not running", Detail: []string{fmt.Sprintf("%s is %s: a file written now could land beneath a mount, so it is left for the next pass after it starts", d.Instance, strings.ToLower(sf.Status))}}
+		return observe.Result{State: observe.Skipped, Reason: "the instance is not running", Detail: []finding.Finding{finding.Notef("the instance is not running", subject, "%s is %s: a file written now could land beneath a mount, so it is left for the next pass after it starts", d.Instance, strings.ToLower(sf.Status))}}
 	}
 
 	var rendering string
@@ -249,7 +224,7 @@ func reconcileDerivedFile(f Files, r Restarter, res Result, sf StampedFile) Deri
 	}
 
 	if live == desired {
-		return DerivedOutcome{State: DerivedUnchanged}
+		return observe.Result{State: observe.Converged}
 	}
 	for _, fi := range resolve.CheckDerived(resolve.DerivedCheck{Render: d.Render, Path: d.Path, Instance: d.Instance, Live: live, Desired: desired, Zone: res.Zone}) {
 		if fi.Severity == finding.Error {
@@ -271,13 +246,14 @@ func reconcileDerivedFile(f Files, r Restarter, res Result, sf StampedFile) Deri
 	if !found {
 		verb = "created"
 	}
-	o := DerivedOutcome{State: DerivedChanged, Wrote: true, Detail: []string{fmt.Sprintf("%s on %s %s and read back", d.Path, d.Instance, verb)}}
+	o := observe.Result{State: observe.Converged, Wrote: true, Detail: []finding.Finding{finding.Notef("the file was rewritten", subject, "%s on %s %s and read back", d.Path, d.Instance, verb)}}
 	if d.Restart {
 		if err := r.Restart(d.Project, d.Instance); err != nil {
-			o.State, o.Reason, o.Err = DerivedFailing, "the instance could not be restarted", fmt.Errorf("%s was rewritten, but restarting %s failed: %w", d.Path, d.Instance, err)
+			o.State, o.Reason, o.Err = observe.Failing, "the instance could not be restarted", fmt.Errorf("%s was rewritten, but restarting %s failed: %w", d.Path, d.Instance, err)
 			return o
 		}
-		o.Detail = append(o.Detail, "restarted "+d.Instance)
+		o.Restarted = true
+		o.Detail = append(o.Detail, finding.Notef("the instance was restarted", subject, "restarted %s", d.Instance))
 	}
 	return o
 }

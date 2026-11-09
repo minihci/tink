@@ -10,9 +10,19 @@ import (
 	"github.com/lxc/incus/v7/shared/api"
 
 	"github.com/minihci/tink/internal/instant"
+	"github.com/minihci/tink/internal/observe"
 )
 
 var t0 = time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+
+// skipped is the record of a volume the helper will not copy, and failingCopy that of a copy that is failing, as the daemon writes them.
+func skipped(volume, reason string) observe.Record {
+	return observe.Record{What: observe.WhatBackup, Resource: volume, State: observe.Skipped, Reason: reason, Since: instant.At(t0.Add(-time.Hour))}
+}
+
+func failingCopy(volume, target string, failures int, since time.Time) observe.Record {
+	return observe.Record{What: observe.WhatBackup, Resource: volume, Target: target, State: observe.Failing, Reason: "the copy has failed since its last success", Failures: failures, Since: instant.At(since)}
+}
 
 // recorder is a Publisher whose clock the test moves and whose writes it counts.
 type recorder struct {
@@ -49,7 +59,7 @@ func TestThePublisherWritesOnChangeAndOnTheHeartbeatAndOtherwiseStaysQuiet(t *te
 		}
 	}
 	// a skipped volume appears: that is a change
-	s.Skipped = []Skip{{Volume: "lib", Reason: "policy of a newer protocol"}}
+	s.States = []observe.Record{skipped("lib", "policy of a newer protocol")}
 	r.now = r.now.Add(time.Minute)
 	if wrote, _ := r.p.Publish(s); !wrote {
 		t.Error("a new skipped volume must be written at once")
@@ -112,14 +122,14 @@ func TestParseRefusesWhatItCannotUnderstand(t *testing.T) {
 	for name, tc := range map[string]struct{ in, want string }{
 		"not json":         {"nope", "not a status document"},
 		"no protocol":      {`{"version":"x"}`, "no protocol"},
-		"a newer protocol": {`{"proto":3}`, "protocol 3"},
+		"a newer protocol": {`{"proto":4}`, "protocol 4"},
 	} {
 		if _, err := Parse(tc.in); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
 	// a newer helper may add fields within a protocol: they are ignored, not an error
-	if st, err := Parse(`{"proto":2,"version":"v9","something_new":[1,2,3]}`); err != nil || st.Version != "v9" {
+	if st, err := Parse(`{"proto":3,"version":"v9","something_new":[1,2,3]}`); err != nil || st.Version != "v9" {
 		t.Errorf("%+v %v", st, err)
 	}
 }
@@ -155,8 +165,8 @@ func TestEvaluateJudgesTheHelperFromWhatItSaidAndWhatItsInstanceIs(t *testing.T)
 		{"quiet for a little: one late heartbeat is not an alarm", found("Running", fresh(func(s *Status) { s.WrittenAt = instant.At(now.Add(-20 * time.Minute)) })), Healthy, ""},
 		{"quiet for more than 2.5 heartbeats", found("Running", fresh(func(s *Status) { s.WrittenAt = instant.At(now.Add(-26 * time.Minute)) })), Down, "stale: last heard from 26m ago"},
 		{"running, nothing published yet", found("Running", nil), Degraded, "has not published"},
-		{"a skipped volume", found("Running", fresh(func(s *Status) { s.Skipped = []Skip{{"tenant/lib", "policy of a newer protocol"}} })), Degraded, "tenant/lib (policy of a newer protocol)"},
-		{"a failing copy", found("Running", fresh(func(s *Status) { s.Failing = []Failing{{Volume: "lib", Target: "nas", Count: 3}} })), Degraded, "lib -> nas (3x)"},
+		{"a skipped volume", found("Running", fresh(func(s *Status) { s.States = []observe.Record{skipped("tenant/lib", "policy of a newer protocol")} })), Degraded, "tenant/lib (policy of a newer protocol)"},
+		{"a failing copy", found("Running", fresh(func(s *Status) { s.States = []observe.Record{failingCopy("lib", "nas", 3, time.Time{})} })), Degraded, "lib -> nas (3x)"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -182,7 +192,7 @@ func TestADocumentWithNoWriteTimeIsNeverHealthy(t *testing.T) {
 		reason string
 	}{
 		"no write time":              {found("Running", fresh(noTime)), Degraded, "no write time (written-at)"},
-		"no write time and failing":  {found("Running", fresh(func(s *Status) { noTime(s); s.Failing = []Failing{{Volume: "lib", Target: "nas", Count: 1}} })), Degraded, "copy(ies) failing"},
+		"no write time and failing":  {found("Running", fresh(func(s *Status) { noTime(s); s.States = []observe.Record{failingCopy("lib", "nas", 1, time.Time{})} })), Degraded, "copy(ies) failing"},
 		"no heartbeat":               {found("Running", fresh(noBeat)), Degraded, "no heartbeat"},
 		"no write time, and stopped": {found("Stopped", fresh(noTime)), Down, "the instance is stopped"},
 	} {
@@ -211,7 +221,7 @@ func TestADocumentWithNoWriteTimeIsNeverHealthy(t *testing.T) {
 
 func TestTheDocumentNamesItsInstantsAndItsHeartbeatTheGlossaryWay(t *testing.T) {
 	st := Status{Proto: StatusProto, StartedAt: instant.At(t0.Add(-time.Hour)), WrittenAt: instant.At(t0), Heartbeat: instant.Duration(10 * time.Minute),
-		Failing: []Failing{{Volume: "lib", Target: "nas", Count: 3, Since: instant.At(t0.Add(-30 * time.Minute)), FailedAt: instant.At(t0.Add(-time.Minute))}},
+		States:  []observe.Record{{What: observe.WhatBackup, Resource: "lib", Target: "nas", State: observe.Failing, Reason: "r", Failures: 3, Since: instant.At(t0.Add(-30 * time.Minute)), FailedAt: instant.At(t0.Add(-time.Minute))}},
 		LastJob: &LastJob{ID: "j", State: "failed", FinishedAt: instant.At(t0.Add(-5 * time.Minute))}}
 	text, err := Encode(st)
 	if err != nil {
@@ -231,7 +241,7 @@ func TestTheDocumentNamesItsInstantsAndItsHeartbeatTheGlossaryWay(t *testing.T) 
 		}
 	}
 	back, err := Parse(text)
-	if err != nil || !back.WrittenAt.Equal(t0) || back.Heartbeat.D() != 10*time.Minute || !back.Failing[0].Since.Equal(t0.Add(-30*time.Minute)) {
+	if err != nil || !back.WrittenAt.Equal(t0) || back.Heartbeat.D() != 10*time.Minute || !back.States[0].Since.Equal(t0.Add(-30*time.Minute)) {
 		t.Errorf("round trip: %+v %v", back, err)
 	}
 }
@@ -282,5 +292,72 @@ func TestADrainingHelperIsDegradedAndSaysHowToEndIt(t *testing.T) {
 	r := Evaluate(found("Running", fresh(func(s *Status) { s.Draining = true })), t0)
 	if r.Health != Degraded || !strings.Contains(r.Summary(), "draining") || !strings.Contains(r.Summary(), "DRAIN") {
 		t.Errorf("a drain that was left behind must not look healthy: %s", r.Summary())
+	}
+}
+
+// The states of what the daemon keeps (a derived file that is blocked, say) are carried in the document and read by `plan` and `tink helper status`;
+// judging them is the health work's, so a standing reconcile state does not change what Evaluate says about the helper. The volumes' copies still do.
+func TestHealthJudgesTheBackupStatesAndNotYetTheReconcileStates(t *testing.T) {
+	reconcileOnly := fresh(func(s *Status) {
+		s.States = []observe.Record{{What: "derived", Resource: "ingress-routes", Site: "home", State: observe.Blocked, Reason: "the file is not there", Since: instant.At(t0.Add(-time.Hour))}}
+	})
+	if r := Evaluate(found("Running", reconcileOnly), t0); r.Health != Healthy {
+		t.Errorf("a blocked derived file: %s %v", r.Health, r.Reasons)
+	}
+	both := fresh(func(s *Status) {
+		s.States = []observe.Record{
+			{What: "derived", Resource: "ingress-routes", State: observe.Failing, Reason: "r"},
+			skipped("lib", "policy of a newer protocol"), failingCopy("lib", "nas", 2, t0.Add(-time.Hour)),
+		}
+	})
+	r := Evaluate(found("Running", both), t0)
+	if r.Health != Degraded || !strings.Contains(r.Summary(), "1 volume(s) skipped: lib (policy of a newer protocol)") || !strings.Contains(r.Summary(), "1 copy(ies) failing: lib -> nas (2x)") {
+		t.Errorf("%s: %s", r.Health, r.Summary())
+	}
+}
+
+// A new event is a change worth a write, like a new state; the same list again is not.
+func TestAnEventIsAChangeTheHeartbeatDoesNotHaveToWaitFor(t *testing.T) {
+	r := newRecorder()
+	s := Status{JobProto: 1}
+	if wrote, _ := r.p.Publish(s); !wrote {
+		t.Fatal("the first publish always writes")
+	}
+	r.now = r.now.Add(time.Minute)
+	s.Events = []observe.Event{{Event: observe.Healed, What: "derived", Resource: "ingress-routes", At: instant.At(r.now)}}
+	if wrote, _ := r.p.Publish(s); !wrote {
+		t.Error("a healed event must be written at once")
+	}
+	r.now = r.now.Add(time.Minute)
+	if wrote, _ := r.p.Publish(s); wrote {
+		t.Error("the same list again is nothing to say")
+	}
+}
+
+func TestLoadReadsTheStoredDocumentAndSaysSoWhenItCannotBeRead(t *testing.T) {
+	text, err := Encode(Status{Proto: StatusProto, States: []observe.Record{skipped("lib", "x")}, Events: []observe.Event{{Event: observe.Restarted, What: "derived"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := func(s string, err error) *Publisher {
+		return &Publisher{Read: func() (string, error) { return s, err }}
+	}
+	if st, err := read(text, nil).Load(); err != nil || len(st.States) != 1 || len(st.Events) != 1 {
+		t.Errorf("a stored document: %+v %v", st, err)
+	}
+	if st, err := read("", nil).Load(); err != nil || len(st.States) != 0 {
+		t.Errorf("nothing stored: %+v %v", st, err)
+	}
+	if st, err := (&Publisher{}).Load(); err != nil || len(st.States) != 0 {
+		t.Errorf("no place to read: %+v %v", st, err)
+	}
+	for name, p := range map[string]*Publisher{
+		"not json":         read("nope", nil),
+		"a newer protocol": read(`{"proto":99}`, nil),
+		"a failed read":    read("", errors.New("the volume is not there")),
+	} {
+		if _, err := p.Load(); err == nil {
+			t.Errorf("%s: Load did not say it could not read it", name)
+		}
 	}
 }

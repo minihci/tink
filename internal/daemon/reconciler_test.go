@@ -9,6 +9,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/minihci/tink/internal/finding"
+	"github.com/minihci/tink/internal/observe"
 )
 
 // stream is a fake event stream: a subscription that stays up until the test drops it.
@@ -74,24 +77,29 @@ type harness struct {
 	log    *logs
 	cancel context.CancelFunc
 	done   chan struct{}
-	result atomic.Value // []ReconcileResult the next pass returns
+	result atomic.Value // []observe.Result the next pass returns
 }
 
 func start(t *testing.T) *harness {
+	return startWith(t, &Live{}, observe.Result{What: "dns", State: "converged"})
+}
+
+// startWith is start with a Live of the caller's, which may have been seeded from a stored document, and the results the first pass returns.
+func startWith(t *testing.T, live *Live, first ...observe.Result) *harness {
 	t.Helper()
 	h := &harness{s: newStream(), log: &logs{}, done: make(chan struct{})}
-	h.result.Store([]ReconcileResult{{What: "dns", State: "converged"}})
+	h.result.Store(first)
 	h.r = &Reconciler{
 		Watch: h.s.watch,
-		Reconcile: func(context.Context) []ReconcileResult {
+		Reconcile: func(context.Context) []observe.Result {
 			h.passes.Add(1)
-			return h.result.Load().([]ReconcileResult)
+			return h.result.Load().([]observe.Result)
 		},
 		Debounce: 30 * time.Millisecond,
 		MaxWait:  300 * time.Millisecond,
 		Resync:   time.Hour,
 		Backoff:  5 * time.Millisecond,
-		Live:     &Live{},
+		Live:     live,
 		Logf:     h.log.logf,
 		// every reading of the clock is two seconds later than the last: an instant is kept to whole seconds, so a real clock would
 		// make two passes a few milliseconds apart read as the same moment
@@ -111,6 +119,17 @@ func start(t *testing.T) *harness {
 		}
 	})
 	return h
+}
+
+// states are the states the status document would carry now.
+func (h *harness) states() []observe.Record {
+	states, _ := h.r.Live.snapshot()
+	return states
+}
+
+func (h *harness) events() []observe.Event {
+	_, events := h.r.Live.snapshot()
+	return events
 }
 
 func eventually(t *testing.T, what string, ok func() bool) {
@@ -184,10 +203,10 @@ func TestADroppedStreamIsSubscribedAgainAndFollowedByAFullPass(t *testing.T) {
 
 func TestTheResyncIsTheBackstopWhenNoEventComes(t *testing.T) {
 	h := &harness{s: newStream(), log: &logs{}, done: make(chan struct{})}
-	h.result.Store([]ReconcileResult{{What: "dns", State: "converged"}})
+	h.result.Store([]observe.Result{{What: "dns", State: "converged"}})
 	h.r = &Reconciler{
 		Watch:     h.s.watch,
-		Reconcile: func(context.Context) []ReconcileResult { h.passes.Add(1); return h.result.Load().([]ReconcileResult) },
+		Reconcile: func(context.Context) []observe.Result { h.passes.Add(1); return h.result.Load().([]observe.Result) },
 		Debounce:  20 * time.Millisecond, Resync: 60 * time.Millisecond, Backoff: 5 * time.Millisecond,
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -199,8 +218,8 @@ func TestTheResyncIsTheBackstopWhenNoEventComes(t *testing.T) {
 func TestWhatThePassFoundIsInTheStatusAndKeepsItsSinceUntilItChanges(t *testing.T) {
 	h := start(t)
 	// the pass counts itself before it records what it found, so wait for the record and not for the count
-	eventually(t, "the first pass recorded", func() bool { return len(h.r.Live.reconcilesSnapshot()) == 1 })
-	first := h.r.Live.reconcilesSnapshot()
+	eventually(t, "the first pass recorded", func() bool { return len(h.states()) == 1 })
+	first := h.states()
 	if len(first) != 1 || first[0].What != "dns" || first[0].State != "converged" || first[0].Since.IsZero() {
 		t.Fatalf("status = %+v", first)
 	}
@@ -208,14 +227,14 @@ func TestWhatThePassFoundIsInTheStatusAndKeepsItsSinceUntilItChanges(t *testing.
 	time.Sleep(20 * time.Millisecond)
 	h.s.emit("instance-updated")
 	eventually(t, "a second pass", func() bool { return h.passes.Load() == 2 })
-	if again := h.r.Live.reconcilesSnapshot(); !again[0].Since.Equal(first[0].Since.Time) {
+	if again := h.states(); !again[0].Since.Equal(first[0].Since.Time) {
 		t.Errorf("a pass that found the same thing moved Since: %v -> %v", first[0].Since, again[0].Since)
 	}
 
-	h.result.Store([]ReconcileResult{{What: "dns", State: "blocked", Reason: "the apply was refused", Detail: []string{"detail line"}}})
+	h.result.Store([]observe.Result{{What: "dns", State: "blocked", Reason: "the apply was refused", Detail: []finding.Finding{finding.Errorf("the apply was refused", "dns", "detail line")}}})
 	h.s.emit("instance-updated")
-	eventually(t, "a third pass recorded", func() bool { return h.r.Live.reconcilesSnapshot()[0].State == "blocked" })
-	got := h.r.Live.reconcilesSnapshot()
+	eventually(t, "a third pass recorded", func() bool { return h.states()[0].State == "blocked" })
+	got := h.states()
 	if got[0].State != "blocked" || got[0].Reason != "the apply was refused" || !got[0].Since.After(first[0].Since.Time) {
 		t.Errorf("status after a change = %+v", got)
 	}
@@ -252,7 +271,7 @@ func TestWakesReconcileIsTheDerivedStateEventsOnly(t *testing.T) {
 
 func TestEveryPassThatRewroteSomethingIsInTheLogEvenWhenTheStateIsTheSame(t *testing.T) {
 	h := start(t)
-	h.result.Store([]ReconcileResult{{What: "dns", State: "converged", Wrote: true, Detail: []string{"1 record added"}}})
+	h.result.Store([]observe.Result{{What: "dns", State: "converged", Wrote: true, Detail: []finding.Finding{finding.Notef("the records were rewritten", "dns", "1 record added")}}})
 	eventually(t, "the first pass", func() bool { return h.passes.Load() >= 1 })
 	for i := 2; i <= 3; i++ {
 		h.s.emit("instance-updated")

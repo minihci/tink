@@ -7,8 +7,7 @@ import (
 
 	"github.com/lxc/incus/v7/shared/api"
 
-	"github.com/minihci/tink/internal/helper"
-	"github.com/minihci/tink/internal/instant"
+	"github.com/minihci/tink/internal/observe"
 )
 
 // A Reconciler keeps derived state in step with the stamps on the server. It is level-triggered: a pass reads the server, works out what should be true,
@@ -24,26 +23,28 @@ type Reconciler struct {
 	// ctx is done, and returns an error when the stream ends before that. incusapi.WatchLifecycle is the real one.
 	Watch func(ctx context.Context, ready func(), handle func(action string)) error
 	// Reconcile does one full pass and says what it found, one entry per thing it keeps and per site.
-	Reconcile func(ctx context.Context) []ReconcileResult
+	Reconcile func(ctx context.Context) []observe.Result
 
 	// Debounce is the quiet time after the last event before a pass (default 2 seconds), and MaxWait the longest a steady stream of events can put one off
 	// (default 10). Resync is the longest between passes (default 5 minutes). Backoff is the first wait before subscribing again (default 2 seconds, doubling up
 	// to a minute).
 	Debounce, MaxWait, Resync, Backoff time.Duration
 
-	// Live, if set, is told what each pass found, for the status document.
+	// Live, if set, holds the clock every pass reports to, and the list of what the daemon did, for the status document. Without one the reconciler
+	// keeps a clock of its own, so it still logs only a transition, and keeps no events.
 	Live *Live
 	Logf func(format string, args ...any)
 	// Now is a test seam; nil is the real clock.
 	Now func() time.Time
+
+	own observe.Clock // used when Live is nil
 }
 
-// ReconcileResult is what one pass found for one thing it keeps. State and Reason are the fixed words the status document carries (State is converged, blocked,
-// skipped or failing); Wrote says the pass rewrote something, which is worth a line in the log each time and is not a state; Detail is for the log.
-type ReconcileResult struct {
-	What, Site, State, Reason string
-	Wrote                     bool
-	Detail                    []string
+func (r *Reconciler) clock() *observe.Clock {
+	if r.Live != nil {
+		return &r.Live.clock
+	}
+	return &r.own
 }
 
 // wakeActions are the lifecycle events that can change what a published name's records are derived from: an instance appearing, going, being renamed or
@@ -104,7 +105,6 @@ func (r *Reconciler) Run(ctx context.Context) error {
 
 	resync := time.NewTicker(r.resync())
 	defer resync.Stop()
-	last := map[string]string{}
 	for {
 		select {
 		case <-ctx.Done():
@@ -115,7 +115,7 @@ func (r *Reconciler) Run(ctx context.Context) error {
 				return nil
 			}
 		}
-		r.pass(ctx, last)
+		r.pass(ctx)
 	}
 }
 
@@ -173,32 +173,45 @@ func (r *Reconciler) watch(ctx context.Context, poke func()) {
 	}
 }
 
-// pass runs one reconcile and records what it found. It says what it found in the log when that changes, not on every pass.
-func (r *Reconciler) pass(ctx context.Context, last map[string]string) {
-	for _, res := range r.Reconcile(ctx) {
-		if r.Live != nil {
-			r.Live.setReconcile(helper.Reconcile{What: res.What, Site: res.Site, State: res.State, Reason: res.Reason, Since: instant.At(r.now())})
+// pass runs one reconcile and records what it found. Each result goes to the clock, which says whether it is a transition: the log gets a line then, and
+// not on every pass that finds the same thing. A pass that rewrote a file or restarted an instance says so in the log too, because it did something, and
+// adds an event for it to the status document. Whatever the pass did not report is forgotten.
+func (r *Reconciler) pass(ctx context.Context) {
+	results := r.Reconcile(ctx)
+	now := r.now()
+	clock := r.clock()
+	var whats []string
+	var events []observe.Event
+	for _, res := range results {
+		_, changed := clock.Observe(res, now)
+		whats = append(whats, res.What)
+		events = append(events, observe.EventsOf(res, now)...)
+		if changed || res.Wrote {
+			r.say(res)
 		}
-		key := res.What + "/" + res.Site
-		state := res.State + ": " + res.Reason
-		if last[key] == state && !res.Wrote {
-			continue
-		}
-		last[key] = state
-		site := res.Site
-		if site == "" {
-			site = "the unnamed site"
-		}
-		msg := fmt.Sprintf("reconcile %s, %s: %s", res.What, site, res.State)
-		if res.Wrote {
-			msg += ", rewrote it"
-		}
-		if res.Reason != "" {
-			msg += " (" + res.Reason + ")"
-		}
-		r.logf("%s", msg)
-		for _, d := range res.Detail {
-			r.logf("  %s", d)
-		}
+	}
+	if r.Live != nil {
+		r.Live.addEvents(events...)
+	}
+	if len(whats) > 0 {
+		clock.EndPass(whats...)
+	}
+}
+
+// say writes the line for a result, and the lines of its findings and its error, which are for the log and nothing else.
+func (r *Reconciler) say(res observe.Result) {
+	msg := fmt.Sprintf("reconcile %s, %s: %s", observe.Name(res.What, res.Resource, res.Target), observe.SiteName(res.Site), res.State)
+	if res.Wrote {
+		msg += ", rewrote it"
+	}
+	if res.Reason != "" {
+		msg += " (" + res.Reason + ")"
+	}
+	r.logf("%s", msg)
+	for _, d := range res.Detail {
+		r.logf("  %s", d)
+	}
+	if res.Err != nil {
+		r.logf("  %s", res.Err)
 	}
 }

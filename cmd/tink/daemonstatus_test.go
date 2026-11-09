@@ -17,6 +17,7 @@ import (
 
 	"github.com/minihci/tink/internal/helper"
 	"github.com/minihci/tink/internal/jobs"
+	"github.com/minihci/tink/internal/observe"
 )
 
 func TestStatusTargetRefusesTwoPlacesAndAPoolForNoVolume(t *testing.T) {
@@ -101,6 +102,15 @@ func (s *publishServer) UpdateStoragePoolVolume(_, _, _ string, put api.StorageV
 	s.cfg, s.desc = put.Config, put.Description
 	s.etag++
 	return nil
+}
+
+func (s *publishServer) GetInstance(name string) (*api.Instance, string, error) {
+	if name != "helper" {
+		return nil, "", api.StatusErrorf(http.StatusNotFound, "not found")
+	}
+	inst := &api.Instance{Name: name}
+	inst.Config = s.cfg
+	return inst, "", nil
 }
 
 func (s *publishServer) RawQuery(method, path string, data any, _ string) (*api.Response, string, error) {
@@ -216,5 +226,46 @@ func TestAHelperWhoseStatusVolumeCannotBeReadCannotTakeABackupRun(t *testing.T) 
 	why := helperCannotTake(r)
 	if !strings.Contains(why, "status volume default/helper-status cannot be read") || strings.Contains(why, "has not published") {
 		t.Errorf("%q", why)
+	}
+}
+
+// The daemon reads its own document back from where it publishes it, so that a restart can seed its clock: the same volume key, the same instance key, and
+// nothing when none is stored.
+func TestThePublisherReadsBackWhatItPublishedFromTheSamePlace(t *testing.T) {
+	connect := func(srv *publishServer) func() (incus.InstanceServer, error) {
+		return func() (incus.InstanceServer, error) { return srv, nil }
+	}
+	text, err := helper.Encode(helper.Status{Proto: helper.StatusProto, Version: "v1", States: []observe.Record{{What: "derived", Resource: "ingress-routes", State: "blocked", Reason: "r"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	vol := &publishServer{cfg: map[string]string{helper.StatusKey: text}}
+	p := statusTarget{Volume: "helper-status", Pool: "fast", Project: "tink-helper"}.publisher(connect(vol), time.Hour)
+	st, err := p.Load()
+	if err != nil || st.Version != "v1" || len(st.States) != 1 || vol.project != "tink-helper" {
+		t.Errorf("the volume form: %+v %v (project %q)", st, err, vol.project)
+	}
+	if len(vol.puts) != 0 {
+		t.Errorf("reading wrote: %v", vol.puts)
+	}
+
+	inst := &publishServer{cfg: map[string]string{helper.StatusKey: text}}
+	p = statusTarget{Instance: "helper", Project: "tink-helper"}.publisher(connect(inst), time.Hour)
+	if st, err := p.Load(); err != nil || len(st.States) != 1 {
+		t.Errorf("the instance form: %+v %v", st, err)
+	}
+	if len(inst.patches) != 0 {
+		t.Errorf("reading wrote: %v", inst.patches)
+	}
+
+	empty := &publishServer{}
+	p = statusTarget{Volume: "helper-status", Pool: "fast"}.publisher(connect(empty), time.Hour)
+	if st, err := p.Load(); err != nil || len(st.States) != 0 {
+		t.Errorf("nothing stored is an empty document and no error: %+v %v", st, err)
+	}
+	p = statusTarget{Volume: "no-such-volume", Pool: "fast"}.publisher(connect(empty), time.Hour)
+	if _, err := p.Load(); err == nil {
+		t.Error("a volume that cannot be read is an error (the daemon starts empty)")
 	}
 }

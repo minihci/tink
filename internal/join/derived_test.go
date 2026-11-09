@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/minihci/tink/internal/finding"
+	"github.com/minihci/tink/internal/observe"
 	"github.com/minihci/tink/internal/resolve"
 )
 
@@ -51,19 +53,19 @@ func meshFile() resolve.Resource {
 	return resolve.Resource{Kind: resolve.KindFile, Name: "mesh-records", Project: "tink", Instance: "mesh", Path: meshPath, Derive: resolve.DeriveMesh}
 }
 
-func reconcileDerived(f *serverFake, files *fakeFiles, r *fakeRestarter) []DerivedOutcome {
+func reconcileDerived(f *serverFake, files *fakeFiles, r *fakeRestarter) []observe.Result {
 	return ReconcileDerived(f, files, r, "")
 }
 
-func one(t *testing.T, outs []DerivedOutcome, name string) DerivedOutcome {
+func one(t *testing.T, outs []observe.Result, name string) observe.Result {
 	t.Helper()
 	for _, o := range outs {
-		if o.Name == name {
+		if o.Resource == name {
 			return o
 		}
 	}
 	t.Fatalf("no outcome for %q in %+v", name, outs)
-	return DerivedOutcome{}
+	return observe.Result{}
 }
 
 func TestAHandEditInsideTheRegionIsPutBackAndTheRestOfTheFileIsKept(t *testing.T) {
@@ -72,7 +74,7 @@ func TestAHandEditInsideTheRegionIsPutBackAndTheRestOfTheFileIsKept(t *testing.T
 	files.files[fkey("tink", "ingress", routesPath)] = emptyShell
 
 	first := one(t, reconcileDerived(f, files, rs), "ingress-routes")
-	if first.State != DerivedChanged || !first.Wrote {
+	if first.State != observe.Converged || !first.Wrote {
 		t.Fatalf("first = %+v, want changed", first)
 	}
 	got := files.files[fkey("tink", "ingress", routesPath)]
@@ -85,7 +87,7 @@ func TestAHandEditInsideTheRegionIsPutBackAndTheRestOfTheFileIsKept(t *testing.T
 	files.files[fkey("tink", "ingress", routesPath)] = edited
 	files.writes = nil
 	second := one(t, reconcileDerived(f, files, rs), "ingress-routes")
-	if second.State != DerivedChanged {
+	if second.State != observe.Converged || !second.Wrote {
 		t.Fatalf("second = %+v, want the edit put back", second)
 	}
 	back := files.files[fkey("tink", "ingress", routesPath)]
@@ -98,7 +100,7 @@ func TestAHandEditInsideTheRegionIsPutBackAndTheRestOfTheFileIsKept(t *testing.T
 
 	files.writes = nil
 	third := one(t, reconcileDerived(f, files, rs), "ingress-routes")
-	if third.State != DerivedUnchanged || len(files.writes) != 0 {
+	if third.State != observe.Converged || third.Wrote || len(files.writes) != 0 {
 		t.Errorf("third = %+v, writes %v: a file that is right is not written", third, files.writes)
 	}
 }
@@ -110,11 +112,17 @@ func TestTheInstanceIsRestartedOnlyWhenTheStampSaysSoAndTheFileChanged(t *testin
 	files.files[fkey("tink", "dns", "/hosts")] = resolve.DeriveBegin + "\n" + resolve.DeriveEnd + "\n"
 
 	outs := reconcileDerived(f, files, rs)
-	if one(t, outs, "ingress-routes").State != DerivedChanged || one(t, outs, "dns-hosts").State != DerivedChanged {
+	if one(t, outs, "ingress-routes").State != observe.Converged || one(t, outs, "dns-hosts").State != observe.Converged {
 		t.Fatalf("outcomes = %+v", outs)
 	}
 	if len(rs.calls) != 1 || rs.calls[0] != "tink/ingress" {
 		t.Errorf("restarted %v: only the file whose stamp says restart, once", rs.calls)
+	}
+	if r := one(t, outs, "ingress-routes"); !r.Restarted || !r.Wrote {
+		t.Errorf("the result of a rewrite that restarted = %+v, want wrote and restarted", r)
+	}
+	if r := one(t, outs, "dns-hosts"); r.Restarted || !r.Wrote {
+		t.Errorf("the result of a rewrite that did not restart = %+v, want wrote and not restarted", r)
 	}
 	rs.calls = nil
 	reconcileDerived(f, files, rs)
@@ -128,7 +136,7 @@ func TestARestartThatFailsIsFailingAfterAGoodWrite(t *testing.T) {
 	files, rs := platformFiles(), &fakeRestarter{err: errors.New("busy")}
 	files.files[fkey("tink", "ingress", routesPath)] = emptyShell
 	o := one(t, reconcileDerived(f, files, rs), "ingress-routes")
-	if o.State != DerivedFailing || o.Reason != "the instance could not be restarted" || !o.Wrote {
+	if o.State != observe.Failing || o.Reason != "the instance could not be restarted" || !o.Wrote {
 		t.Errorf("outcome = %+v", o)
 	}
 }
@@ -137,13 +145,13 @@ func TestAFileThatIsNotThereOrHasNoMarkersIsBlockedAndLeftAlone(t *testing.T) {
 	f := serverOf(t, withDerived(t, routesFile(false)))
 	files, rs := platformFiles(), &fakeRestarter{}
 	o := one(t, reconcileDerived(f, files, rs), "ingress-routes")
-	if o.State != DerivedBlocked || o.Reason != "the file is not there" || len(files.writes) != 0 {
+	if o.State != observe.Blocked || o.Reason != "the file is not there" || len(files.writes) != 0 {
 		t.Errorf("missing file: %+v, writes %v", o, files.writes)
 	}
 
 	files.files[fkey("tink", "ingress", routesPath)] = "reverse_proxy 192.0.2.5:80\n"
 	o = one(t, reconcileDerived(f, files, rs), "ingress-routes")
-	if o.State != DerivedBlocked || o.Reason != "the file has no region to fill" || len(files.writes) != 0 {
+	if o.State != observe.Blocked || o.Reason != "the file has no region to fill" || len(files.writes) != 0 {
 		t.Errorf("no markers: %+v, writes %v", o, files.writes)
 	}
 	if got := files.files[fkey("tink", "ingress", routesPath)]; got != "reverse_proxy 192.0.2.5:80\n" {
@@ -160,7 +168,7 @@ func TestAnEmptyRenderingDoesNotEmptyARegionThatHasLines(t *testing.T) {
 	files.files[fkey("tink", "ingress", routesPath)] = live
 
 	o := one(t, reconcileDerived(f, files, rs), "ingress-routes")
-	if o.State != DerivedBlocked || o.Reason != "the file is not the daemon's to replace" || !strings.Contains(strings.Join(o.Detail, " "), "nothing is published") {
+	if o.State != observe.Blocked || o.Reason != "the file is not the daemon's to replace" || !detailText(o.Detail, "nothing is published") {
 		t.Fatalf("outcome = %+v", o)
 	}
 	if files.files[fkey("tink", "ingress", routesPath)] != live || len(files.writes) != 0 {
@@ -183,7 +191,7 @@ func TestAJoinErrorBlocksEveryFileAndWritesNothing(t *testing.T) {
 	outs := reconcileDerived(f, files, rs)
 	for _, name := range []string{"sso-rules"} {
 		o := one(t, outs, name)
-		if o.State != DerivedBlocked || o.Reason != "the join has errors" {
+		if o.State != observe.Blocked || o.Reason != "the join has errors" {
 			t.Errorf("%s = %+v", name, o)
 		}
 	}
@@ -204,10 +212,10 @@ func TestAStampThatCannotBeReadBlocksThatFileAndNotTheOthers(t *testing.T) {
 	}
 
 	outs := reconcileDerived(f, files, rs)
-	if o := one(t, outs, "dns-hosts"); o.State != DerivedBlocked || o.Reason != "a derived-file stamp cannot be read" {
+	if o := one(t, outs, "dns-hosts"); o.State != observe.Blocked || o.Reason != "a derived-file stamp cannot be read" {
 		t.Errorf("dns-hosts = %+v", o)
 	}
-	if o := one(t, outs, "ingress-routes"); o.State != DerivedChanged {
+	if o := one(t, outs, "ingress-routes"); o.State != observe.Converged {
 		t.Errorf("ingress-routes = %+v: an unreadable stamp elsewhere must not stop it", o)
 	}
 }
@@ -219,7 +227,7 @@ func TestAPublishStampThatCannotBeReadBlocksEveryFile(t *testing.T) {
 	f.whoami(t).Config["user.tink.intent.publish.whoami"] = `{"allow":"family"}`
 
 	o := one(t, reconcileDerived(f, files, rs), "ingress-routes")
-	if o.State != DerivedBlocked || o.Reason != "a publish stamp cannot be read" || len(files.writes) != 0 {
+	if o.State != observe.Blocked || o.Reason != "a publish stamp cannot be read" || len(files.writes) != 0 {
 		t.Errorf("outcome = %+v, writes %v", o, files.writes)
 	}
 }
@@ -230,16 +238,16 @@ func TestWritesThatFailOrDoNotTakeAreFailingNotBlocked(t *testing.T) {
 	files.files[fkey("tink", "ingress", routesPath)] = emptyShell
 
 	files.writeErr = errors.New("denied")
-	if o := one(t, reconcileDerived(f, files, rs), "ingress-routes"); o.State != DerivedFailing || o.Reason != "the file could not be written" {
+	if o := one(t, reconcileDerived(f, files, rs), "ingress-routes"); o.State != observe.Failing || o.Reason != "the file could not be written" {
 		t.Errorf("a failed write: %+v", o)
 	}
 	files.writeErr, files.corrupt = nil, true
-	if o := one(t, reconcileDerived(f, files, rs), "ingress-routes"); o.State != DerivedFailing || o.Reason != "the file does not hold what was written" {
+	if o := one(t, reconcileDerived(f, files, rs), "ingress-routes"); o.State != observe.Failing || o.Reason != "the file does not hold what was written" {
 		t.Errorf("a write that does not take: %+v", o)
 	}
 	files.corrupt = false
 	files.readErr[routesPath] = errors.New("gone")
-	if o := one(t, reconcileDerived(f, files, rs), "ingress-routes"); o.State != DerivedFailing || o.Reason != "the file could not be read" {
+	if o := one(t, reconcileDerived(f, files, rs), "ingress-routes"); o.State != observe.Failing || o.Reason != "the file could not be read" {
 		t.Errorf("a failed read: %+v", o)
 	}
 }
@@ -248,7 +256,7 @@ func TestASiteWithNoStampedFileIsSkippedAndNothingIsRead(t *testing.T) {
 	f := serverOf(t, load(t))
 	files, rs := platformFiles(), &fakeRestarter{}
 	outs := reconcileDerived(f, files, rs)
-	if len(outs) != 1 || outs[0].State != DerivedSkipped {
+	if len(outs) != 1 || outs[0].State != observe.Skipped {
 		t.Fatalf("outcomes = %+v", outs)
 	}
 	if len(files.reads) != 0 || len(files.writes) != 0 {
@@ -260,7 +268,7 @@ func TestADnsFileHoldsTheZoneFilesRule(t *testing.T) {
 	f := serverOf(t, withDerived(t, dnsFile()))
 	files, rs := platformFiles(), &fakeRestarter{}
 	files.files[fkey("tink", "dns", "/hosts")] = resolve.DeriveBegin + "\n" + resolve.DeriveEnd + "\n"
-	if o := one(t, reconcileDerived(f, files, rs), "dns-hosts"); o.State != DerivedChanged || !strings.Contains(files.files[fkey("tink", "dns", "/hosts")], "whoami.home.example.org") {
+	if o := one(t, reconcileDerived(f, files, rs), "dns-hosts"); o.State != observe.Converged || !strings.Contains(files.files[fkey("tink", "dns", "/hosts")], "whoami.home.example.org") {
 		t.Fatalf("the records were not written: %+v", o)
 	}
 
@@ -269,12 +277,12 @@ func TestADnsFileHoldsTheZoneFilesRule(t *testing.T) {
 	files.files[fkey("tink", "dns", "/hosts")] = resolve.DeriveBegin + "\n" + resolve.DeriveEnd + "\n"
 	files.writes = nil
 	o := one(t, reconcileDerived(f, files, rs), "dns-hosts")
-	if o.State != DerivedBlocked || o.Reason != "a name clashes with the platform's own" || len(files.writes) != 0 {
+	if o.State != observe.Blocked || o.Reason != "a name clashes with the platform's own" || len(files.writes) != 0 {
 		t.Errorf("outcome = %+v, writes %v", o, files.writes)
 	}
 
 	delete(files.files, fkey("tink", "dns", "/db.home.example.org"))
-	if o := one(t, reconcileDerived(f, files, rs), "dns-hosts"); o.State != DerivedBlocked {
+	if o := one(t, reconcileDerived(f, files, rs), "dns-hosts"); o.State != observe.Blocked {
 		t.Errorf("no zone file: %+v, want blocked", o)
 	}
 }
@@ -285,18 +293,18 @@ func TestTheMeshViewIsTheWholeFileAndKeepsItsGuards(t *testing.T) {
 	files.files[fkey("tink", "mesh", meshPath)] = "[]\n"
 
 	o := one(t, reconcileDerived(f, files, rs), "mesh-records")
-	if o.State != DerivedChanged || !strings.Contains(files.files[fkey("tink", "mesh", meshPath)], "whoami.home.example.org") {
+	if o.State != observe.Converged || !strings.Contains(files.files[fkey("tink", "mesh", meshPath)], "whoami.home.example.org") {
 		t.Fatalf("the mesh view was not written: %+v", o)
 	}
 	files.writes = nil
-	if o := one(t, reconcileDerived(f, files, rs), "mesh-records"); o.State != DerivedUnchanged || len(files.writes) != 0 {
+	if o := one(t, reconcileDerived(f, files, rs), "mesh-records"); o.State != observe.Converged || len(files.writes) != 0 {
 		t.Errorf("second = %+v", o)
 	}
 
 	// a file that is not a records file is not the daemon's to replace
 	files.files[fkey("tink", "mesh", meshPath)] = "{\"not\": \"an array\"}\n"
 	o = one(t, reconcileDerived(f, files, rs), "mesh-records")
-	if o.State != DerivedBlocked || o.Reason != "the file is not the daemon's to replace" {
+	if o.State != observe.Blocked || o.Reason != "the file is not the daemon's to replace" {
 		t.Errorf("a foreign file: %+v", o)
 	}
 }
@@ -311,7 +319,7 @@ func TestAnotherSitesStampedFileIsNotReadOrWritten(t *testing.T) {
 		}
 	}
 	outs := reconcileDerived(f, files, rs) // the unnamed site
-	if len(outs) != 1 || outs[0].State != DerivedSkipped || len(files.writes) != 0 {
+	if len(outs) != 1 || outs[0].State != observe.Skipped || len(files.writes) != 0 {
 		t.Errorf("outcomes = %+v, writes %v: the file belongs to site lab", outs, files.writes)
 	}
 }
@@ -327,7 +335,7 @@ func TestAFileOnAnInstanceThatIsNotRunningIsSkippedAndNothingIsTouched(t *testin
 	}
 
 	o := one(t, reconcileDerived(f, files, rs), "ingress-routes")
-	if o.State != DerivedSkipped || o.Reason != "the instance is not running" {
+	if o.State != observe.Skipped || o.Reason != "the instance is not running" {
 		t.Fatalf("outcome = %+v", o)
 	}
 	if len(files.reads) != 0 || len(files.writes) != 0 || len(rs.calls) != 0 {
@@ -340,7 +348,7 @@ func TestAFileOnAnInstanceThatIsNotRunningIsSkippedAndNothingIsTouched(t *testin
 			f.instances[i].Status = "Running"
 		}
 	}
-	if o := one(t, reconcileDerived(f, files, rs), "ingress-routes"); o.State != DerivedChanged {
+	if o := one(t, reconcileDerived(f, files, rs), "ingress-routes"); o.State != observe.Converged {
 		t.Errorf("after it started: %+v", o)
 	}
 }
@@ -351,13 +359,13 @@ func TestAMissingMeshViewIsCreatedAndAMissingRegionFileIsNot(t *testing.T) {
 
 	outs := reconcileDerived(f, files, rs)
 	mesh := one(t, outs, "mesh-records")
-	if mesh.State != DerivedChanged || !mesh.Wrote || !strings.Contains(files.files[fkey("tink", "mesh", meshPath)], "whoami.home.example.org") {
+	if mesh.State != observe.Converged || !mesh.Wrote || !strings.Contains(files.files[fkey("tink", "mesh", meshPath)], "whoami.home.example.org") {
 		t.Fatalf("the mesh view was not created: %+v", mesh)
 	}
-	if got := strings.Join(mesh.Detail, " "); !strings.Contains(got, "created") {
-		t.Errorf("detail = %q, want it to say created", got)
+	if !detailText(mesh.Detail, "created") {
+		t.Errorf("detail = %+v, want it to say created", mesh.Detail)
 	}
-	if routes := one(t, outs, "ingress-routes"); routes.State != DerivedBlocked || routes.Reason != "the file is not there" {
+	if routes := one(t, outs, "ingress-routes"); routes.State != observe.Blocked || routes.Reason != "the file is not there" {
 		t.Errorf("a region file that is missing: %+v", routes)
 	}
 	if _, there := files.files[fkey("tink", "ingress", routesPath)]; there {
@@ -367,7 +375,17 @@ func TestAMissingMeshViewIsCreatedAndAMissingRegionFileIsNot(t *testing.T) {
 	// the directory has to be there: a write that fails is failing, not a created path
 	files.files = map[string]string{"tink/dns/db.home.example.org": labZone}
 	files.writeErr = errors.New("no such directory")
-	if o := one(t, reconcileDerived(f, files, rs), "mesh-records"); o.State != DerivedFailing || o.Reason != "the file could not be written" {
+	if o := one(t, reconcileDerived(f, files, rs), "mesh-records"); o.State != observe.Failing || o.Reason != "the file could not be written" {
 		t.Errorf("a create that fails: %+v", o)
 	}
+}
+
+// detailText says whether any of a result's findings, as the log prints them, contains text.
+func detailText(fs []finding.Finding, text string) bool {
+	for _, f := range fs {
+		if strings.Contains(f.String(), text) {
+			return true
+		}
+	}
+	return false
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/minihci/tink/internal/backuprun"
 	"github.com/minihci/tink/internal/helper"
 	"github.com/minihci/tink/internal/jobs"
+	"github.com/minihci/tink/internal/observe"
 	"github.com/minihci/tink/internal/ownership"
 	"github.com/minihci/tink/internal/volbackup"
 )
@@ -30,21 +31,32 @@ func TestATickTellsTheStatusDocumentWhatItCouldNotDoAndWhatIsFailing(t *testing.
 	r.eng.poolErrs = map[string]error{"nas": errors.New("TrueNAS refused: api key tk-SECRET-123 is not valid")}
 	r.eng.liveErr["docs"] = errors.New("incus said: token tk-SECRET-456 expired")
 	r.eng.live["lib"] = map[string]string{
-		backupmeta.CopiedAt("nas"): now0.Add(-3 * time.Hour).UTC().Format(time.RFC3339),
-		backupmeta.FailedAt("nas"): now0.Add(-time.Minute).UTC().Format(time.RFC3339),
-		backupmeta.Failures("nas"): "3",
+		backupmeta.CopiedAt("nas"):     now0.Add(-3 * time.Hour).UTC().Format(time.RFC3339),
+		backupmeta.FailedAt("nas"):     now0.Add(-time.Minute).UTC().Format(time.RFC3339),
+		backupmeta.FailingSince("nas"): now0.Add(-2 * time.Hour).UTC().Format(time.RFC3339),
+		backupmeta.Failures("nas"):     "3",
 	}
 
 	var st SchedulerState
 	r.h.Tick(&st)
-	skipped, failing := r.h.Live.snapshot()
+	skipped, failing := backupStates(r.h.Live)
 
-	if len(failing) != 1 || failing[0].Volume != "lib" || failing[0].Target != "nas" || failing[0].Count != 3 {
+	if len(failing) != 1 || failing[0].Resource != "lib" || failing[0].Target != "nas" || failing[0].Failures != 3 {
 		t.Errorf("failing = %+v", failing)
+	}
+	// a failing copy reports the real onset, the failing-since stamp on the volume, as its since, and the latest failure as failed-at
+	if f := failing[0]; !f.Since.Equal(now0.Add(-2*time.Hour)) || !f.FailedAt.Equal(now0.Add(-time.Minute)) || f.State != observe.Failing || f.What != observe.WhatBackup {
+		t.Errorf("a failing copy = %+v, want its failing-since as since", f)
 	}
 	reasons := map[string]string{}
 	for _, s := range skipped {
-		reasons[s.Volume] = s.Reason
+		reasons[s.Resource] = s.Reason
+	}
+	// a skipped volume has a since, from the clock
+	for _, s := range skipped {
+		if s.Since.IsZero() || s.State != observe.Skipped {
+			t.Errorf("a skipped volume = %+v, want a since", s)
+		}
 	}
 	if !strings.Contains(reasons["tenant/newer"], "protocol 2") {
 		t.Errorf("a policy tink cannot read is explained by tink's own message: %v", reasons)
@@ -86,15 +98,32 @@ func TestATickSkipsACopyAndAnUnboundVolumeWithAFixedReasonAndStillSchedulesTheOr
 	if n := r.h.Tick(&st); n != 1 {
 		t.Errorf("the original is still scheduled: queued %d", n)
 	}
-	skipped, _ := r.h.Live.snapshot()
+	skipped, _ := backupStates(r.h.Live)
 	got := map[string]string{}
 	for _, s := range skipped {
-		got[s.Volume] = s.Reason
+		got[s.Resource] = s.Reason
 	}
 	want := map[string]string{"lib-copy": backuprun.ReasonCopy, "old": backuprun.ReasonUnbound}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("skipped = %v, want %v", got, want)
 	}
+}
+
+// backupStates are the states of the volumes' copies in a live's snapshot: the volumes that are skipped, and the copies that are failing.
+func backupStates(l *Live) (skipped, failing []observe.Record) {
+	states, _ := l.snapshot()
+	for _, r := range states {
+		if r.What != observe.WhatBackup {
+			continue
+		}
+		switch r.State {
+		case observe.Skipped:
+			skipped = append(skipped, r)
+		case observe.Failing:
+			failing = append(failing, r)
+		}
+	}
+	return skipped, failing
 }
 
 func TestATickWithNothingWrongLeavesTheDocumentClean(t *testing.T) {
@@ -103,18 +132,18 @@ func TestATickWithNothingWrongLeavesTheDocumentClean(t *testing.T) {
 	r.volume(t, "lib")
 	r.eng.live["lib"] = map[string]string{backupmeta.CopiedAt("nas"): now0.Add(-5 * time.Minute).UTC().Format(time.RFC3339)}
 	r.h.Tick(&SchedulerState{})
-	if skipped, failing := r.h.Live.snapshot(); len(skipped) != 0 || len(failing) != 0 {
+	if skipped, failing := backupStates(r.h.Live); len(skipped) != 0 || len(failing) != 0 {
 		t.Errorf("%+v %+v", skipped, failing)
 	}
 	// and a recovery clears it: the volume that could not be read can be again
 	r.eng.liveErr["lib"] = errors.New("busy")
 	r.h.Tick(&SchedulerState{})
-	if skipped, _ := r.h.Live.snapshot(); len(skipped) != 1 {
+	if skipped, _ := backupStates(r.h.Live); len(skipped) != 1 {
 		t.Fatalf("%+v", skipped)
 	}
 	delete(r.eng.liveErr, "lib")
 	r.h.Tick(&SchedulerState{})
-	if skipped, _ := r.h.Live.snapshot(); len(skipped) != 0 {
+	if skipped, _ := backupStates(r.h.Live); len(skipped) != 0 {
 		t.Errorf("a volume that can be read again is no longer skipped: %+v", skipped)
 	}
 }
@@ -196,12 +225,12 @@ func TestTheStatusWorkerPublishesAtOnceAndThenOnlyWhatChanged(t *testing.T) {
 	if rec.n() != 1 {
 		t.Errorf("nothing changed, so nothing is written: %d writes", rec.n())
 	}
-	live.setBackup([]helper.Skip{{Volume: "lib", Reason: "x"}}, nil)
+	live.setBackup([]observe.Result{{What: observe.WhatBackup, Resource: "lib", State: observe.Skipped, Reason: "x"}}, nil, time.Now())
 	waitFor("the write after a change", func() bool { return rec.n() == 2 })
 	cancel()
 	<-done
 	st, err := helper.Parse(rec.writes[1][helper.StatusKey])
-	if err != nil || len(st.Skipped) != 1 || st.Skipped[0].Volume != "lib" {
+	if err != nil || len(st.States) != 1 || st.States[0].Resource != "lib" || st.States[0].Since.IsZero() {
 		t.Errorf("%+v %v", st, err)
 	}
 }
@@ -262,7 +291,7 @@ func TestRunStartsTheStatusWorkerBesideTheOthersAndTheHelperFeedsIt(t *testing.T
 	for time.Now().Before(deadline) {
 		rec.mu.Lock()
 		for _, w := range rec.writes {
-			if got, err := helper.Parse(w[helper.StatusKey]); err == nil && len(got.Failing) == 1 {
+			if got, err := helper.Parse(w[helper.StatusKey]); err == nil && len(got.Backup(observe.Failing)) == 1 {
 				st = got
 			}
 		}
@@ -279,7 +308,7 @@ func TestRunStartsTheStatusWorkerBesideTheOthersAndTheHelperFeedsIt(t *testing.T
 	if st.Proto == 0 {
 		t.Fatalf("the scheduler's finding never reached the document:\n%s", out.String())
 	}
-	if st.Version != "vtest" || st.Failing[0].Volume != "lib" || st.Failing[0].Count != 2 {
+	if st.Version != "vtest" || st.Backup(observe.Failing)[0].Resource != "lib" || st.Backup(observe.Failing)[0].Failures != 2 {
 		t.Errorf("%+v", st)
 	}
 	if rec.writes[0][helper.MarkerKey] == "" {
@@ -316,7 +345,7 @@ func TestNothingIsPublishedUntilTheSchedulerHasLooked(t *testing.T) {
 	if rec.n() != 0 {
 		t.Fatalf("a helper that has not looked at its volumes must not publish a document that says nothing is wrong: %d writes", rec.n())
 	}
-	live.setBackup(nil, nil) // the scheduler has completed a pass, and found nothing amiss
+	live.setBackup(nil, nil, time.Now()) // the scheduler has completed a pass, and found nothing amiss
 	deadline := time.Now().Add(5 * time.Second)
 	for rec.n() == 0 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
@@ -425,7 +454,7 @@ func TestBuildStatusReportsTheRemotesItCanReachOnlyWhenItCouldRead(t *testing.T)
 func TestFailingCarriesTheOnsetAndTheLastAttemptApart(t *testing.T) {
 	onset, last := time.Date(2026, 10, 7, 9, 0, 0, 0, time.UTC), time.Date(2026, 10, 7, 9, 40, 0, 0, time.UTC)
 	got := failingFrom([]backuprun.FailingCopy{{Volume: "lib", Target: "nas", Count: 5, Since: onset, FailedAt: last}})
-	if len(got) != 1 || !got[0].Since.Equal(onset) || !got[0].FailedAt.Equal(last) || got[0].Count != 5 {
+	if len(got) != 1 || !got[0].Since.Equal(onset) || !got[0].FailedAt.Equal(last) || got[0].Failures != 5 {
 		t.Errorf("failing = %+v", got)
 	}
 }
