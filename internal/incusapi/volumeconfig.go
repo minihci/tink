@@ -42,3 +42,17 @@ func MergeVolumeConfig(s incus.InstanceServer, project, pool, name string, confi
 		return nil
 	})
 }
+
+// VolumeConfigKey reads one key of a custom storage volume's config, "" when the volume does not carry it. It is a plain read of the object
+// MergeVolumeConfig reads before it writes, so a caller that may publish on a volume may read it back with no further right. project is the project the
+// volume is in ("" for the connection's own).
+func VolumeConfigKey(s incus.InstanceServer, project, pool, name, key string) (string, error) {
+	if project != "" {
+		s = s.UseProject(project)
+	}
+	vol, _, err := s.GetStoragePoolVolume(pool, "custom", name)
+	if err != nil {
+		return "", fmt.Errorf("reading volume %s/%s: %w", pool, name, err)
+	}
+	return vol.Config[key], nil
+}
