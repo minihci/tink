@@ -1,9 +1,11 @@
 # Running tink against another machine
 
 By default tink manages the Incus daemon on the machine it runs on, over its unix socket. Which socket is Incus's own resolution, the
-same as the `incus` client: `$INCUS_SOCKET`, then `$INCUS_DIR/unix.socket`, then `/run/incus/unix.socket` if it exists, else
-`/var/lib/incus/unix.socket`. So a package that keeps the socket under `/run` (Fedora's) works with no flag; `--socket PATH` names one
-explicitly. With `--remote` (or `$TINK_REMOTE`) it manages a **remote** instead: any server defined in the Incus client configuration,
+same as the `incus` client: `$INCUS_SOCKET`, then `$INCUS_DIR/unix.socket`, then the first of `/run/incus/unix.socket` and
+`/var/lib/incus/unix.socket` that accepts a connection; when neither does, the first that exists, else `/var/lib/incus/unix.socket`.
+So a package that keeps the socket under `/run` (Fedora's) works with no flag, and a stale socket file under `/run` does not hide a
+live daemon under `/var/lib` (this is the rule of the Incus client library from 7.6; before it, `/run` won whenever its file existed).
+`--socket PATH` names one explicitly. With `--remote` (or `$TINK_REMOTE`) it manages a **remote** instead: any server defined in the Incus client configuration,
 reached over the Incus network API. That is what lets `tink` run from a laptop against a server.
 
 ```

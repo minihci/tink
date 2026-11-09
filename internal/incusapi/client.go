@@ -48,10 +48,12 @@ func wantsRemote(socketPath string) (bool, error) {
 }
 
 // Connect opens a connection to Incus: the remote chosen with UseRemote, or else the local daemon over its unix
-// socket. An empty path uses Incus's own resolution ($INCUS_SOCKET, then $INCUS_DIR/unix.socket, then
-// /run/incus/unix.socket if it exists, else /var/lib/incus/unix.socket), which is where a distribution package
-// that puts the socket under /run (Fedora's) is found without the caller knowing. Callers pass "" unless the user
-// gave --socket: a path filled in here as a default would hide $INCUS_SOCKET and that fallback.
+// socket. An empty path uses Incus's own resolution ($INCUS_SOCKET, then $INCUS_DIR/unix.socket, then the first of
+// /run/incus/unix.socket and /var/lib/incus/unix.socket that accepts a connection; when neither does, the first that
+// exists, else /var/lib/incus/unix.socket), which is where a distribution package that puts the socket under /run
+// (Fedora's) is found without the caller knowing, and a stale socket file under /run does not hide a live daemon under
+// /var/lib (the client library's rule from Incus 7.6; before it, /run won whenever its file existed). Callers pass ""
+// unless the user gave --socket: a path filled in here as a default would hide $INCUS_SOCKET and that fallback.
 func Connect(socketPath string) (incus.InstanceServer, error) {
 	useRemote, err := wantsRemote(socketPath)
 	if err != nil {
