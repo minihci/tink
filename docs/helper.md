@@ -49,7 +49,7 @@ remotes: [host, vps]          # the Incus servers it must be able to reach, for 
 authz: narrow                 # narrow the daemon's certificate to what it does (optional; see below)
 ```
 
-- **A helper that is there is adopted, and nothing about it is changed.** `plan` says how it is (`healthy`, `degraded`, `down`, with the reasons), which tink version it runs, and warns when a remote the stack says it needs is not among the remotes it reports (naming `tink helper remote add`). It never upgrades, restarts or re-enrols it: an upgrade drains the helper first, and a declaration is not the place to start one by surprise (`tink helper upgrade`).
+- **A helper that is there is adopted, and nothing about it is changed.** `plan` says how it is (`healthy`, `degraded`, `down`, with a warning for each reason, carrying the reason phrase and the detail), which tink version it runs, and warns when a remote the stack says it needs is not among the remotes it reports (naming `tink helper remote add`). It never upgrades, restarts or re-enrols it: an upgrade drains the helper first, and a declaration is not the place to start one by surprise (`tink helper upgrade`).
 - **When there is none, `apply` installs it,** exactly as `tink helper install` does: it mints a single-use trust token with the certificate of whoever runs the apply, and the helper enrols with a certificate of its own. So a platform stack brings up its own controller. Remotes other than the host's cannot be added this way (they need a token or fingerprint from the other server, which is for its owner to give), and `plan` warns about each.
 - **It is BLOCKED if an instance of that name exists in that project and is not a helper** (it lacks the marker), instead of failing half way through an install.
 - **`authz: narrow` narrows the daemon's certificate** ([Narrowing the daemon's certificate](#narrowing-the-daemons-certificate)). It is the one change a declaration makes to a helper that is there, and `plan` says it first.
@@ -250,7 +250,7 @@ either way. `Ctrl-C` stops following and leaves the job running.
   whether or not anything ran them, which is to say a warning nobody read.
 - **A `kind: helper` document makes all of this part of the plan** ([above](#declaring-it-in-a-stack)): the helper's health is reported on its own line, not only as a closing note.
 - **They tell you when the helper is not well.** `tink plan` and `tink plan apply` end with a note when the server has a helper that is degraded or down
-  (skipping a volume, failing a copy, stopped, silent, or without its certificate), the same judgement `tink helper status` makes. A note, never a
+  (skipping a volume, failing a copy, a derived file blocked, a failed last job, stopped, silent, or without its certificate), the same judgement `tink helper status` makes. A note, never a
   failure, and nothing is said when there is no helper or it is healthy.
 - **They will not write a copy policy the helper cannot read.** The status document says the newest policy protocol the helper reads
   (`policy-proto`). If this tink would write a policy of a newer protocol, the volume is **BLOCKED** with the reason, instead of being applied and then
@@ -456,8 +456,9 @@ was found and since when:
 
 A volume the helper will **not** copy (a policy of a protocol it does not read, one that does not parse, a pool it cannot list, a volume it cannot read) is a
 record with `what` `backup` and the state `skipped`, and it has a `since` like any other. A copy that has failed since its last success is one with the state
-`failing`. `tink helper status` and `Evaluate` read these: a helper with a skipped volume or a failing copy is **degraded**. A reconcile state is carried in the
-document and printed by `tink helper status`, but not yet judged by health (that is its own piece of work).
+`failing`. `tink helper status` and `Evaluate` read these, and health judges all of them ([health](#health-what-the-document-says)): a skipped volume, a failing copy and
+a reconcile that is `blocked` or `failing` each make the helper **degraded**. A reconcile that is `skipped` does not: it means there is no stamped file or the instance
+it is on is not running, and a stopped proxy is noticed on its own.
 
 **One rule for "since", and it survives a restart.** One clock keeps `since` for every state: the reconciler's and the volumes'. At startup the daemon reads its
 own stored document, from the key and the place it publishes to (so it needs no right it does not already hold), and seeds the clock from it. A seeded entry
@@ -516,22 +517,26 @@ instance for an older helper), and judges it from that and from the state of its
 
 | | |
 |---|---|
-| **healthy** (exit 0) | running, heard from recently, no volume skipped, no copy failing |
-| **degraded** (exit 1) | running and heard from, but skipping a volume, failing a copy, or saying nothing useful (no document yet, one it cannot read, or a status volume that cannot be read) |
-| **down** (exit 2) | the instance is stopped, there is no helper, or it has been silent for more than **2.5 heartbeats** |
+| **healthy** (exit 0) | running, heard from recently, no volume skipped, no copy failing, no derived file or dns reconcile blocked or failing, and the last job did not fail |
+| **degraded** (exit 1) | running and heard from, but skipping a volume, failing a copy, a derived file or the dns records **blocked** or **failing**, the **last job failed**, draining, or saying nothing useful (no document yet, one it cannot read, one with no write time or heartbeat, or a status volume that cannot be read) |
+| **down** (exit 2) | the instance is stopped, there is no helper, it has been silent for more than **2.5 heartbeats**, or its certificate is not in the host's trust store |
+
+A reconcile that is `skipped` is not a problem, and neither is a last job that was `cancelled`: a cancelled job was stopped on purpose. A last job that `failed` is
+degraded **whenever it is the last one**, even when the copy it was about is also listed as failing: one rule, and the next job that finishes (whatever its state)
+takes its place in the document and clears it. The duplicate line is harmless, because a notification comes from the states and not from these lines.
 
 `--check` prints one line per helper and sets the exit status, so cron, a monitor or Home Assistant can poll it. Without `--check` it prints the
-details and exits 0 whatever it found (unless it could not look). The details list the volumes skipped (with since when) and the copies failing, then `states`: what the daemon keeps
+details and exits 0 whatever it found (unless it could not look). The details list each finding that judged the helper, then the volumes skipped (with since when) and the copies failing, then `states`: what the daemon keeps
 (a derived file, the dns records), each with its state, its reason and since when, and `events`: what it did lately, oldest first. `--json` prints everything.
 
 ```
 $ tink helper status --check
-degraded: tink-helper/helper: 1 volume(s) skipped: tenant/lib (user.tink.intent.backup.policy was written for protocol 2; this tink speaks 1)
+degraded: tink-helper/helper: tenant/lib is skipped: user.tink.intent.backup.policy was written for protocol 2; this tink speaks 1
 $ echo $?
 1
 ```
 
-`--json` prints a list with one object per helper: `project`, `name`, `instance-state` (the instance's own state, `Running`, `Stopped`, ...), `health` (`healthy`, `degraded` or `down`), `exit-code` (0, 1 or 2, the same as `--check` sets), `reasons`, `status-volume` (`POOL/VOLUME`, left out for a helper that keeps its document on its instance) and `status` (the [status document](#the-status-document) as it was read, left out when there was none). Every key is spelled with hyphens, like the status document's: **a script that read `instance_state`, `exit_code`, `status_volume`, `last_job`, `job_proto`, `policy_proto`, `running_jobs` or `queued_jobs` must read the hyphenated name** ([the removal page](removals/stamp-and-key-names.md) has the full list). In `jq` a hyphenated key takes brackets:
+`--json` prints a list with one object per helper: `project`, `name`, `instance-state` (the instance's own state, `Running`, `Stopped`, ...), `health` (`healthy`, `degraded` or `down`), `exit-code` (0, 1 or 2, the same as `--check` sets), `findings` (what judged the helper: a list of objects with `severity`, `reason`, `subject` and `detail`, [below](#health-what-the-document-says); it replaced the list of strings `reasons`, [the removal page](removals/status-json-findings.md)), `status-volume` (`POOL/VOLUME`, left out for a helper that keeps its document on its instance) and `status` (the [status document](#the-status-document) as it was read, left out when there was none). Every key is spelled with hyphens, like the status document's: **a script that read `instance_state`, `exit_code`, `status_volume`, `last_job`, `job_proto`, `policy_proto`, `running_jobs` or `queued_jobs` must read the hyphenated name** ([the removal page](removals/stamp-and-key-names.md) has the full list). In `jq` a hyphenated key takes brackets:
 
 ```
 $ tink helper status --json | jq -r '.[0]["instance-state"], .[0]["exit-code"]'
@@ -540,6 +545,40 @@ Running
 $ tink helper status --json | jq -r '.[0].status["last-job"].state'
 succeeded
 ```
+
+### Health: what the document says
+
+**Status: built (#311); unit-tested against fakes. Not yet run live.**
+
+Health is judged in two parts. **`Evaluate`** needs the server: whether the instance is running, whether the status volume could be read, whether the document has
+gone quiet for longer than its heartbeat, and (`CheckTrust`) whether the helper's certificate is still trusted. **`JudgeStatus(status, now)`** needs only the
+document and the time, so anything that holds the document can run it; `Evaluate` calls it, and nothing about the existing verdicts changed when they were split.
+
+Each reason is a **finding** (the one finding type): a **warning** when it makes the helper degraded and an **error** when it makes it down, a fixed **reason**
+phrase that names the kind of problem and carries no name or count (so it can be sent outside the site), a **subject** (the thing it is about, as the document names it:
+`backup/lib`, `derived/ingress-routes`, or the helper's instance, `instance/tink-helper/helper`) and a **detail** for a person that may name volumes and files.
+The document holds no error text, so the detail adds no exposure that the document does not already have.
+
+| Reason | Severity | When |
+|---|---|---|
+| `the helper's instance is not running` | error | the instance is stopped |
+| `the helper has gone quiet` | error | silent for more than 2.5 heartbeats |
+| `the helper's certificate is not trusted` | error | its certificate is not in the host's trust store |
+| `the status volume cannot be read` | warning | the volume the instance points at could not be read |
+| `the status document cannot be read` | warning | it is there and is not JSON, has no protocol, or is for a newer protocol |
+| `the helper has published no status document` | warning | it is running and has published nothing |
+| `the status document has no write time` / `has no heartbeat` | warning | it cannot be shown to be fresh |
+| `a volume is skipped` | warning | one for each volume the helper will not copy |
+| `a copy is failing` | warning | one for each copy that has failed since its last success |
+| `a derived file is blocked` / `is failing` | warning | one for each derived file whose state is `blocked` or `failing` |
+| `the dns records are blocked` / `are failing` | warning | the dns reconcile's state is `blocked` or `failing` |
+| `a reconcile is blocked` / `is failing` | warning | any other reconcile the document carries |
+| `a job failed` | warning | the last finished job failed |
+| `the helper is draining` | warning | an upgrade is in progress, or a drain was left behind |
+
+`tink helper status` prints each detail with its reason after it (`  - the copy of lib to nas is failing, 7 in a row [a copy is failing]`), `--check` joins the
+details on one line, and `--json` prints the findings. `plan` raises one warning for each, with the same reason and subject and the detail under "the daemon helper is
+degraded" (or "down"). The backup hand-off is unchanged: it refuses a helper that is down, and takes one that is degraded.
 
 **"Down" is the one the helper cannot report for itself**, which is why it is judged from outside, from a document that is still on its volume
 after the helper has gone. Nothing here sends a notification: this is what a notifier would run. Nothing in tink does that yet.
