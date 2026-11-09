@@ -1,6 +1,6 @@
 # Ownership stamps
 
-**Status: phase 1 ("Write") is built and was run live on a disposable Incus 7.5.1 server (2026-10-20); phases 2 and 3 are not built. The resource stamp (#309, the second stamp below) is built and run against fakes only: it has not yet been run on a live server.** The design is issue #133 (the whole of it: the rules, the removal that is not built, the open questions); this page records what exists. Phase 1 is #127.
+**Status: phase 1 ("Write") is built and was run live on a disposable Incus 7.5.1 server (2026-10-20); phases 2 and 3 are not built. The resource stamp (#309, the second stamp below) is built, unit-tested against fakes, and run live on a disposable Incus 7.5.1 server (2026-11-09, L-2026-11-09b): see [Run live](#run-live).** The design is issue #133 (the whole of it: the rules, the removal that is not built, the open questions); this page records what exists. Phase 1 is #127.
 
 An ownership stamp is one config key, `user.tink.intent.stack`, whose value is the name the stack gives itself with a `kind: stack` document. It answers "which stack made this object?" from the object, without a state file, the way a volume's backup policy already lives on the volume. It is a record, not a lock: nothing in phase 1 decides what may be removed, and tink still never deletes an object. It is one of tink's *intent* keys (written from the declaration, under `user.tink.intent.`); what an intent key is, and the facts and outcomes beside it, is defined once, in the [glossary](glossary.md#key-classes) and `internal/ownership`.
 
@@ -105,9 +105,17 @@ On 2026-10-20 on a local test host (a disposable Incus 7.5.1 server, tink built 
 - `ownership: adopt-on-apply` stamped a hand-made profile on the next ordinary apply; without it, an ordinary apply left a hand-made profile unstamped and `plan` listed it.
 - Not run: stamping an object on a server that restricts the client to some projects; a bridge with an OVN or physical parent; `--remote`.
 
-## Not run live
+## Run live
 
-The resource stamp (#309) has been run against fakes only. To check on a disposable server: `incus storage volume copy` of a managed volume is skipped by the daemon and shown with the fixed reason in `tink helper status`; `incus copy` of a published instance no longer blocks the site's derived files; and a renamed volume made managed again by `plan apply --adopt` with nothing restarted.
+The resource stamp (#309) was run on a disposable Incus 7.5.1 server over `--remote` on 2026-11-09 (L-2026-11-09b), with the tink of this change and, as the control, the tink of `main` before it:
+
+- **Stamps.** An instance, a profile, a network, a network ACL, a project and a storage volume each carried `user.tink.intent.resource` with their own address (for example `instance/default/whoami`, `network/tink0`, `storage-volume/default/default/keep`). A second plan said no changes for them: the stamp is not a change line.
+- **A copy of a published instance.** After `incus copy` of an instance that carries publish stamps, `main` refused to render the site (`error: the name "whoami" is also published by default/<copy's source>: a published name is unique in the zone`, "nothing was rendered") and `tink plan` of the platform stack stopped on it. With this change `plan` of the platform said no changes, and `tink join --from-server` rendered and reported one warning for the copy: its publish, site and derive stamps are ignored.
+- **The scheduler.** With `tink daemon run`, a copy made by `incus storage volume copy` of a managed volume was skipped with "its stamps were made for another object (a copy?)", a volume created by the tink of `main` (owner stamp, no resource stamp) with "it has no resource stamp yet (plan apply writes it)", and the original was scheduled (a copy job was queued). The reasons were read from the daemon's published status document.
+- **An unbound instance.** An instance created by the tink of `main` was planned with the line "has no resource stamp yet: `tink plan apply` writes it and restarts none", and an ordinary `plan apply` wrote `instance/default/legacy`; its process id and uptime were unchanged, so nothing was restarted.
+- **`--adopt`.** A hand-made volume copy that a stack then declared was planned with one grouped line naming it ("carries stamps made for another resource (copies?)"); `plan apply --adopt` rewrote its resource stamp to its own address, and the next plan had no such line.
+
+Not run live: `tink helper status` reading those reasons (the status document was read directly); an image (`kind: image`) carrying the stamp; and a daemon running as a helper instance under a narrowed certificate. The mutation checks of the tests (a broken consumer makes its test fail) were run on fakes.
 
 ## Not built
 
