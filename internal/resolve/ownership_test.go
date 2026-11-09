@@ -273,25 +273,31 @@ func (f *ownFake) CreateImage(_ api.ImagesPost, args *incus.ImageCreateArgs) (in
 
 func (f *ownFake) CreateImageAlias(api.ImageAliasesPost) error { return nil }
 
-// The five states every kind is run against. "absent" is the object not being there at all.
+// The states every kind is run against. "absent" is the object not being there at all.
 const (
 	absent        = "absent"
 	unstamped     = "unstamped"
 	stampedHere   = "stamped here"
 	stampedElsewh = "stamped elsewhere"
+	stampedCopy   = "stamped for another object"
+	unbound       = "stamped without a resource"
 )
 
-// stampFor is the config an object in the given state carries, on top of base.
-func stampFor(state string, base map[string]string) map[string]string {
+// stampFor is the config an object in the given state carries, on top of base; address is the address the object really has.
+func stampFor(state string, base map[string]string, address string) map[string]string {
 	out := map[string]string{}
 	for k, v := range base {
 		out[k] = v
 	}
 	switch state {
 	case stampedHere:
-		out[ownership.Key] = "lab"
+		out[ownership.Key], out[ownership.ResourceKey] = "lab", address
 	case stampedElsewh:
-		out[ownership.Key] = "other"
+		out[ownership.Key], out[ownership.ResourceKey] = "other", address
+	case stampedCopy:
+		out[ownership.Key], out[ownership.ResourceKey] = "lab", address+"-of-another"
+	case unbound:
+		out[ownership.Key] = "lab"
 	}
 	return out
 }
@@ -303,7 +309,7 @@ func (f *ownFake) seed(kind Kind, state string) Resource {
 		return stampedResource(kind)
 	}
 	r := stampedResource(kind)
-	cfg := stampFor(state, r.Config)
+	cfg := stampFor(state, r.Config, addressOf(r))
 	switch kind {
 	case KindProject:
 		f.projects["p"] = &api.Project{Name: "p", ProjectPut: api.ProjectPut{Config: cfg}}
@@ -319,7 +325,7 @@ func (f *ownFake) seed(kind Kind, state string) Resource {
 		f.acls["p"] = &api.NetworkACL{NetworkACLPost: api.NetworkACLPost{Name: "p"}, NetworkACLPut: api.NetworkACLPut{Config: cfg}}
 	case KindImage:
 		f.aliases["a"] = "fp1"
-		f.images["fp1"] = &api.Image{Fingerprint: "fp1", ImagePut: api.ImagePut{Properties: stampFor(state, r.Properties), Profiles: []string{"p1", "p2"}, AutoUpdate: true}}
+		f.images["fp1"] = &api.Image{Fingerprint: "fp1", ImagePut: api.ImagePut{Properties: stampFor(state, r.Properties, addressOf(r)), Profiles: []string{"p1", "p2"}, AutoUpdate: true}}
 	}
 	return r
 }
@@ -352,9 +358,10 @@ func ownOpts(stack string) PlanOptions {
 
 // Every kind that carries a stamp, planned against every live state: the stamp is never a change, and it is classified.
 func TestEveryKindReportsWhoseItIsAndNeverCallsTheStampAChange(t *testing.T) {
-	want := map[string]ownership.State{absent: ownership.Unknown, unstamped: ownership.Unstamped, stampedHere: ownership.Here, stampedElsewh: ownership.Elsewhere}
+	want := map[string]ownership.State{absent: ownership.Unknown, unstamped: ownership.Unstamped, stampedHere: ownership.Here, stampedElsewh: ownership.Elsewhere,
+		stampedCopy: ownership.Copy, unbound: ownership.Unbound}
 	for _, kind := range stampedKinds {
-		for _, state := range []string{absent, unstamped, stampedHere, stampedElsewh} {
+		for _, state := range []string{absent, unstamped, stampedHere, stampedElsewh, stampedCopy, unbound} {
 			t.Run(string(kind)+"/"+state, func(t *testing.T) {
 				f := newOwnFake()
 				r := f.seed(kind, state)
@@ -370,7 +377,7 @@ func TestEveryKindReportsWhoseItIsAndNeverCallsTheStampAChange(t *testing.T) {
 					t.Fatalf("a stamp-only difference must not be a change: action %v, changes %q", p.Action, p.Changes)
 				}
 				for _, c := range p.Changes {
-					if strings.Contains(c, ownership.Key) {
+					if strings.Contains(c, ownership.Key) || strings.Contains(c, ownership.ResourceKey) {
 						t.Errorf("a change line names the stamp: %q", c)
 					}
 				}
@@ -472,13 +479,20 @@ func TestObjectsAreStampedInTheirCreationRequest(t *testing.T) {
 				if got != stack {
 					t.Errorf("the creation request carried %q = %q, want %q", ownership.Key, got, stack)
 				}
+				wantAddr := addressOf(r)
+				if stack == "" {
+					wantAddr = "" // an unnamed stack stamps nothing
+				}
+				if got := f.createdConfig[f.created[0]][ownership.ResourceKey]; got != wantAddr {
+					t.Errorf("the creation request carried %q = %q, want %q", ownership.ResourceKey, got, wantAddr)
+				}
 				if !reflect.DeepEqual(r.Config, before) && len(before) > 0 {
 					t.Errorf("creating changed the declaration's config: %v, was %v", r.Config, before)
 				}
 				if kind == KindInstance {
 					// the stamp survives the config step that follows creation, and the instance is stamped in the request, not after
-					if f.instances["p"].Config[ownership.Key] != stack {
-						t.Errorf("the instance ended with %q = %q, want %q", ownership.Key, f.instances["p"].Config[ownership.Key], stack)
+					if f.instances["p"].Config[ownership.Key] != stack || f.instances["p"].Config[ownership.ResourceKey] != wantAddr {
+						t.Errorf("the instance ended with %v, want both stamps", f.instances["p"].Config)
 					}
 				}
 				if kind == KindStorageVolume || kind == KindProfile {
@@ -557,8 +571,11 @@ func TestAdoptStampsEachKindWithOneKeyAndKeepsTheRest(t *testing.T) {
 					t.Errorf("%s was dropped or changed by the stamp: %q", k, got[k])
 				}
 			}
-			if len(got) != len(bag)+1 {
-				t.Errorf("the write changed more than one key: %v", got)
+			if got[ownership.ResourceKey] != addressOf(r) {
+				t.Errorf("the object carries %q = %q, want its own address %q", ownership.ResourceKey, got[ownership.ResourceKey], addressOf(r))
+			}
+			if len(got) != len(bag)+2 {
+				t.Errorf("the write changed more than the two stamps: %v", got)
 			}
 			// a second pass has nothing to do and writes nothing
 			before := len(f.updated) + len(f.patches)
@@ -591,8 +608,8 @@ func TestAdoptRestartsNothingEvenWhenTheInstanceSaysRestart(t *testing.T) {
 	if len(f.patches) != 1 || f.patches[0] != "PATCH /1.0/instances/web?project=ha" {
 		t.Fatalf("patches = %v, want one PATCH of the instance, in its project", f.patches)
 	}
-	if got := f.updatedConfig["patch/web"]; !reflect.DeepEqual(got, map[string]string{ownership.Key: "lab"}) {
-		t.Errorf("the PATCH carried %v, want only the stamp", got)
+	if got := f.updatedConfig["patch/web"]; !reflect.DeepEqual(got, map[string]string{ownership.Key: "lab", ownership.ResourceKey: "instance/ha/web"}) {
+		t.Errorf("the PATCH carried %v, want only the two stamps", got)
 	}
 	if lines := res.Lines(); !strings.HasSuffix(lines[0], "restarted 0") || !strings.Contains(lines[0], "1 instance") {
 		t.Errorf("summary = %q", lines)
@@ -744,7 +761,7 @@ func TestAdoptNeedsAStackNameAndStopsWhenInterrupted(t *testing.T) {
 
 // The line plan prints, and the summary.
 
-func TestTheOwnershipLineIsOneGroupedLine(t *testing.T) {
+func TestTheLineForUnstampedObjectsIsOneGroupedLine(t *testing.T) {
 	rep := NewOwnershipReport("lab", false)
 	for i, n := range []string{"a", "b", "c", "d", "e", "f", "g"} {
 		kind := KindInstance
@@ -756,10 +773,11 @@ func TestTheOwnershipLineIsOneGroupedLine(t *testing.T) {
 	rep.Add(PlannedResource{Resource: Resource{Kind: KindInstance, Name: "stamped"}, Ownership: StampState{State: ownership.Here}})
 	rep.Add(PlannedResource{Resource: Resource{Kind: KindInstance, Name: "foreign"}, Ownership: StampState{State: ownership.Elsewhere, Owner: "o"}})
 	rep.Add(PlannedResource{Resource: Resource{Kind: KindFile, Name: "f"}})
-	line := rep.Line()
-	if strings.Contains(line, "\n") {
-		t.Fatalf("not one line:\n%s", line)
+	lines := rep.Lines()
+	if len(lines) != 1 {
+		t.Fatalf("want one line, got %q", lines)
 	}
+	line := lines[0]
 	for _, want := range []string{"7 declared objects have no stamp", "instance/a@ha", "(+2 more)", "--adopt", "restarts none"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("line lacks %q: %s", want, line)
@@ -772,13 +790,13 @@ func TestTheOwnershipLineIsOneGroupedLine(t *testing.T) {
 	none := NewOwnershipReport("lab", false)
 	none.Add(PlannedResource{Resource: Resource{Kind: KindInstance, Name: "x"}, Ownership: StampState{State: ownership.Here}})
 	none.Add(PlannedResource{Resource: Resource{Kind: KindInstance, Name: "new"}}) // created: no state
-	if none.Line() != "" {
-		t.Errorf("a stack whose objects are all stamped (or new) prints nothing: %q", none.Line())
+	if len(none.Lines()) != 0 {
+		t.Errorf("a stack whose objects are all stamped (or new) prints nothing: %q", none.Lines())
 	}
 	// standing adoption changes the promise
 	adopting := NewOwnershipReport("lab", true)
 	adopting.Add(PlannedResource{Resource: Resource{Kind: KindInstance, Name: "x"}, Ownership: StampState{State: ownership.Unstamped}})
-	if l := adopting.Line(); !strings.Contains(l, "1 declared object has no stamp") || !strings.Contains(l, "the next apply stamps it") {
+	if l := adopting.Lines(); len(l) != 1 || !strings.Contains(l[0], "1 declared object has no stamp") || !strings.Contains(l[0], "the next apply stamps it") {
 		t.Errorf("line = %s", l)
 	}
 }
@@ -788,11 +806,11 @@ func TestAnUnnamedStackSaysSoOnce(t *testing.T) {
 	rep.Add(PlannedResource{Resource: Resource{Kind: KindInstance, Name: "a"}})
 	rep.Add(PlannedResource{Resource: Resource{Kind: KindProfile, Name: "b"}})
 	rep.Add(PlannedResource{Resource: Resource{Kind: KindFile, Name: "c"}}) // no object: not counted
-	line := rep.Line()
-	if strings.Contains(line, "\n") || !strings.Contains(line, "has no name") || !strings.Contains(line, "2 declared") {
-		t.Errorf("line = %q", line)
+	lines := rep.Lines()
+	if len(lines) != 1 || !strings.Contains(lines[0], "has no name") || !strings.Contains(lines[0], "2 declared") {
+		t.Errorf("lines = %q", lines)
 	}
-	if l := NewOwnershipReport("", false).Line(); l != "" {
+	if l := NewOwnershipReport("", false).Lines(); len(l) != 0 {
 		t.Errorf("a stack with nothing that carries a stamp says nothing: %q", l)
 	}
 }
@@ -800,7 +818,7 @@ func TestAnUnnamedStackSaysSoOnce(t *testing.T) {
 func TestAdoptSummaryNamesTheKindsAndCountsNoRestart(t *testing.T) {
 	a := AdoptResult{Stamped: make([]string, 14), ByKind: map[Kind]int{KindInstance: 9, KindProfile: 3, KindStorageVolume: 2}}
 	got := a.Lines()[0]
-	want := "adopt: stamped user.tink.intent.stack on 14 objects (9 instance, 3 profile, 2 storage-volume); restarted 0"
+	want := "adopt: stamped user.tink.intent.stack and user.tink.intent.resource on 14 objects (9 instance, 3 profile, 2 storage-volume); restarted 0"
 	if got != want {
 		t.Errorf("summary = %q, want %q", got, want)
 	}
@@ -857,12 +875,13 @@ func TestOwnershipIsAFieldOfTheStackAlone(t *testing.T) {
 func TestExportNeverWritesTheStamp(t *testing.T) {
 	inst := kumaInstance()
 	inst.Config[ownership.Key] = "lab"
-	s := &stampedExportServer{exportServer: exportServer{inst: inst, volCfg: map[string]string{ownership.Key: "lab", "size": "1GiB"}}}
+	inst.Config[ownership.ResourceKey] = "instance/tink-play/kuma-play"
+	s := &stampedExportServer{exportServer: exportServer{inst: inst, volCfg: map[string]string{ownership.Key: "lab", ownership.ResourceKey: "storage-volume/tink-play/default/data", "size": "1GiB"}}}
 	res, err := Export(s, ExportOptions{Project: "tink-play", Instances: []string{"kuma-play"}, Offline: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(res.YAML, ownership.Key) || strings.Contains(res.YAML, "user.tink.intent.stack") {
+	if strings.Contains(res.YAML, ownership.Key) || strings.Contains(res.YAML, ownership.ResourceKey) || strings.Contains(res.YAML, "user.tink.intent.") {
 		t.Errorf("the export wrote the stamp:\n%s", res.YAML)
 	}
 	path := filepath.Join(t.TempDir(), "tink.yaml")
@@ -887,33 +906,13 @@ func (s *stampedExportServer) GetProject(name string) (*api.Project, string, err
 
 // The stamp on an instance is tink's own key, not something a person set: plan --extras does not list it.
 func TestTheStampIsNotAnExtra(t *testing.T) {
-	live := Resource{Config: map[string]string{ownership.Key: "lab", "user.mine": "y"}}
+	live := Resource{Config: map[string]string{ownership.Key: "lab", ownership.ResourceKey: "instance/default/x", "user.mine": "y"}}
 	e := undeclaredExtras(live, Resource{})
 	if !reflect.DeepEqual(e.Config, []string{"user.mine"}) {
 		t.Errorf("extras = %v, want only the key a person set", e.Config)
 	}
-	if got := undeclaredConfig(map[string]string{ownership.Key: "lab"}, nil, nil); len(got) != 0 {
+	if got := undeclaredConfig(map[string]string{ownership.Key: "lab", ownership.ResourceKey: "profile/default/x"}, nil, nil); len(got) != 0 {
 		t.Errorf("the stamp on a profile, volume, network or project is an extra: %v", got)
-	}
-}
-
-func TestClassify(t *testing.T) {
-	cases := []struct {
-		cfg   map[string]string
-		stack string
-		state ownership.State
-		owner string
-	}{
-		{nil, "lab", ownership.Unstamped, ""},
-		{map[string]string{ownership.Key: ""}, "lab", ownership.Unstamped, ""},
-		{map[string]string{ownership.Key: "lab"}, "lab", ownership.Here, "lab"},
-		{map[string]string{ownership.Key: "other"}, "lab", ownership.Elsewhere, "other"},
-		{map[string]string{ownership.Key: "lab"}, "", ownership.Unknown, ""},
-	}
-	for _, c := range cases {
-		if s, o := ownership.Classify(c.cfg, c.stack); s != c.state || o != c.owner {
-			t.Errorf("Classify(%v, %q) = %v, %q; want %v, %q", c.cfg, c.stack, s, o, c.state, c.owner)
-		}
 	}
 }
 

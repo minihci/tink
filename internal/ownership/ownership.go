@@ -9,6 +9,11 @@
 // The key lives in the object's own `config`, except for an image, where Incus keeps a client's keys in `properties`; the key and the value are the
 // same.
 //
+// A second intent stamp, `user.tink.intent.resource`, is written beside it: the object's own address (Address), which is what the object was made for.
+// A copy of an object (`incus copy`, `incus storage volume copy`, a profile or a project made with `show | create`) carries every user.* key of what
+// it was copied from, so a stamp that says only "stack lab" would be read as true of the copy too. Comparing the stamp's address with the object's real
+// one is what tells the original from its copy (Classify), and everything that acts on an object because of a stamp acts only when they match.
+//
 // The package is also the one place that says what class a key under user.tink. is (ClassOf; the issue behind it is #306). There are three, and the
 // class is the prefix, so no consumer keeps a table of its own:
 //
@@ -37,12 +42,54 @@ const (
 // ACL (their `config`) and image (its `properties`). It is intent: which stack the object was made for.
 const Key = IntentPrefix + "stack"
 
-// ResourceKey and AppliedKey are two more intent keys, named here so that everything that has to treat them alike (a copy of a volume keeps the first
-// and drops the second; a plan never takes either back) can. Writing them is the work of their own issues: nothing writes them yet.
+// ResourceKey is the second stamp: the address (Address) of the object it was written on, "what this object was made for". It is written where Key is,
+// in the creation request, and kept current by an ordinary apply on an object the stack already owns. AppliedKey is another intent key, named here so
+// that everything that has to treat the stamps alike (a copy of a volume keeps the first two and drops the applied record; a plan never takes any of
+// them back) can. Nothing writes the applied record yet: that is the work of its own issue.
 const (
 	ResourceKey = IntentPrefix + "resource"
 	AppliedKey  = IntentPrefix + "applied"
 )
+
+// The kinds that carry the stamps, in the words an address uses. They are the kind names of a stack's documents; a test in the resolver holds the two
+// to each other.
+const (
+	KindProject       = "project"
+	KindProfile       = "profile"
+	KindStorageVolume = "storage-volume"
+	KindInstance      = "instance"
+	KindImage         = "image"
+	KindNetwork       = "network"
+	KindNetworkACL    = "network-acl"
+)
+
+// Address is an Incus object's own address in tink's form, the string the resource stamp holds:
+//
+//	instance/PROJECT/NAME   profile/PROJECT/NAME   image/PROJECT/ALIAS
+//	storage-volume/PROJECT/POOL/NAME
+//	project/NAME
+//	network/NAME            network-acl/NAME        (server-global: no project)
+//
+// An empty project or pool is written "default", so a declaration that leaves them out and a listing that spells them out meet. For an image the name is
+// the alias tink looks it up by, in the project the stack declares: no lookup of the project an image is really stored in is needed. A kind that carries
+// no stamp has no address, and Address returns "". It is the same string that names an object as the subject of a status, a log line or a notification.
+func Address(kind, project, pool, name string) string {
+	def := func(s string) string {
+		if s == "" {
+			return "default"
+		}
+		return s
+	}
+	switch kind {
+	case KindProject, KindNetwork, KindNetworkACL:
+		return kind + "/" + name
+	case KindInstance, KindProfile, KindImage:
+		return kind + "/" + def(project) + "/" + name
+	case KindStorageVolume:
+		return kind + "/" + def(project) + "/" + def(pool) + "/" + name
+	}
+	return ""
+}
 
 // The facts: the keys a person writes under user.tink. in `config:`. It is the whole list. role and dns.zone are one key each; leg. and offer. own every
 // key under them (a leg per NIC; an offer's port, protocol and listen address).
@@ -125,6 +172,12 @@ const (
 	Here
 	// Elsewhere means the object is stamped with the name of another stack.
 	Elsewhere
+	// Copy means the object carries this stack's stamp and a resource stamp that is the address of another object: it was copied from one, and
+	// everything it carries is what the original was made for.
+	Copy
+	// Unbound means the object carries this stack's stamp and no resource stamp: it was made before the resource stamp existed. An ordinary apply
+	// writes the stamp; until then nothing may act on the object because of what it carries.
+	Unbound
 )
 
 func (s State) String() string {
@@ -135,6 +188,10 @@ func (s State) String() string {
 		return "stamped here"
 	case Elsewhere:
 		return "stamped elsewhere"
+	case Copy:
+		return "stamped for another object"
+	case Unbound:
+		return "stamped without a resource"
 	}
 	return "unknown"
 }
@@ -144,33 +201,53 @@ func Owner(config map[string]string) string {
 	return config[Key]
 }
 
+// Resource is the address the object's resource stamp holds, or "".
+func Resource(config map[string]string) string {
+	return config[ResourceKey]
+}
+
 // Classify says whose an existing object is, from its own config as it was read (its local config, never an expanded one: an instance's profiles
-// would otherwise answer for it), and the name of the stack asking. A stack with no name has no answer: it stamps and adopts nothing. The second
-// result is the owner the object names, or "".
-func Classify(config map[string]string, stack string) (State, string) {
-	if stack == "" {
+// would otherwise answer for it), the name of the stack asking and the address the object really has (Address). A stack with no name has no answer: it
+// stamps and adopts nothing, and neither has an object without an address. The second result is the owner the object names, or "".
+//
+// The states are Unstamped (no owner stamp), Elsewhere (another stack's), Here (this stack's, and a resource stamp equal to address), Copy (this
+// stack's, and a resource stamp that differs) and Unbound (this stack's, and no resource stamp yet). A consumer acts on Here and on nothing else.
+func Classify(config map[string]string, stack, address string) (State, string) {
+	if stack == "" || address == "" {
 		return Unknown, ""
 	}
-	switch owner := Owner(config); {
+	owner := Owner(config)
+	switch {
 	case owner == "":
 		return Unstamped, ""
-	case owner == stack:
+	case owner != stack:
+		return Elsewhere, owner
+	}
+	switch res := Resource(config); {
+	case res == "":
+		return Unbound, owner
+	case res == address:
 		return Here, owner
 	default:
-		return Elsewhere, owner
+		return Copy, owner
 	}
 }
 
-// With returns a copy of config that carries the stamp for stack, for a creation request. The map it is given is not changed (a resource's config is
-// shared by everything that plans and applies it). A stack with no name adds nothing, and config is returned as it is.
-func With(config map[string]string, stack string) map[string]string {
+// With returns a copy of config that carries both stamps for stack, for a creation request: the owner stamp and the resource stamp, address being the
+// address (Address) of the object the request creates. The map it is given is not changed (a resource's config is shared by everything that plans and
+// applies it). A stack with no name adds nothing, and config is returned as it is. An empty address adds no resource stamp: the object would be
+// unbound, which reads as "not yet", never as a claim about another object.
+func With(config map[string]string, stack, address string) map[string]string {
 	if stack == "" {
 		return config
 	}
-	out := make(map[string]string, len(config)+1)
+	out := make(map[string]string, len(config)+2)
 	for k, v := range config {
 		out[k] = v
 	}
 	out[Key] = stack
+	if address != "" {
+		out[ResourceKey] = address
+	}
 	return out
 }

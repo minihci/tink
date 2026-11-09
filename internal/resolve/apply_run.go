@@ -11,6 +11,7 @@ import (
 	incus "github.com/lxc/incus/v7/client"
 
 	"github.com/minihci/tink/internal/incusapi"
+	"github.com/minihci/tink/internal/ownership"
 )
 
 // outcome is how one resource ended an apply.
@@ -167,9 +168,20 @@ func applyOne(server incus.InstanceServer, r Resource, opts PlanOptions, note fu
 			}
 		}
 	}
+	// Keeping the stamps current on an object this stack already owns: an unbound one (it has the owner stamp and no resource stamp yet) gets the
+	// resource stamp. With a real change to make it goes in the same call (below); otherwise it is a stamp-only write (adopt.go), and a stamp is
+	// not a change, so the object is still "no changes" and nothing is restarted for it, whatever its restart: says.
+	unbound := plan.Ownership.State == ownership.Unbound
 	switch plan.Action {
 	case ActionNone:
 		note("%s/%s: no changes", r.Kind, r.Name)
+		if unbound {
+			limit := opLimit(opts.opTimeout, false)
+			if _, err := incusapi.Bounded(limit, "writing the resource stamp of "+stampLabel(r), func() (adoptOutcome, error) { return stampObject(server, r, opts.stack, resourceJob(r)) }); err != nil {
+				return outConverged, fmt.Errorf("writing the resource stamp: %w", err)
+			}
+			note("%s/%s: wrote its resource stamp %s (a stamp is not a change; nothing was restarted)", r.Kind, r.Name, addressOf(r))
+		}
 		fileNotes()
 		return outConverged, nil
 	case ActionDeferred:
@@ -196,6 +208,9 @@ func applyOne(server incus.InstanceServer, r Resource, opts PlanOptions, note fu
 		}
 		return outChanged, nil
 	case ActionUpdate:
+		if unbound {
+			r.Config = withResourceStamp(r.Config, r)
+		}
 		if err := updateOne(server, r, volumeEnv{targets: opts.targets, stack: opts.stack, opTimeout: opts.opTimeout, helperAuthz: opts.helperAuthz}); err != nil {
 			return outConverged, err
 		}
@@ -223,6 +238,11 @@ func applyOne(server incus.InstanceServer, r Resource, opts PlanOptions, note fu
 		return outChanged, nil
 	}
 	return outConverged, nil
+}
+
+// withResourceStamp is config with the resource stamp of r added, as a new map: the object is being updated anyway, and the stamp goes in that write.
+func withResourceStamp(config map[string]string, r Resource) map[string]string {
+	return withStamps(config, map[string]string{ownership.ResourceKey: addressOf(r)})
 }
 
 // changesEnvironment reports whether any planned change is to an environment.* config key.

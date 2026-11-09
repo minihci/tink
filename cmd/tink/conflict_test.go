@@ -18,7 +18,7 @@ import (
 // The one named exception is a function whose every caller is such a literal, and says so in its comment.
 func TestEveryETagWriteIsRetriedOnConflict(t *testing.T) {
 	update := regexp.MustCompile(`^Update(Profile|Project|Network|NetworkACL|Image|StoragePoolVolume|Instance|StoragePoolBucket|NetworkZone|ClusterGroup)$`)
-	calledOnlyInsideRetry := map[string]bool{"adoptOnce": true}
+	calledOnlyInsideRetry := map[string]bool{"stampOnce": true}
 
 	var bad []string
 	fset := token.NewFileSet()

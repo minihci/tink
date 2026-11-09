@@ -353,7 +353,7 @@ not counted. See docs/plan-extras.md.`, resolve.DefaultFile),
 					}
 				}
 			}
-			if line := owned.Line(); line != "" {
+			for _, line := range owned.Lines() {
 				fmt.Fprintln(cmd.OutOrStdout(), line)
 			}
 			noteUndeclaredPolicies(cmd.OutOrStdout(), backuprun.ServerEngine{Server: server}, resources)

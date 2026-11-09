@@ -5,16 +5,22 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/minihci/tink/internal/backupext"
 	"github.com/minihci/tink/internal/ownership"
 )
 
-// Ownership stamps, phase 1 (issue #127; the design is #133, the notes docs/ownership.md).
+// Ownership stamps, phase 1 (issue #127; the design is #133, the notes docs/ownership.md), and the resource stamp (issue #309).
 //
-// Every object tink CREATES for a named stack carries `user.tink.intent.stack: <stack name>` from the creation request on (createOne, createInstance). An
-// object that was there already is not touched by an ordinary apply: whose it is is a separate dimension of its plan (StampState), read from the
-// object as the plan read it, that is never a change line, never an action and never an exit status. `tink plan` says in one line how many declared
-// objects have no stamp; `tink plan apply --adopt` (or `ownership: adopt-on-apply` on the `kind: stack`) stamps them in one narrow pass (adopt.go) that
-// writes the one key and nothing else, and in particular never restarts anything.
+// Every object tink CREATES for a named stack carries two stamps from the creation request on (createOne, createInstance): `user.tink.intent.stack: <stack
+// name>`, whose it is, and `user.tink.intent.resource: <address>` (ownership.Address), which object it was made for. An object that was there already is
+// not claimed by an ordinary apply: whose it is, and whether its stamps are meant for it, is a separate dimension of its plan, the stamp dimension
+// (StampState), read from the object as the plan read it, that is never a change line, never an action and never an exit status. `tink plan` says in
+// grouped lines how many declared objects have no stamp, carry stamps made for another object (a copy), or have no resource stamp yet.
+//
+// What may write a stamp is narrow. An ordinary apply keeps the stamps current on an object this stack already owns: it writes a missing resource stamp,
+// in the same call as a real change, or alone otherwise (the narrow write of adopt.go), and restarts nothing for it. `tink plan apply --adopt` (or
+// `ownership: adopt-on-apply` on the `kind: stack`) claims the declared objects that carry no stamp and the ones that are copies, in one narrow pass that
+// writes the two stamps and nothing else. An object another stack stamped is left alone.
 //
 // Which kinds: project, profile, storage-volume, instance, network, network-acl and image (its `properties`). Not the helper (`kind: helper` is
 // installed by the helper's own installer, and its project is the installer's), not a project that is only named by `project:` (a reference, never
@@ -29,12 +35,26 @@ func stampedKind(k Kind) bool {
 	return false
 }
 
-// StampState is the ownership dimension of one planned resource.
+// StampState is the stamp dimension of one planned resource.
 type StampState struct {
-	// State is whose the object is for this stack: ownership.Unknown unless the kind carries a stamp, the object exists and the stack has a name.
+	// State is whose the object is for this stack, and whether its stamps are meant for it (ownership.Classify): ownership.Unknown unless the kind
+	// carries a stamp, the object exists and the stack has a name.
 	State ownership.State
-	// Owner is the stack the object names, when State is Elsewhere (and the stack's own name when it is Here).
+	// Owner is the stack the object names, when State is Elsewhere (and the stack's own name for the other states that have one).
 	Owner string
+	// RestorePoint says that the object is one of tink's own restore points (or a copy in progress), which carries its source's stamps by design and is not
+	// counted as a copy. It is read from the markers the backup capability registers.
+	RestorePoint bool
+}
+
+// addressOf is the address (ownership.Address) of the Incus object r declares: what its resource stamp holds. An image is found by its alias, so that is
+// its name here; every other kind is placed by the project and pool the stack gave it (Levels puts the stack's project in each resource).
+func addressOf(r Resource) string {
+	name := r.Name
+	if r.Kind == KindImage {
+		name = r.Alias
+	}
+	return ownership.Address(string(r.Kind), r.Project, r.Pool, name)
 }
 
 // observed records the config (an image's properties) a plan read from the live object, so that planKind can say whose the object is once the kind has
@@ -47,7 +67,14 @@ func observed(p PlannedResource, config map[string]string) PlannedResource {
 // withOwnership classifies the object the plan observed, for the named stack, and forgets what it read. It changes nothing else about the plan.
 func (p PlannedResource) withOwnership(stack string) PlannedResource {
 	if stack != "" && p.liveRead && stampedKind(p.Resource.Kind) {
-		p.Ownership.State, p.Ownership.Owner = ownership.Classify(p.live, stack)
+		p.Ownership.State, p.Ownership.Owner = ownership.Classify(p.live, stack, addressOf(p.Resource))
+		if p.Ownership.State == ownership.Copy && p.Resource.Kind == KindStorageVolume {
+			for _, marker := range backupext.Get().Keys().RestorePointMarkers {
+				if _, ok := p.live[marker]; ok {
+					p.Ownership.RestorePoint = true
+				}
+			}
+		}
 	}
 	p.live, p.liveRead = nil, false
 	return p
@@ -153,17 +180,19 @@ func AdoptOnApply(resources []Resource) bool {
 	return false
 }
 
-// OwnershipReport collects, over the plans of a whole stack, what `plan` says about ownership: one line, and nothing else. It is the only change to the
-// output of `plan` for a stack that exists already.
+// OwnershipReport collects, over the plans of a whole stack, what `plan` says about the stamps: a few grouped lines, never a line of any resource, and
+// never an exit status. It is the only change to the output of `plan` for a stack that exists already.
 type OwnershipReport struct {
 	stack     string
 	adopting  bool
 	unnamed   int // declared objects that would carry a stamp if the stack had a name
 	unstamped []string
+	copies    []string // carry this stack's stamps, made for another object
+	unbound   []string // carry this stack's stamp and no resource stamp yet
 }
 
-// NewOwnershipReport starts a report for a stack. adopting says the apply that follows is going to stamp what has no stamp (--adopt, or
-// ownership: adopt-on-apply), which changes what the line promises.
+// NewOwnershipReport starts a report for a stack. adopting says the apply that follows is going to claim what has no stamp and what is a copy (--adopt,
+// or ownership: adopt-on-apply), which changes what those lines promise.
 func NewOwnershipReport(stack string, adopting bool) *OwnershipReport {
 	return &OwnershipReport{stack: stack, adopting: adopting}
 }
@@ -178,8 +207,15 @@ func (o *OwnershipReport) Add(p PlannedResource) {
 		o.unnamed++
 		return
 	}
-	if p.Ownership.State == ownership.Unstamped {
+	switch p.Ownership.State {
+	case ownership.Unstamped:
 		o.unstamped = append(o.unstamped, stampLabel(r))
+	case ownership.Copy:
+		if !p.Ownership.RestorePoint { // tink's own restore points carry their source's stamps on purpose
+			o.copies = append(o.copies, stampLabel(r))
+		}
+	case ownership.Unbound:
+		o.unbound = append(o.unbound, stampLabel(r))
 	}
 }
 
@@ -195,35 +231,69 @@ func stampLabel(r Resource) string {
 	return label
 }
 
-// maxOwnershipNames is how many unstamped objects the line names before it counts the rest.
+// maxOwnershipNames is how many objects a line names before it counts the rest.
 const maxOwnershipNames = 5
 
-// Line is the one line to print, or "" when there is nothing to say: every declared object that exists is stamped, or there is none.
-func (o *OwnershipReport) Line() string {
-	switch {
-	case o.stack == "" && o.unnamed > 0:
-		return fmt.Sprintf("ownership: this stack has no name (add a `kind: stack` document), so nothing it creates is stamped with the stack it belongs to and nothing can be adopted; "+
-			"once it is named, %d declared object(s) would be stamped", o.unnamed)
-	case len(o.unstamped) == 0:
-		return ""
-	}
-	names := append([]string(nil), o.unstamped...)
+// listed is the sorted, shortened list a line carries, and the words that agree with how many there are.
+func listed(labels []string) (list, noun, them string) {
+	names := append([]string(nil), labels...)
 	sort.Strings(names)
 	shown := names
 	if len(shown) > maxOwnershipNames {
 		shown = shown[:maxOwnershipNames]
 	}
-	list := strings.Join(shown, ", ")
+	list = strings.Join(shown, ", ")
 	if more := len(names) - len(shown); more > 0 {
 		list += fmt.Sprintf(" (+%d more)", more)
 	}
-	noun, them := "objects have", "them"
+	noun, them = "objects", "them"
 	if len(names) == 1 {
-		noun, them = "object has", "it"
+		noun, them = "object", "it"
 	}
-	tail := "nothing changes because of it; `tink plan apply --adopt` stamps " + them + " in one pass and restarts none"
-	if o.adopting {
-		tail = "the next apply stamps " + them + " in one pass and restarts none (ownership: adopt-on-apply)"
+	return list, noun, them
+}
+
+// Lines are the lines to print, or none when there is nothing to say: every declared object that exists is stamped, for itself.
+func (o *OwnershipReport) Lines() []string {
+	if o.stack == "" {
+		if o.unnamed == 0 {
+			return nil
+		}
+		return []string{fmt.Sprintf("ownership: this stack has no name (add a `kind: stack` document), so nothing it creates is stamped with the stack it belongs to and nothing can be adopted; "+
+			"once it is named, %d declared object(s) would be stamped", o.unnamed)}
 	}
-	return fmt.Sprintf("ownership: %d declared %s no stamp (made before stamps, or by hand): %s; %s", len(names), noun, list, tail)
+	var out []string
+	if n := len(o.unstamped); n > 0 {
+		list, noun, them := listed(o.unstamped)
+		have := "have"
+		if n == 1 {
+			have = "has"
+		}
+		tail := "nothing changes because of it; `tink plan apply --adopt` stamps " + them + " in one pass and restarts none"
+		if o.adopting {
+			tail = "the next apply stamps " + them + " in one pass and restarts none (ownership: adopt-on-apply)"
+		}
+		out = append(out, fmt.Sprintf("ownership: %d declared %s %s no stamp (made before stamps, or by hand): %s; %s", n, noun, have, list, tail))
+	}
+	if n := len(o.copies); n > 0 {
+		list, noun, them := listed(o.copies)
+		carry := "carry"
+		if n == 1 {
+			carry = "carries"
+		}
+		tail := "nothing acts on them and nothing changes because of it; `tink plan apply --adopt` takes " + them + " over for this declaration in one pass and restarts none"
+		if o.adopting {
+			tail = "nothing acts on them until the next apply takes " + them + " over for this declaration in one pass, restarting none (ownership: adopt-on-apply)"
+		}
+		out = append(out, fmt.Sprintf("ownership: %d declared %s %s stamps made for another resource (copies?): %s; %s", n, noun, carry, list, tail))
+	}
+	if n := len(o.unbound); n > 0 {
+		list, noun, _ := listed(o.unbound)
+		have := "have"
+		if n == 1 {
+			have = "has"
+		}
+		out = append(out, fmt.Sprintf("ownership: %d declared %s %s no resource stamp yet: %s; `tink plan apply` writes it and restarts none", n, noun, have, list))
+	}
+	return out
 }
