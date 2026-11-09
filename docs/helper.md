@@ -321,8 +321,8 @@ is not an event; the resync puts the file back (measured: within one resync).
 published (an empty rendering is never applied), a publish stamp cannot be read, the zone file is missing or already holds a published name, or `/hosts` exists and
 tink did not write it. `--adopt` and `--allow-empty` are decisions for a person with the command; the daemon takes neither.
 
-**What it reports.** The status document carries one entry per site: `converged` (the file is right, whether or not this pass had to write it), `blocked` and why, `skipped`
-(the site has no dns helper) or `failing` (the server or the helper could not be read or written), and since when. The log says each rewrite and each change of state,
+**What it reports.** The status document's [states list](#the-states-list) carries one record per site, with `what` `dns`: `converged` (the file is right, whether or not this pass had to write it), `blocked` and why, `skipped`
+(the site has no dns helper) or `failing` (the server or the helper could not be read or written), and since when. A rewrite is also a `healed` event. The log says each rewrite and each change of state,
 not each pass. The reasons are fixed phrases; the detail is in the log.
 
 **The credential.** It uses the daemon's own certificate and asks for nothing more, but that certificate is unrestricted (see "Not confined" above), so a host should
@@ -393,7 +393,7 @@ tink daemon run --jobs /var/lib/tink/jobs --reconcile-derived [--reconcile-site 
 
 - **A hand edit inside a region is put back,** within the resync or the next event; a line outside the markers is the person's and is kept. It writes only a file that differs, with a read-back, and restarts the instance only when the stamp says `restart` and the content changed.
 - **It follows `plan`'s refusals.** A join error, or a publish stamp that cannot be read, blocks every file and writes nothing. It never adopts a file tink did not write and never empties a region that has lines (`allow_empty`, `adopt_existing` are for `plan apply`), it does not place markers or create a region file, and it keeps files on running instances only.
-- **It reports one entry per file** (`derived/NAME`, and `derived` for a whole site): `converged`, `blocked` and why, `skipped` (no stamped file, or the instance is not running) or `failing`, with fixed reasons. A stopped instance is kept at the next resync after it starts: starts are not events it wakes on.
+- **It reports one state per file** (`what` `derived`, `resource` the file's name, none for a whole site): `converged`, `blocked` and why, `skipped` (no stamped file, or the instance is not running) or `failing`, with fixed reasons ([the states list](#the-states-list)). A rewrite is a `healed` event and a restart a `restarted` event ([the events list](#the-events-list)). A stopped instance is kept at the next resync after it starts: starts are not events it wakes on.
 - **The rows it needs** are in [Narrowing the daemon's certificate](#narrowing-the-daemons-certificate): read the instances, profiles, networks and ACLs; access files on each instance that carries a stamp; and restart (`can_update_state`) the ones whose stamp says `restart`. It has no right to edit an instance, to run anything in one, or to touch a network. `tink daemon authz plan --reconcile-derived` shows them, and `authz: narrow` reads the flag from the helper's entrypoint and reports the rules out of date when a derived file is added.
 
 **Measured live** (a local Incus 7.5.1, the herd corpus's platform site of a dns helper, a sign-on helper and a proxy, one published app, and the daemon run as a certificate of its own narrowed with `tink daemon authz apply --reconcile-derived`): the app was applied after the platform, so the proxy's routes file lacked its name; the daemon's first pass for the site wrote the dns records, the routes and the sign-on rules from their stamps with no second apply, and restarted the proxy and the sign-on helper, the two whose stamps say `restart`. A hand edit inside the routes region was put back within one 20-second resync and a line added outside the markers was kept. With the ingress helper's role removed the join had an error: all three files were `blocked` ("the join has errors"), a hand edit stood untouched, the status document carried `blocked` and that reason and no file content, and when the role came back the file was put right. The certificate was refused editing an instance's config or devices, running a command, stopping an instance whose stamp does not say restart, reading a file on an instance with no stamp, and editing a network, an ACL, the server's config or creating a project; it was allowed to view instances, read a file on a stamped instance, and restart one whose stamp says so. **Not run:** the mesh view; an Incus restart with the daemon connected; more than one site at once; a stopped instance; a host other than a laptop.
@@ -429,15 +429,52 @@ was read, **keeping every other key as it was**; if the volume changed in betwee
 | `version`, `tz`, `started-at` | which tink, which time zone schedules run in, and when it started |
 | `job-proto`, `policy-proto` | the job-directory protocol it speaks, and the **newest copy-policy protocol it can read** |
 | `written-at`, `heartbeat` | when it was written (an RFC 3339 UTC instant to the whole second), and how often it is written when nothing changes (a Go duration string, `10m0s`) |
-| `skipped` | volumes it will **not** copy, and why: a policy of a protocol it does not read, one that does not parse, a pool it cannot list, a volume it cannot read |
-| `failing` | copies that have failed since their last success: `volume`, `target`, `count` (how many in a row), `since` (when the run of failures began, which stays through the retries) and `failed-at` (when the latest attempt failed, which moves with each) |
+| `states` | **one list** of what the daemon found, one record for each thing it keeps or watches ([The states list](#the-states-list)) |
+| `events` | the last few things the daemon did, at most 20, the oldest first ([The events list](#the-events-list)) |
 | `last-job` | the newest finished job: `id`, `state`, `finished-at` |
 | `running-jobs`, `queued-jobs`, `draining` | the jobs in the job directory right now (left out when zero), and whether the helper is starting none (an upgrade waits for `running-jobs` to reach zero) |
-| `reconciles` | with `--reconcile-dns`: one entry per site kept, `what` (`dns`), `site`, `state` (`converged`, `blocked`, `skipped`, `failing`), a fixed `reason` when it is not converged, and `since`, when that state began (so a pass that finds the same thing writes nothing new) |
 | `remotes` | the Incus servers the helper can reach by name: `host`, and any added with `tink helper remote add` (name, address, project; no credential). Absent from an older helper, which is why a missing list is not read as "none" |
 
 It holds **no error text**. Errors from Incus and its drivers can echo credentials, so the reasons it gives for something Incus refused are fixed
 phrases, and the detail stays in the job's log.
+
+### The states list
+
+`states` replaced three lists (`skipped`, `failing`, `reconciles`) that had two shapes, so that health and a notifier iterate one thing (what to do about a helper that still publishes the old document: [the removal page](removals/status-states-list.md)). Each record says what
+was found and since when:
+
+| Field | Meaning |
+|---|---|
+| `what`, `resource`, `site`, `target` | what is kept or watched and which one of it. `what` is `dns` or `derived` (a reconcile; `resource` is the derived file's name, left out for a result about the whole site) or `backup` (a volume or a copy; `resource` is the volume and `target` the copy's other end). `site` is left out for the unnamed site |
+| `state` | `converged` (it is as it should be, whether or not this pass had to write it), `blocked` (a refusal stopped it, on purpose, and nothing was written), `skipped` (there is nothing to keep, an instance is not running, or a volume is not copied) or `failing` (the server, a helper or an instance could not be read, written or restarted) |
+| `reason` | a fixed phrase, left out when the state is `converged`. Never error text |
+| `since` | when this state began. It is kept while the state **and** the reason stay the same, and starts again when either changes, so a pass that finds the same thing changes nothing in the document. For a failing copy it is the `failing-since` stamp on the volume, the real onset |
+| `failed-at`, `failures` | a failing copy only: when its latest attempt failed (it moves with each) and how many in a row |
+
+A volume the helper will **not** copy (a policy of a protocol it does not read, one that does not parse, a pool it cannot list, a volume it cannot read) is a
+record with `what` `backup` and the state `skipped`, and it has a `since` like any other. A copy that has failed since its last success is one with the state
+`failing`. `tink helper status` and `Evaluate` read these: a helper with a skipped volume or a failing copy is **degraded**. A reconcile state is carried in the
+document and printed by `tink helper status`, but not yet judged by health (that is its own piece of work).
+
+**One rule for "since", and it survives a restart.** One clock keeps `since` for every state: the reconciler's and the volumes'. At startup the daemon reads its
+own stored document, from the key and the place it publishes to (so it needs no right it does not already hold), and seeds the clock from it. A seeded entry
+keeps its `since` if the first fresh pass reports the same state and reason, starts again if the pass reports something else, and is dropped if the pass does not
+report it; until a pass confirms it, it is not published. A document that cannot be read (not JSON, no protocol, a newer protocol, a volume that cannot be read)
+seeds nothing and the clock starts empty: there is no version handling. The log gets a line when a state changes, and so a restart does not announce every standing
+problem again.
+
+### The events list
+
+`events` is what the daemon **did**, as opposed to what it found: `event`, `what`, `resource`, `site` and `at` (the time, an RFC 3339 UTC instant). It has a fixed
+set of two words and holds **no file content**:
+
+| Event | When |
+|---|---|
+| `healed` | a derived file was rewritten, because it differed from what the stamps say (a hand edit put back, or a new publish) |
+| `restarted` | the instance was restarted after the file was rewritten, because the file's stamp says `restart` |
+
+Only the most recent 20 are kept, oldest first. A new event is a change, so the document is written at once. The list is read back at startup with the states, so it
+survives a restart. A pass that finds nothing to do adds nothing.
 
 **When it is written.** When something in it changes, and every `--status-heartbeat` (default 10 minutes) when nothing has. Every write is
 one lifecycle event in the log of anything listening and about 90 ms of the Incus daemon's CPU, so it is not written on every tick. The daemon
@@ -448,7 +485,7 @@ once its instance carries both (`incus config set INSTANCE user.tink.outcome.hel
 
 **A document that does not say when it was written is not healthy.** The staleness test needs `written-at` and `heartbeat`. A document without either (written by another
 version, edited by hand, or damaged) cannot be shown to be fresh, so the helper is judged **degraded**, with the reason `its status document has no write time (written-at)` (or
-`no heartbeat`), and never healthy: a helper that had stopped would otherwise read as well for ever. There is no version logic in this: `status` protocol 2 is the document
+`no heartbeat`), and never healthy: a helper that had stopped would otherwise read as well for ever. There is no version logic in this: `status` protocol 3 is the document
 described above, a reader refuses a newer protocol, and an older document is judged by what it says like any other.
 
 **Why config on a volume.** Reading it costs no event (reading a file out of an instance does), and it is still there when the helper has
@@ -476,12 +513,13 @@ instance for an older helper), and judges it from that and from the state of its
 
 | | |
 |---|---|
-| **healthy** (exit 0) | running, heard from recently, nothing skipped, nothing failing |
+| **healthy** (exit 0) | running, heard from recently, no volume skipped, no copy failing |
 | **degraded** (exit 1) | running and heard from, but skipping a volume, failing a copy, or saying nothing useful (no document yet, one it cannot read, or a status volume that cannot be read) |
 | **down** (exit 2) | the instance is stopped, there is no helper, or it has been silent for more than **2.5 heartbeats** |
 
 `--check` prints one line per helper and sets the exit status, so cron, a monitor or Home Assistant can poll it. Without `--check` it prints the
-details and exits 0 whatever it found (unless it could not look). `--json` prints everything.
+details and exits 0 whatever it found (unless it could not look). The details list the volumes skipped (with since when) and the copies failing, then `states`: what the daemon keeps
+(a derived file, the dns records), each with its state, its reason and since when, and `events`: what it did lately, oldest first. `--json` prints everything.
 
 ```
 $ tink helper status --check
