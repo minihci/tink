@@ -83,3 +83,57 @@ func TestApplyConfigWithNoOwnedPrefixRemovesNothing(t *testing.T) {
 type doneOp struct{ incus.Operation }
 
 func (doneOp) Wait() error { return nil }
+
+type deviceFake struct {
+	configFake
+	devices api.DevicesMap
+	puts    int
+}
+
+func (f *deviceFake) GetInstance(name string) (*api.Instance, string, error) {
+	inst, etag, _ := f.configFake.GetInstance(name)
+	inst.Devices = api.DevicesMap{}
+	for n, d := range f.devices {
+		inst.Devices[n] = d
+	}
+	return inst, etag, nil
+}
+
+func (f *deviceFake) UpdateInstance(n string, put api.InstancePut, etag string) (incus.Operation, error) {
+	f.puts++
+	return f.configFake.UpdateInstance(n, put, etag)
+}
+
+// What the caller says was applied and is no longer declared is taken back in the same PUT that sets the declaration, from the instance as it was read, and
+// everything else the instance carries (its volatile.* keys above all: a PUT replaces the whole config) goes back as it was.
+func TestApplyConfigTakesBackWhatStaleAppliedNamesInTheSamePut(t *testing.T) {
+	f := &deviceFake{
+		configFake: configFake{live: map[string]string{"limits.cpu": "2", "limits.memory": "1GiB", "user.by-hand": "h", "volatile.eth0.hwaddr": "00:16:3e:00:00:01"}},
+		devices:    api.DevicesMap{"eth0": {"type": "nic"}, "old": {"type": "nic"}, "by-hand": {"type": "usb"}},
+	}
+	var asked int
+	spec := &Spec{
+		Name: "web", Config: map[string]string{"limits.cpu": "4"}, Devices: map[string]map[string]string{"eth0": {"type": "nic", "network": "br0"}},
+		StaleApplied: func(config map[string]string, devices map[string]map[string]string) ([]string, []string) {
+			asked++
+			if config["limits.memory"] != "1GiB" || devices["old"] == nil {
+				t.Errorf("asked about %v %v, want the instance as it was read", config, devices)
+			}
+			return []string{"limits.memory"}, []string{"old"}
+		},
+	}
+	if err := ApplyConfig(f, spec); err != nil {
+		t.Fatal(err)
+	}
+	if f.puts != 1 || asked != 1 {
+		t.Errorf("%d PUTs, asked %d times", f.puts, asked)
+	}
+	wantConfig := map[string]string{"limits.cpu": "4", "user.by-hand": "h", "volatile.eth0.hwaddr": "00:16:3e:00:00:01"}
+	if !reflect.DeepEqual(map[string]string(f.updated.Config), wantConfig) {
+		t.Errorf("config = %v, want %v", f.updated.Config, wantConfig)
+	}
+	wantDevices := api.DevicesMap{"eth0": {"type": "nic", "network": "br0"}, "by-hand": {"type": "usb"}}
+	if !reflect.DeepEqual(f.updated.Devices, wantDevices) {
+		t.Errorf("devices = %v, want %v", f.updated.Devices, wantDevices)
+	}
+}

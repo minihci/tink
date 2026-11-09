@@ -186,14 +186,25 @@ func ApplyConfig(server incus.InstanceServer, spec *Spec) error {
 		if put.Config == nil {
 			put.Config = map[string]string{}
 		}
+		if put.Devices == nil {
+			put.Devices = api.DevicesMap{}
+		}
+		// what the record says was applied and is no longer declared is worked out from the instance as it was read, before the declaration is merged in
+		var staleKeys, staleDevices []string
+		if spec.StaleApplied != nil {
+			staleKeys, staleDevices = spec.StaleApplied(put.Config, put.Devices)
+		}
 		for k, v := range spec.Config {
 			put.Config[k] = v
 		}
 		for _, k := range StaleOwnedKeys(put.Config, spec.Config, spec.OwnedConfigPrefixes) {
 			delete(put.Config, k)
 		}
-		if put.Devices == nil {
-			put.Devices = api.DevicesMap{}
+		for _, k := range staleKeys {
+			delete(put.Config, k)
+		}
+		for _, name := range staleDevices {
+			delete(put.Devices, name)
 		}
 		for name, dev := range spec.Devices {
 			put.Devices[name] = dev
